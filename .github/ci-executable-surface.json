@@ -1,0 +1,535 @@
+{
+  "schemaVersion": 1,
+  "workflows": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "f5738dbf76bd9a9ea32b3d4eab7b44048f9555e7619a6f4adce9092623469c86"
+    },
+    {
+      "path": ".github/workflows/nightly-verification.yml",
+      "sha256": "ac5315d0c7eef6580bcdf9a01b2cd3c52438db70ac26f91f9c07baef460fe324"
+    },
+    {
+      "path": ".github/workflows/playwright.yml",
+      "sha256": "f51ee7705c362d408873bb9470699ae9f79c449f7435777a07ed1af381e3f239"
+    },
+    {
+      "path": ".github/workflows/publish-playwright-report.yml",
+      "sha256": "4658109596b7b873c9676bea6d4bedfb2ede7c5f68b4d1d6f242a41c65f9780a"
+    },
+    {
+      "path": ".github/workflows/publish-server-image.yml",
+      "sha256": "380a2be70307eaf55de457af84097792ba71b4d6258f78c14b9fe900907bf3f1"
+    },
+    {
+      "path": ".github/workflows/release-desktop.yml",
+      "sha256": "c434018092d930c17ca652f5b7b215354836c736b07330da79680adaff95675e"
+    }
+  ],
+  "localActions": [],
+  "packageScripts": [
+    {
+      "manifest": "apps/api/package.json",
+      "scripts": ["check", "start"]
+    },
+    {
+      "manifest": "apps/desktop/package.json",
+      "scripts": ["build", "check"]
+    },
+    {
+      "manifest": "apps/mobile/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "apps/web/package.json",
+      "scripts": ["build", "check"]
+    },
+    {
+      "manifest": "apps/worker/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "apps/www/package.json",
+      "scripts": ["build", "check"]
+    },
+    {
+      "manifest": "infra/sandboxes/supervisor/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "infra/updater/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "package.json",
+      "scripts": [
+        "build",
+        "check",
+        "db:generate",
+        "lint",
+        "security:audit",
+        "security:secrets",
+        "security:secrets:history",
+        "test",
+        "test:canary",
+        "test:e2e",
+        "test:integration",
+        "test:policy",
+        "test:topology"
+      ]
+    },
+    {
+      "manifest": "packages/adapter-kit/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/adapters/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/auth/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/chat-ui/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/contracts/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/core/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/db/package.json",
+      "scripts": ["check", "generate"]
+    },
+    {
+      "manifest": "packages/memory/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/testkit/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/ui-tokens/package.json",
+      "scripts": ["check"]
+    },
+    {
+      "manifest": "packages/ui-web/package.json",
+      "scripts": ["check"]
+    }
+  ],
+  "surfaces": [
+    {
+      "path": ".dockerignore",
+      "reasons": ["image build context config"],
+      "sha256": "9992a7f5ae8c2040d98f5c5bd5cd22d0e0fa67796b7e6b3a4b59a6cf248b3958"
+    },
+    {
+      "path": ".npmrc",
+      "reasons": ["pnpm package-manager config"],
+      "sha256": "995a5b9304efc3aaef1625d03df991a48b397ca7caf6e0de915ac9f9714a6d89"
+    },
+    {
+      "path": "apps/api/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "151f6b3256d9dc501bc0316e7a7d01a8c0f5ba740f8d4ab42b368763fa23ebad"
+    },
+    {
+      "path": "apps/api/tsconfig.json",
+      "reasons": ["package-script:apps/api/package.json#check: TypeScript config"],
+      "sha256": "e6459a073629caf620bfb7ae769aba8aa948d01157c9374431f7e44e85cfe184"
+    },
+    {
+      "path": "apps/desktop/e2e/playwright.config.ts",
+      "reasons": [".github/workflows/ci.yml:jobs.build.steps[5].run: pnpm exec: Playwright config"],
+      "sha256": "b79fa57e39842ed38d0f02755d49b10bf5ea1171304f3256930c72daaacd72cb"
+    },
+    {
+      "path": "apps/desktop/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "f60e161fab59ad44859f02a8f9c58418d75cc4e04c2fcb077b58ef86699d6991"
+    },
+    {
+      "path": "apps/desktop/scripts/copy-static.mjs",
+      "reasons": ["package-script:apps/desktop/package.json#build: static file reference"],
+      "sha256": "8ea3b2d21a7eb59c14aa6650d4b488b119e68fd7d0344a9226ebb3c478df590f"
+    },
+    {
+      "path": "apps/desktop/tsconfig.json",
+      "reasons": [
+        "package-script:apps/desktop/package.json#build: TypeScript config",
+        "package-script:apps/desktop/package.json#check: TypeScript config"
+      ],
+      "sha256": "926f92c6d20e57fcdc3c49acec701fc5e2227c78336d89f5ea00b8a7b8356e9e"
+    },
+    {
+      "path": "apps/mobile/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "eaafca273d0adaeae72e66ed902428cc4f5570a5959f7f627e9b98f1286a5e24"
+    },
+    {
+      "path": "apps/mobile/tsconfig.json",
+      "reasons": ["package-script:apps/mobile/package.json#check: TypeScript config"],
+      "sha256": "f829081ba96b37764fd7162b9789af51e54695a78c6a51c2095ed2716ddd4cf7"
+    },
+    {
+      "path": "apps/web/e2e/helpers.ts",
+      "reasons": ["file:apps/web/playwright.config.ts: static local module"],
+      "sha256": "c04f63442409f9338d7e84ce4e083f11bdfb2ab615686617cfb7e018dd2d773c"
+    },
+    {
+      "path": "apps/web/lingui.config.ts",
+      "reasons": ["package-script:apps/web/package.json#build: Lingui config"],
+      "sha256": "4565c54db7fed3c09313ad0d83ec417781e6c7cd72d2eb5193eca874a1d730d6"
+    },
+    {
+      "path": "apps/web/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "b9ea94d5a97170476500f7313b81e2e660434771b4c9b15cc7a773b58dd9c4d3"
+    },
+    {
+      "path": "apps/web/playwright.config.ts",
+      "reasons": [
+        ".github/workflows/playwright.yml:jobs.playwright.steps[5].run: pnpm exec: Playwright config"
+      ],
+      "sha256": "6b566252e8c2bc4aa106126e51f74fd4a6329aa37c9a1032dbdbd9cdd0283fe5"
+    },
+    {
+      "path": "apps/web/src/screen-proxy.ts",
+      "reasons": ["file:apps/web/vite.config.ts: static local module"],
+      "sha256": "80754b88057b18d8247c495eac6642b1a6b822ad8036909051e01830b0b96a30"
+    },
+    {
+      "path": "apps/web/tsconfig.json",
+      "reasons": ["package-script:apps/web/package.json#check: TypeScript config"],
+      "sha256": "84298e95087d793f3c4d617947678118c0a63dea1c716e8d12ae82bcf7eea1fb"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "reasons": ["package-script:apps/web/package.json#build: Vite config"],
+      "sha256": "f4515d13df273b3602b2e76b5ad8f8cb833c1ade0a911dfe169d26f320046894"
+    },
+    {
+      "path": "apps/worker/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "26a7b9d4f9bd814bbcd443c1a6513b73413c3d7b3f642fd9e78da91121806854"
+    },
+    {
+      "path": "apps/worker/tsconfig.json",
+      "reasons": ["package-script:apps/worker/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "apps/www/astro.config.mjs",
+      "reasons": [
+        "package-script:apps/www/package.json#build: Astro config",
+        "package-script:apps/www/package.json#check: Astro config"
+      ],
+      "sha256": "b7b5baa84f11590b6da43d95546a8c6bc209b92d14debac1937bcb80dcd8e36e"
+    },
+    {
+      "path": "apps/www/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "a48023af9980078a4fb8d15d6cdd65634b33a74f30f559e6317e5735def4d331"
+    },
+    {
+      "path": "biome.json",
+      "reasons": ["package-script:package.json#lint: Biome config"],
+      "sha256": "f32530f1c26cf46cdb57e46bfc324041e8c69a7811fe282bc3067579e5415292"
+    },
+    {
+      "path": "infra/compose/Dockerfile",
+      "reasons": [".github/workflows/publish-server-image.yml: image Dockerfile"],
+      "sha256": "4f34efcddd71f5e1e7db6f8a6d013fff50b90502eaaed7d8abe6f5c0bd59c529"
+    },
+    {
+      "path": "infra/sandboxes/supervisor/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "212ab90d8aeb194b3e0849d66507feb9045ef373f754d0f09c896efd788d721f"
+    },
+    {
+      "path": "infra/sandboxes/supervisor/tsconfig.json",
+      "reasons": [
+        "package-script:infra/sandboxes/supervisor/package.json#check: TypeScript config"
+      ],
+      "sha256": "c3d56f08bd5afa01a1f152b91abab302ca5529b8a7f63174156e7572a309a150"
+    },
+    {
+      "path": "infra/updater/Dockerfile",
+      "reasons": [".github/workflows/publish-server-image.yml: image Dockerfile"],
+      "sha256": "aa577a18b7b39068afaed250a39efca3e905ffff373600a7c358abeab4464e79"
+    },
+    {
+      "path": "infra/updater/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "0b146b143c475974d2ebc0765fc12b3477d73fae62b453924444dd1246de39f8"
+    },
+    {
+      "path": "infra/updater/tsconfig.json",
+      "reasons": ["package-script:infra/updater/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "1e4177b6469aa120f65c68d46500cf41000c8580294d52c9ae72c0e3ef46890f"
+    },
+    {
+      "path": "packages/adapter-kit/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "f930ed1d32cd436658a66673c595746affc34ff8a12d19f87605a7655b98eb3b"
+    },
+    {
+      "path": "packages/adapter-kit/tsconfig.json",
+      "reasons": ["package-script:packages/adapter-kit/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/adapters/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "a7f4a969bf3d24185be1707bd0fde4f958be75d0552952c62ab1e4fe432507d6"
+    },
+    {
+      "path": "packages/adapters/tsconfig.json",
+      "reasons": ["package-script:packages/adapters/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/auth/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "c95aad96db15e7d4e03f9bb56ee16c9cb18c4d6904fe178efe5566fc09b4a664"
+    },
+    {
+      "path": "packages/auth/tsconfig.json",
+      "reasons": ["package-script:packages/auth/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/chat-ui/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "b0d5df752e923c4c9fba98347de1335fd3c27901ffe8512374d1cf7a21cca62e"
+    },
+    {
+      "path": "packages/chat-ui/tsconfig.json",
+      "reasons": ["package-script:packages/chat-ui/package.json#check: TypeScript config"],
+      "sha256": "ad32ce8438ab3bed527209a236cf9e903fc6b3aeba327c4a2a33cdc742aece0a"
+    },
+    {
+      "path": "packages/contracts/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "3fc963bd383843dda0100669ade7fa19dfdac5c93f1564312d29287780c53c37"
+    },
+    {
+      "path": "packages/contracts/tsconfig.json",
+      "reasons": ["package-script:packages/contracts/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/core/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "7f5cfa6d72359e122984bbc6fde812809f3dfd9cba275ae587bc8c1667fe3808"
+    },
+    {
+      "path": "packages/core/src/secrets-guard.ts",
+      "reasons": ["file:apps/web/vite.config.ts: static local module"],
+      "sha256": "ab937c0ab723854869ed386a9238b1a82a2ed50547ea86237e69f8128207a56a"
+    },
+    {
+      "path": "packages/core/tsconfig.json",
+      "reasons": ["package-script:packages/core/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/db/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "0b57165d00d2a0e03dc2f34a008018cd7491ee453bc5c7bfaf5a1bc838a46524"
+    },
+    {
+      "path": "packages/db/prisma.config.ts",
+      "reasons": ["package-script:packages/db/package.json#generate: Prisma executable config"],
+      "sha256": "bc42eac4f6aea118546355a39636ca5e93972f471bf03d7221983464243126ce"
+    },
+    {
+      "path": "packages/db/prisma/schema.prisma",
+      "reasons": ["package-script:packages/db/package.json#generate: Prisma generator config"],
+      "sha256": "0f0c2a5c169bb80b74d08b29c43b80abb1fb3b80c42b244262e632ad14ac89e8"
+    },
+    {
+      "path": "packages/db/tsconfig.json",
+      "reasons": ["package-script:packages/db/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/memory/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "402140659d05aae44997bd114997d76a8c655ed126ee154e471231eac21dcb30"
+    },
+    {
+      "path": "packages/memory/tsconfig.json",
+      "reasons": ["package-script:packages/memory/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/testkit/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "dd4792ac2b57b3ccd453c8950b9f4651f298d63a9496e5f32f82c9efc40ea492"
+    },
+    {
+      "path": "packages/testkit/src/cli/canary.ts",
+      "reasons": ["package-script:package.json#test:canary: static file reference"],
+      "sha256": "ec308de2254bb684eb25b6bdfe6cf2182cc97b9d894f584a1432e1b75958b4d5"
+    },
+    {
+      "path": "packages/testkit/src/cli/generate-playwright-report-dashboard.ts",
+      "reasons": ["file:scripts/publish-playwright-report.sh: static file reference"],
+      "sha256": "59617c3430496b4e385bc9724c65cc7f4ccddc93220d1bd3f73157434e25c5fb"
+    },
+    {
+      "path": "packages/testkit/src/cli/harness.ts",
+      "reasons": [
+        "package-script:package.json#test:e2e: static file reference",
+        "package-script:package.json#test:integration: static file reference"
+      ],
+      "sha256": "37494037d1f58a41188263653faee70a905809a3e823035da606ae05eb4056b7"
+    },
+    {
+      "path": "packages/testkit/src/cli/topology.ts",
+      "reasons": ["package-script:package.json#test:topology: static file reference"],
+      "sha256": "44f8ea381fe6338521f4cef86323cd8b9658c2ec8a12cfb6818aec80ea628520"
+    },
+    {
+      "path": "packages/testkit/src/gitleaks-history.test.ts",
+      "reasons": ["package-script:package.json#test:policy: static file reference"],
+      "sha256": "578c777e31b168efb63ee4f6c3f035ea5c3eb9e248e839516ec4040c48455ba9"
+    },
+    {
+      "path": "packages/testkit/src/pin-test-env.ts",
+      "reasons": [
+        "package-script:package.json#test: Vitest setup file",
+        "package-script:package.json#test:policy: Vitest setup file"
+      ],
+      "sha256": "0057ded4c3655796bf535eba3ab8dc433687998673a4f293b6e10561f24f3348"
+    },
+    {
+      "path": "packages/testkit/src/repository-policy.test.ts",
+      "reasons": ["package-script:package.json#test:policy: static file reference"],
+      "sha256": "e09b59f238c57d6fab6083dea7053ff437c5508aac3dd555f4265736760ea1d3"
+    },
+    {
+      "path": "packages/testkit/tsconfig.json",
+      "reasons": ["package-script:packages/testkit/package.json#check: TypeScript config"],
+      "sha256": "860f2a590d9f9dea15ba89a1816c7d59fc66106f068386f4cbc8fc6b86385f0a"
+    },
+    {
+      "path": "packages/ui-tokens/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "84a1161b1e0038ec56726e67163bea4083425470434bd159359e7229d3d3bd07"
+    },
+    {
+      "path": "packages/ui-tokens/tsconfig.json",
+      "reasons": ["package-script:packages/ui-tokens/package.json#check: TypeScript config"],
+      "sha256": "57745fb626375aa377c56c9b24aeb483e4113326509367d6b6ad2a434e0f5733"
+    },
+    {
+      "path": "packages/ui-web/package.json",
+      "reasons": ["pnpm package-manager manifest"],
+      "sha256": "1e88173760cb3067f2479cec3cc0fe657f92c907875a8906d740a4bb59021cb5"
+    },
+    {
+      "path": "packages/ui-web/tsconfig.json",
+      "reasons": ["package-script:packages/ui-web/package.json#check: TypeScript config"],
+      "sha256": "84298e95087d793f3c4d617947678118c0a63dea1c716e8d12ae82bcf7eea1fb"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "reasons": ["pnpm package-manager config"],
+      "sha256": "5c2b416a2b45f751c99da4ca30fd653a910f7b591357d620083df13ba9bd198a"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "reasons": ["pnpm package-manager config"],
+      "sha256": "25178b418b7047d388fd11f88a537d6a93cd10cc5bf1f5c26a8f1c8b57da6fc7"
+    },
+    {
+      "path": "scripts/gitleaks-canary.mjs",
+      "reasons": ["package-script:package.json#test:policy: static file reference"],
+      "sha256": "4e4d805d72e29c2e039cd5990463b790805ed7b9cfc387ad19b5677952e7f0e5"
+    },
+    {
+      "path": "scripts/gitleaks-history.mjs",
+      "reasons": ["package-script:package.json#security:secrets:history: static file reference"],
+      "sha256": "98351b4dd233faa47d647805665a8d255a5719fee251debbb50f647794b23bf9"
+    },
+    {
+      "path": "scripts/gitleaks-scan.mjs",
+      "reasons": [
+        "file:scripts/gitleaks-canary.mjs: static local module",
+        "package-script:package.json#security:secrets: static file reference"
+      ],
+      "sha256": "6bbc41bd836cf61ac5e765e4bf98147acf825f6f3cbac73e8388bbe14123e5ec"
+    },
+    {
+      "path": "scripts/publish-playwright-report.sh",
+      "reasons": [
+        ".github/workflows/playwright.yml:jobs.playwright.steps[12].run: static file reference",
+        ".github/workflows/publish-playwright-report.yml:jobs.publish.steps[8].run: static file reference"
+      ],
+      "sha256": "3a2315ad9cac83903ced22ecf6552ed1493b0073536c876f8cd6adaa2d21709a"
+    },
+    {
+      "path": "scripts/repository-policy.mjs",
+      "reasons": [
+        "file:scripts/gitleaks-canary.mjs: static local module",
+        "file:scripts/gitleaks-history.mjs: static local module",
+        "file:scripts/gitleaks-scan.mjs: static local module",
+        "package-script:package.json#test:policy: static file reference"
+      ],
+      "sha256": "21b25daa61e5009a327edaf0e8a904f8203b6f9a776d673e4fbb0cd040db069a"
+    },
+    {
+      "path": "tsconfig.base.json",
+      "reasons": [
+        "file:apps/api/tsconfig.json: TypeScript config extends",
+        "file:apps/desktop/tsconfig.json: TypeScript config extends",
+        "file:apps/mobile/tsconfig.json: TypeScript config extends",
+        "file:apps/web/tsconfig.json: TypeScript config extends",
+        "file:apps/worker/tsconfig.json: TypeScript config extends",
+        "file:infra/sandboxes/supervisor/tsconfig.json: TypeScript config extends",
+        "file:infra/updater/tsconfig.json: TypeScript config extends",
+        "file:packages/adapter-kit/tsconfig.json: TypeScript config extends",
+        "file:packages/adapters/tsconfig.json: TypeScript config extends",
+        "file:packages/auth/tsconfig.json: TypeScript config extends",
+        "file:packages/chat-ui/tsconfig.json: TypeScript config extends",
+        "file:packages/contracts/tsconfig.json: TypeScript config extends",
+        "file:packages/core/tsconfig.json: TypeScript config extends",
+        "file:packages/db/tsconfig.json: TypeScript config extends",
+        "file:packages/memory/tsconfig.json: TypeScript config extends",
+        "file:packages/testkit/tsconfig.json: TypeScript config extends",
+        "file:packages/ui-tokens/tsconfig.json: TypeScript config extends",
+        "file:packages/ui-web/tsconfig.json: TypeScript config extends"
+      ],
+      "sha256": "1c99abd32806b16bb3a47711888125fe40313b981fb3399663bda401d3daa425"
+    },
+    {
+      "path": "turbo.json",
+      "reasons": [
+        "package-script:package.json#build: turbo config",
+        "package-script:package.json#check: turbo config"
+      ],
+      "sha256": "7f63f9c22e6d8bc55a147bb8e3cb9b7de4a0c4b22a515c0243a572aa8295650c"
+    },
+    {
+      "path": "vitest.config.ts",
+      "reasons": [
+        "package-script:package.json#test: Vitest config",
+        "package-script:package.json#test:policy: Vitest config"
+      ],
+      "sha256": "3a72663d175bb3141f16a085ccbfc790d56638a4727b502a416cccb76d573a49"
+    }
+  ]
+}

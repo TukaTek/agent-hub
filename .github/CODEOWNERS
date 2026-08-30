@@ -3,6 +3,7 @@
 /.github/workflows/ @acepgh
 /.github/dependabot.yml @acepgh
 /.github/CODEOWNERS @acepgh
+/.github/ci-executable-surface.json @acepgh
 /.gitleaks.toml @acepgh
 /.env.example @acepgh
 /scripts/repository-policy.mjs @acepgh

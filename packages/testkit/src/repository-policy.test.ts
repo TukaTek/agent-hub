@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -125,6 +125,8 @@ async function withWorkflowSources(
 ) {
   const originals = new Map<string, string | undefined>();
   try {
+    const manifest = path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json");
+    originals.set(manifest, await readFile(manifest, "utf8").catch(() => undefined));
     for (const [filename, source] of Object.entries(workflows)) {
       const target = path.join(repositoryFixtureRoot, ".github/workflows", filename);
       originals.set(target, await readFile(target, "utf8").catch(() => undefined));
@@ -137,6 +139,41 @@ async function withWorkflowSources(
       else await writeFile(target, original);
     }
   }
+}
+
+async function withRepositoryFiles(files: Record<string, string>, assertion: () => Promise<void>) {
+  const originals = new Map<string, string | undefined>();
+  try {
+    const manifest = path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json");
+    originals.set(manifest, await readFile(manifest, "utf8").catch(() => undefined));
+    for (const [filename, source] of Object.entries(files)) {
+      const target = path.join(repositoryFixtureRoot, filename);
+      originals.set(target, await readFile(target, "utf8").catch(() => undefined));
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, source);
+    }
+    await assertion();
+  } finally {
+    for (const [target, original] of originals) {
+      if (original === undefined) await rm(target, { force: true });
+      else await writeFile(target, original);
+    }
+  }
+}
+
+async function regenerateExecutableSurfaceManifest() {
+  const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
+    writeExecutableSurfaceManifest?: (root: string) => Promise<void>;
+  };
+  await policy.writeExecutableSurfaceManifest?.(repositoryFixtureRoot);
+}
+
+async function executableSurfaceManifestGenerator() {
+  const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
+    createExecutableSurfaceManifest?: (root: string) => Promise<unknown>;
+  };
+  expect(policy.createExecutableSurfaceManifest).toBeTypeOf("function");
+  return policy.createExecutableSurfaceManifest;
 }
 
 function actionBuildWorkflow(context?: unknown) {
@@ -212,16 +249,23 @@ jobs:
   });
 
   it.each([
-    ["a local action", "./.github/actions/bridge"],
     ["an absolute path", "/.github/workflows/playwright.yml"],
     ["traversal", "./.github/workflows/../playwright.yml"],
     ["an expression", githubExpression("inputs.action")],
-    ["a SHA-looking local action", `./.github/actions/${sha}`],
   ])("rejects step-level %s", (_name, action) => {
     const workflow = `jobs: { test: { runs-on: ubuntu-latest, steps: [{ uses: ${JSON.stringify(action)} }] } }`;
 
     expect(() => assertPinnedWorkflowSource(workflow, "untrusted-step.yml")).toThrow();
   });
+
+  it.each(["./.github/actions/bridge", `./.github/actions/${sha}`])(
+    "accepts canonical local action %s for manifest resolution",
+    (action) => {
+      const workflow = `jobs: { test: { runs-on: ubuntu-latest, steps: [{ uses: ${JSON.stringify(action)} }] } }`;
+
+      expect(() => assertPinnedWorkflowSource(workflow, "local-action.yml")).not.toThrow();
+    },
+  );
 
   it("enforces a bounded canonical local reusable workflow filename", () => {
     const bounded = `./.github/workflows/${"a".repeat(64)}.yml`;
@@ -633,7 +677,7 @@ describe("exact candidate checkout policy", () => {
   });
 });
 
-describe("repository-wide image build inventory", () => {
+describe("content-addressed executable surface and image build policy", () => {
   beforeAll(prepareRepositoryFixture);
 
   afterAll(async () => {
@@ -646,6 +690,288 @@ describe("repository-wide image build inventory", () => {
     });
   });
 
+  it("keeps check mode read-only", async () => {
+    const filename = path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json");
+    const before = await readFile(filename, "utf8");
+
+    await assertRepositoryPolicy(repositoryFixtureRoot);
+
+    await expect(readFile(filename, "utf8")).resolves.toBe(before);
+  });
+
+  it.each([
+    ["bash -lc", `bash -lc 'docker build .'`],
+    ["sh -ec", `sh -ec 'docker build .'`],
+    ["timeout", "timeout 30 docker build ."],
+    ["nice", "nice -n 5 docker build ."],
+    ["env -S", `env -S 'docker build .'`],
+    ["find -exec", String.raw`find . -exec docker build {} \;`],
+    ["GNU xargs option arguments", "printf '.\\n' | xargs --max-procs 1 docker build"],
+    ["buildctl-daemonless.sh", "buildctl-daemonless.sh build --frontend dockerfile.v0"],
+  ])(
+    "rejects %s by workflow content drift without shell interpretation",
+    async (_name, command) => {
+      const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+      const mutated = mutateRequired(source, "      - run: pnpm lint", `      - run: ${command}`);
+
+      await withWorkflowSources({ "ci.yml": mutated }, async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest|workflow inventory/i,
+        );
+      });
+    },
+  );
+
+  it("rejects workflow-to-local-script indirection by workflow content drift", async () => {
+    const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutated = mutateRequired(
+      source,
+      "      - run: pnpm lint",
+      "      - run: bash scripts/ci-image-build.sh",
+    );
+
+    await withRepositoryFiles(
+      {
+        ".github/workflows/ci.yml": mutated,
+        "scripts/ci-image-build.sh": "#!/usr/bin/env bash\nset -euo pipefail\ndocker build .\n",
+      },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest|workflow inventory/i,
+        );
+      },
+    );
+  });
+
+  it("does not interpret inert heredoc, echo, or comment payload text as commands", async () => {
+    const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const inert = `      - run: |\n          # docker build . is documentation\n          echo "docker build ."\n          cat <<'PAYLOAD'\n          docker build .\n          buildctl-daemonless.sh build\n          PAYLOAD`;
+    const mutated = mutateRequired(source, "      - run: pnpm lint", inert);
+
+    await withWorkflowSources({ "ci.yml": mutated }, async () => {
+      await regenerateExecutableSurfaceManifest();
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
+        workflowCount: 6,
+      });
+    });
+  });
+
+  it("fails closed when an allowed workflow run scalar changes", async () => {
+    const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutated = mutateRequired(source, "      - run: pnpm lint", "      - run: echo changed");
+
+    await withWorkflowSources({ "ci.yml": mutated }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /content|digest|executable-surface manifest/i,
+      );
+    });
+  });
+
+  it("fails closed when a referenced local script changes", async () => {
+    const filename = "scripts/publish-playwright-report.sh";
+    const source = await readFile(path.join(root, filename), "utf8");
+
+    await withRepositoryFiles(
+      { [filename]: `${source}\n# changed executable bytes\n` },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      },
+    );
+  });
+
+  it("content-binds recursively referenced extensionless shell scripts", async () => {
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: sh scripts/outer",
+    );
+
+    await withRepositoryFiles(
+      {
+        ".github/workflows/ci.yml": mutatedWorkflow,
+        "scripts/inner": "#!/usr/bin/env sh\nexit 0\n",
+        "scripts/outer": "#!/usr/bin/env sh\nsh scripts/inner\n",
+      },
+      async () => {
+        await regenerateExecutableSurfaceManifest();
+        await writeFile(
+          path.join(repositoryFixtureRoot, "scripts/inner"),
+          "#!/usr/bin/env sh\ndocker build .\n",
+        );
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      },
+    );
+  });
+
+  it("content-binds local action manifests and entrypoints", async () => {
+    await withRepositoryFiles(
+      {
+        ".github/actions/bound/action.yml":
+          "name: bound\nruns:\n  using: node20\n  main: index.mjs\n",
+        ".github/actions/bound/index.mjs": "import './nested.mjs';\n",
+        ".github/actions/bound/nested.mjs": "console.log('reviewed');\n",
+      },
+      async () => {
+        await regenerateExecutableSurfaceManifest();
+        await writeFile(
+          path.join(repositoryFixtureRoot, ".github/actions/bound/nested.mjs"),
+          "console.log('changed');\n",
+        );
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      },
+    );
+  });
+
+  it.each(["packages/db/prisma.config.ts", "tsconfig.base.json"])(
+    "content-binds the transitive config root %s",
+    async (filename) => {
+      const source = await readFile(path.join(root, filename), "utf8");
+
+      await withRepositoryFiles({ [filename]: `${source}\n` }, async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      });
+    },
+  );
+
+  it("fails closed when a workflow-reachable package script changes", async () => {
+    const source = await readFile(path.join(root, "package.json"), "utf8");
+    const mutated = mutateRequired(
+      source,
+      '"test:integration": "tsx packages/testkit/src/cli/harness.ts --integration"',
+      '"test:integration": "docker build ."',
+    );
+
+    await withRepositoryFiles({ "package.json": mutated }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /content|digest|executable-surface manifest/i,
+      );
+    });
+  });
+
+  it.each([
+    [
+      "workflow",
+      ".github/workflows/extra-reusable.yml",
+      "name: extra reusable\non: workflow_call\njobs: {}\n",
+    ],
+    [
+      "local action",
+      ".github/actions/extra/action.yml",
+      "name: extra action\nruns:\n  using: composite\n  steps: []\n",
+    ],
+  ])("fails closed on an extra or renamed %s", async (_kind, filename, source) => {
+    await withRepositoryFiles({ [filename]: source }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /executable-surface manifest|inventory|workflow|local action/i,
+      );
+    });
+  });
+
+  it("fails closed on an outside-root local action entrypoint", async () => {
+    const action =
+      "name: outside root\nruns:\n  using: node20\n  main: ../../../../outside-entrypoint.mjs\n";
+
+    await withRepositoryFiles({ ".github/actions/outside/action.yml": action }, async () => {
+      await expect(
+        (async () => {
+          await regenerateExecutableSurfaceManifest();
+          await assertRepositoryPolicy(repositoryFixtureRoot);
+        })(),
+      ).rejects.toThrow(/outside|repository root|entrypoint/i);
+    });
+  });
+
+  it("fails closed on a symlinked local action entrypoint", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const actionDirectory = path.join(repositoryFixtureRoot, ".github/actions/symlinked");
+    const outside = path.join(repositoryFixtureParent, "outside-entrypoint.mjs");
+    await mkdir(actionDirectory, { recursive: true });
+    await writeFile(
+      path.join(actionDirectory, "action.yml"),
+      "name: symlinked\nruns:\n  using: node20\n  main: index.mjs\n",
+    );
+    await writeFile(outside, "console.log('outside');\n");
+    await symlink(outside, path.join(actionDirectory, "index.mjs"));
+
+    try {
+      await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/symlink/i);
+    } finally {
+      await rm(actionDirectory, { force: true, recursive: true });
+      await rm(outside, { force: true });
+    }
+  });
+
+  it("fails closed on cyclic local composite actions", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+
+    await withRepositoryFiles(
+      {
+        ".github/actions/a/action.yml":
+          "name: a\nruns:\n  using: composite\n  steps:\n    - uses: ../b\n",
+        ".github/actions/b/action.yml":
+          "name: b\nruns:\n  using: composite\n  steps:\n    - uses: ../a\n",
+      },
+      async () => {
+        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/cycle/i);
+      },
+    );
+  });
+
+  it("fails closed on a dynamic or unresolved local action entrypoint", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+
+    await withRepositoryFiles(
+      {
+        ".github/actions/dynamic/action.yml": `name: dynamic\nruns:\n  using: node20\n  main: ${githubExpression("inputs.entrypoint")}\n`,
+      },
+      async () => {
+        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(
+          /dynamic|static|entrypoint|unresolved/i,
+        );
+      },
+    );
+  });
+
+  it("fails closed on a missing static local action entrypoint", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+
+    await withRepositoryFiles(
+      {
+        ".github/actions/missing/action.yml":
+          "name: missing\nruns:\n  using: node20\n  main: missing.mjs\n",
+      },
+      async () => {
+        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(
+          /missing|unresolved|entrypoint/i,
+        );
+      },
+    );
+  });
+
+  it("fails closed on executable-surface manifest drift", async () => {
+    await withRepositoryFiles(
+      { ".github/ci-executable-surface.json": '{"schemaVersion":1}\n' },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /executable-surface manifest|manifest drift|schema/i,
+        );
+      },
+    );
+  });
+
   it.each([
     ["local context", "."],
     ["remote URL/ref context", "https://github.com/TukaTek/agent-hub.git#main"],
@@ -655,6 +981,7 @@ describe("repository-wide image build inventory", () => {
     await withWorkflowSources(
       { "unmanifested-image.yml": actionBuildWorkflow(context) },
       async () => {
+        await regenerateExecutableSurfaceManifest();
         await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
           /image build|image-building|authorized image/i,
         );
@@ -690,6 +1017,7 @@ describe("repository-wide image build inventory", () => {
     });
 
     await withWorkflowSources({ "publish-server-image.yml": stringifyYaml(workflow) }, async () => {
+      await regenerateExecutableSurfaceManifest();
       await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
         /image build|exactly one|authorized/i,
       );
@@ -833,6 +1161,7 @@ describe("repository-wide image build inventory", () => {
     const source = `name: image-build-words-only\non: workflow_dispatch\njobs:\n  words:\n    name: docker build label only\n    runs-on: ubuntu-latest\n    env:\n      IMAGE_LABEL: docker build .\n    steps:\n      - name: docker build is only a label\n        run: |\n          # docker build .\n          echo "docker build ."\n          printf '%s\\n' 'docker buildx build .'\n          IMAGE_LABEL='docker compose build'\n          echo docker build .\n          echo image-builder unrelated-build-word\n`;
 
     await withWorkflowSources({ "words-only.yml": source }, async () => {
+      await regenerateExecutableSurfaceManifest();
       await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
         workflowCount: 7,
       });
@@ -846,6 +1175,7 @@ describe("repository-wide image build inventory", () => {
     await withWorkflowSources(
       { "call-image-builder.yml": caller, "reusable-image.yml": reusable },
       async () => {
+        await regenerateExecutableSurfaceManifest();
         await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
           /image build|reusable workflow|authorized image/i,
         );
