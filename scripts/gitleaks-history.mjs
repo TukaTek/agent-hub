@@ -112,6 +112,20 @@ export function assertGitleaksHistoryResult(result, reportSource, range) {
   );
 }
 
+function gitleaksScannedCommitCount(result, range) {
+  const matches = [...commandOutput(result).matchAll(/\b([0-9]+) commits scanned\./gu)];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Gitleaks history scanner did not report one scanned commit count for ${range}`,
+    );
+  }
+  const count = Number.parseInt(matches[0][1], 10);
+  if (!Number.isSafeInteger(count) || count < 1) {
+    throw new Error(`Gitleaks history scanner reported an invalid commit count for ${range}`);
+  }
+  return count;
+}
+
 export async function runGitleaksHistory(target, baseRef, headRef) {
   const requestedTarget = path.resolve(target);
   const targetInfo = await stat(requestedTarget).catch(() => undefined);
@@ -183,10 +197,26 @@ export async function runGitleaksHistory(target, baseRef, headRef) {
   if (!Number.isSafeInteger(commitCount) || commitCount < 1) {
     throw new Error(`Gitleaks history range is empty or invalid: ${range}`);
   }
+  const mergeCommitCount = Number.parseInt(
+    runGit(
+      repository,
+      ["rev-list", "--count", "--merges", range],
+      "Gitleaks history merge-count validation",
+    ),
+    10,
+  );
+  if (
+    !Number.isSafeInteger(mergeCommitCount) ||
+    mergeCommitCount < 0 ||
+    mergeCommitCount > commitCount
+  ) {
+    throw new Error(`Gitleaks history merge count is invalid: ${range}`);
+  }
 
   const reportDirectory = await mkdtemp(path.join(tmpdir(), "rakazo-gitleaks-history-"));
   try {
     const reportPath = path.join(reportDirectory, "report.json");
+    const logOptions = `--diff-merges=first-parent ${range}`;
     const result = spawnSync(
       "gitleaks",
       [
@@ -197,7 +227,7 @@ export async function runGitleaksHistory(target, baseRef, headRef) {
         "--exit-code=73",
         "--report-format=json",
         `--report-path=${reportPath}`,
-        `--log-opts=${range}`,
+        `--log-opts=${logOptions}`,
         repository,
       ],
       { cwd: repository, encoding: "utf8" },
@@ -211,7 +241,17 @@ export async function runGitleaksHistory(target, baseRef, headRef) {
       );
     });
     const findings = assertGitleaksHistoryResult(result, reportSource, range);
-    return { base, commitCount, findingCount: findings.length, head, mergeBase, range };
+    const scannedCommitCount = gitleaksScannedCommitCount(result, range);
+    return {
+      base,
+      commitCount,
+      findingCount: findings.length,
+      head,
+      mergeBase,
+      mergeCommitCount,
+      range,
+      scannedCommitCount,
+    };
   } finally {
     await rm(reportDirectory, { force: true, recursive: true });
   }
@@ -228,9 +268,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 2;
   } else {
     runGitleaksHistory(target, baseRef, headRef)
-      .then(({ commitCount, head, mergeBase, range }) => {
+      .then(({ commitCount, head, mergeBase, mergeCommitCount, range, scannedCommitCount }) => {
         console.log(
-          `Gitleaks history scan passed: ${commitCount} candidate commit(s), merge base ${mergeBase}, exact head ${head}, range ${range}`,
+          `Gitleaks history scan passed: ${commitCount} governed candidate commit(s) including ${mergeCommitCount} merge commit(s), ${scannedCommitCount} commit(s) with scannable patches, merge base ${mergeBase}, exact head ${head}, range ${range}`,
         );
       })
       .catch((error) => {

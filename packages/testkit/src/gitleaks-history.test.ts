@@ -49,10 +49,33 @@ async function commitFile(repository: string, filename: string, contents: string
   return git(repository, "rev-parse", "HEAD");
 }
 
-async function removeAndCommit(repository: string, filename: string, message: string) {
+async function removeAndCommit(
+  repository: string,
+  filename: string,
+  message: string,
+  addCleanMarker = false,
+) {
   await rm(path.join(repository, filename));
+  if (addCleanMarker) await writeFile(path.join(repository, "cleanup-marker.txt"), "clean\n");
   git(repository, "add", "--all");
   git(repository, "commit", "--no-gpg-sign", "-m", message);
+  return git(repository, "rev-parse", "HEAD");
+}
+
+async function commitMergeResolution(repository: string, contents: string) {
+  git(repository, "checkout", "-b", "merge-side");
+  await commitFile(repository, "merge-only.txt", "side parent\n", "add side parent");
+  git(repository, "checkout", "main");
+  await commitFile(repository, "merge-only.txt", "main parent\n", "add main parent");
+  const merge = spawnSync(
+    "git",
+    ["-C", repository, "merge", "--no-ff", "--no-commit", "merge-side"],
+    { encoding: "utf8", env: gitEnvironment },
+  );
+  expect(merge.status, `${merge.stdout}\n${merge.stderr}`).toBe(1);
+  await writeFile(path.join(repository, "merge-only.txt"), contents);
+  git(repository, "add", "--all");
+  git(repository, "commit", "--no-gpg-sign", "-m", "resolve merge");
   return git(repository, "rev-parse", "HEAD");
 }
 
@@ -137,6 +160,43 @@ describeWithGitleaks("Gitleaks bounded history scan", () => {
     await expect(runGitleaksHistory(repository, initial, head)).rejects.toThrow(
       /history scan detected.*transient\.txt/is,
     );
+  });
+
+  it("rejects a canary introduced only by merge resolution and deleted later", async () => {
+    const { initial, repository } = await createRepository();
+    const canary = await readFile(path.join(root, GITLEAKS_CANARY_PATH), "utf8");
+    const merge = await commitMergeResolution(repository, canary);
+    const head = await removeAndCommit(
+      repository,
+      "merge-only.txt",
+      "delete resolved canary",
+      true,
+    );
+
+    expect(git(repository, "rev-list", "--parents", "-n", "1", merge).split(" ")).toHaveLength(3);
+    expect(git(repository, "show", `${merge}^1:merge-only.txt`)).not.toContain(canary.trim());
+    expect(git(repository, "show", `${merge}^2:merge-only.txt`)).not.toContain(canary.trim());
+    expect(git(repository, "show", `${merge}:merge-only.txt`)).toBe(canary.trim());
+    await expect(runGitleaksHistory(repository, initial, head)).rejects.toThrow(
+      /history scan detected.*merge-only\.txt/is,
+    );
+  });
+
+  it("reports every governed commit as scanned when the candidate range contains a merge", async () => {
+    const { initial, repository } = await createRepository();
+    await commitMergeResolution(repository, "clean merge resolution\n");
+    const head = await removeAndCommit(
+      repository,
+      "merge-only.txt",
+      "delete clean resolution",
+      true,
+    );
+
+    await expect(runGitleaksHistory(repository, initial, head)).resolves.toMatchObject({
+      commitCount: 4,
+      mergeCommitCount: 1,
+      scannedCommitCount: 4,
+    });
   });
 
   it("does not include a secret that exists only before the selected base", async () => {
