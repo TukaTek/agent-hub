@@ -182,7 +182,7 @@ describeWithGitleaks("Gitleaks bounded history scan", () => {
     );
   });
 
-  it("reports every governed commit as scanned when the candidate range contains a merge", async () => {
+  it("selects every governed commit for scanning when the candidate range contains a merge", async () => {
     const { initial, repository } = await createRepository();
     await commitMergeResolution(repository, "clean merge resolution\n");
     const head = await removeAndCommit(
@@ -195,7 +195,7 @@ describeWithGitleaks("Gitleaks bounded history scan", () => {
     await expect(runGitleaksHistory(repository, initial, head)).resolves.toMatchObject({
       commitCount: 4,
       mergeCommitCount: 1,
-      scannedCommitCount: 4,
+      scanInputCommitCount: 4,
     });
   });
 
