@@ -9,6 +9,34 @@ import { parseDocument } from "yaml";
 export const CODEOWNER = "@acepgh";
 export const CANARY_RULE_ID = "rakazo-gitleaks-canary";
 export const GITLEAKS_CANARY_PATH = "scripts/fixtures/gitleaks-canary.txt";
+export const DESKTOP_SANDBOX_PROTECTED_PATHS = Object.freeze([
+  "apps/api/src/app.ts",
+  "apps/api/src/env.test.ts",
+  "apps/api/src/env.ts",
+  "apps/api/src/router.test.ts",
+  "apps/api/src/router.ts",
+  "apps/worker/src/index.ts",
+  "packages/adapters/src/computer-support.test.ts",
+  "packages/adapters/src/computer-support.ts",
+  "packages/adapters/src/desktop-sandbox-paths.test.ts",
+  "packages/adapters/src/desktop-sandbox-paths.ts",
+  "packages/adapters/src/desktop-sandbox-win32-path.ts",
+  "packages/adapters/src/desktop-sandbox-write-containment.test.ts",
+  "packages/adapters/src/desktop-sandbox.ts",
+  "packages/adapters/src/host-aware-sandbox.test.ts",
+  "packages/adapters/src/host-aware-sandbox.ts",
+  "packages/adapters/src/sandbox-conformance.test.ts",
+  "packages/adapters/src/sandbox-factory.test.ts",
+  "packages/adapters/src/sandbox-factory.ts",
+  "packages/adapters/src/sandbox-faults.test.ts",
+  "packages/adapters/src/sandbox-provider-env.test.ts",
+  "packages/adapters/src/sandbox-provider-env.ts",
+  "packages/contracts/src/domain.ts",
+  "packages/contracts/src/rpc.ts",
+  "packages/db/src/repos.test.ts",
+  "packages/db/src/repos.ts",
+  "packages/testkit/src/journeys.test.ts",
+]);
 
 const CANARY_REGEX = "CAAH30_GITLEAKS_CANARY_[A-Z0-9]{32}";
 const CANARY_VALUE_REGEX = "^CAAH30_GITLEAKS_CANARY_0123456789ABCDEF0123456789ABCDE[F]$";
@@ -45,6 +73,25 @@ const CODEOWNER_IDENTITY = /^@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\/[A-Za
 const EXACT_CANDIDATE_REF = ["$", "{{ github.event.pull_request.head.sha || github.sha }}"].join(
   "",
 );
+const EXACT_IMAGE_CANDIDATE_SHA = [
+  "$",
+  "{{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
+].join("");
+const EXACT_IMAGE_CANDIDATE_REF = ["$", "{{ env.CANDIDATE_SHA }}"].join("");
+const EXACT_PULL_REQUEST_HEAD_REF = ["$", "{{ github.event.pull_request.head.sha }}"].join("");
+const EXACT_METADATA_TAGS_REF = ["$", "{{ steps.meta.outputs.tags }}"].join("");
+const EXACT_METADATA_LABELS_REF = ["$", "{{ steps.meta.outputs.labels }}"].join("");
+const EXACT_IMAGE_PROVENANCE_VERIFICATION = `set -euo pipefail
+if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+  test -n "$PR_HEAD_SHA"
+  test "$CANDIDATE_SHA" = "$PR_HEAD_SHA"
+else
+  test "$CANDIDATE_SHA" = "$GITHUB_SHA"
+fi
+checkout_sha="$(git rev-parse HEAD)"
+test "$checkout_sha" = "$CANDIDATE_SHA"
+printf 'candidate-sha=%s\\ncheckout-sha=%s\\nimage-tag=sha-%s\\noci-revision=%s\\ngit-sha-build-arg=%s\\n' \\
+  "$CANDIDATE_SHA" "$checkout_sha" "$CANDIDATE_SHA" "$CANDIDATE_SHA" "$CANDIDATE_SHA"`;
 const CANDIDATE_CHECKOUT_REQUIREMENTS = new Map([
   [
     ".github/workflows/ci.yml",
@@ -54,6 +101,14 @@ const CANDIDATE_CHECKOUT_REQUIREMENTS = new Map([
     },
   ],
   [".github/workflows/playwright.yml", { candidateJobs: ["playwright"], historyJobs: [] }],
+  [
+    ".github/workflows/publish-server-image.yml",
+    {
+      candidateJobs: ["validate", "publish"],
+      candidateRef: EXACT_IMAGE_CANDIDATE_REF,
+      historyJobs: [],
+    },
+  ],
 ]);
 
 const PROTECTED_FILE_GLOBS = [
@@ -79,8 +134,17 @@ const PROTECTED_FILE_GLOBS = [
   "infra/compose/**",
   "infra/updater/**",
   "infra/sandboxes/**/Dockerfile",
+  "apps/api/src/app.ts",
+  "apps/api/src/{env,router}.{ts,test.ts}",
+  "apps/worker/src/index.ts",
   "packages/auth/**",
   "packages/core/src/{model-oauth,screen-lease,secrets-guard,signup-policy}.{ts,test.ts}",
+  "packages/adapters/src/{computer-support,desktop-sandbox*,host-aware-sandbox,sandbox-factory}.{ts,test.ts}",
+  "packages/adapters/src/sandbox-{conformance,faults}.test.ts",
+  "packages/adapters/src/sandbox-provider-env.{ts,test.ts}",
+  "packages/contracts/src/{domain,rpc}.ts",
+  "packages/db/src/repos.{ts,test.ts}",
+  "packages/testkit/src/journeys.test.ts",
   "packages/adapters/src/*connector*.{ts,test.ts}",
   "packages/adapters/src/{computer-control,computer-screens,connector-safety,executor-computer-safety,executor-secret-pi,installed-connectors,mcp-oauth,pi-anthropic-oauth,pi-oauth,run-secret,secrets}.{ts,test.ts}",
   "apps/api/src/screen-proxy.{ts,test.ts}",
@@ -92,6 +156,7 @@ const PROTECTED_FILE_GLOBS = [
 
 const REQUIRED_PROTECTED_PATHS = [
   ".github/workflows/ci.yml",
+  ".github/workflows/publish-server-image.yml",
   ".github/dependabot.yml",
   ".github/CODEOWNERS",
   ".gitleaks.toml",
@@ -110,6 +175,7 @@ const REQUIRED_PROTECTED_PATHS = [
   "scripts/gitleaks-scan.mjs",
   "packages/testkit/src/gitleaks-history.test.ts",
   "packages/testkit/src/repository-policy.test.ts",
+  ...DESKTOP_SANDBOX_PROTECTED_PATHS,
 ];
 
 const REQUIRED_OWNERSHIP_PROBES = [".github/actions/example/action.yml"];
@@ -229,6 +295,7 @@ export function assertCandidateCheckoutPolicy(source, filename, requirements) {
     throw new Error(`${filename}: candidate workflow must define jobs`);
   }
   const historyJobs = new Set(requirements.historyJobs ?? []);
+  const exactRef = requirements.candidateRef ?? EXACT_CANDIDATE_REF;
   for (const jobName of requirements.candidateJobs) {
     const job = jobs[jobName];
     if (!job || !Array.isArray(job.steps)) {
@@ -248,11 +315,11 @@ export function assertCandidateCheckoutPolicy(source, filename, requirements) {
     }
     const checkout = checkouts[0];
     const ref = checkout.with?.ref;
-    if (ref !== EXACT_CANDIDATE_REF) {
+    if (ref !== exactRef) {
       const reason =
         typeof ref === "string" && /refs\/pull\/|github\.ref/u.test(ref)
           ? "synthetic merge refs are forbidden"
-          : `expected ${EXACT_CANDIDATE_REF}`;
+          : `expected ${exactRef}`;
       throw new Error(
         `${filename}: candidate validation job ${jobName} must checkout the exact candidate head; ${reason}`,
       );
@@ -270,8 +337,151 @@ export function assertCandidateCheckoutPolicy(source, filename, requirements) {
   }
 }
 
+export function assertImageCandidatePolicy(source, filename, requirements) {
+  const workflow = parseWorkflowSource(source, filename);
+  const jobs = workflow?.jobs;
+  if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) {
+    throw new Error(`${filename}: image candidate workflow must define jobs`);
+  }
+  if (workflow?.env?.CANDIDATE_SHA !== EXACT_IMAGE_CANDIDATE_SHA) {
+    throw new Error(
+      `${filename}: image candidate SHA must be the exact pull-request head with github.sha only as the non-PR fallback`,
+    );
+  }
+
+  const expectedJobs = [...requirements.candidateJobs];
+  if (new Set(expectedJobs).size !== expectedJobs.length || expectedJobs.length === 0) {
+    throw new Error(`${filename}: image candidate jobs must be a non-empty unique manifest`);
+  }
+  const buildJobs = Object.entries(jobs)
+    .filter(([, job]) =>
+      job?.steps?.some((step) => String(step?.uses ?? "").startsWith("docker/build-push-action@")),
+    )
+    .map(([jobName]) => jobName)
+    .sort();
+  if (!isDeepStrictEqual(buildJobs, [...expectedJobs].sort())) {
+    throw new Error(
+      `${filename}: every image build job must be in the exact candidate provenance manifest; expected ${expectedJobs.join(", ")}, found ${buildJobs.join(", ") || "none"}`,
+    );
+  }
+
+  assertCandidateCheckoutPolicy(source, filename, {
+    candidateJobs: expectedJobs,
+    candidateRef: EXACT_IMAGE_CANDIDATE_REF,
+    historyJobs: [],
+  });
+  for (const jobName of expectedJobs) {
+    const job = jobs[jobName];
+    if (job?.env && Object.hasOwn(job.env, "CANDIDATE_SHA")) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} must not override CANDIDATE_SHA`,
+      );
+    }
+    const steps = job.steps;
+    for (const step of steps) {
+      if (step?.env && Object.hasOwn(step.env, "CANDIDATE_SHA")) {
+        throw new Error(
+          `${filename}: image candidate job ${jobName} must not override CANDIDATE_SHA`,
+        );
+      }
+    }
+
+    const verification = exactlyOneStep(
+      steps,
+      (step) => step?.name === "Verify exact candidate provenance",
+      filename,
+      jobName,
+      "exact candidate verification",
+    );
+    if (
+      verification.shell !== "bash" ||
+      !isDeepStrictEqual(verification.env, { PR_HEAD_SHA: EXACT_PULL_REQUEST_HEAD_REF }) ||
+      typeof verification.run !== "string" ||
+      verification.run.trim() !== EXACT_IMAGE_PROVENANCE_VERIFICATION
+    ) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} must use the exact event-aware candidate verification`,
+      );
+    }
+
+    const metadata = exactlyOneStep(
+      steps,
+      (step) => String(step?.uses ?? "").startsWith("docker/metadata-action@"),
+      filename,
+      jobName,
+      "Docker metadata",
+    );
+    if (metadata.id !== "meta") {
+      throw new Error(`${filename}: image candidate job ${jobName} metadata step must use id meta`);
+    }
+    const candidateTags = scalarLines(metadata.with?.tags).filter(
+      (line) => line.startsWith("type=sha") || line.startsWith("type=raw,value=sha-"),
+    );
+    const expectedTag = `type=raw,value=sha-${EXACT_IMAGE_CANDIDATE_REF}`;
+    if (!isDeepStrictEqual(candidateTags, [expectedTag])) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} must generate exactly one full candidate SHA tag`,
+      );
+    }
+    const revisionLabels = scalarLines(metadata.with?.labels).filter((line) =>
+      line.startsWith("org.opencontainers.image.revision="),
+    );
+    const expectedRevision = `org.opencontainers.image.revision=${EXACT_IMAGE_CANDIDATE_REF}`;
+    if (!isDeepStrictEqual(revisionLabels, [expectedRevision])) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} must set exactly one candidate OCI revision label`,
+      );
+    }
+
+    const build = exactlyOneStep(
+      steps,
+      (step) => String(step?.uses ?? "").startsWith("docker/build-push-action@"),
+      filename,
+      jobName,
+      "Docker build",
+    );
+    if (build.with?.tags !== EXACT_METADATA_TAGS_REF) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} build tags must come only from candidate metadata`,
+      );
+    }
+    if (build.with?.labels !== EXACT_METADATA_LABELS_REF) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} build labels must come only from candidate metadata`,
+      );
+    }
+    const gitShaArguments = scalarLines(build.with?.["build-args"]).filter((line) =>
+      line.startsWith("GIT_SHA="),
+    );
+    if (!isDeepStrictEqual(gitShaArguments, [`GIT_SHA=${EXACT_IMAGE_CANDIDATE_REF}`])) {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} must set exactly one candidate GIT_SHA build argument`,
+      );
+    }
+  }
+}
+
+function exactlyOneStep(steps, predicate, filename, jobName, description) {
+  const matches = steps.filter(predicate);
+  if (matches.length !== 1) {
+    throw new Error(
+      `${filename}: image candidate job ${jobName} must have exactly one ${description} step`,
+    );
+  }
+  return matches[0];
+}
+
+function scalarLines(value) {
+  if (typeof value !== "string") return [];
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+}
+
 export function parseCodeowners(source) {
   const rules = [];
+  const patternLines = new Map();
   for (const [index, rawLine] of source.split(/\r?\n/u).entries()) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
@@ -291,6 +501,13 @@ export function parseCodeowners(source) {
     if (!owners.every((owner) => CODEOWNER_IDENTITY.test(owner))) {
       throw new Error(`CODEOWNERS line ${index + 1} contains an invalid owner`);
     }
+    const previousLine = patternLines.get(pattern);
+    if (previousLine !== undefined) {
+      throw new Error(
+        `CODEOWNERS line ${index + 1} duplicates pattern ${pattern} from line ${previousLine}`,
+      );
+    }
+    patternLines.set(pattern, index + 1);
     rules.push({ line: index + 1, owners, pattern });
   }
   if (rules.length === 0) throw new Error("CODEOWNERS must contain at least one rule");
@@ -392,6 +609,12 @@ export async function assertRepositoryPolicy(root) {
     .filter((filename) => /\.ya?ml$/iu.test(filename))
     .sort();
   if (workflowFiles.length === 0) throw new Error("No GitHub Actions workflows found");
+  for (const repositoryFilename of CANDIDATE_CHECKOUT_REQUIREMENTS.keys()) {
+    const filename = repositoryFilename.slice(".github/workflows/".length);
+    if (!workflowFiles.includes(filename)) {
+      throw new Error(`Required candidate workflow is missing: ${repositoryFilename}`);
+    }
+  }
   for (const filename of workflowFiles) {
     const repositoryFilename = `.github/workflows/${filename}`;
     const source = await readFile(path.join(workflowsRoot, filename), "utf8");
@@ -399,6 +622,9 @@ export async function assertRepositoryPolicy(root) {
     const checkoutRequirements = CANDIDATE_CHECKOUT_REQUIREMENTS.get(repositoryFilename);
     if (checkoutRequirements) {
       assertCandidateCheckoutPolicy(source, repositoryFilename, checkoutRequirements);
+    }
+    if (repositoryFilename === ".github/workflows/publish-server-image.yml") {
+      assertImageCandidatePolicy(source, repositoryFilename, checkoutRequirements);
     }
   }
   assertDependabotPolicy(await readFile(path.join(root, ".github/dependabot.yml"), "utf8"));

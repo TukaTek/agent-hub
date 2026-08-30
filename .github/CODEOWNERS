@@ -37,6 +37,24 @@
 /apps/web/src/lib/model-auth* @acepgh
 /apps/web/src/lib/use-model-oauth-signin.ts @acepgh
 
+# Desktop sandbox containment, host access routing, and provider composition
+/packages/adapters/src/computer-support.ts @acepgh
+/packages/adapters/src/computer-support.test.ts @acepgh
+/packages/adapters/src/desktop-sandbox* @acepgh
+/packages/adapters/src/host-aware-sandbox* @acepgh
+/packages/adapters/src/sandbox-conformance.test.ts @acepgh
+/packages/adapters/src/sandbox-factory* @acepgh
+/packages/adapters/src/sandbox-faults.test.ts @acepgh
+/packages/adapters/src/sandbox-provider-env* @acepgh
+/apps/api/src/app.ts @acepgh
+/apps/api/src/env* @acepgh
+/apps/api/src/router* @acepgh
+/apps/worker/src/index.ts @acepgh
+/packages/contracts/src/domain.ts @acepgh
+/packages/contracts/src/rpc.ts @acepgh
+/packages/db/src/repos* @acepgh
+/packages/testkit/src/journeys.test.ts @acepgh
+
 # Connectors, OAuth, and secret translation
 /packages/core/src/secrets-guard* @acepgh
 /packages/adapters/src/*connector* @acepgh
