@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "exclusions": [".github/ci-executable-surface.json"],
   "entryCount": 885,
-  "treeSha256": "1a09ce9c14af0ac8d4d8b0d1c08129778d1e87820f85dd327711ab44f335d2c7",
+  "treeSha256": "e44f643cb100b371cb1b9261d90ef53a01d4f6a285e05ac779eceb9a053b8a2d",
   "entries": [
     {
       "path": ".agents/skills/composio/SKILL.md",
@@ -43,8 +43,8 @@
       "path": ".env.example",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 4084,
-      "sha256": "6957ac2ec7a432ca72a5a35dabcd1806450a0f320f3eb4106ec09f8777373f85"
+      "byteLength": 4087,
+      "sha256": "888af59eb407d7e5b91d7d253342ca64985e085835363fe447b937435e939953"
     },
     {
       "path": ".gitattributes",
@@ -2773,8 +2773,8 @@
       "path": "docs/self-host.md",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 30552,
-      "sha256": "24adba6b35ad02203e9d47450eb70c9108acc464c861c1d4afc1cfd180c9738a"
+      "byteLength": 31148,
+      "sha256": "abf06b18769418409a8b7df28506e322001e0bd31428f39cb442311cfaf6138b"
     },
     {
       "path": "infra/compose/.env.images.example",
@@ -2892,8 +2892,8 @@
       "path": "infra/compose/manual-update-pilot.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 9850,
-      "sha256": "b448461f8afc29d9656783317fcd81e69ea2045332e98a95c4e784a99135b3f2"
+      "byteLength": 12113,
+      "sha256": "4a071706a86c47430c2ef58263afc6453fade34b907a09b64d264847a9acb7fc"
     },
     {
       "path": "infra/compose/preflight-cli.test.ts",

@@ -344,9 +344,10 @@ previous rollback point. Keep the previous image in the local Docker cache until
 accepted, and write the recorded values to the operator change record outside the public checkout.
 
 ```bash
+set -euo pipefail
 cd /srv/rakazo
 RAKAZO_IMAGE="$(sed -n 's/^RAKAZO_IMAGE=//p' .env)"
-: "${RAKAZO_IMAGE:=ghcr.io/elie222/rakazo/app}"
+: "${RAKAZO_IMAGE:=ghcr.io/TukaTek/agent-hub/app}"
 export RAKAZO_IMAGE
 RAKAZO_HOST="$(sed -n 's/^RAKAZO_HOST=//p' .env)"
 test -n "$RAKAZO_HOST"
@@ -370,6 +371,7 @@ production backup. Copy the resulting snapshot through the operator-owned off-ho
 and verify it there before continuing.
 
 ```bash
+set -euo pipefail
 corepack pnpm deployment:preflight
 sudo /usr/local/sbin/rakazo-backup
 ```
@@ -378,6 +380,7 @@ Pull the exact target image directly, then verify its OCI revision label. A movi
 SHA, missing label, or mismatched label stops the update.
 
 ```bash
+set -euo pipefail
 docker pull "${RAKAZO_IMAGE}:${TARGET_TAG}"
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
   "${RAKAZO_IMAGE}:${TARGET_TAG}")" = "$TARGET_SHA"
@@ -388,6 +391,7 @@ through a mode-`0600` temporary file, install its locked Node dependencies, and 
 preflight before recreating any service.
 
 ```bash
+set -euo pipefail
 git fetch --no-tags origin "$TARGET_SHA"
 git checkout --detach "$TARGET_SHA"
 update_identity() {
@@ -415,6 +419,7 @@ serves, so a migration failure keeps readiness red. Complete the operator gate b
 state and requiring the public health response to report the exact target revision.
 
 ```bash
+set -euo pipefail
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml ps
 HEALTH_REVISION="$(curl --fail --silent "https://${RAKAZO_HOST}/health" | \
   node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value).revision ?? ""));')"
@@ -430,11 +435,25 @@ the locked dependencies, run preflight, recreate the application services, and v
 the exact previous revision.
 
 ```bash
+set -euo pipefail
 [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous revision" >&2; exit 1; }
 test "$PREVIOUS_TAG" = "sha-${PREVIOUS_SHA}"
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
   "${RAKAZO_IMAGE}:${PREVIOUS_TAG}")" = "$PREVIOUS_SHA"
 git checkout --detach "$PREVIOUS_SHA"
+update_identity() {
+  local revision="$1" tag="sha-${1}" temporary
+  temporary="$(mktemp .env.XXXXXX)"
+  chmod 0600 "$temporary"
+  awk -v revision="$revision" -v tag="$tag" '
+    BEGIN { sha = 0; image = 0 }
+    /^GIT_SHA=/ { print "GIT_SHA=" revision; sha = 1; next }
+    /^RAKAZO_IMAGE_TAG=/ { print "RAKAZO_IMAGE_TAG=" tag; image = 1; next }
+    { print }
+    END { if (!sha || !image) exit 42 }
+  ' .env > "$temporary" || { rm -f "$temporary"; return 1; }
+  mv "$temporary" .env
+}
 update_identity "$PREVIOUS_SHA"
 corepack pnpm install --frozen-lockfile
 corepack pnpm deployment:preflight

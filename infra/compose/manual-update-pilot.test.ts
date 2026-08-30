@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { loadEnv } from "../../apps/api/src/env.js";
@@ -21,6 +24,48 @@ const manualOnlyMessage = "Manual updates only for pilot.";
 
 function trackedFile(file: string): string {
   return readFileSync(file, "utf8");
+}
+
+function bashBlockAfter(markdown: string, marker: string): string {
+  const markerIndex = markdown.indexOf(marker);
+  expect(markerIndex).toBeGreaterThan(-1);
+  const blockStart = markdown.indexOf("```bash\n", markerIndex);
+  expect(blockStart).toBeGreaterThan(-1);
+  const contentStart = blockStart + "```bash\n".length;
+  const blockEnd = markdown.indexOf("\n```", contentStart);
+  expect(blockEnd).toBeGreaterThan(contentStart);
+  return markdown.slice(contentStart, blockEnd);
+}
+
+function expectPreflightFailureStopsBeforeCompose(block: string): void {
+  const cwd = mkdtempSync(join(tmpdir(), "rakazo-manual-pilot-"));
+  const marker = join(cwd, "compose-called");
+  writeFileSync(join(cwd, ".env"), `GIT_SHA=${revision}\nRAKAZO_IMAGE_TAG=sha-${revision}\n`, {
+    mode: 0o600,
+  });
+  const script = `
+git() { return 0; }
+corepack() { return 23; }
+docker() {
+  if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+    printf '%s\\n' "$PREVIOUS_SHA"
+    return 0
+  fi
+  if [[ "$1" == "compose" ]]; then
+    printf 'called\\n' >> "$MARKER"
+  fi
+}
+export TARGET_SHA=${revision}
+export TARGET_TAG=sha-${revision}
+export PREVIOUS_SHA=${revision}
+export PREVIOUS_TAG=sha-${revision}
+export RAKAZO_IMAGE=ghcr.io/TukaTek/agent-hub/app
+export MARKER=${marker}
+${block}
+`;
+  const result = spawnSync("bash", ["-c", script], { cwd, encoding: "utf8" });
+  expect(result.status).toBe(23);
+  expect(existsSync(marker)).toBe(false);
 }
 
 function pilotComposeModel(): ComposeModel {
@@ -210,6 +255,10 @@ describe("CAAH-19 manual-update pilot acceptance", () => {
       provenance: "mode=max",
       sbom: true,
     });
+    expect(trackedFile(".env.example")).toContain("RAKAZO_IMAGE=ghcr.io/TukaTek/agent-hub/app");
+    expect(source).toContain(
+      "images: ghcr.io/$" + "{{ github.repository }}/$" + "{{ matrix.name }}",
+    );
   });
 
   it("documents one exact-SHA manual update and rollback runbook with honest gates", () => {
@@ -237,5 +286,16 @@ describe("CAAH-19 manual-update pilot acceptance", () => {
     expect(runbook).not.toContain("--profile updater");
     expect(runbook).not.toContain("/apply");
     expect(runbook).not.toContain("ghcr.io/elie222/rakazo/updater");
+
+    const updateBlock = bashBlockAfter(
+      runbook,
+      "Fetch and detach the exact reviewed source revision",
+    );
+    const rollbackBlock = bashBlockAfter(runbook, "### Rollback");
+    expect(updateBlock).toMatch(/^set -euo pipefail\n/);
+    expect(rollbackBlock).toMatch(/^set -euo pipefail\n/);
+    expect(rollbackBlock).toContain("update_identity() {");
+    expectPreflightFailureStopsBeforeCompose(updateBlock);
+    expectPreflightFailureStopsBeforeCompose(rollbackBlock);
   });
 });
