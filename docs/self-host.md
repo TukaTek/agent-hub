@@ -21,13 +21,15 @@ cp .env.images.example .env
 Generate secrets and write them into `.env` (after `cp .env.images.example .env`):
 
 ```bash
+CORTEXAI_DEPLOYMENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]') &&
 POSTGRES_PASSWORD=$(openssl rand -hex 16) &&
 BETTER_AUTH_SECRET=$(openssl rand -hex 32) &&
 ENCRYPTION_KEY=$(openssl rand -hex 32) &&
 SCREEN_PROXY_SECRET=$(openssl rand -hex 32) &&
 SANDBOX_SUPERVISOR_TOKEN=$(openssl rand -hex 32) &&
-: "${POSTGRES_PASSWORD:?}" "${BETTER_AUTH_SECRET:?}" "${ENCRYPTION_KEY:?}" "${SCREEN_PROXY_SECRET:?}" "${SANDBOX_SUPERVISOR_TOKEN:?}" &&
+: "${CORTEXAI_DEPLOYMENT_ID:?}" "${POSTGRES_PASSWORD:?}" "${BETTER_AUTH_SECRET:?}" "${ENCRYPTION_KEY:?}" "${SCREEN_PROXY_SECRET:?}" "${SANDBOX_SUPERVISOR_TOKEN:?}" &&
 sed -i.bak \
+  -e "s/^CORTEXAI_DEPLOYMENT_ID=$/CORTEXAI_DEPLOYMENT_ID=${CORTEXAI_DEPLOYMENT_ID}/" \
   -e "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" \
   -e "s/^BETTER_AUTH_SECRET=$/BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}/" \
   -e "s/^ENCRYPTION_KEY=$/ENCRYPTION_KEY=${ENCRYPTION_KEY}/" \
@@ -209,6 +211,10 @@ container logs, default no-new-privileges, and the kernel NAT path instead of Do
    `RAKAZO_IMAGE_TAG` is `sha-<GIT_SHA>`. Set `RAKAZO_DEPLOY_DIR` when the checkout is not at the
    supported Linux default, `/srv/rakazo`. Use distinct random values of at least 32 characters for
    every critical credential; `ENCRYPTION_KEY` is 64 lowercase hexadecimal characters.
+   Because Compose places `POSTGRES_PASSWORD` into a PostgreSQL URI, production preflight accepts
+   only unreserved URI characters (`A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, `-`) and rejects URI
+   delimiters or percent escapes. `openssl rand -hex 32` produces a compatible value without
+   reducing the 32-character minimum.
    If you enable the `updater` profile, also set a dedicated `RAKAZO_UPDATER_TOKEN` (at least 32
    characters) that differs from `BETTER_AUTH_SECRET`, `SANDBOX_SUPERVISOR_TOKEN`, and
    `SCREEN_PROXY_SECRET`.
@@ -243,10 +249,12 @@ CORTEXAI_BACKUP_ENCRYPTION_KEY=<dedicated-backup-encryption-credential>
 
 4. Install with Node 24, run the read-only preflight before any build, migration, or container start,
    and record the safe inventory output. Preflight parses the rendered Compose model, checks the
-   exact checkout/image pin, host capacity and architecture, DNS resolution, HTTPS same-origin
-   settings, remote provider inputs, backup inputs, secret names/status classes, and published
-   ports. It never emits secret values and does not call providers, start containers, run migrations,
-   create backups, or modify DNS/firewall state.
+   exact checkout/image pin (including forbidden Git `assume-unchanged` and `skip-worktree` flags),
+   host capacity and architecture, globally routable DNS answers, standard-port HTTPS same-origin
+   settings, an exact `RAKAZO_HOST` match in rendered web/Caddy configuration, remote provider
+   inputs, backup inputs, secret names/status classes, and publicly bound Caddy ports 80/443. It
+   never emits secret values and does not call providers, start containers, run migrations, create
+   backups, or modify DNS/firewall state.
 
 ```bash
 corepack pnpm install --frozen-lockfile
@@ -284,26 +292,43 @@ published application/updater builds pin their base-image digests. Refresh those
 when taking upstream security updates; changing only the visible major tag does not change the
 content while a digest is present.
 
-For the single-VM production layout, install `infra/compose/backup-prod.sh` as
-`/usr/local/sbin/rakazo-backup` and enable the supplied `rakazo-backup.timer`. It creates a verified
-Postgres custom-format dump plus an application-data archive under `/var/backups/rakazo`, with mode
-`0600` and seven-day rotation. Each snapshot includes `deployment.json` with only the deployment ID,
-revision/image tag, provider kind, and backup target class. The target URI and credentials are never
-written. These local snapshots help with operator mistakes but are not a substitute for the actual
-encrypted off-host transfer: preflight validates its declared target and dedicated encryption input,
-but does not create or upload backup objects. Verify that separate transfer before production
-acceptance.
-
-## Restore
+For the single-VM production layout, install both production scripts and enable the supplied
+`rakazo-backup.timer`:
 
 ```bash
-./scripts/restore.sh backups/<stamp>
+sudo install -m 0755 infra/compose/backup-prod.sh /usr/local/sbin/rakazo-backup
+sudo install -m 0755 infra/compose/restore-prod.sh /usr/local/sbin/rakazo-restore
 ```
 
-Restore validates `deployment.json` before it starts Postgres or any other service. A missing,
-malformed, or different deployment ID fails closed. Preserve `CORTEXAI_DEPLOYMENT_ID` for a
-same-tenant recovery; do not bypass the check to clone credentials or external connections into a
-new tenant identity.
+The backup script uses `/srv/rakazo` by default (override with `RAKAZO_PROJECT_DIR`) and creates one
+mode-`0700` snapshot directory under `/var/backups/rakazo`. Its exact artifacts are `rakazo.dump`,
+created by `pg_dump --format=custom`, `appdata.tgz`, and mode-`0600` `deployment.json`. The manifest
+records the deployment ID, revision/image tag, provider kind, backup target class,
+transport-encryption key fingerprint, exact artifact names/types/sizes, and SHA-256 digests. An
+HMAC-SHA-256 made with the dedicated backup encryption key binds that metadata to the payload
+digests without storing or printing the key, target URI, or other secrets.
+
+## Production Restore
+
+```bash
+sudo /usr/local/sbin/rakazo-restore /var/backups/rakazo/<stamp>
+```
+
+The production restore uses `docker-compose.prod.yml` and consumes the production artifact names.
+It rejects symlinked, missing, extra, permissive, tampered, cross-snapshot, wrong-layout, or
+wrong-deployment input before stopping application services. Each payload is opened without
+following symlinks and its size/digest is verified again from the same file descriptor immediately
+before it is piped to `pg_restore` or the application-data volume. Preserve
+`CORTEXAI_DEPLOYMENT_ID` and `CORTEXAI_BACKUP_ENCRYPTION_KEY` for a same-tenant recovery; do not
+bypass these checks to clone credentials or external connections into a new tenant identity.
+
+The development Compose scripts remain a separate layout: `./scripts/backup.sh` writes
+`backups/<stamp>/{rakazo.sql,homes.tgz,deployment.json}`, and `./scripts/restore.sh backups/<stamp>`
+restores only that local layout. Do not use it for production snapshots.
+
+Local snapshots help with operator mistakes but are not the encrypted off-host transfer. Preflight
+validates its declared target and dedicated encryption input, but these scripts do not encrypt or
+upload backup objects. Verify that separate transport before production acceptance.
 
 ## Upgrade
 

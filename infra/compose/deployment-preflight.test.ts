@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   type ComposeModel,
@@ -35,10 +36,15 @@ function composeModel(): ComposeModel {
         environment: { SANDBOX_PROVIDER: "e2b", CORTEXAI_DEPLOYMENT_ID: deploymentId },
         networks: ["app", "data"],
       },
-      web: { image: `ghcr.io/example/app:sha-${revision}`, networks: ["edge", "app"] },
+      web: {
+        image: `ghcr.io/example/app:sha-${revision}`,
+        environment: { RAKAZO_HOST: "app.example.test" },
+        networks: ["edge", "app"],
+      },
       updater: { image: "ghcr.io/example/updater:sha-safe", networks: ["control"] },
       caddy: {
         image: "caddy:2@sha256:def",
+        environment: { RAKAZO_HOST: "app.example.test" },
         ports: [
           { target: 80, published: "80", protocol: "tcp" },
           { target: 443, published: "443", protocol: "tcp" },
@@ -59,6 +65,7 @@ function validInput(): PreflightInput {
       WEB_ORIGIN: "https://app.example.test",
       BETTER_AUTH_URL: "https://app.example.test",
       API_URL: "https://app.example.test",
+      RAKAZO_HOST: "app.example.test",
       SANDBOX_PROVIDER: "e2b",
       CORTEXAI_BACKUP_TARGET: "s3://fake-backup-bucket/tenant-a",
       RAKAZO_IMAGE: "ghcr.io/example/app",
@@ -72,6 +79,7 @@ function validInput(): PreflightInput {
       freeDiskBytes: 80 * gib,
       currentRevision: revision,
       sourceClean: true,
+      sourceIndexFlagsClear: true,
       publicOriginResolved: true,
     },
     compose: composeModel(),
@@ -122,9 +130,28 @@ describe("validateProductionPreflight", () => {
     expect(JSON.stringify(result)).not.toContain(input.env.BETTER_AUTH_SECRET!);
   });
 
+  it.each(["@", ":", "/", "#", "?", "%", "%2", "%GG"])(
+    "rejects a PostgreSQL password containing URI-unsafe text %j",
+    (delimiter) => {
+      const input = validInput();
+      input.env.POSTGRES_PASSWORD = `Aa9_${"x".repeat(28)}${delimiter}`;
+      const result = validateProductionPreflight(input);
+      expect(failureSubjects(input)).toContain("POSTGRES_PASSWORD");
+      expect(JSON.stringify(result)).not.toContain(input.env.POSTGRES_PASSWORD);
+    },
+  );
+
+  it("accepts a generated high-entropy hexadecimal PostgreSQL password", () => {
+    const input = validInput();
+    input.env.POSTGRES_PASSWORD = randomBytes(16).toString("hex");
+    expect(failureSubjects(input)).not.toContain("POSTGRES_PASSWORD");
+  });
+
   it.each([
     ["non-HTTPS", { WEB_ORIGIN: "http://app.example.test" }],
+    ["non-standard HTTPS port", { WEB_ORIGIN: "https://app.example.test:444" }],
     ["inconsistent", { API_URL: "https://api.example.test" }],
+    ["host mismatch", { RAKAZO_HOST: "other.example.test" }],
     ["malformed", { BETTER_AUTH_URL: "not a URL" }],
   ])("rejects %s public origins", (_kind, override) => {
     const input = validInput();
@@ -181,6 +208,12 @@ describe("validateProductionPreflight", () => {
     expect(failureSubjects(input)).toContain("source-revision");
   });
 
+  it("rejects tracked paths carrying Git index concealment flags", () => {
+    const input = validInput();
+    input.host.sourceIndexFlagsClear = false;
+    expect(failureSubjects(input)).toContain("source-revision");
+  });
+
   it.each([
     ["memory", { totalMemoryBytes: 2 * gib }],
     ["disk", { freeDiskBytes: 8 * gib }],
@@ -206,6 +239,21 @@ describe("validateProductionPreflight", () => {
       protocol: "tcp",
     });
     expect(failureSubjects(input)).toContain("compose-public-ports");
+  });
+
+  it.each(["127.0.0.1", "::1"])("rejects loopback-only Caddy bindings on %s", (hostIp) => {
+    const input = validInput();
+    input.compose.services.caddy!.ports = input.compose.services.caddy!.ports!.map((port) => ({
+      ...port,
+      host_ip: hostIp,
+    }));
+    expect(failureSubjects(input)).toContain("compose-public-ports");
+  });
+
+  it("rejects a rendered Caddy host that differs from the public origin", () => {
+    const input = validInput();
+    input.compose.services.caddy!.environment!.RAKAZO_HOST = "other.example.test";
+    expect(failureSubjects(input)).toContain("compose-runtime-identity");
   });
 
   it("rejects missing private networks and identity/provider drift across API and worker", () => {

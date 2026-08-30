@@ -25,6 +25,7 @@ export interface HostFacts {
   freeDiskBytes: number;
   currentRevision: string;
   sourceClean: boolean;
+  sourceIndexFlagsClear: boolean;
   publicOriginResolved: boolean;
 }
 
@@ -222,6 +223,9 @@ function validateSecret(
   if (value !== value.trim()) return invalid(name, "whitespace-altered");
   if (value.length < 32) return invalid(name, "length-below-32");
   if (PLACEHOLDER_SECRET.test(value)) return unsafe(name, "placeholder");
+  if (name === "POSTGRES_PASSWORD" && !/^[A-Za-z0-9._~-]+$/.test(value)) {
+    return invalid(name, "uri-unsafe-character");
+  }
   if (name === "ENCRYPTION_KEY" && !/^[0-9a-f]{64}$/.test(value)) {
     return invalid(name, "expected-64-lowercase-hex");
   }
@@ -243,6 +247,14 @@ function duplicatedSecretValues(
 
 function validateOrigins(env: NodeJS.ProcessEnv): PreflightCheck {
   const names = ["WEB_ORIGIN", "BETTER_AUTH_URL", "API_URL"] as const;
+  const declaredHost = env.RAKAZO_HOST;
+  if (
+    !declaredHost ||
+    declaredHost !== declaredHost.trim() ||
+    declaredHost !== declaredHost.toLowerCase()
+  ) {
+    return invalid("public-origins", "RAKAZO_HOST:missing-or-malformed");
+  }
   const origins: string[] = [];
   for (const name of names) {
     const value = env[name];
@@ -251,6 +263,7 @@ function validateOrigins(env: NodeJS.ProcessEnv): PreflightCheck {
       const parsed = new URL(value);
       if (
         parsed.protocol !== "https:" ||
+        parsed.port !== "" ||
         parsed.username ||
         parsed.password ||
         parsed.pathname !== "/" ||
@@ -258,6 +271,9 @@ function validateOrigins(env: NodeJS.ProcessEnv): PreflightCheck {
         parsed.hash
       ) {
         return invalid("public-origins", `${name}:unsafe`);
+      }
+      if (parsed.hostname !== declaredHost) {
+        return invalid("public-origins", `${name}:host-mismatch`);
       }
       origins.push(parsed.origin);
     } catch {
@@ -299,6 +315,7 @@ function validateRevision(input: PreflightInput): PreflightCheck {
     !FULL_GIT_REVISION.test(revision) ||
     input.host.currentRevision !== revision ||
     !input.host.sourceClean ||
+    !input.host.sourceIndexFlagsClear ||
     !image ||
     image !== image.trim() ||
     image.includes("@") ||
@@ -323,7 +340,8 @@ function validateComposePorts(model: ComposeModel): PreflightCheck {
         serviceName !== "caddy" ||
         ![80, 443].includes(published) ||
         port.target !== published ||
-        !["tcp", "udp"].includes(protocol)
+        !["tcp", "udp"].includes(protocol) ||
+        !isPublicBind(port.host_ip)
       ) {
         return unsafe("compose-public-ports", "internal-or-unexpected-port-published");
       }
@@ -339,6 +357,10 @@ function renderedPublicPorts(model: ComposeModel): string[] {
   return (model.services.caddy?.ports ?? []).map(
     (port) => `${Number(port.published)}/${port.protocol ?? "tcp"}`,
   );
+}
+
+function isPublicBind(hostIp: string | undefined): boolean {
+  return hostIp === undefined || hostIp === "" || hostIp === "0.0.0.0" || hostIp === "::";
 }
 
 function validateComposeNetworks(model: ComposeModel): PreflightCheck {
@@ -387,6 +409,13 @@ function validateComposeRuntime(input: PreflightInput): PreflightCheck {
   }
   if (input.compose.services.web?.image !== expectedImage) {
     return invalid("compose-runtime-identity", "web-image-drift");
+  }
+  const expectedHost = input.env.RAKAZO_HOST;
+  if (
+    input.compose.services.web?.environment?.RAKAZO_HOST !== expectedHost ||
+    input.compose.services.caddy?.environment?.RAKAZO_HOST !== expectedHost
+  ) {
+    return invalid("compose-runtime-identity", "public-host-drift");
   }
   return ok("compose-runtime-identity", "api-worker-identical");
 }

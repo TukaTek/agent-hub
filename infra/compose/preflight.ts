@@ -54,6 +54,19 @@ export async function collectPreflightInput(
   if (statusResult.status !== 0) {
     throw new Error("The current source state could not be verified.");
   }
+  const indexFlagsResult = dependencies.runner("git", ["ls-files", "-v", "--full-name"], {
+    cwd: dependencies.cwd,
+    env: dependencies.env,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (indexFlagsResult.status !== 0) {
+    throw new Error("The tracked source index could not be verified.");
+  }
+  const sourceIndexFlagsClear = indexFlagsResult.stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .every((entry) => !/^(?:[a-z]|S) /.test(entry));
 
   let publicOriginResolved = false;
   try {
@@ -75,7 +88,8 @@ export async function collectPreflightInput(
       totalMemoryBytes: dependencies.totalMemory(),
       freeDiskBytes: await dependencies.freeDisk(dependencies.cwd),
       currentRevision: revisionResult.stdout.trim(),
-      sourceClean: statusResult.stdout.trim().length === 0,
+      sourceClean: statusResult.stdout.trim().length === 0 && sourceIndexFlagsClear,
+      sourceIndexFlagsClear,
       publicOriginResolved,
     },
     compose: renderComposeConfig(dependencies.runner, {
@@ -87,35 +101,93 @@ export async function collectPreflightInput(
   };
 }
 
-function isPublicAddress(address: string): boolean {
+const NON_GLOBAL_IPV4_CIDRS = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+] as const;
+
+const NON_GLOBAL_IPV6_CIDRS = [
+  ["::", 96],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["100::", 64],
+  ["2001::", 32],
+  ["2001:2::", 48],
+  ["2001:10::", 28],
+  ["2001:20::", 28],
+  ["2001:db8::", 32],
+  ["2002::", 16],
+  ["3fff::", 20],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+] as const;
+
+export function isPublicAddress(address: string): boolean {
   const version = isIP(address);
   if (version === 4) {
-    const [first = 0, second = 0, third = 0] = address.split(".").map(Number);
-    return !(
-      first === 0 ||
-      first === 10 ||
-      first === 127 ||
-      first >= 224 ||
-      (first === 100 && second >= 64 && second <= 127) ||
-      (first === 169 && second === 254) ||
-      (first === 172 && second >= 16 && second <= 31) ||
-      (first === 192 && second === 0 && third === 0) ||
-      (first === 192 && second === 168) ||
-      (first === 198 && (second === 18 || second === 19))
+    const numericAddress = ipv4ToNumber(address);
+    return !NON_GLOBAL_IPV4_CIDRS.some(([base, prefix]) =>
+      numberInCidr(numericAddress, ipv4ToNumber(base), prefix, 32),
     );
   }
   if (version !== 6) return false;
-  const normalized = address.toLowerCase();
-  if (normalized.startsWith("::ffff:")) {
-    return isPublicAddress(normalized.slice("::ffff:".length));
+  const numericAddress = ipv6ToBigInt(address);
+  const mappedPrefix = ipv6ToBigInt("::ffff:0:0");
+  if (numberInCidr(numericAddress, mappedPrefix, 96, 128)) {
+    return isPublicAddress(numberToIpv4(Number(numericAddress & 0xffffffffn)));
   }
-  if (normalized === "::" || normalized === "::1") return false;
-  const firstHextet = Number.parseInt(normalized.split(":", 1)[0] || "0", 16);
-  return (
-    (firstHextet & 0xfe00) !== 0xfc00 &&
-    (firstHextet & 0xffc0) !== 0xfe80 &&
-    (firstHextet & 0xff00) !== 0xff00
+  return !NON_GLOBAL_IPV6_CIDRS.some(([base, prefix]) =>
+    numberInCidr(numericAddress, ipv6ToBigInt(base), prefix, 128),
   );
+}
+
+function ipv4ToNumber(address: string): bigint {
+  return address
+    .split(".")
+    .map(Number)
+    .reduce((value, octet) => (value << 8n) | BigInt(octet), 0n);
+}
+
+function numberToIpv4(address: number): string {
+  const unsigned = address >>> 0;
+  return [24, 16, 8, 0].map((shift) => (unsigned >>> shift) & 0xff).join(".");
+}
+
+function ipv6ToBigInt(address: string): bigint {
+  let normalized = address.toLowerCase();
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":");
+    const ipv4 = Number(ipv4ToNumber(normalized.slice(lastColon + 1)));
+    normalized = `${normalized.slice(0, lastColon)}:${(ipv4 >>> 16).toString(16)}:${(
+      ipv4 & 0xffff
+    ).toString(16)}`;
+  }
+  const halves = normalized.split("::");
+  const leading = halves[0] ? halves[0].split(":") : [];
+  const trailing = halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - leading.length - trailing.length : 0;
+  const hextets = [...leading, ...Array.from({ length: fill }, () => "0"), ...trailing];
+  return hextets.reduce((value, hextet) => (value << 16n) | BigInt(`0x${hextet}`), 0n);
+}
+
+function numberInCidr(address: bigint, base: bigint, prefix: number, bits: number): boolean {
+  const shift = BigInt(bits - prefix);
+  return address >> shift === base >> shift;
 }
 
 function commandRunner(
