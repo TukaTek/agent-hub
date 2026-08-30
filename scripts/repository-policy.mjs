@@ -81,6 +81,64 @@ const EXACT_IMAGE_CANDIDATE_REF = ["$", "{{ env.CANDIDATE_SHA }}"].join("");
 const EXACT_PULL_REQUEST_HEAD_REF = ["$", "{{ github.event.pull_request.head.sha }}"].join("");
 const EXACT_METADATA_TAGS_REF = ["$", "{{ steps.meta.outputs.tags }}"].join("");
 const EXACT_METADATA_LABELS_REF = ["$", "{{ steps.meta.outputs.labels }}"].join("");
+const EXACT_MATRIX_DOCKERFILE_REF = ["$", "{{ matrix.dockerfile }}"].join("");
+const EXACT_MATRIX_NAME_REF = ["$", "{{ matrix.name }}"].join("");
+const EXACT_PULL_REQUEST_NUMBER_REF = ["$", "{{ github.event.pull_request.number }}"].join("");
+const EXACT_IMAGE_PLATFORMS_REF = [
+  "$",
+  "{{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && 'linux/amd64,linux/arm64' || 'linux/amd64' }}",
+].join("");
+const IMAGE_BUILD_WORKFLOW = ".github/workflows/publish-server-image.yml";
+const EXACT_BUILD_PUSH_ACTION = "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8";
+const AUTHORIZED_IMAGE_BUILD_STEPS = Object.freeze([
+  {
+    job: "validate",
+    stepIndex: 4,
+    workflow: IMAGE_BUILD_WORKFLOW,
+    step: {
+      uses: EXACT_BUILD_PUSH_ACTION,
+      with: {
+        context: ".",
+        file: EXACT_MATRIX_DOCKERFILE_REF,
+        push: false,
+        tags: EXACT_METADATA_TAGS_REF,
+        labels: EXACT_METADATA_LABELS_REF,
+        "build-args": `GIT_SHA=${EXACT_IMAGE_CANDIDATE_REF}`,
+        "cache-from": `type=gha,scope=${EXACT_MATRIX_NAME_REF}`,
+        "cache-to": `type=gha,mode=max,scope=pr-${EXACT_PULL_REQUEST_NUMBER_REF}-${EXACT_MATRIX_NAME_REF}`,
+        provenance: false,
+        sbom: false,
+      },
+    },
+  },
+  {
+    job: "publish",
+    stepIndex: 6,
+    workflow: IMAGE_BUILD_WORKFLOW,
+    step: {
+      id: "build",
+      uses: EXACT_BUILD_PUSH_ACTION,
+      with: {
+        context: ".",
+        file: EXACT_MATRIX_DOCKERFILE_REF,
+        push: true,
+        tags: EXACT_METADATA_TAGS_REF,
+        labels: EXACT_METADATA_LABELS_REF,
+        platforms: EXACT_IMAGE_PLATFORMS_REF,
+        "build-args": `GIT_SHA=${EXACT_IMAGE_CANDIDATE_REF}`,
+        "cache-from": `type=gha,scope=${EXACT_MATRIX_NAME_REF}`,
+        "cache-to": `type=gha,mode=max,scope=${EXACT_MATRIX_NAME_REF}`,
+        provenance: "mode=max",
+        sbom: true,
+      },
+    },
+  },
+]);
+const IMAGE_BUILD_ACTION_SOURCES = new Set([
+  "docker/bake-action",
+  "docker/build-push-action",
+  "redhat-actions/buildah-build",
+]);
 const EXACT_IMAGE_PROVENANCE_VERIFICATION = `set -euo pipefail
 if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
   test -n "$PR_HEAD_SHA"
@@ -102,9 +160,9 @@ const CANDIDATE_CHECKOUT_REQUIREMENTS = new Map([
   ],
   [".github/workflows/playwright.yml", { candidateJobs: ["playwright"], historyJobs: [] }],
   [
-    ".github/workflows/publish-server-image.yml",
+    IMAGE_BUILD_WORKFLOW,
     {
-      candidateJobs: ["validate", "publish"],
+      candidateJobs: AUTHORIZED_IMAGE_BUILD_STEPS.map(({ job }) => job),
       candidateRef: EXACT_IMAGE_CANDIDATE_REF,
       historyJobs: [],
     },
@@ -156,7 +214,7 @@ const PROTECTED_FILE_GLOBS = [
 
 const REQUIRED_PROTECTED_PATHS = [
   ".github/workflows/ci.yml",
-  ".github/workflows/publish-server-image.yml",
+  IMAGE_BUILD_WORKFLOW,
   ".github/dependabot.yml",
   ".github/CODEOWNERS",
   ".gitleaks.toml",
@@ -182,6 +240,10 @@ const REQUIRED_OWNERSHIP_PROBES = [".github/actions/example/action.yml"];
 
 export function assertPinnedWorkflowSource(source, filename) {
   const workflow = parseWorkflowSource(source, filename);
+  assertPinnedWorkflow(workflow, filename);
+}
+
+function assertPinnedWorkflow(workflow, filename) {
   visitWorkflowValue(workflow, filename, [], new Set());
 }
 
@@ -286,6 +348,543 @@ function assertPinnedUse(value, filename, location, jobLevel) {
       `${filename}: ${location} action or reusable workflow ${value} must use a remote owner/repository path and an exact 40-hex commit SHA${localRequirement}`,
     );
   }
+}
+
+function imageBuildIdentity(workflow, job, stepIndex) {
+  return `${workflow}:jobs.${job}.steps[${stepIndex}]`;
+}
+
+function imageBuildActionSource(value) {
+  if (typeof value !== "string") return undefined;
+  const at = value.lastIndexOf("@");
+  if (at <= 0) return undefined;
+  const source = value.slice(0, at).toLowerCase();
+  return IMAGE_BUILD_ACTION_SOURCES.has(source) ? source : undefined;
+}
+
+function assertRepositoryImageBuildPolicy(workflows) {
+  assertReusableWorkflowInventory(workflows);
+
+  const manifest = new Map(
+    AUTHORIZED_IMAGE_BUILD_STEPS.map((entry) => [
+      imageBuildIdentity(entry.workflow, entry.job, entry.stepIndex),
+      entry,
+    ]),
+  );
+  const discovered = new Set();
+
+  for (const [workflowFilename, workflow] of workflows) {
+    const jobs = workflow?.jobs;
+    if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) continue;
+    for (const [jobName, job] of Object.entries(jobs)) {
+      if (!job || typeof job !== "object" || !Array.isArray(job.steps)) continue;
+      for (const [stepIndex, step] of job.steps.entries()) {
+        if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+        const location = imageBuildIdentity(workflowFilename, jobName, stepIndex);
+        const actionSource = imageBuildActionSource(step.uses);
+        if (actionSource) {
+          const authorized = manifest.get(location);
+          if (!authorized) {
+            throw new Error(
+              `${location}: image build action ${actionSource} is outside the exact authorized image-build manifest`,
+            );
+          }
+          if (!isDeepStrictEqual(step, authorized.step)) {
+            throw new Error(
+              `${location}: authorized image build action and inputs must exactly match the repository manifest`,
+            );
+          }
+          discovered.add(location);
+        }
+        if (Object.hasOwn(step, "run")) {
+          if (typeof step.run !== "string") {
+            throw new Error(`${location}.run: workflow run commands must be strings`);
+          }
+          const imageCommand = findImageBuildCommand(step.run, `${location}.run`);
+          if (imageCommand) {
+            throw new Error(
+              `${location}.run: direct image-building command ${imageCommand} is forbidden; only exact manifested build-push-action steps may build images`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  for (const identity of manifest.keys()) {
+    if (!discovered.has(identity)) {
+      throw new Error(
+        `Authorized image build is missing from the exact manifest location ${identity}`,
+      );
+    }
+  }
+}
+
+function assertReusableWorkflowInventory(workflows) {
+  const states = new Map();
+
+  function visit(workflowFilename, callers) {
+    const state = states.get(workflowFilename);
+    if (state === "visited") return;
+    if (state === "visiting") {
+      throw new Error(
+        `Local reusable workflow inventory contains a cycle: ${[...callers, workflowFilename].join(" -> ")}`,
+      );
+    }
+    states.set(workflowFilename, "visiting");
+    const workflow = workflows.get(workflowFilename);
+    const jobs = workflow?.jobs;
+    if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+      for (const [jobName, job] of Object.entries(jobs)) {
+        if (!job || typeof job !== "object" || Array.isArray(job) || !Object.hasOwn(job, "uses")) {
+          continue;
+        }
+        const uses = job.uses;
+        if (typeof uses === "string" && isCanonicalLocalReusableWorkflow(uses)) {
+          const target = uses.slice(2);
+          if (!workflows.has(target)) {
+            throw new Error(
+              `${workflowFilename}:jobs.${jobName}.uses references missing local reusable workflow ${target}; image-build inventory cannot inspect it`,
+            );
+          }
+          visit(target, [...callers, workflowFilename]);
+          continue;
+        }
+        throw new Error(
+          `${workflowFilename}:jobs.${jobName}.uses invokes an opaque remote reusable workflow; repository image-build inventory permits only inspectable local reusable workflows`,
+        );
+      }
+    }
+    states.set(workflowFilename, "visited");
+  }
+
+  for (const workflowFilename of workflows.keys()) visit(workflowFilename, []);
+}
+
+const SHELL_COMMAND_SEPARATORS = new Set([";", "&", "|", "(", ")", "{", "}"]);
+const SHELL_RESERVED_PREFIXES = new Set([
+  "!",
+  "do",
+  "elif",
+  "else",
+  "if",
+  "then",
+  "time",
+  "until",
+  "while",
+]);
+const SHELL_TRANSPARENT_WRAPPERS = new Set(["command", "exec", "nohup", "sudo"]);
+const SHELL_BUILD_WORDS = new Set(["bake", "bud", "build"]);
+const SHELL_WRAPPER_OPTIONS_WITH_VALUES = new Map([
+  ["env", new Set(["-C", "--chdir", "-u", "--unset"])],
+  [
+    "sudo",
+    new Set([
+      "-C",
+      "--close-from",
+      "-g",
+      "--group",
+      "-h",
+      "--host",
+      "-p",
+      "--prompt",
+      "-R",
+      "--chroot",
+      "-T",
+      "--command-timeout",
+      "-u",
+      "--user",
+    ]),
+  ],
+]);
+const IMAGE_CLI_OPTIONS_WITH_VALUES = new Set([
+  "--ansi",
+  "--builder",
+  "-c",
+  "--config",
+  "--connection",
+  "--context",
+  "--env-file",
+  "-f",
+  "--file",
+  "-H",
+  "--host",
+  "--identity",
+  "-l",
+  "--log-level",
+  "-p",
+  "--parallel",
+  "--profile",
+  "--progress",
+  "--project-directory",
+  "--project-name",
+  "--tlscacert",
+  "--tlscert",
+  "--tlskey",
+  "--url",
+]);
+
+function findImageBuildCommand(source, location, depth = 0) {
+  if (depth > 8) {
+    throw new Error(`${location}: ambiguous nested shell command exceeds the inventory limit`);
+  }
+  const commands = tokenizeShellCommands(source, location, (nested, nestedKind) => {
+    const nestedBuild = findImageBuildCommand(nested, `${location}:${nestedKind}`, depth + 1);
+    if (nestedBuild) {
+      throw new Error(
+        `${location}: nested direct image-building command ${nestedBuild} is forbidden`,
+      );
+    }
+  });
+  for (const command of commands) {
+    const match = classifyImageBuildCommand(command, location, depth);
+    if (match) return match;
+  }
+  return undefined;
+}
+
+function tokenizeShellCommands(source, location, inspectNested) {
+  const commands = [];
+  let command = [];
+  let current;
+  let quote;
+
+  function startWord() {
+    current ??= { dynamic: false, kind: "word", value: "" };
+    return current;
+  }
+
+  function finishWord() {
+    if (!current) return;
+    command.push(current);
+    current = undefined;
+  }
+
+  function finishCommand() {
+    finishWord();
+    if (command.length > 0) commands.push(command);
+    command = [];
+  }
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote === "single") {
+      if (character === "'") quote = undefined;
+      else startWord().value += character;
+      continue;
+    }
+    if (quote === "double") {
+      if (character === '"') {
+        quote = undefined;
+        continue;
+      }
+      if (character === "\\") {
+        const escaped = source[index + 1];
+        if (escaped === "\n") index += 1;
+        else if (escaped !== undefined) {
+          startWord().value += escaped;
+          index += 1;
+        }
+        continue;
+      }
+      if (character === "$" || character === "`") {
+        index = consumeShellExpansion(source, index, startWord(), location, inspectNested);
+        continue;
+      }
+      startWord().value += character;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      startWord();
+      quote = character === "'" ? "single" : "double";
+      continue;
+    }
+    if (character === "\\") {
+      const escaped = source[index + 1];
+      if (escaped === "\n") index += 1;
+      else if (escaped !== undefined) {
+        startWord().value += escaped;
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "$" || character === "`") {
+      index = consumeShellExpansion(source, index, startWord(), location, inspectNested);
+      continue;
+    }
+    if (character === "#" && !current) {
+      while (index + 1 < source.length && source[index + 1] !== "\n") index += 1;
+      continue;
+    }
+    if (character === "\n") {
+      finishCommand();
+      continue;
+    }
+    if (/\s/u.test(character)) {
+      finishWord();
+      continue;
+    }
+    if (character === "<" || character === ">") {
+      if (current?.value && /^\d+$/u.test(current.value)) current = undefined;
+      else finishWord();
+      let operator = character;
+      while (source[index + 1] === character) {
+        operator += source[index + 1];
+        index += 1;
+      }
+      if (source[index + 1] === "&") {
+        operator += "&";
+        index += 1;
+      }
+      command.push({ dynamic: false, kind: "redirect", value: operator });
+      continue;
+    }
+    if (SHELL_COMMAND_SEPARATORS.has(character)) {
+      finishCommand();
+      if (source[index + 1] === character) index += 1;
+      continue;
+    }
+    startWord().value += character;
+  }
+
+  if (quote) throw new Error(`${location}: ambiguous shell command has an unterminated quote`);
+  finishCommand();
+  return commands;
+}
+
+function consumeShellExpansion(source, index, word, location, inspectNested) {
+  if (source[index] === "`") {
+    const end = findUnescaped(source, "`", index + 1);
+    if (end < 0) throw new Error(`${location}: ambiguous shell command has an open backtick`);
+    inspectNested(source.slice(index + 1, end), "backtick");
+    word.dynamic = true;
+    word.value += "<dynamic>";
+    return end;
+  }
+  if (source.startsWith("${{", index)) {
+    const end = source.indexOf("}}", index + 3);
+    if (end < 0) throw new Error(`${location}: ambiguous GitHub expression in shell command`);
+    word.dynamic = true;
+    word.value += "<dynamic>";
+    return end + 1;
+  }
+  if (source.startsWith("$(", index)) {
+    const balanced = readCommandSubstitution(source, index, location);
+    inspectNested(balanced.content, "command-substitution");
+    word.dynamic = true;
+    word.value += "<dynamic>";
+    return balanced.end;
+  }
+  if (source.startsWith("${", index)) {
+    const end = source.indexOf("}", index + 2);
+    if (end < 0) throw new Error(`${location}: ambiguous shell parameter expansion`);
+    word.dynamic = true;
+    word.value += "<dynamic>";
+    return end;
+  }
+  const variable = /^\$[A-Za-z_][A-Za-z0-9_]*/u.exec(source.slice(index));
+  word.dynamic = true;
+  word.value += "<dynamic>";
+  return variable ? index + variable[0].length - 1 : index;
+}
+
+function readCommandSubstitution(source, start, location) {
+  let depth = 1;
+  let quote;
+  for (let index = start + 2; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote === "single") {
+      if (character === "'") quote = undefined;
+      continue;
+    }
+    if (quote === "double") {
+      if (character === "\\") index += 1;
+      else if (character === '"') quote = undefined;
+      continue;
+    }
+    if (character === "'") quote = "single";
+    else if (character === '"') quote = "double";
+    else if (character === "\\") index += 1;
+    else if (character === "(") depth += 1;
+    else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return { content: source.slice(start + 2, index), end: index };
+    }
+  }
+  throw new Error(`${location}: ambiguous shell command has an open command substitution`);
+}
+
+function findUnescaped(source, character, start) {
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === "\\") index += 1;
+    else if (source[index] === character) return index;
+  }
+  return -1;
+}
+
+function classifyImageBuildCommand(tokens, location, depth) {
+  const words = [];
+  let discardRedirectTarget = false;
+  for (const token of tokens) {
+    if (token.kind === "redirect") {
+      discardRedirectTarget = true;
+      continue;
+    }
+    if (discardRedirectTarget) {
+      discardRedirectTarget = false;
+      continue;
+    }
+    words.push(token);
+  }
+
+  let index = 0;
+  while (index < words.length) {
+    const value = words[index].value.toLowerCase();
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[index].value)) index += 1;
+    else if (SHELL_RESERVED_PREFIXES.has(value)) index += 1;
+    else break;
+  }
+  if (index >= words.length) return undefined;
+
+  let executable = shellExecutable(words[index].value);
+  if (words[index].dynamic) {
+    if (words.slice(index + 1).some((word) => SHELL_BUILD_WORDS.has(word.value.toLowerCase()))) {
+      throw new Error(
+        `${location}: ambiguous dynamic shell executable can resolve to an image-building command`,
+      );
+    }
+    return undefined;
+  }
+
+  while (SHELL_TRANSPARENT_WRAPPERS.has(executable) || executable === "env") {
+    index += 1;
+    while (index < words.length) {
+      const value = words[index].value;
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(value)) {
+        index += 1;
+        continue;
+      }
+      if (!value.startsWith("-")) break;
+      const option = value.split("=", 1)[0];
+      index += 1;
+      if (!value.includes("=") && SHELL_WRAPPER_OPTIONS_WITH_VALUES.get(executable)?.has(option)) {
+        index += 1;
+      }
+    }
+    if (index >= words.length) return undefined;
+    if (words[index].dynamic) {
+      if (words.slice(index + 1).some((word) => SHELL_BUILD_WORDS.has(word.value.toLowerCase()))) {
+        throw new Error(`${location}: ambiguous command wrapper can invoke an image build`);
+      }
+      return undefined;
+    }
+    executable = shellExecutable(words[index].value);
+  }
+
+  if (executable === "eval") {
+    const arguments_ = words.slice(index + 1);
+    if (arguments_.some((word) => word.dynamic)) {
+      throw new Error(`${location}: ambiguous dynamic eval can hide an image-building command`);
+    }
+    return findImageBuildCommand(
+      arguments_.map((word) => word.value).join(" "),
+      `${location}:eval`,
+      depth + 1,
+    );
+  }
+  if (["bash", "cmd", "dash", "ksh", "powershell", "pwsh", "sh", "zsh"].includes(executable)) {
+    const commandFlag = words.findIndex(
+      (word, wordIndex) =>
+        wordIndex > index && ["-c", "-command", "/c"].includes(word.value.toLowerCase()),
+    );
+    if (commandFlag >= 0) {
+      const nested = words[commandFlag + 1];
+      if (!nested || nested.dynamic) {
+        throw new Error(`${location}: ambiguous nested shell can hide an image-building command`);
+      }
+      return findImageBuildCommand(nested.value, `${location}:${executable}`, depth + 1);
+    }
+    return undefined;
+  }
+
+  if (executable === "xargs") {
+    const nestedIndex = words.findIndex(
+      (word, wordIndex) => wordIndex > index && !word.value.startsWith("-"),
+    );
+    return nestedIndex < 0
+      ? undefined
+      : classifyImageBuildCommand(words.slice(nestedIndex), `${location}:xargs`, depth + 1);
+  }
+
+  if (executable === "docker" || executable === "podman" || executable === "nerdctl") {
+    const primary = shellSubcommand(words, index + 1, location, executable);
+    if (!primary) return undefined;
+    if (primary.value === "build") return `${executable} build`;
+    if (["builder", "buildx", "compose", "image"].includes(primary.value)) {
+      const secondary = shellSubcommand(words, primary.index + 1, location, executable);
+      if (secondary && (secondary.value === "build" || secondary.value === "bake")) {
+        return `${executable} ${primary.value} ${secondary.value}`;
+      }
+      if (
+        primary.value === "compose" &&
+        secondary &&
+        hasImageBuildFlag(words, secondary.index + 1)
+      ) {
+        return `${executable} compose ${secondary.value} --build`;
+      }
+    }
+    return undefined;
+  }
+  if (executable === "docker-compose") {
+    const subcommand = shellSubcommand(words, index + 1, location, executable);
+    if (subcommand?.value === "build") return "docker-compose build";
+    return subcommand && hasImageBuildFlag(words, subcommand.index + 1)
+      ? `docker-compose ${subcommand.value} --build`
+      : undefined;
+  }
+  if (executable === "buildah") {
+    const subcommand = shellSubcommand(words, index + 1, location, executable);
+    return subcommand && ["bud", "build", "build-using-dockerfile"].includes(subcommand.value)
+      ? `buildah ${subcommand.value}`
+      : undefined;
+  }
+  if (["buildctl", "ko", "pack"].includes(executable)) {
+    const subcommand = shellSubcommand(words, index + 1, location, executable);
+    return subcommand?.value === "build" ? `${executable} build` : undefined;
+  }
+  return executable === "executor" && /(?:^|\/)kaniko(?:\/|$)/u.test(words[index].value)
+    ? "kaniko executor"
+    : undefined;
+}
+
+function shellExecutable(value) {
+  return (value.split(/[\\/]/u).pop() ?? value).replace(/\.exe$/iu, "").toLowerCase();
+}
+
+function shellSubcommand(words, start, location, executable) {
+  for (let index = start; index < words.length; index += 1) {
+    const word = words[index];
+    if (word.dynamic) {
+      throw new Error(
+        `${location}: ambiguous dynamic ${executable} subcommand can resolve to an image build`,
+      );
+    }
+    if (word.value === "--") continue;
+    if (word.value.startsWith("-")) {
+      const option = word.value.split("=", 1)[0];
+      if (!word.value.includes("=") && IMAGE_CLI_OPTIONS_WITH_VALUES.has(option)) index += 1;
+      continue;
+    }
+    return { index, value: word.value.toLowerCase() };
+  }
+  return undefined;
+}
+
+function hasImageBuildFlag(words, start) {
+  return words
+    .slice(start)
+    .some((word) => word.value === "--build" || word.value.startsWith("--build="));
 }
 
 export function assertCandidateCheckoutPolicy(source, filename, requirements) {
@@ -620,15 +1219,23 @@ export async function assertRepositoryPolicy(root) {
       throw new Error(`Required candidate workflow is missing: ${repositoryFilename}`);
     }
   }
+  const workflowSources = new Map();
+  const workflows = new Map();
   for (const filename of workflowFiles) {
     const repositoryFilename = `.github/workflows/${filename}`;
     const source = await readFile(path.join(workflowsRoot, filename), "utf8");
-    assertPinnedWorkflowSource(source, repositoryFilename);
+    const workflow = parseWorkflowSource(source, repositoryFilename);
+    assertPinnedWorkflow(workflow, repositoryFilename);
+    workflowSources.set(repositoryFilename, source);
+    workflows.set(repositoryFilename, workflow);
+  }
+  assertRepositoryImageBuildPolicy(workflows);
+  for (const [repositoryFilename, source] of workflowSources) {
     const checkoutRequirements = CANDIDATE_CHECKOUT_REQUIREMENTS.get(repositoryFilename);
     if (checkoutRequirements) {
       assertCandidateCheckoutPolicy(source, repositoryFilename, checkoutRequirements);
     }
-    if (repositoryFilename === ".github/workflows/publish-server-image.yml") {
+    if (repositoryFilename === IMAGE_BUILD_WORKFLOW) {
       assertImageCandidatePolicy(source, repositoryFilename, checkoutRequirements);
     }
   }

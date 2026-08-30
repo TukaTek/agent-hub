@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { assertGitleaksCanaryReport } from "../../../scripts/gitleaks-canary.mjs";
 import {
@@ -94,6 +95,71 @@ function mutateImageBuildContext(
     build.with.context = context;
   }
   return stringifyYaml(workflow);
+}
+
+let repositoryFixtureParent: string;
+let repositoryFixtureRoot: string;
+
+async function prepareRepositoryFixture() {
+  repositoryFixtureParent = await mkdtemp(path.join(tmpdir(), "rakazo-repository-policy-"));
+  repositoryFixtureRoot = path.join(repositoryFixtureParent, "repository");
+  const ignoredRoots = new Set([
+    ".git",
+    ".turbo",
+    "node_modules",
+    "playwright-report",
+    "test-report",
+  ]);
+  await cp(root, repositoryFixtureRoot, {
+    filter: (source) => {
+      const relative = path.relative(root, source);
+      return relative === "" || !ignoredRoots.has(relative.split(path.sep)[0] ?? "");
+    },
+    recursive: true,
+  });
+}
+
+async function withWorkflowSources(
+  workflows: Record<string, string>,
+  assertion: () => Promise<void>,
+) {
+  const originals = new Map<string, string | undefined>();
+  try {
+    for (const [filename, source] of Object.entries(workflows)) {
+      const target = path.join(repositoryFixtureRoot, ".github/workflows", filename);
+      originals.set(target, await readFile(target, "utf8").catch(() => undefined));
+      await writeFile(target, source);
+    }
+    await assertion();
+  } finally {
+    for (const [target, original] of originals) {
+      if (original === undefined) await rm(target, { force: true });
+      else await writeFile(target, original);
+    }
+  }
+}
+
+function actionBuildWorkflow(context?: unknown) {
+  const workflow = {
+    name: "unmanifested-image",
+    on: "workflow_dispatch",
+    jobs: {
+      image: {
+        "runs-on": "ubuntu-latest",
+        steps: [
+          {
+            uses: `docker/build-push-action@${sha}`,
+            ...(context === undefined ? {} : { with: { context } }),
+          },
+        ],
+      },
+    },
+  };
+  return stringifyYaml(workflow);
+}
+
+function runWorkflow(runEntry: string) {
+  return `name: unmanifested-run\non: workflow_dispatch\njobs:\n  image:\n    runs-on: ubuntu-latest\n    steps:\n      - ${runEntry}\n`;
 }
 
 describe("GitHub Actions pin policy", () => {
@@ -564,6 +630,247 @@ describe("exact candidate checkout policy", () => {
         historyJobs: ["candidate"],
       }),
     ).toThrow(expectedError);
+  });
+});
+
+describe("repository-wide image build inventory", () => {
+  beforeAll(prepareRepositoryFixture);
+
+  afterAll(async () => {
+    await rm(repositoryFixtureParent, { force: true, recursive: true });
+  });
+
+  it("accepts the checked-in exact image-build manifest", async () => {
+    await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
+      workflowCount: 6,
+    });
+  });
+
+  it.each([
+    ["local context", "."],
+    ["remote URL/ref context", "https://github.com/TukaTek/agent-hub.git#main"],
+    ["dynamic context", githubExpression("inputs.build_context")],
+    ["default context", undefined],
+  ])("rejects an additional workflow build-push action with %s", async (_name, context) => {
+    await withWorkflowSources(
+      { "unmanifested-image.yml": actionBuildWorkflow(context) },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /image build|image-building|authorized image/i,
+        );
+      },
+    );
+  });
+
+  it("rejects an additional build-push job in the governed workflow", async () => {
+    const source = await readFile(
+      path.join(root, ".github/workflows/publish-server-image.yml"),
+      "utf8",
+    );
+    const mutated = `${source}\n  unmanifested:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: docker/build-push-action@${sha}\n        with:\n          context: .\n`;
+
+    await withWorkflowSources({ "publish-server-image.yml": mutated }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /image build|manifest|authorized/i,
+      );
+    });
+  });
+
+  it("rejects an additional build-push step in a governed job", async () => {
+    const source = await readFile(
+      path.join(root, ".github/workflows/publish-server-image.yml"),
+      "utf8",
+    );
+    const workflow = parseYaml(source) as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    workflow.jobs.validate?.steps.push({
+      uses: `docker/build-push-action@${sha}`,
+      with: { context: "." },
+    });
+
+    await withWorkflowSources({ "publish-server-image.yml": stringifyYaml(workflow) }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /image build|exactly one|authorized/i,
+      );
+    });
+  });
+
+  it.each([
+    [
+      "a renamed authorized job",
+      (workflow: { jobs: Record<string, { steps: Array<Record<string, unknown>> }> }) => {
+        workflow.jobs["validate-renamed"] = workflow.jobs.validate!;
+        delete workflow.jobs.validate;
+      },
+    ],
+    [
+      "a relocated authorized build step",
+      (workflow: { jobs: Record<string, { steps: Array<Record<string, unknown>> }> }) => {
+        workflow.jobs.validate?.steps.unshift({ run: "echo safe" });
+      },
+    ],
+    [
+      "a differently pinned build action",
+      (workflow: { jobs: Record<string, { steps: Array<Record<string, unknown>> }> }) => {
+        const build = workflow.jobs.validate?.steps.find((step) =>
+          String(step.uses ?? "").startsWith("docker/build-push-action@"),
+        );
+        expect(build).toBeDefined();
+        if (build) build.uses = `docker/build-push-action@${sha}`;
+      },
+    ],
+  ])("rejects %s outside the exact step manifest", async (_name, mutate) => {
+    const source = await readFile(
+      path.join(root, ".github/workflows/publish-server-image.yml"),
+      "utf8",
+    );
+    const workflow = parseYaml(source) as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    mutate(workflow);
+
+    await withWorkflowSources({ "publish-server-image.yml": stringifyYaml(workflow) }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /image build|manifest|authorized|candidate job/i,
+      );
+    });
+  });
+
+  it.each([
+    ["docker build", "docker build ."],
+    ["an absolute Docker path", "/usr/bin/docker build ."],
+    ["a quoted Docker executable", `'docker' build .`],
+    ["an escaped Docker subcommand", "docker bui\\ld ."],
+    ["a command wrapper", "command docker build ."],
+    ["an environment wrapper", "env DOCKER_BUILDKIT=1 docker build ."],
+    ["a sudo option wrapper", "sudo -u root docker build ."],
+    ["a Docker global option", "docker --context local build ."],
+    ["docker buildx build", "docker buildx build ."],
+    ["docker image build", "docker image build ."],
+    ["docker compose build", "docker compose build"],
+    ["docker compose build after an option", "docker compose -f compose.yml build"],
+    ["docker compose up --build", "docker compose up --build"],
+    ["docker-compose build", "docker-compose build"],
+    ["docker-compose up --build", "docker-compose up --build"],
+    ["podman build", "podman build ."],
+    ["podman image build", "podman image build ."],
+    ["podman compose up --build", "podman compose up --build"],
+    ["buildah bud", "buildah bud ."],
+    ["nerdctl build", "nerdctl build ."],
+    ["nerdctl compose build", "nerdctl compose build"],
+    ["nerdctl compose up --build", "nerdctl compose up --build"],
+    ["docker buildx bake", "docker buildx bake"],
+  ])("rejects an unmanifested direct %s command", async (_name, command) => {
+    await withWorkflowSources(
+      { "unmanifested-run.yml": runWorkflow(`run: ${JSON.stringify(command)}`) },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /image build|image-building|authorized image/i,
+        );
+      },
+    );
+  });
+
+  it("rejects a direct image build added to the governed workflow", async () => {
+    const source = await readFile(
+      path.join(root, ".github/workflows/publish-server-image.yml"),
+      "utf8",
+    );
+    const mutated = `${source}\n  shell-build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker build https://github.com/TukaTek/agent-hub.git#main\n`;
+
+    await withWorkflowSources({ "publish-server-image.yml": mutated }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /image build|image-building|authorized image/i,
+      );
+    });
+  });
+
+  it.each([
+    ["quoted scalar", `run: "docker build ."`],
+    ["block scalar", "run: |\n          docker build ."],
+    ["folded scalar", "run: >-\n          docker build\n          ."],
+    ["semicolon separator", `run: "echo safe; docker build ."`],
+    ["AND separator", `run: "true && docker buildx build ."`],
+    ["OR separator", `run: "false || docker compose build"`],
+    ["pipeline separator", `run: "printf context | docker build -"`],
+    ["newline separator", "run: |\n          echo safe\n          docker build ."],
+  ])("rejects image builds hidden by a %s", async (_name, runEntry) => {
+    await withWorkflowSources({ "unmanifested-run.yml": runWorkflow(runEntry) }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /image build|image-building|authorized image/i,
+      );
+    });
+  });
+
+  it("rejects an image build carried through a YAML alias", async () => {
+    const source = `name: aliased-build\non: workflow_dispatch\nx-image-build: &image-build "docker build ."\njobs:\n  image:\n    runs-on: ubuntu-latest\n    steps:\n      - run: *image-build\n`;
+
+    await withWorkflowSources({ "unmanifested-run.yml": source }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /image build|image-building|authorized image/i,
+      );
+    });
+  });
+
+  it.each([
+    ["a dynamic Docker subcommand", `docker "$IMAGE_SUBCOMMAND" .`],
+    ["a dynamic image tool", `${githubExpression("inputs.image_tool")} build .`],
+    ["eval", `eval 'docker build .'`],
+    ["a nested shell", `bash -c 'docker build .'`],
+  ])("fails closed for %s that can hide an image build", async (_name, command) => {
+    await withWorkflowSources(
+      { "unmanifested-run.yml": runWorkflow(`run: ${JSON.stringify(command)}`) },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /ambiguous|image build|image-building|authorized image/i,
+        );
+      },
+    );
+  });
+
+  it("does not flag comments, echo text, labels, assignments, or unrelated words", async () => {
+    const source = `name: image-build-words-only\non: workflow_dispatch\njobs:\n  words:\n    name: docker build label only\n    runs-on: ubuntu-latest\n    env:\n      IMAGE_LABEL: docker build .\n    steps:\n      - name: docker build is only a label\n        run: |\n          # docker build .\n          echo "docker build ."\n          printf '%s\\n' 'docker buildx build .'\n          IMAGE_LABEL='docker compose build'\n          echo docker build .\n          echo image-builder unrelated-build-word\n`;
+
+    await withWorkflowSources({ "words-only.yml": source }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
+        workflowCount: 7,
+      });
+    });
+  });
+
+  it("rejects image building reached through a local reusable workflow", async () => {
+    const caller = `name: call-image-builder\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/reusable-image.yml\n`;
+    const reusable = `name: reusable-image\non: workflow_call\njobs:\n  image:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: docker/build-push-action@${sha}\n        with:\n          context: .\n`;
+
+    await withWorkflowSources(
+      { "call-image-builder.yml": caller, "reusable-image.yml": reusable },
+      async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /image build|reusable workflow|authorized image/i,
+        );
+      },
+    );
+  });
+
+  it("rejects opaque remote reusable workflows that could hide image building", async () => {
+    const source = `name: opaque-builder\non: workflow_dispatch\njobs:\n  call:\n    uses: TukaTek/agent-hub/.github/workflows/image.yml@${sha}\n`;
+
+    await withWorkflowSources({ "opaque-builder.yml": source }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /opaque|remote reusable|image build/i,
+      );
+    });
+  });
+
+  it("rejects a local reusable workflow reference that cannot be inventoried", async () => {
+    const source = `name: missing-reusable\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/missing-image-builder.yml\n`;
+
+    await withWorkflowSources({ "missing-reusable.yml": source }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /missing|local reusable|inventory/i,
+      );
+    });
   });
 });
 
