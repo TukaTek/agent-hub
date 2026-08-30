@@ -130,6 +130,7 @@ export function validateProductionPreflight(input: PreflightInput): PreflightRes
   checks.push(validateOrigins(input.env));
   checks.push(validateBackup(input.env));
   checks.push(validateRevision(input));
+  checks.push(validateUpdaterRevision(input));
   checks.push(
     input.host.totalMemoryBytes >= MIN_MEMORY_BYTES
       ? ok("host-memory", "at-least-4-gib")
@@ -326,6 +327,35 @@ function validateRevision(input: PreflightInput): PreflightCheck {
   return ok("source-revision", "exact-source-addressed-image");
 }
 
+function validateUpdaterRevision(input: PreflightInput): PreflightCheck {
+  if (!updaterEnabled(input.env)) return ok("updater-source-revision", "disabled");
+  const revision = input.env.GIT_SHA;
+  const image = input.env.RAKAZO_UPDATER_IMAGE;
+  const tag = input.env.RAKAZO_UPDATER_IMAGE_TAG;
+  const expectedImage = expectedUpdaterImage(input.env.RAKAZO_IMAGE);
+  if (
+    !revision ||
+    !FULL_GIT_REVISION.test(revision) ||
+    !expectedImage ||
+    image !== expectedImage ||
+    image !== image?.trim() ||
+    image?.includes("@") === true ||
+    tag !== `sha-${revision}`
+  ) {
+    return invalid("updater-source-revision", "image-not-source-addressed-sibling");
+  }
+  return ok("updater-source-revision", "exact-source-addressed-sibling-image");
+}
+
+function expectedUpdaterImage(applicationImage: string | undefined): string | undefined {
+  if (!applicationImage?.endsWith("/app")) return undefined;
+  return `${applicationImage.slice(0, -"/app".length)}/updater`;
+}
+
+function updaterEnabled(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.RAKAZO_UPDATER_TOKEN);
+}
+
 function validateComposePorts(model: ComposeModel): PreflightCheck {
   const services = model.services;
   const required = ["postgres", "api", "worker", "web", "caddy"];
@@ -410,6 +440,12 @@ function validateComposeRuntime(input: PreflightInput): PreflightCheck {
   if (input.compose.services.web?.image !== expectedImage) {
     return invalid("compose-runtime-identity", "web-image-drift");
   }
+  if (updaterEnabled(input.env)) {
+    const expectedUpdater = `${input.env.RAKAZO_UPDATER_IMAGE}:${input.env.RAKAZO_UPDATER_IMAGE_TAG}`;
+    if (input.compose.services.updater?.image !== expectedUpdater) {
+      return invalid("compose-runtime-identity", "enabled-updater-image-drift");
+    }
+  }
   const expectedHost = input.env.RAKAZO_HOST;
   if (
     input.compose.services.web?.environment?.RAKAZO_HOST !== expectedHost ||
@@ -417,7 +453,7 @@ function validateComposeRuntime(input: PreflightInput): PreflightCheck {
   ) {
     return invalid("compose-runtime-identity", "public-host-drift");
   }
-  return ok("compose-runtime-identity", "api-worker-identical");
+  return ok("compose-runtime-identity", "runtime-images-and-identity-match");
 }
 
 function ok(subject: string, detail: string): PreflightCheck {

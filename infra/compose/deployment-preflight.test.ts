@@ -20,6 +20,7 @@ const validSecrets = {
   SCREEN_PROXY_SECRET: deterministicSecretFixture("screen"),
   CORTEXAI_BACKUP_ENCRYPTION_KEY: deterministicSecretFixture("backup"),
   E2B_API_KEY: deterministicSecretFixture("provider"),
+  RAKAZO_UPDATER_TOKEN: deterministicSecretFixture("updater"),
 };
 
 function composeModel(): ComposeModel {
@@ -41,7 +42,7 @@ function composeModel(): ComposeModel {
         environment: { RAKAZO_HOST: "app.example.test" },
         networks: ["edge", "app"],
       },
-      updater: { image: "ghcr.io/example/updater:sha-safe", networks: ["control"] },
+      updater: { image: `ghcr.io/example/updater:sha-${revision}`, networks: ["control"] },
       caddy: {
         image: "caddy:2@sha256:def",
         environment: { RAKAZO_HOST: "app.example.test" },
@@ -70,6 +71,8 @@ function validInput(): PreflightInput {
       CORTEXAI_BACKUP_TARGET: "s3://fake-backup-bucket/tenant-a",
       RAKAZO_IMAGE: "ghcr.io/example/app",
       RAKAZO_IMAGE_TAG: `sha-${revision}`,
+      RAKAZO_UPDATER_IMAGE: "ghcr.io/example/updater",
+      RAKAZO_UPDATER_IMAGE_TAG: `sha-${revision}`,
       GIT_SHA: revision,
       ...validSecrets,
     },
@@ -212,6 +215,35 @@ describe("validateProductionPreflight", () => {
     const input = validInput();
     input.host.sourceIndexFlagsClear = false;
     expect(failureSubjects(input)).toContain("source-revision");
+  });
+
+  it("rejects an enabled updater image outside the application registry and namespace", () => {
+    const input = validInput();
+    input.env.RAKAZO_UPDATER_IMAGE = "attacker.invalid/root";
+    input.compose.services.updater!.image = `attacker.invalid/root:sha-${revision}`;
+    expect(failureSubjects(input)).toContain("updater-source-revision");
+  });
+
+  it("rejects a moving tag for an enabled updater even when the rendered image agrees", () => {
+    const input = validInput();
+    input.env.RAKAZO_UPDATER_IMAGE_TAG = "latest";
+    input.compose.services.updater!.image = "ghcr.io/example/updater:latest";
+    expect(failureSubjects(input)).toContain("updater-source-revision");
+  });
+
+  it("rejects rendered enabled-updater image drift from immutable environment pins", () => {
+    const input = validInput();
+    input.compose.services.updater!.image = "attacker.invalid/root:latest";
+    expect(failureSubjects(input)).toContain("compose-runtime-identity");
+  });
+
+  it("keeps updater image pins optional when the opt-in sidecar is disabled", () => {
+    const input = validInput();
+    delete input.env.RAKAZO_UPDATER_TOKEN;
+    delete input.env.RAKAZO_UPDATER_IMAGE;
+    delete input.env.RAKAZO_UPDATER_IMAGE_TAG;
+    input.compose.services.updater!.image = "unused.invalid/updater:local";
+    expect(validateProductionPreflight(input).ok).toBe(true);
   });
 
   it.each([
