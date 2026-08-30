@@ -17,7 +17,7 @@ import { deterministicSecretFixture } from "./secret-fixtures.js";
 const revision = "22d7eb598c3cc72c047025df6d7a72d3612067a9";
 const deploymentId = "0198f2ce-7d11-7a41-8b5c-7d1dfd62c551";
 
-it("executes the production restore topology with the exact verified backup payloads", () => {
+it("fails before an avoidable outage when PostgreSQL stays unready, then restores after recovery", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "caah-19-production-restore-"));
   try {
     const project = path.join(directory, "project");
@@ -68,7 +68,9 @@ it("executes the production restore topology with the exact verified backup payl
       `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$RAKAZO_DOCKER_LOG"
-if [[ "$*" == *"pg_restore --clean"* ]]; then
+if [[ "$*" == *"pg_isready"* && "\${RAKAZO_DATABASE_READY:-ready}" != "ready" ]]; then
+  exit 1
+elif [[ "$*" == *"pg_restore --clean"* ]]; then
   /bin/cat > "$RAKAZO_DATABASE_CAPTURE"
 elif [[ "$*" == *"run --rm --no-deps"* ]]; then
   /bin/cat > "$RAKAZO_APPDATA_CAPTURE"
@@ -77,30 +79,70 @@ fi
       { mode: 0o700 },
     );
 
-    const result = spawnSync("bash", [path.join(composeDirectory, "restore-prod.sh"), snapshot], {
+    const command = [path.join(composeDirectory, "restore-prod.sh"), snapshot];
+    const restoreEnvironment = {
+      ...process.env,
+      ...environment,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      RAKAZO_PROJECT_DIR: project,
+      RAKAZO_DOCKER_LOG: dockerLog,
+      RAKAZO_DATABASE_CAPTURE: databaseCapture,
+      RAKAZO_APPDATA_CAPTURE: appdataCapture,
+      RAKAZO_RESTORE_DB_READY_ATTEMPTS: "1",
+    };
+    const unavailable = spawnSync("bash", command, {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        ...environment,
-        PATH: `${fakeBin}:${process.env.PATH}`,
-        RAKAZO_PROJECT_DIR: project,
-        RAKAZO_DOCKER_LOG: dockerLog,
-        RAKAZO_DATABASE_CAPTURE: databaseCapture,
-        RAKAZO_APPDATA_CAPTURE: appdataCapture,
-      },
+      env: { ...restoreEnvironment, RAKAZO_DATABASE_READY: "never" },
+      timeout: 2_000,
+    });
+
+    const unavailableCommands = readFileSync(dockerLog, "utf8");
+    expect(
+      unavailable.status,
+      `${unavailable.stdout}\n${unavailable.stderr}\n${unavailableCommands}`,
+    ).toBe(1);
+    expect(unavailable.error).toBeUndefined();
+    expect(unavailable.stderr).toContain("PostgreSQL did not become ready after 1 attempt");
+    expect(unavailable.stderr).toContain("application services were not stopped");
+    expect(unavailableCommands).toContain("up -d postgres");
+    expect(unavailableCommands).not.toContain("stop caddy web worker api");
+    expect(unavailableCommands).not.toContain("pg_restore --clean");
+
+    writeFileSync(dockerLog, "", { mode: 0o600 });
+    const recovered = spawnSync("bash", command, {
+      encoding: "utf8",
+      env: { ...restoreEnvironment, RAKAZO_DATABASE_READY: "ready" },
+      timeout: 2_000,
     });
 
     const commands = readFileSync(dockerLog, "utf8");
-    expect(result.status, `${result.stdout}\n${result.stderr}\n${commands}`).toBe(0);
+    expect(recovered.status, `${recovered.stdout}\n${recovered.stderr}\n${commands}`).toBe(0);
     expect(
       readFileSync(databaseCapture),
-      `${result.stdout}\n${result.stderr}\n${commands}`,
+      `${recovered.stdout}\n${recovered.stderr}\n${commands}`,
     ).toEqual(databaseBytes);
     expect(readFileSync(appdataCapture), commands).toEqual(appdataBytes);
     expect(commands).toContain("docker-compose.prod.yml");
+    expect(commands.indexOf("up -d postgres")).toBeLessThan(
+      commands.indexOf("stop caddy web worker api"),
+    );
     expect(commands).toContain("pg_restore --clean --if-exists");
     expect(commands).toContain("run --rm --no-deps --entrypoint sh api");
     expect(commands).not.toContain("infra/compose/docker-compose.yml");
+
+    writeFileSync(dockerLog, "", { mode: 0o600 });
+    const invalidPolicy = spawnSync("bash", command, {
+      encoding: "utf8",
+      env: {
+        ...restoreEnvironment,
+        RAKAZO_DATABASE_READY: "ready",
+        RAKAZO_RESTORE_DB_READY_ATTEMPTS: "0",
+      },
+      timeout: 2_000,
+    });
+    expect(invalidPolicy.status, invalidPolicy.stderr).toBe(2);
+    expect(invalidPolicy.stderr).toContain("integer from 1 through 300");
+    expect(readFileSync(dockerLog, "utf8")).toBe("");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
