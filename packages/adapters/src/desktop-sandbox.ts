@@ -735,7 +735,16 @@ function childPathViaDirFd(fd: number, name: string) {
 }
 
 async function realpathFromFd(fd: number) {
-  if (process.platform === "linux") return realpath(`/proc/self/fd/${fd}`);
+  if (process.platform === "linux") {
+    try {
+      return await realpath(`/proc/self/fd/${fd}`);
+    } catch (error) {
+      // Some Linux sandboxes do not mount procfs. Preserve the pathname-only
+      // fail-closed checks there, but do not hide any other fd lookup failure.
+      if (hasErrorCode(error, "ENOENT")) return undefined;
+      throw error;
+    }
+  }
   if (process.platform === "win32") {
     try {
       return pathFromDirectoryFd(fd);

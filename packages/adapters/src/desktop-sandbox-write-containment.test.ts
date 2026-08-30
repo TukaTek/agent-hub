@@ -19,7 +19,12 @@ const lstatRace = vi.hoisted(() => ({
   afterRealpath: undefined as undefined | ((target: string) => Promise<void>),
 }));
 const directoryScan = vi.hoisted(() => ({
+  calls: 0,
   entries: undefined as string[] | undefined,
+}));
+const fileDescriptorPath = vi.hoisted(() => ({
+  forcePathnameFallback: false,
+  lookups: 0,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -40,6 +45,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return result;
     },
     opendir: async (target: string, options?: Parameters<typeof actual.opendir>[1]) => {
+      directoryScan.calls += 1;
       if (!directoryScan.entries) return actual.opendir(target, options);
       const entries = directoryScan.entries;
       return {
@@ -49,6 +55,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       } as Awaited<ReturnType<typeof actual.opendir>>;
     },
     realpath: async (target: string) => {
+      if (target.startsWith("/proc/self/fd/")) {
+        fileDescriptorPath.lookups += 1;
+        if (fileDescriptorPath.forcePathnameFallback) {
+          throw Object.assign(
+            new Error(`ENOENT: no such file or directory, realpath '${target}'`),
+            {
+              code: "ENOENT",
+            },
+          );
+        }
+      }
       const result = await actual.realpath(target);
       await lstatRace.afterRealpath?.(target);
       return result;
@@ -70,7 +87,10 @@ const roots: string[] = [];
 afterEach(async () => {
   lstatRace.after = undefined;
   lstatRace.afterRealpath = undefined;
+  directoryScan.calls = 0;
   directoryScan.entries = undefined;
+  fileDescriptorPath.forcePathnameFallback = false;
+  fileDescriptorPath.lookups = 0;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -139,6 +159,7 @@ describe("desktop sandbox write containment without O_NOFOLLOW", () => {
     const outside = path.join(root, "outside.txt");
     await writeFile(target, "inside-before");
     await writeFile(outside, "outside-before");
+    fileDescriptorPath.forcePathnameFallback = true;
     directoryScan.entries = Array.from({ length: 4_097 }, (_, index) => `missing-${index}`);
     let swapped = false;
     lstatRace.after = async (inspected) => {
@@ -155,10 +176,43 @@ describe("desktop sandbox write containment without O_NOFOLLOW", () => {
       }),
     ).rejects.toThrow("Path escapes the computer workspace");
     expect(swapped).toBe(true);
+    expect(directoryScan.calls).toBe(1);
     expect(await readFile(outside, "utf8")).toBe("outside-before");
     expect(await readFile(displaced, "utf8")).toBe("inside-before");
     expect(await readlink(target)).toBe(outside);
   });
+
+  it.runIf(process.platform === "linux")(
+    "uses fd-bound containment for a relocated inode without scanning its directory",
+    async () => {
+      const { root, desktop, computer } = await fixture("fd-bound-relocation");
+      const target = path.join(computer.providerRef, "result.txt");
+      const displaced = path.join(computer.providerRef, "result-original.txt");
+      const outside = path.join(root, "outside.txt");
+      await writeFile(target, "inside-before");
+      await writeFile(outside, "outside-before");
+      directoryScan.entries = Array.from({ length: 4_097 }, (_, index) => `missing-${index}`);
+      let swapped = false;
+      lstatRace.after = async (inspected) => {
+        if (swapped || path.basename(inspected) !== "result.txt") return;
+        swapped = true;
+        await rename(target, displaced);
+        await symlink(outside, target);
+      };
+
+      await desktop.writeFile(computer, {
+        path: "result.txt",
+        content: new TextEncoder().encode("after"),
+      });
+
+      expect(swapped).toBe(true);
+      expect(fileDescriptorPath.lookups).toBeGreaterThan(0);
+      expect(directoryScan.calls).toBe(0);
+      expect(await readFile(outside, "utf8")).toBe("outside-before");
+      expect(await readFile(displaced, "utf8")).toBe("after");
+      expect(await readlink(target)).toBe(outside);
+    },
+  );
 
   it("rejects a parent symlink that resolves outside the workspace", async () => {
     const { root, desktop, computer } = await fixture("parent-link");
