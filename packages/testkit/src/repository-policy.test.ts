@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -161,6 +161,21 @@ async function withRepositoryFiles(files: Record<string, string>, assertion: () 
   }
 }
 
+async function withExecutableRepositoryFiles(
+  files: Record<string, string>,
+  executablePaths: string[],
+  assertion: () => Promise<void>,
+) {
+  await withRepositoryFiles(files, async () => {
+    if (process.platform !== "win32") {
+      for (const filename of executablePaths) {
+        await chmod(path.join(repositoryFixtureRoot, filename), 0o755);
+      }
+    }
+    await assertion();
+  });
+}
+
 async function regenerateExecutableSurfaceManifest() {
   const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
     writeExecutableSurfaceManifest?: (root: string) => Promise<void>;
@@ -174,6 +189,19 @@ async function executableSurfaceManifestGenerator() {
   };
   expect(policy.createExecutableSurfaceManifest).toBeTypeOf("function");
   return policy.createExecutableSurfaceManifest;
+}
+
+async function executableSurfaceManifestWriter() {
+  const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
+    writeExecutableSurfaceManifest?: (root: string) => Promise<unknown>;
+  };
+  expect(policy.writeExecutableSurfaceManifest).toBeTypeOf("function");
+  return policy.writeExecutableSurfaceManifest;
+}
+
+function executableSurfacePaths(manifest: unknown) {
+  const value = manifest as { surfaces?: Array<{ path?: unknown }> };
+  return (value.surfaces ?? []).map((surface) => surface.path);
 }
 
 function actionBuildWorkflow(context?: unknown) {
@@ -808,6 +836,245 @@ describe("content-addressed executable surface and image build policy", () => {
     );
   });
 
+  it("content-binds a quoted extensionless direct workflow wrapper with spaces", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: '\"./scripts/nested wrappers/ci wrapper\"'",
+    );
+    const wrapper = "scripts/nested wrappers/ci wrapper";
+
+    await withExecutableRepositoryFiles(
+      {
+        ".github/workflows/ci.yml": mutatedWorkflow,
+        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
+      },
+      [wrapper],
+      async () => {
+        await regenerateExecutableSurfaceManifest();
+        expect(executableSurfacePaths(await createManifest(repositoryFixtureRoot))).toContain(
+          wrapper,
+        );
+        await writeFile(
+          path.join(repositoryFixtureRoot, wrapper),
+          "#!/usr/bin/env sh\ndocker build .\n",
+        );
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      },
+    );
+  });
+
+  it("content-binds a normalized extensionless direct path from a reached package script", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const packageSource = await readFile(path.join(root, "package.json"), "utf8");
+    const mutatedPackage = mutateRequired(
+      packageSource,
+      '"test:integration": "tsx packages/testkit/src/cli/harness.ts --integration"',
+      '"test:integration": "scripts/./nested/ci-wrapper"',
+    );
+    const wrapper = "scripts/nested/ci-wrapper";
+
+    await withExecutableRepositoryFiles(
+      {
+        "package.json": mutatedPackage,
+        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
+      },
+      [wrapper],
+      async () => {
+        await regenerateExecutableSurfaceManifest();
+        expect(executableSurfacePaths(await createManifest(repositoryFixtureRoot))).toContain(
+          wrapper,
+        );
+        await writeFile(
+          path.join(repositoryFixtureRoot, wrapper),
+          "#!/usr/bin/env sh\ndocker build .\n",
+        );
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      },
+    );
+  });
+
+  it("recursively content-binds nested extensionless direct wrappers from a referenced script", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: sh scripts/direct-wrapper-entry.sh",
+    );
+    const outer = "scripts/nested-direct/outer";
+    const inner = "scripts/nested-direct/deeper/inner";
+
+    await withExecutableRepositoryFiles(
+      {
+        ".github/workflows/ci.yml": mutatedWorkflow,
+        "scripts/direct-wrapper-entry.sh": `#!/usr/bin/env sh\n./${outer}\n`,
+        [outer]: `./${inner}\n`,
+        [inner]: "#!/usr/bin/env sh\nexit 0\n",
+      },
+      [outer, inner],
+      async () => {
+        await regenerateExecutableSurfaceManifest();
+        const surfaces = executableSurfacePaths(await createManifest(repositoryFixtureRoot));
+        expect(surfaces).toContain(outer);
+        expect(surfaces).toContain(inner);
+        await writeFile(
+          path.join(repositoryFixtureRoot, inner),
+          "#!/usr/bin/env sh\ndocker build .\n",
+        );
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /content|digest|executable-surface manifest/i,
+        );
+      },
+    );
+  });
+
+  it("resolves an explicit parent path inside the root from a nested workflow directory", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: ../../scripts/./parent-wrapper\n        working-directory: apps/web",
+    );
+    const wrapper = "scripts/parent-wrapper";
+
+    await withExecutableRepositoryFiles(
+      {
+        ".github/workflows/ci.yml": mutatedWorkflow,
+        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
+      },
+      [wrapper],
+      async () => {
+        const manifest = await createManifest(repositoryFixtureRoot);
+        expect(executableSurfacePaths(manifest)).toContain(wrapper);
+      },
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "fails closed when a directly executed repository wrapper is not executable",
+    async () => {
+      const createManifest = await executableSurfaceManifestGenerator();
+      if (!createManifest) return;
+      const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+      const mutatedWorkflow = mutateRequired(
+        workflow,
+        "      - run: pnpm lint",
+        "      - run: ./scripts/non-executable-wrapper",
+      );
+
+      await withRepositoryFiles(
+        {
+          ".github/workflows/ci.yml": mutatedWorkflow,
+          "scripts/non-executable-wrapper": "#!/usr/bin/env sh\nexit 0\n",
+        },
+        async () => {
+          await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(
+            /executable|permission|mode/i,
+          );
+        },
+      );
+    },
+  );
+
+  it("does not require executable permission when an explicit wrapper is passed to an interpreter", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: sh ./scripts/interpreted-wrapper",
+    );
+    const wrapper = "scripts/interpreted-wrapper";
+
+    await withRepositoryFiles(
+      {
+        ".github/workflows/ci.yml": mutatedWorkflow,
+        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
+      },
+      async () => {
+        expect(executableSurfacePaths(await createManifest(repositoryFixtureRoot))).toContain(
+          wrapper,
+        );
+      },
+    );
+  });
+
+  it.each([
+    ["missing", "./scripts/missing-direct-wrapper", /missing|unresolved/i],
+    ["outside-root", "../outside-direct-wrapper", /outside|repository root/i],
+  ])("fails closed on a %s explicit direct wrapper", async (_name, command, expectedError) => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      `      - run: ${command}`,
+    );
+
+    await withRepositoryFiles({ ".github/workflows/ci.yml": mutatedWorkflow }, async () => {
+      await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(expectedError);
+    });
+  });
+
+  it("fails closed on a symlinked explicit direct wrapper", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: ./scripts/symlinked-direct-wrapper",
+    );
+    const outside = path.join(repositoryFixtureParent, "outside-direct-wrapper");
+    const wrapper = path.join(repositoryFixtureRoot, "scripts/symlinked-direct-wrapper");
+    await writeFile(path.join(repositoryFixtureRoot, ".github/workflows/ci.yml"), mutatedWorkflow);
+    await writeFile(outside, "#!/usr/bin/env sh\nexit 0\n");
+    await symlink(outside, wrapper);
+
+    try {
+      await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/symlink/i);
+    } finally {
+      await rm(wrapper, { force: true });
+      await rm(outside, { force: true });
+      await writeFile(path.join(repositoryFixtureRoot, ".github/workflows/ci.yml"), workflow);
+    }
+  });
+
+  it("fails closed when an explicit direct wrapper is not a regular file", async () => {
+    const createManifest = await executableSurfaceManifestGenerator();
+    if (!createManifest) return;
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const mutatedWorkflow = mutateRequired(
+      workflow,
+      "      - run: pnpm lint",
+      "      - run: ./scripts/direct-wrapper-directory",
+    );
+    const directory = path.join(repositoryFixtureRoot, "scripts/direct-wrapper-directory");
+
+    await withRepositoryFiles({ ".github/workflows/ci.yml": mutatedWorkflow }, async () => {
+      await mkdir(directory, { recursive: true });
+      try {
+        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/regular file/i);
+      } finally {
+        await rm(directory, { force: true, recursive: true });
+      }
+    });
+  });
+
   it("content-binds local action manifests and entrypoints", async () => {
     await withRepositoryFiles(
       {
@@ -970,6 +1237,143 @@ describe("content-addressed executable surface and image build policy", () => {
         );
       },
     );
+  });
+
+  it.each([
+    [
+      "root",
+      (source: string) =>
+        mutateRequired(
+          source,
+          '{\n  "schemaVersion": 1,',
+          '{\n  "schemaVersion": 999,\n  "schemaVersion": 1,',
+        ),
+    ],
+    [
+      "nested workflow object",
+      (source: string) =>
+        mutateRequired(
+          source,
+          '{\n      "path": ".github/workflows/ci.yml",',
+          '{\n      "path": "ignored.yml",\n      "path": ".github/workflows/ci.yml",',
+        ),
+    ],
+    [
+      "nested surface object",
+      (source: string) =>
+        mutateRequired(
+          source,
+          '{\n      "path": ".dockerignore",',
+          '{\n      "path": "ignored",\n      "path": ".dockerignore",',
+        ),
+    ],
+    [
+      "escaped-equivalent root key",
+      (source: string) =>
+        mutateRequired(
+          source,
+          '{\n  "schemaVersion": 1,',
+          '{\n  "schema\\u0056ersion": 999,\n  "schemaVersion": 1,',
+        ),
+    ],
+  ])(
+    "rejects a duplicate JSON key at the %s and keeps check mode read-only",
+    async (_name, mutate) => {
+      await regenerateExecutableSurfaceManifest();
+      const source = await readFile(
+        path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"),
+        "utf8",
+      );
+      const malformed = mutate(source);
+
+      await withRepositoryFiles({ ".github/ci-executable-surface.json": malformed }, async () => {
+        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+          /duplicate.*key|invalid.*manifest/i,
+        );
+        await expect(
+          readFile(path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"), "utf8"),
+        ).resolves.toBe(malformed);
+      });
+    },
+  );
+
+  it.each([
+    ["malformed JSON", (source: string) => source.slice(0, -2)],
+    ["trailing content", (source: string) => `${source}true\n`],
+    ["a trailing comment", (source: string) => `${source}// not JSON\n`],
+  ])("rejects %s without changing the manifest", async (_name, mutate) => {
+    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
+    const malformed = mutate(source);
+
+    await withRepositoryFiles({ ".github/ci-executable-surface.json": malformed }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /invalid.*manifest|JSON|position|unexpected|trailing/i,
+      );
+      await expect(
+        readFile(path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"), "utf8"),
+      ).resolves.toBe(malformed);
+    });
+  });
+
+  it("does not treat key-like text inside a valid JSON string as an object key", async () => {
+    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
+    const stale = mutateRequired(
+      source,
+      '"image build context config"',
+      '"text containing \\"schemaVersion\\": 999 is still a string"',
+    );
+
+    await withRepositoryFiles({ ".github/ci-executable-surface.json": stale }, async () => {
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
+        /manifest drift|metadata drift/i,
+      );
+    });
+  });
+
+  it.each([
+    [
+      "duplicate-key",
+      (source: string) =>
+        mutateRequired(
+          source,
+          '{\n  "schemaVersion": 1,',
+          '{\n  "schemaVersion": 999,\n  "schemaVersion": 1,',
+        ),
+      /duplicate.*key|invalid.*manifest/i,
+    ],
+    [
+      "malformed",
+      (source: string) => `${source}// comment\n`,
+      /invalid.*manifest|JSON|unexpected/i,
+    ],
+  ])("refuses to regenerate over an existing %s manifest", async (_name, mutate, expectedError) => {
+    const writeManifest = await executableSurfaceManifestWriter();
+    if (!writeManifest) return;
+    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
+    const malformed = mutate(source);
+
+    await withRepositoryFiles({ ".github/ci-executable-surface.json": malformed }, async () => {
+      await expect(writeManifest(repositoryFixtureRoot)).rejects.toThrow(expectedError);
+      await expect(
+        readFile(path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"), "utf8"),
+      ).resolves.toBe(malformed);
+    });
+  });
+
+  it("allows explicit regeneration to replace a valid stale manifest", async () => {
+    const writeManifest = await executableSurfaceManifestWriter();
+    if (!writeManifest) return;
+    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
+    const stale = mutateRequired(
+      source,
+      '"sha256": "f5738dbf76bd9a9ea32b3d4eab7b44048f9555e7619a6f4adce9092623469c86"',
+      `"sha256": "${"0".repeat(64)}"`,
+    );
+
+    await withRepositoryFiles({ ".github/ci-executable-surface.json": stale }, async () => {
+      await expect(writeManifest(repositoryFixtureRoot)).resolves.toBeDefined();
+      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toBeDefined();
+    });
   });
 
   it.each([
@@ -1276,6 +1680,50 @@ describe("CODEOWNERS policy", () => {
 
     expect(effectiveCodeowners(parseCodeowners(source), probe)).toEqual(["@acepgh"]);
     expect(() => assertProtectedCodeowners(source, [probe], "@acepgh")).not.toThrow();
+  });
+
+  it("protects the complete present and future root script surface without weakening other executables", async () => {
+    const source = await readFile(path.join(root, ".github/CODEOWNERS"), "utf8");
+    const rules = parseCodeowners(source);
+    const scriptBoundary = [
+      "scripts/future-extensionless-wrapper",
+      "scripts/nested/future wrapper",
+      "scripts/repository-policy.mjs",
+      "scripts/backup.sh",
+    ];
+    const nonScriptBoundary = [
+      ".github/workflows/ci.yml",
+      ".github/actions/future/action.yml",
+      "package.json",
+      "infra/updater/Dockerfile",
+      "packages/adapters/src/desktop-sandbox.ts",
+    ];
+
+    expect(source.match(/^\/scripts\/\*\* @acepgh$/gmu)).toHaveLength(1);
+    for (const protectedPath of [...scriptBoundary, ...nonScriptBoundary]) {
+      expect(effectiveCodeowners(rules, protectedPath), protectedPath).toEqual(["@acepgh"]);
+    }
+    expect(() =>
+      assertProtectedCodeowners(source, [...scriptBoundary, ...nonScriptBoundary], "@acepgh"),
+    ).not.toThrow();
+  });
+
+  it("rejects omission, later overrides, and duplicate rules for the root script surface", async () => {
+    const source = await readFile(path.join(root, ".github/CODEOWNERS"), "utf8");
+    const probes = ["scripts/future-extensionless-wrapper", "scripts/nested/future wrapper"];
+    const omitted = mutateRequired(source, "/scripts/** @acepgh\n", "");
+
+    expect(() => assertProtectedCodeowners(omitted, probes, "@acepgh")).toThrow(/scripts/i);
+    for (const override of [
+      "* @someone-else\n",
+      "/scripts/future-extensionless-wrapper @someone-else\n",
+      "/scripts/nested/** @someone-else\n",
+    ]) {
+      expect(() => assertProtectedCodeowners(`${source}\n${override}`, probes, "@acepgh")).toThrow(
+        /scripts/i,
+      );
+    }
+    expect(() => parseCodeowners(`${source}\n/scripts/** @acepgh\n`)).toThrow(/duplicate/i);
   });
 });
 

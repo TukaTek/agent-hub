@@ -185,13 +185,7 @@ const PROTECTED_FILE_GLOBS = [
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
   "**/package.json",
-  "scripts/repository-policy.mjs",
-  "scripts/gitleaks-canary.mjs",
-  "scripts/gitleaks-history.mjs",
-  "scripts/gitleaks-scan.mjs",
-  "scripts/{backup,restore}.sh",
-  "scripts/publish-playwright-report.sh",
-  GITLEAKS_CANARY_PATH,
+  "scripts/**",
   "packages/testkit/src/gitleaks-history.test.ts",
   "packages/testkit/src/repository-policy.test.ts",
   "infra/compose/**",
@@ -242,7 +236,11 @@ const REQUIRED_PROTECTED_PATHS = [
   ...DESKTOP_SANDBOX_PROTECTED_PATHS,
 ];
 
-const REQUIRED_OWNERSHIP_PROBES = [".github/actions/example/action.yml"];
+const REQUIRED_OWNERSHIP_PROBES = [
+  ".github/actions/example/action.yml",
+  "scripts/future-extensionless-wrapper",
+  "scripts/nested/future wrapper",
+];
 
 export function assertPinnedWorkflowSource(source, filename) {
   const workflow = parseWorkflowSource(source, filename);
@@ -462,8 +460,6 @@ function assertReusableWorkflowInventory(workflows) {
 const EXECUTABLE_SURFACE_SCHEMA_VERSION = 1;
 const STATIC_REPOSITORY_FILE =
   /(?:^|[\s'"=(])((?:scripts|packages|apps|infra)\/[A-Za-z0-9_./-]+\.(?:cjs|js|mjs|ps1|py|rb|sh|ts|tsx))(?=$|[\s'"),;])/gu;
-const STATIC_EXECUTOR_TARGET =
-  /\b(?:bash|bun|dash|node|python3?|sh|tsx|zsh)\s+(?:-[^\s]+\s+)*["']?((?:scripts|packages|apps|infra)\/[A-Za-z0-9_./-]+)["']?/gu;
 const STATIC_LOCAL_MODULE =
   /^\s*(?:import\s*(?:[^"'`\n]*?\sfrom\s*)?|export\s+[^"'`\n]*?\sfrom\s*|\}\s*from\s*)["'](\.{1,2}\/[^"'`]+)["']/gmu;
 const STATIC_LOCAL_LOADER =
@@ -471,6 +467,19 @@ const STATIC_LOCAL_LOADER =
 const DYNAMIC_EXECUTION_TARGET =
   /\b(?:bash|bun|dash|node|python3?|sh|tsx|zsh)\s+(?:-[A-Za-z0-9-]+\s+)*(?:["']?\$\{\{|["']?\$[A-Za-z_])/u;
 const PACKAGE_MANAGER_FILES = [".npmrc", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
+const STATIC_EXECUTORS = new Set([
+  "bash",
+  "bun",
+  "dash",
+  "node",
+  "python",
+  "python2",
+  "python3",
+  "sh",
+  "tsx",
+  "zsh",
+]);
+const REPOSITORY_PATH_PREFIXES = [".github/", "apps/", "infra/", "packages/", "scripts/"];
 
 function sha256(source) {
   return createHash("sha256").update(source).digest("hex");
@@ -497,6 +506,159 @@ function stripStaticQuotes(value) {
 
 function staticWords(source) {
   return (source.match(/"[^"]*"|'[^']*'|[^\s]+/gu) ?? []).map(stripStaticQuotes).filter(Boolean);
+}
+
+function staticCommandSegments(source) {
+  return source
+    .replace(/\\\r?\n/gu, " ")
+    .split(/\r?\n|&&|\|\||[;|]/u)
+    .map((segment) => staticWords(segment))
+    .filter((words) => words.length > 0);
+}
+
+function isRepositoryExecutionPath(value) {
+  const candidate = stripStaticQuotes(value).replaceAll("\\", "/");
+  return (
+    candidate.startsWith("./") ||
+    candidate.startsWith("../") ||
+    REPOSITORY_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))
+  );
+}
+
+function directRepositoryExecutionTargets(source) {
+  const targets = [];
+  for (const words of staticCommandSegments(source)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=.*\$\(/u.test(words[0] ?? "")) continue;
+    let index = 0;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[index] ?? "")) index += 1;
+
+    if (words[index] === "command" || words[index] === "exec") {
+      index += 1;
+      while (words[index]?.startsWith("-")) index += 1;
+    } else if (words[index] === "env" || words[index] === "cross-env") {
+      index += 1;
+      while (
+        words[index]?.startsWith("-") ||
+        /^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[index] ?? "")
+      ) {
+        index += 1;
+      }
+    }
+
+    const candidate = words[index];
+    if (candidate && isRepositoryExecutionPath(candidate)) targets.push(candidate);
+  }
+  return targets;
+}
+
+function interpretedRepositoryExecutionTargets(source) {
+  const targets = [];
+  for (const words of staticCommandSegments(source)) {
+    for (const [index, word] of words.entries()) {
+      if (!STATIC_EXECUTORS.has(word)) continue;
+      const candidate = words.slice(index + 1).find(isRepositoryExecutionPath);
+      if (candidate) targets.push(candidate);
+    }
+  }
+  return targets;
+}
+
+export function parseStrictJson(source, filename = "JSON input") {
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch (error) {
+    throw new Error(
+      `${filename}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  let offset = 0;
+  function skipWhitespace() {
+    while (/\s/u.test(source[offset] ?? "")) offset += 1;
+  }
+
+  function readString() {
+    const start = offset;
+    offset += 1;
+    while (offset < source.length) {
+      if (source[offset] === "\\") {
+        offset += 2;
+        continue;
+      }
+      if (source[offset] === '"') {
+        offset += 1;
+        return JSON.parse(source.slice(start, offset));
+      }
+      offset += 1;
+    }
+    throw new Error(`${filename}: invalid JSON string`);
+  }
+
+  function readValue() {
+    skipWhitespace();
+    if (source[offset] === "{") {
+      readObject();
+      return;
+    }
+    if (source[offset] === "[") {
+      readArray();
+      return;
+    }
+    if (source[offset] === '"') {
+      readString();
+      return;
+    }
+    while (offset < source.length && !/[\s,\]}]/u.test(source[offset])) offset += 1;
+  }
+
+  function readObject() {
+    offset += 1;
+    skipWhitespace();
+    const keys = new Set();
+    if (source[offset] === "}") {
+      offset += 1;
+      return;
+    }
+    while (offset < source.length) {
+      skipWhitespace();
+      const key = readString();
+      if (keys.has(key)) {
+        throw new Error(`${filename}: duplicate JSON object key ${JSON.stringify(key)}`);
+      }
+      keys.add(key);
+      skipWhitespace();
+      offset += 1;
+      readValue();
+      skipWhitespace();
+      if (source[offset] === "}") {
+        offset += 1;
+        return;
+      }
+      offset += 1;
+    }
+  }
+
+  function readArray() {
+    offset += 1;
+    skipWhitespace();
+    if (source[offset] === "]") {
+      offset += 1;
+      return;
+    }
+    while (offset < source.length) {
+      readValue();
+      skipWhitespace();
+      if (source[offset] === "]") {
+        offset += 1;
+        return;
+      }
+      offset += 1;
+    }
+  }
+
+  readValue();
+  return parsed;
 }
 
 function manifestEntriesByPath(entries) {
@@ -631,7 +793,7 @@ export async function createExecutableSurfaceManifest(root) {
     return relative.replace(/^\.\//u, "");
   }
 
-  async function readSurface(relative, reason) {
+  async function readSurface(relative, reason, requireExecutable = false) {
     const normalized = normalizedRepositoryPath(relative);
     const absolute = path.resolve(canonicalRoot, normalized);
     if (absolute !== canonicalRoot && !absolute.startsWith(`${canonicalRoot}${path.sep}`)) {
@@ -644,6 +806,11 @@ export async function createExecutableSurfaceManifest(root) {
     }
     if (!info.isFile()) {
       throw new Error(`${reason}: executable surface must be a regular file: ${normalized}`);
+    }
+    if (requireExecutable && process.platform !== "win32" && (info.mode & 0o111) === 0) {
+      throw new Error(
+        `${reason}: directly executed first-party path lacks executable permission: ${normalized}`,
+      );
     }
     const resolved = await realpath(absolute);
     if (resolved !== canonicalRoot && !resolved.startsWith(`${canonicalRoot}${path.sep}`)) {
@@ -807,19 +974,29 @@ export async function createExecutableSurfaceManifest(root) {
       throw new Error(`${context.location}: dynamic first-party execution target is forbidden`);
     }
 
-    async function visitStaticCandidate(candidate) {
-      const packageRelative = context.baseDirectory
-        ? path.posix.join(context.baseDirectory, candidate)
-        : candidate;
-      const resolved = fileSet.has(packageRelative) ? packageRelative : candidate;
+    async function visitStaticCandidate(candidate, requireExecutable = false) {
+      const explicitlyRelative = candidate.startsWith("./") || candidate.startsWith("../");
+      const packageRelative = repositoryPath(
+        candidate,
+        context.baseDirectory,
+        `${context.location}: first-party execution target`,
+      );
+      const resolved =
+        explicitlyRelative || fileSet.has(packageRelative) ? packageRelative : candidate;
       await visitFile(
         resolved,
         `${context.location}: static file reference`,
         context.baseDirectory,
+        false,
+        requireExecutable,
+        requireExecutable,
       );
     }
-    for (const match of source.matchAll(STATIC_EXECUTOR_TARGET)) {
-      await visitStaticCandidate(match[1]);
+    for (const candidate of directRepositoryExecutionTargets(source)) {
+      await visitStaticCandidate(candidate, true);
+    }
+    for (const candidate of interpretedRepositoryExecutionTargets(source)) {
+      await visitStaticCandidate(candidate);
     }
     for (const match of source.matchAll(STATIC_REPOSITORY_FILE)) {
       await visitStaticCandidate(match[1]);
@@ -844,12 +1021,19 @@ export async function createExecutableSurfaceManifest(root) {
     await addToolConfiguration(source, context.baseDirectory, context.location);
   }
 
-  async function visitFile(relative, reason, baseDirectory = "", followStaticModules = false) {
+  async function visitFile(
+    relative,
+    reason,
+    baseDirectory = "",
+    followStaticModules = false,
+    requireExecutable = false,
+    followExecutionReferences = false,
+  ) {
     const normalized = repositoryPath(relative, "", reason);
     const state = fileStates.get(normalized);
     if (state === "visiting")
       throw new Error(`First-party executable reference cycle at ${normalized}`);
-    const source = await readSurface(normalized, reason);
+    const source = await readSurface(normalized, reason, requireExecutable);
     if (state === "visited") return;
     fileStates.set(normalized, "visiting");
     const text = source.toString("utf8");
@@ -922,6 +1106,7 @@ export async function createExecutableSurfaceManifest(root) {
       }
     }
     if (
+      followExecutionReferences ||
       normalized.endsWith(".sh") ||
       path.posix.basename(normalized) === "Dockerfile" ||
       /^#![^\n]*\b(?:bash|dash|sh|zsh)\b/u.test(text)
@@ -1143,25 +1328,32 @@ export async function createExecutableSurfaceManifest(root) {
 }
 
 export async function writeExecutableSurfaceManifest(root) {
+  const filename = path.join(root, EXECUTABLE_SURFACE_MANIFEST_PATH);
+  try {
+    parseStrictJson(await readFile(filename, "utf8"), EXECUTABLE_SURFACE_MANIFEST_PATH);
+  } catch (error) {
+    if (!(error && typeof error === "object" && error.code === "ENOENT")) {
+      throw new Error(
+        `Refusing to regenerate over an invalid executable-surface manifest at ${EXECUTABLE_SURFACE_MANIFEST_PATH}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   const manifest = await createExecutableSurfaceManifest(root);
-  await writeFile(
-    path.join(root, EXECUTABLE_SURFACE_MANIFEST_PATH),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-  );
+  await writeFile(filename, `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
 
 export async function assertExecutableSurfaceManifest(root) {
-  const expected = await createExecutableSurfaceManifest(root);
   const filename = path.join(root, EXECUTABLE_SURFACE_MANIFEST_PATH);
   let actual;
   try {
-    actual = JSON.parse(await readFile(filename, "utf8"));
+    actual = parseStrictJson(await readFile(filename, "utf8"), EXECUTABLE_SURFACE_MANIFEST_PATH);
   } catch (error) {
     throw new Error(
       `Executable-surface manifest is missing or invalid at ${EXECUTABLE_SURFACE_MANIFEST_PATH}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  const expected = await createExecutableSurfaceManifest(root);
   if (!isDeepStrictEqual(actual, expected)) {
     throw new Error(
       `Executable-surface manifest drift in the CI executable and image build inventory: ${describeExecutableManifestDrift(actual, expected)}. Regenerate intentionally with \`pnpm policy:manifest\`.`,

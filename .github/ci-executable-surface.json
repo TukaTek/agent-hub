@@ -418,7 +418,7 @@
     {
       "path": "packages/testkit/src/repository-policy.test.ts",
       "reasons": ["package-script:package.json#test:policy: static file reference"],
-      "sha256": "e09b59f238c57d6fab6083dea7053ff437c5508aac3dd555f4265736760ea1d3"
+      "sha256": "9010e8f284da54f7b6be2abf56fe5f8875578197926feb523b8fdf08f5b2ba09"
     },
     {
       "path": "packages/testkit/tsconfig.json",
@@ -489,7 +489,7 @@
         "file:scripts/gitleaks-scan.mjs: static local module",
         "package-script:package.json#test:policy: static file reference"
       ],
-      "sha256": "21b25daa61e5009a327edaf0e8a904f8203b6f9a776d673e4fbb0cd040db069a"
+      "sha256": "27d087b6503c6533ba8667b804ca7dac26932e3ab76f89ad7e5f5459c06ac177"
     },
     {
       "path": "tsconfig.base.json",

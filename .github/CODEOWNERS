@@ -11,6 +11,7 @@
 /scripts/gitleaks-history.mjs @acepgh
 /scripts/gitleaks-scan.mjs @acepgh
 /scripts/fixtures/gitleaks-canary.txt @acepgh
+/scripts/** @acepgh
 /packages/testkit/src/gitleaks-history.test.ts @acepgh
 /packages/testkit/src/repository-policy.test.ts @acepgh
 
