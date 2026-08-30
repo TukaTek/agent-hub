@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "exclusions": [".github/ci-executable-surface.json"],
   "entryCount": 868,
-  "treeSha256": "6c23495632acbfffd7cc73d65cfc1f243f8fa8148e3c0db444037970a777a01b",
+  "treeSha256": "7b533a096a2e1d3baec716ff9b55b20712857dcb75762d11153d193b379f7ea0",
   "entries": [
     {
       "path": ".agents/skills/composio/SKILL.md",
@@ -2703,8 +2703,8 @@
       "path": "docs/ci-governance.md",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 7885,
-      "sha256": "5714ae4e4de9b8091837bea0724f9e091c8874f7332820269260cf5791ce9d2c"
+      "byteLength": 8629,
+      "sha256": "15314f53bead6f5b8f6b120aaf853587f668a5391a4a419851f82e44794b94a0"
     },
     {
       "path": "docs/computer-runtime.md",
@@ -5832,8 +5832,8 @@
       "path": "packages/testkit/src/repository-policy.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 121075,
-      "sha256": "24b8923f270f54d2111f1daec2f22caf929c71d971e0d5937585b3fbcc4346d1"
+      "byteLength": 127376,
+      "sha256": "f31e95b1eb41342a6636caaffa2a6f1509c62ef02c3470b28191c9ad8afb4e12"
     },
     {
       "path": "packages/testkit/src/runs-list.test.ts",
@@ -6042,8 +6042,8 @@
       "path": "scripts/repository-policy.mjs",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 81068,
-      "sha256": "c3ab79c580b431c5f1e259d12c9bd6d8292fc07320412084abe57b3caf631316"
+      "byteLength": 82800,
+      "sha256": "2718ce428582fc818454c0956d93c18791d60bfa4b728dcf72723bd2062d5eef"
     },
     {
       "path": "scripts/restore.sh",

@@ -2553,6 +2553,151 @@ PAYLOAD
     });
   });
 
+  it.each([
+    ["successful", false],
+    ["failed EIO", true],
+  ] as const)(
+    "reports restoration residual uncertainty when %s directory sync displaces its owned inode outside .github",
+    async (_syncOutcome, injectDirectorySyncFailure) => {
+      await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        await writeAndTrackSourceTreeManifest(repository);
+        const filename = path.join(repository, manifestRelativePath);
+        const previousBytes = await readFile(filename);
+        const previousInfo = await lstat(filename);
+        await writeFile(path.join(repository, "tracked.txt"), "after\n");
+        const githubDirectory = path.join(repository, ".github");
+        const displacedRestoration = path.join(
+          repository,
+          injectDirectorySyncFailure
+            ? "restoration-sync-failure-owned-inode"
+            : "restoration-sync-success-owned-inode",
+        );
+        const concurrentTemp = path.join(
+          githubDirectory,
+          injectDirectorySyncFailure
+            ? "restoration-sync-failure-canonical-winner"
+            : "restoration-sync-success-canonical-winner",
+        );
+        let primaryRenameCompleted = false;
+        let primaryVerificationFailureCount = 0;
+        let restorationDisplaced = false;
+        let restorationHandle: Awaited<ReturnType<typeof open>> | undefined;
+        let restorationHandleOpenDuringSync = false;
+        const fileSystem: ManifestWriterFileSystem = {
+          link,
+          lstat,
+          open: (async (...arguments_: Parameters<typeof open>) => {
+            const candidate = path.resolve(String(arguments_[0]));
+            if (candidate === filename && primaryRenameCompleted && !restorationHandle) {
+              primaryVerificationFailureCount += 1;
+              throw new Error("injected primary post-rename verification failure");
+            }
+            const handle = await open(...arguments_);
+            if (
+              path.basename(candidate).includes(".restore.") &&
+              (Number(arguments_[1]) & constants.O_CREAT) !== 0
+            ) {
+              restorationHandle = handle;
+            }
+            if (candidate !== githubDirectory) return handle;
+            return new Proxy(handle, {
+              get(target, property) {
+                if (property === "sync") {
+                  return async () => {
+                    if (!restorationHandle) {
+                      await target.sync();
+                      return;
+                    }
+                    if (!restorationDisplaced && restorationHandle) {
+                      restorationHandleOpenDuringSync = await restorationHandle.stat().then(
+                        () => true,
+                        () => false,
+                      );
+                      restorationDisplaced = true;
+                      await rename(filename, displacedRestoration);
+                      await writeFile(concurrentTemp, previousBytes, {
+                        mode: previousInfo.mode & 0o777,
+                      });
+                      await rename(concurrentTemp, filename);
+                    }
+                    if (injectDirectorySyncFailure) {
+                      throw Object.assign(new Error("injected restoration directory sync EIO"), {
+                        code: "EIO",
+                      });
+                    }
+                    await target.sync();
+                  };
+                }
+                const value = Reflect.get(target, property, target);
+                return typeof value === "function" ? value.bind(target) : value;
+              },
+            }) as Awaited<ReturnType<typeof open>>;
+          }) as typeof open,
+          rename: async (oldPath, newPath) => {
+            await rename(oldPath, newPath);
+            if (
+              !primaryRenameCompleted &&
+              path.resolve(String(newPath)) === filename &&
+              !path.basename(String(oldPath)).includes(".restore.")
+            ) {
+              primaryRenameCompleted = true;
+            }
+          },
+          unlink,
+        };
+
+        const operation = await policy
+          .writeSourceTreeManifest(repository, {
+            fileSystem,
+            nonceFactory: () => (injectDirectorySyncFailure ? "4" : "5").repeat(32),
+            platform: "linux",
+          })
+          .then(
+            () => ({ error: "", status: "resolved" as const }),
+            (error: unknown) => ({
+              error: error instanceof Error ? error.message : String(error),
+              status: "rejected" as const,
+            }),
+          );
+        const displacedInfo = await lstat(displacedRestoration).catch(() => undefined);
+        const restorationHandleClosed =
+          (await restorationHandle?.stat().then(
+            () => false,
+            (error: unknown) => error instanceof Error && "code" in error && error.code === "EBADF",
+          )) ?? false;
+
+        expect({
+          ...operation,
+          claimedVerifiedRestoration: /restored and verified/iu.test(operation.error),
+          directorySyncEioReported:
+            !injectDirectorySyncFailure ||
+            /injected restoration directory sync EIO|\bEIO\b/iu.test(operation.error),
+          installedMatchesPrevious: (await readFile(filename)).equals(previousBytes),
+          outsideOwnedLinkPresent: displacedInfo?.isFile() ?? false,
+          outsideOwnedNlink: displacedInfo ? String(displacedInfo.nlink) : "missing",
+          primaryVerificationFailed: primaryVerificationFailureCount > 0,
+          residualReported: /residual-integrity uncertainty/iu.test(operation.error),
+          restorationDisplaced,
+          restorationHandleClosed,
+          restorationHandleOpenDuringSync,
+        }).toMatchObject({
+          claimedVerifiedRestoration: false,
+          directorySyncEioReported: true,
+          installedMatchesPrevious: true,
+          outsideOwnedLinkPresent: true,
+          outsideOwnedNlink: "1",
+          primaryVerificationFailed: true,
+          residualReported: true,
+          restorationDisplaced: true,
+          restorationHandleClosed: true,
+          restorationHandleOpenDuringSync: true,
+          status: "rejected",
+        });
+      });
+    },
+  );
+
   it("makes raw CLI and documented regeneration write the same canonical bytes", async () => {
     const filename = path.join(repositoryFixtureRoot, manifestRelativePath);
     const original = await readFile(filename);

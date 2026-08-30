@@ -49,10 +49,16 @@ If install verification fails after rename has or may have run, the writer makes
 attempt. It restores the byte-identical previously validated manifest with a new independently
 named exclusive temp file and the same write, sync, metadata, read-back, rename, and destination
 verification cycle. Recovery never calls itself or retries indefinitely. A verified restoration is
-reported together with the original failure. If restoration cannot be proved, the command returns
-a prominent fail-closed recovery error stating that manifest integrity is uncertain; it does not
-claim that prior bytes were preserved. Missing-manifest bootstrap has no prior bytes to restore and
-therefore fails with the same integrity warning if a post-rename race is detected.
+reported together with the original failure only when the restoration attempt succeeds after final
+destination validation, parent-directory sync, owned-inode accounting, and handle closure. A
+restoration durability failure may report that the prior bytes are currently installed and verified,
+but cannot claim durable or verified restoration. Ordinary failure, residual-integrity failure, and
+any unknown result each return a prominent fail-closed recovery error; they do not claim that prior
+bytes were restored and verified. Residual recovery runs the same bounded cleanup and closes the
+restoration handle as far as safely possible, while retaining the original restoration error and
+nested causes and stating that restoration-owned state remains uncertain. Missing-manifest bootstrap
+has no prior bytes to restore and therefore fails with the same integrity warning if a post-rename
+race is detected.
 
 Failed attempts never pathname-unlink an entry whose identity can change between validation and
 deletion. With its recorded device/inode identity and, where possible, the still-open handle, the
@@ -75,12 +81,14 @@ On non-Windows hosts the writer syncs `.github/` after verified replacement and 
 fully validates the destination whether sync succeeds or fails. It retains the owned handle during
 both paths. A noncanonical change after a successful sync enters the same single bounded recovery.
 A byte-identical canonical concurrent replacement may win only after the handle proves that the
-invocation-owned inode has no directory link. If a hostile writer moves that inode outside the
-bounded `.github/` scan, the open handle exposes its nonzero link count and the command returns
-explicit residual-integrity uncertainty rather than success. Parent-directory sync is skipped on
-Windows because Node does not provide one portable durability contract across Windows filesystems.
-File and directory durability still depends on the operating system, filesystem, mount, and storage
-hardware honoring their sync guarantees.
+invocation-owned inode has no directory link. If a hostile writer moves a primary- or
+restoration-owned inode outside the bounded `.github/` scan, the open handle exposes its nonzero link
+count and the command returns explicit residual-integrity uncertainty rather than success. Recovery
+also closes the restoration handle while preserving and reporting the outside residual for manual
+inspection; it never deletes an unrelated pathname or claims verified restoration. Parent-directory
+sync is skipped on Windows because Node does not provide one portable durability contract across
+Windows filesystems. File and directory durability still depends on the operating system,
+filesystem, mount, and storage hardware honoring their sync guarantees.
 
 Nested writer, recovery, scan, and handle-close failures are flattened into concise CLI-visible
 cause text. Messages preserve actionable error codes such as `EIO` and `EACCES`, collapse multiline

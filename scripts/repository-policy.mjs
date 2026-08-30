@@ -1802,34 +1802,89 @@ export async function writeSourceTreeManifest(root, options = {}) {
     platform,
     purpose: "restore",
   });
-  const restorationProven =
-    restoration.kind !== "failure" ||
-    (await destinationMatchesExpected(fileSystem, filename, existing));
-  const cleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
+  const primaryCleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
 
-  if (restorationProven) {
-    if (restoration.kind === "failure") {
-      cleanupFailures.push(
-        ...(await cleanupInstallAttempt(fileSystem, filename, restoration.state)),
+  switch (restoration.kind) {
+    case "success":
+      return throwOperationFailure(
+        primary.error,
+        primaryCleanupFailures,
+        "Source-tree manifest install verification failed; the previous manifest bytes were restored and verified",
+      );
+
+    case "durability-failure": {
+      const failures = [primary.error, restoration.error, ...primaryCleanupFailures];
+      throw new AggregateError(
+        failures,
+        "FAIL-CLOSED RECOVERY DURABILITY ERROR: the previous manifest bytes are currently " +
+          "installed and verified, but parent directory sync failed; durable restoration could " +
+          `not be proven and no verified restoration was claimed: ${errorMessage(new AggregateError(failures))}`,
       );
     }
-    const durabilityNote =
-      restoration.kind === "durability-failure"
-        ? `; restoration bytes were verified but parent directory sync failed: ${errorMessage(restoration.error)}`
-        : "";
-    throwOperationFailure(
-      primary.error,
-      cleanupFailures,
-      `Source-tree manifest install verification failed; the previous manifest bytes were restored and verified${durabilityNote}`,
-    );
-  }
 
-  cleanupFailures.push(...(await cleanupInstallAttempt(fileSystem, filename, restoration.state)));
-  throw new AggregateError(
-    [primary.error, restoration.error, ...cleanupFailures],
-    "FAIL-CLOSED RECOVERY ERROR: source-tree manifest integrity is uncertain; " +
-      `install verification failed (${errorMessage(primary.error)}) and the single bounded restoration could not be proven (${errorMessage(restoration.error)})`,
-  );
+    case "failure": {
+      const restorationCleanupFailures = await cleanupInstallAttempt(
+        fileSystem,
+        filename,
+        restoration.state,
+      );
+      const failures = [
+        primary.error,
+        restoration.error,
+        ...primaryCleanupFailures,
+        ...restorationCleanupFailures,
+      ];
+      throw new AggregateError(
+        failures,
+        "FAIL-CLOSED RECOVERY ERROR: source-tree manifest integrity is uncertain; the single " +
+          "bounded restoration failed and could not be proven, so no verified restoration was " +
+          `claimed: ${errorMessage(new AggregateError(failures))}`,
+      );
+    }
+
+    case "residual-integrity-failure": {
+      const restorationCleanupFailures = await cleanupInstallAttempt(
+        fileSystem,
+        filename,
+        restoration.state,
+      );
+      const failures = [
+        primary.error,
+        restoration.error,
+        ...primaryCleanupFailures,
+        ...restorationCleanupFailures,
+      ];
+      throw new AggregateError(
+        failures,
+        "FAIL-CLOSED RECOVERY ERROR: source-tree manifest residual-integrity uncertainty " +
+          "remains after the single bounded restoration; the previous manifest bytes may be " +
+          "present, but restoration-owned state is not fully accounted for and no verified " +
+          `restoration was claimed: ${errorMessage(new AggregateError(failures))}`,
+      );
+    }
+
+    default: {
+      const restorationCleanupFailures = await cleanupInstallAttempt(
+        fileSystem,
+        filename,
+        restoration.state,
+      );
+      const unexpectedResult = new Error(
+        "Source-tree manifest restoration returned an unknown result kind",
+      );
+      const failures = [
+        primary.error,
+        unexpectedResult,
+        ...primaryCleanupFailures,
+        ...restorationCleanupFailures,
+      ];
+      throw new AggregateError(
+        failures,
+        "FAIL-CLOSED RECOVERY ERROR: source-tree manifest integrity is uncertain because the " +
+          `single bounded restoration returned an unknown result: ${errorMessage(new AggregateError(failures))}`,
+      );
+    }
+  }
 }
 
 function assertManifestIsTracked(root) {
