@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { speechUploadName, voiceDeadline } from "./voice-http.js";
 
 describe("voiceDeadline", () => {
@@ -12,7 +12,8 @@ describe("voiceDeadline", () => {
 
   it("aborts when the deadline elapses even if the client stays connected", async () => {
     const combined = voiceDeadline(new AbortController().signal, 1);
-    await vi.waitFor(() => expect(combined.aborted).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(combined.aborted).toBe(true);
   });
 });
 
@@ -37,6 +38,7 @@ describe("voiceDeadline", () => {
 
   it("aborts when the deadline elapses even if the client stays connected", async () => {
     const combined = voiceDeadline(new AbortController().signal, 1);
-    await vi.waitFor(() => expect(combined.aborted).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(combined.aborted).toBe(true);
   });
 });

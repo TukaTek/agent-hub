@@ -59,14 +59,16 @@ jobs:
       group: ${{ inputs.publish_report && 'playwright-publication' || format('playwright-{0}', github.run_id) }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
@@ -107,7 +109,7 @@ jobs:
           printf '%s\n' "$PLAYWRIGHT_RESULT" > test-report/e2e/outcome.txt
       - name: Upload Playwright artifacts
         if: always() && inputs.upload_artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   realpath,
   rename,
   rm,
@@ -17,6 +18,17 @@ const lstatRace = vi.hoisted(() => ({
   after: undefined as undefined | ((target: string) => Promise<void>),
   afterRealpath: undefined as undefined | ((target: string) => Promise<void>),
 }));
+const directoryScan = vi.hoisted(() => ({
+  calls: 0,
+  entries: undefined as string[] | undefined,
+}));
+const fileDescriptorPath = vi.hoisted(() => ({
+  afterUnavailableChildOpen: undefined as undefined | ((target: string) => Promise<void>),
+  childOpenAttempts: 0,
+  forceChildOpenUnavailable: false,
+  forcePathnameFallback: false,
+  lookups: 0,
+}));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -30,12 +42,46 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const [target] = args;
+      if (typeof target === "string" && /^\/proc\/self\/fd\/\d+\/[^/]+$/u.test(target)) {
+        fileDescriptorPath.childOpenAttempts += 1;
+        if (fileDescriptorPath.forceChildOpenUnavailable) {
+          await fileDescriptorPath.afterUnavailableChildOpen?.(target);
+          throw Object.assign(new Error(`ENOENT: no such file or directory, open '${target}'`), {
+            code: "ENOENT",
+          });
+        }
+      }
+      return actual.open(...args);
+    },
     lstat: async (target: string, options?: { bigint?: boolean }) => {
       const result = await actual.lstat(target, options as never);
       await lstatRace.after?.(target);
       return result;
     },
+    opendir: async (target: string, options?: Parameters<typeof actual.opendir>[1]) => {
+      directoryScan.calls += 1;
+      if (!directoryScan.entries) return actual.opendir(target, options);
+      const entries = directoryScan.entries;
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const name of entries) yield { name };
+        },
+      } as Awaited<ReturnType<typeof actual.opendir>>;
+    },
     realpath: async (target: string) => {
+      if (target.startsWith("/proc/self/fd/")) {
+        fileDescriptorPath.lookups += 1;
+        if (fileDescriptorPath.forcePathnameFallback) {
+          throw Object.assign(
+            new Error(`ENOENT: no such file or directory, realpath '${target}'`),
+            {
+              code: "ENOENT",
+            },
+          );
+        }
+      }
       const result = await actual.realpath(target);
       await lstatRace.afterRealpath?.(target);
       return result;
@@ -57,6 +103,13 @@ const roots: string[] = [];
 afterEach(async () => {
   lstatRace.after = undefined;
   lstatRace.afterRealpath = undefined;
+  directoryScan.calls = 0;
+  directoryScan.entries = undefined;
+  fileDescriptorPath.afterUnavailableChildOpen = undefined;
+  fileDescriptorPath.childOpenAttempts = 0;
+  fileDescriptorPath.forceChildOpenUnavailable = false;
+  fileDescriptorPath.forcePathnameFallback = false;
+  fileDescriptorPath.lookups = 0;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -115,7 +168,187 @@ describe("desktop sandbox write containment without O_NOFOLLOW", () => {
     expect(swapped).toBe(true);
     expect(await readFile(outside, "utf8")).toBe("outside-before");
     expect(await readFile(displaced, "utf8")).toBe("after");
+    expect(await readlink(target)).toBe(outside);
   });
+
+  it.runIf(process.platform === "linux")(
+    "falls back to a verified pathname when procfs child open and fd realpath are unavailable",
+    async () => {
+      const { desktop, computer } = await fixture("procfs-unavailable-existing");
+      const parent = path.join(computer.providerRef, "notes");
+      const target = path.join(parent, "result.txt");
+      await mkdir(parent);
+      await writeFile(target, "before");
+      fileDescriptorPath.forceChildOpenUnavailable = true;
+      fileDescriptorPath.forcePathnameFallback = true;
+
+      await desktop.writeFile(computer, {
+        path: "notes/result.txt",
+        content: new TextEncoder().encode("after"),
+      });
+
+      expect(fileDescriptorPath.childOpenAttempts).toBeGreaterThan(0);
+      expect(fileDescriptorPath.lookups).toBeGreaterThan(0);
+      expect(directoryScan.calls).toBe(0);
+      expect(await readFile(target, "utf8")).toBe("after");
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "fails closed for a missing child when procfs is unavailable",
+    async () => {
+      const { desktop, computer } = await fixture("procfs-unavailable-create");
+      const target = path.join(computer.providerRef, "result.txt");
+      fileDescriptorPath.forceChildOpenUnavailable = true;
+      fileDescriptorPath.forcePathnameFallback = true;
+
+      await expect(
+        desktop.writeFile(computer, {
+          path: "result.txt",
+          content: new TextEncoder().encode("created"),
+        }),
+      ).rejects.toThrow("Path escapes the computer workspace");
+
+      expect(fileDescriptorPath.childOpenAttempts).toBeGreaterThan(0);
+      expect(fileDescriptorPath.lookups).toBeGreaterThan(0);
+      expect(directoryScan.calls).toBe(0);
+      await expect(readFile(target, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "does not create a file after a pathname-fallback parent swap",
+    async () => {
+      const { root, desktop, computer } = await fixture("procfs-unavailable-create-swap");
+      const parent = computer.providerRef;
+      const displaced = path.join(root, "inside-original");
+      const outside = path.join(root, "outside-directory");
+      await mkdir(outside);
+      fileDescriptorPath.forceChildOpenUnavailable = true;
+      fileDescriptorPath.forcePathnameFallback = true;
+      let swapped = false;
+      fileDescriptorPath.afterUnavailableChildOpen = async () => {
+        if (swapped) return;
+        swapped = true;
+        await rename(parent, displaced);
+        await symlink(outside, parent, "junction");
+      };
+
+      await expect(
+        desktop.writeFile(computer, {
+          path: "result.txt",
+          content: new TextEncoder().encode("after"),
+        }),
+      ).rejects.toThrow("Path escapes the computer workspace");
+
+      expect(swapped).toBe(true);
+      await expect(readFile(path.join(displaced, "result.txt"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(readFile(path.join(outside, "result.txt"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(await realpath(parent)).toBe(await realpath(outside));
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "rejects a parent swap during pathname fallback without changing either existing file",
+    async () => {
+      const { root, desktop, computer } = await fixture("procfs-unavailable-parent-swap");
+      const parent = computer.providerRef;
+      const displaced = path.join(root, "inside-original");
+      const outside = path.join(root, "outside-directory");
+      await mkdir(outside);
+      await writeFile(path.join(parent, "result.txt"), "inside-before");
+      await writeFile(path.join(outside, "result.txt"), "outside-before");
+      fileDescriptorPath.forceChildOpenUnavailable = true;
+      fileDescriptorPath.forcePathnameFallback = true;
+      let swapped = false;
+      fileDescriptorPath.afterUnavailableChildOpen = async () => {
+        if (swapped) return;
+        swapped = true;
+        await rename(parent, displaced);
+        await symlink(outside, parent, "junction");
+      };
+
+      await expect(
+        desktop.writeFile(computer, {
+          path: "result.txt",
+          content: new TextEncoder().encode("after"),
+        }),
+      ).rejects.toThrow("Path escapes the computer workspace");
+
+      expect(swapped).toBe(true);
+      expect(await readFile(path.join(displaced, "result.txt"), "utf8")).toBe("inside-before");
+      expect(await readFile(path.join(outside, "result.txt"), "utf8")).toBe("outside-before");
+      expect(await realpath(parent)).toBe(await realpath(outside));
+    },
+  );
+
+  it("fails closed when a relocated inode lookup exceeds its scan bound", async () => {
+    const { root, desktop, computer } = await fixture("bounded-scan");
+    const target = path.join(computer.providerRef, "result.txt");
+    const displaced = path.join(computer.providerRef, "result-original.txt");
+    const outside = path.join(root, "outside.txt");
+    await writeFile(target, "inside-before");
+    await writeFile(outside, "outside-before");
+    fileDescriptorPath.forceChildOpenUnavailable = true;
+    fileDescriptorPath.forcePathnameFallback = true;
+    directoryScan.entries = Array.from({ length: 4_097 }, (_, index) => `missing-${index}`);
+    let swapped = false;
+    lstatRace.after = async (inspected) => {
+      if (swapped || path.basename(inspected) !== "result.txt") return;
+      swapped = true;
+      await rename(target, displaced);
+      await symlink(outside, target);
+    };
+
+    await expect(
+      desktop.writeFile(computer, {
+        path: "result.txt",
+        content: new TextEncoder().encode("after"),
+      }),
+    ).rejects.toThrow("Path escapes the computer workspace");
+    expect(swapped).toBe(true);
+    expect(directoryScan.calls).toBe(1);
+    expect(await readFile(outside, "utf8")).toBe("outside-before");
+    expect(await readFile(displaced, "utf8")).toBe("inside-before");
+    expect(await readlink(target)).toBe(outside);
+  });
+
+  it.runIf(process.platform === "linux")(
+    "uses fd-bound containment for a relocated inode without scanning its directory",
+    async () => {
+      const { root, desktop, computer } = await fixture("fd-bound-relocation");
+      const target = path.join(computer.providerRef, "result.txt");
+      const displaced = path.join(computer.providerRef, "result-original.txt");
+      const outside = path.join(root, "outside.txt");
+      await writeFile(target, "inside-before");
+      await writeFile(outside, "outside-before");
+      directoryScan.entries = Array.from({ length: 4_097 }, (_, index) => `missing-${index}`);
+      let swapped = false;
+      lstatRace.after = async (inspected) => {
+        if (swapped || path.basename(inspected) !== "result.txt") return;
+        swapped = true;
+        await rename(target, displaced);
+        await symlink(outside, target);
+      };
+
+      await desktop.writeFile(computer, {
+        path: "result.txt",
+        content: new TextEncoder().encode("after"),
+      });
+
+      expect(swapped).toBe(true);
+      expect(fileDescriptorPath.childOpenAttempts).toBeGreaterThan(0);
+      expect(fileDescriptorPath.lookups).toBeGreaterThan(0);
+      expect(directoryScan.calls).toBe(0);
+      expect(await readFile(outside, "utf8")).toBe("outside-before");
+      expect(await readFile(displaced, "utf8")).toBe("after");
+      expect(await readlink(target)).toBe(outside);
+    },
+  );
 
   it("rejects a parent symlink that resolves outside the workspace", async () => {
     const { root, desktop, computer } = await fixture("parent-link");

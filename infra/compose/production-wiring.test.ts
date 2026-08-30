@@ -83,7 +83,19 @@ it("generates and injects the immutable deployment ID in the published-images qu
   );
 });
 
-it("uses generated fixtures without inline Gitleaks exceptions", () => {
+it("uses generated fixtures without weakening the canonical Gitleaks policy", () => {
+  const config = trackedFile(".gitleaks.toml");
+  expect(config).toContain('targetRules = ["rakazo-gitleaks-canary"]');
+  expect(config).toContain('condition = "AND"');
+  expect(config).toContain('regexTarget = "secret"');
+  expect(config).not.toContain("generic-api-key");
+  for (const fixturePath of [
+    "infra/compose/deployment-preflight",
+    "infra/compose/backup-metadata",
+    "infra/compose/secret-fixtures",
+  ]) {
+    expect(config).not.toContain(fixturePath);
+  }
   for (const fixtureTest of [
     "infra/compose/deployment-preflight.test.ts",
     "infra/compose/backup-metadata.test.ts",

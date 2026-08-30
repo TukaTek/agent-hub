@@ -19,7 +19,11 @@
     "deployment:preflight": "tsx infra/compose/preflight.ts",
     "deployment:inventory": "tsx infra/compose/preflight.ts --inventory",
     "sandbox:build": "docker build -t rakazo/computer:local infra/sandboxes/computer",
+    "security:audit": "pnpm audit --prod --audit-level high",
+    "security:secrets": "node scripts/gitleaks-scan.mjs .",
+    "security:secrets:history": "node scripts/gitleaks-history.mjs",
     "test": "vitest run",
+    "test:policy": "cross-env GITLEAKS_POLICY_TESTS=1 vitest run packages/testkit/src/repository-policy.test.ts packages/testkit/src/gitleaks-history.test.ts && node scripts/repository-policy.mjs && node scripts/gitleaks-canary.mjs",
     "test:integration": "tsx packages/testkit/src/cli/harness.ts --integration",
     "test:e2e": "tsx packages/testkit/src/cli/harness.ts --e2e",
     "test:topology": "tsx packages/testkit/src/cli/topology.ts",
@@ -27,6 +31,7 @@
     "test:computer": "tsx packages/testkit/src/cli/computer.ts",
     "perf:desktop": "tsx packages/testkit/src/cli/desktop-performance.ts",
     "perf:compare": "tsx packages/testkit/src/cli/compare-performance.ts",
+    "policy:manifest": "node scripts/repository-policy.mjs --write-source-tree-manifest && node scripts/repository-policy.mjs --check-source-tree-manifest",
     "compose:up": "docker compose --env-file .env -f infra/compose/docker-compose.yml up --build",
     "compose:down": "docker compose --env-file .env -f infra/compose/docker-compose.yml down -v"
   },
@@ -34,15 +39,21 @@
     "@biomejs/biome": "^2.5.8",
     "@types/node": "^24.3.0",
     "cross-env": "^10.1.0",
+    "minimatch": "^10.2.6",
+    "smol-toml": "^1.8.0",
     "tsx": "^4.20.5",
     "turbo": "^2.5.6",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.0"
   },
   "pnpm": {
     "overrides": {
+      "@prisma/config>deepmerge-ts": "8.0.0",
+      "dockerode>uuid": "11.1.1",
       "react": "19.2.3",
-      "react-dom": "19.2.3"
+      "react-dom": "19.2.3",
+      "xcode>uuid": "11.1.1"
     }
   }
 }

@@ -29,12 +29,12 @@ jobs:
     steps:
       # workflow_run has repository secrets. Always use trusted default-branch code here;
       # never check out or execute the contributor's pull-request revision.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -100,7 +100,7 @@ jobs:
           fi
       - name: Download Playwright artifacts
         if: steps.artifact.outputs.exists == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: playwright-artifacts-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: .
