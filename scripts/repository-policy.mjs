@@ -440,6 +440,11 @@ export function assertImageCandidatePolicy(source, filename, requirements) {
       jobName,
       "Docker build",
     );
+    if (build.with?.context !== ".") {
+      throw new Error(
+        `${filename}: image candidate job ${jobName} build context must be exactly . to consume the verified checkout`,
+      );
+    }
     if (build.with?.tags !== EXACT_METADATA_TAGS_REF) {
       throw new Error(
         `${filename}: image candidate job ${jobName} build tags must come only from candidate metadata`,

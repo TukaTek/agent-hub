@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { assertGitleaksCanaryReport } from "../../../scripts/gitleaks-canary.mjs";
 import {
   assertCandidateCheckoutPolicy,
@@ -24,6 +24,7 @@ const imageCandidateSha = githubExpression(
   "github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha",
 );
 const imageCandidateRef = githubExpression("env.CANDIDATE_SHA");
+const absentBuildContext = Symbol("absent build context");
 const desktopSandboxBoundary = [
   "apps/api/src/app.ts",
   "apps/api/src/env.test.ts",
@@ -71,6 +72,28 @@ function mutateRequired(source: string, expected: string, replacement: string) {
   const mutated = source.replace(expected, replacement);
   expect(mutated, `mutation target ${expected}`).not.toBe(source);
   return mutated;
+}
+
+function mutateImageBuildContext(
+  source: string,
+  jobName: string,
+  context: unknown | typeof absentBuildContext,
+) {
+  const workflow = parseYaml(source) as {
+    jobs?: Record<string, { steps?: Array<{ uses?: unknown; with?: Record<string, unknown> }> }>;
+  };
+  const build = workflow.jobs?.[jobName]?.steps?.find((step) =>
+    String(step.uses ?? "").startsWith("docker/build-push-action@"),
+  );
+  expect(build, `${jobName}: Docker build step`).toBeDefined();
+  expect(build?.with, `${jobName}: Docker build inputs`).toBeDefined();
+
+  if (context === absentBuildContext) {
+    delete build?.with?.context;
+  } else if (build?.with) {
+    build.with.context = context;
+  }
+  return stringifyYaml(workflow);
 }
 
 describe("GitHub Actions pin policy", () => {
@@ -335,6 +358,7 @@ describe("exact candidate checkout policy", () => {
       expect(build?.with?.labels, `${jobName}:build labels`).toBe(
         githubExpression("steps.meta.outputs.labels"),
       );
+      expect(build?.with?.context, `${jobName}:build context`).toBe(".");
       expect(build?.with?.["build-args"], `${jobName}:GIT_SHA`).toBe(
         `GIT_SHA=${imageCandidateRef}`,
       );
@@ -386,6 +410,40 @@ describe("exact candidate checkout policy", () => {
         candidateJobs: ["validate", "publish"],
       }),
     ).not.toThrow();
+  });
+
+  it.each(
+    ["validate", "publish"].flatMap((jobName) =>
+      [
+        ["an absent context", absentBuildContext],
+        ["a remote URL/ref context", "https://github.com/TukaTek/agent-hub.git#main"],
+        ["the explicit default Git context", "{{defaultContext}}"],
+        ["a dynamic expression context", githubExpression("inputs.build_context")],
+        ["a direct github.sha context", githubExpression("github.sha")],
+        [
+          "a pull-request synthetic merge context",
+          "https://github.com/TukaTek/agent-hub.git#refs/pull/1/merge",
+        ],
+        ["a YAML null context", null],
+        ["a YAML boolean context", true],
+        ["a YAML numeric context", 0],
+        ["a YAML mapping context", { path: "." }],
+      ].map(([name, context]) => [jobName, name, context] as const),
+    ),
+  )("rejects %s image builds with %s", async (jobName, _name, context) => {
+    const source = await readFile(
+      path.join(root, ".github/workflows/publish-server-image.yml"),
+      "utf8",
+    );
+    const assertImageCandidatePolicy = await imageCandidatePolicy();
+    if (!assertImageCandidatePolicy) return;
+    const mutated = mutateImageBuildContext(source, jobName, context);
+
+    expect(() =>
+      assertImageCandidatePolicy(mutated, ".github/workflows/publish-server-image.yml", {
+        candidateJobs: ["validate", "publish"],
+      }),
+    ).toThrow(/build context|checked-out context|context.*exact/i);
   });
 
   it.each([
