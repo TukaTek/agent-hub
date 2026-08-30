@@ -1,8 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { minimatch } from "minimatch";
 import { parse as parseToml } from "smol-toml";
 import { parseDocument } from "yaml";
@@ -10,7 +11,7 @@ import { parseDocument } from "yaml";
 export const CODEOWNER = "@acepgh";
 export const CANARY_RULE_ID = "rakazo-gitleaks-canary";
 export const GITLEAKS_CANARY_PATH = "scripts/fixtures/gitleaks-canary.txt";
-export const EXECUTABLE_SURFACE_MANIFEST_PATH = ".github/ci-executable-surface.json";
+export const SOURCE_TREE_MANIFEST_PATH = ".github/ci-executable-surface.json";
 export const DESKTOP_SANDBOX_PROTECTED_PATHS = Object.freeze([
   "apps/api/src/app.ts",
   "apps/api/src/env.test.ts",
@@ -172,10 +173,18 @@ const CANDIDATE_CHECKOUT_REQUIREMENTS = new Map([
     },
   ],
 ]);
+const EXPECTED_WORKFLOW_PATHS = Object.freeze([
+  ".github/workflows/ci.yml",
+  ".github/workflows/nightly-verification.yml",
+  ".github/workflows/playwright.yml",
+  ".github/workflows/publish-playwright-report.yml",
+  ".github/workflows/publish-server-image.yml",
+  ".github/workflows/release-desktop.yml",
+]);
 
 const PROTECTED_FILE_GLOBS = [
   ".github/CODEOWNERS",
-  EXECUTABLE_SURFACE_MANIFEST_PATH,
+  SOURCE_TREE_MANIFEST_PATH,
   ".github/actions/**",
   ".github/dependabot.yml",
   ".github/workflows/**",
@@ -216,7 +225,7 @@ const REQUIRED_PROTECTED_PATHS = [
   IMAGE_BUILD_WORKFLOW,
   ".github/dependabot.yml",
   ".github/CODEOWNERS",
-  EXECUTABLE_SURFACE_MANIFEST_PATH,
+  SOURCE_TREE_MANIFEST_PATH,
   ".gitleaks.toml",
   "package.json",
   "pnpm-lock.yaml",
@@ -457,110 +466,260 @@ function assertReusableWorkflowInventory(workflows) {
   for (const workflowFilename of workflows.keys()) visit(workflowFilename, []);
 }
 
-const EXECUTABLE_SURFACE_SCHEMA_VERSION = 1;
-const STATIC_REPOSITORY_FILE =
-  /(?:^|[\s'"=(])((?:scripts|packages|apps|infra)\/[A-Za-z0-9_./-]+\.(?:cjs|js|mjs|ps1|py|rb|sh|ts|tsx))(?=$|[\s'"),;])/gu;
-const STATIC_LOCAL_MODULE =
-  /^\s*(?:import\s*(?:[^"'`\n]*?\sfrom\s*)?|export\s+[^"'`\n]*?\sfrom\s*|\}\s*from\s*)["'](\.{1,2}\/[^"'`]+)["']/gmu;
-const STATIC_LOCAL_LOADER =
-  /^\s*(?:(?:const|let|var)\s+[^=\n]+?=\s*)?(?:(?:await\s+)?import|require)\(\s*["'](\.{1,2}\/[^"'`]+)["']/gmu;
-const DYNAMIC_EXECUTION_TARGET =
-  /\b(?:bash|bun|dash|node|python3?|sh|tsx|zsh)\s+(?:-[A-Za-z0-9-]+\s+)*(?:["']?\$\{\{|["']?\$[A-Za-z_])/u;
-const PACKAGE_MANAGER_FILES = [".npmrc", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
-const STATIC_EXECUTORS = new Set([
-  "bash",
-  "bun",
-  "dash",
-  "node",
-  "python",
-  "python2",
-  "python3",
-  "sh",
-  "tsx",
-  "zsh",
-]);
-const REPOSITORY_PATH_PREFIXES = [".github/", "apps/", "infra/", "packages/", "scripts/"];
+const SOURCE_TREE_MANIFEST_SCHEMA_VERSION = 2;
+const SOURCE_TREE_MANIFEST_EXCLUSIONS = Object.freeze([SOURCE_TREE_MANIFEST_PATH]);
+const REGULAR_GIT_MODES = new Set(["100644", "100755"]);
+const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
+const GIT_INDEX_RECORD = /^([0-9]{6}) ([0-9a-f]{40}|[0-9a-f]{64}) ([0-3])$/u;
+const MANIFEST_TOP_LEVEL_KEYS = [
+  "entries",
+  "entryCount",
+  "exclusions",
+  "schemaVersion",
+  "treeSha256",
+];
+const MANIFEST_ENTRY_KEYS = ["byteLength", "gitMode", "gitType", "path", "sha256"];
 
 function sha256(source) {
   return createHash("sha256").update(source).digest("hex");
 }
 
-function normalizedRepositoryPath(value) {
-  return value.split(path.sep).join("/").replace(/^\.\//u, "");
+function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
-function stripStaticQuotes(value) {
-  const trimmed = value
-    .trim()
-    .replace(/^[["',]+/u, "")
-    .replace(/[\]"',);\\]+$/u, "");
-  if (
-    trimmed.length >= 2 &&
-    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'")))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed.trim();
-}
-
-function staticWords(source) {
-  return (source.match(/"[^"]*"|'[^']*'|[^\s]+/gu) ?? []).map(stripStaticQuotes).filter(Boolean);
-}
-
-function staticCommandSegments(source) {
-  return source
-    .replace(/\\\r?\n/gu, " ")
-    .split(/\r?\n|&&|\|\||[;|]/u)
-    .map((segment) => staticWords(segment))
-    .filter((words) => words.length > 0);
-}
-
-function isRepositoryExecutionPath(value) {
-  const candidate = stripStaticQuotes(value).replaceAll("\\", "/");
-  return (
-    candidate.startsWith("./") ||
-    candidate.startsWith("../") ||
-    REPOSITORY_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))
+function gitFailure(result, operation) {
+  const detail = Buffer.isBuffer(result.stderr)
+    ? new TextDecoder("utf-8", { fatal: false }).decode(result.stderr).trim()
+    : String(result.stderr ?? "").trim();
+  const cause = result.error instanceof Error ? result.error.message : detail;
+  return new Error(
+    `${operation} failed closed because Git metadata is required${cause ? `: ${cause}` : ""}`,
   );
 }
 
-function directRepositoryExecutionTargets(source) {
-  const targets = [];
-  for (const words of staticCommandSegments(source)) {
-    if (/^[A-Za-z_][A-Za-z0-9_]*=.*\$\(/u.test(words[0] ?? "")) continue;
-    let index = 0;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[index] ?? "")) index += 1;
-
-    if (words[index] === "command" || words[index] === "exec") {
-      index += 1;
-      while (words[index]?.startsWith("-")) index += 1;
-    } else if (words[index] === "env" || words[index] === "cross-env") {
-      index += 1;
-      while (
-        words[index]?.startsWith("-") ||
-        /^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[index] ?? "")
-      ) {
-        index += 1;
-      }
-    }
-
-    const candidate = words[index];
-    if (candidate && isRepositoryExecutionPath(candidate)) targets.push(candidate);
+function runGit(root, arguments_) {
+  const result = spawnSync("git", ["-C", root, ...arguments_], {
+    encoding: null,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
+    throw gitFailure(result, `git ${arguments_.join(" ")}`);
   }
-  return targets;
+  return result.stdout;
 }
 
-function interpretedRepositoryExecutionTargets(source) {
-  const targets = [];
-  for (const words of staticCommandSegments(source)) {
-    for (const [index, word] of words.entries()) {
-      if (!STATIC_EXECUTORS.has(word)) continue;
-      const candidate = words.slice(index + 1).find(isRepositoryExecutionPath);
-      if (candidate) targets.push(candidate);
+function decodeUtf8(source, label) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(source);
+  } catch (error) {
+    throw new Error(
+      `${label} must be valid UTF-8: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function canonicalGitRoot(root) {
+  let canonicalRoot;
+  try {
+    canonicalRoot = await realpath(root);
+  } catch (error) {
+    throw new Error(
+      "Repository root is missing or inaccessible: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+  const reportedRoot = decodeUtf8(
+    runGit(canonicalRoot, ["rev-parse", "--show-toplevel"]),
+    "Git repository root",
+  ).replace(/\r?\n$/u, "");
+  let canonicalReportedRoot;
+  try {
+    canonicalReportedRoot = await realpath(reportedRoot);
+  } catch (error) {
+    throw new Error(
+      "Git reported an inaccessible repository root: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+  if (canonicalReportedRoot !== canonicalRoot) {
+    throw new Error(
+      "Repository policy must run at the Git toplevel; expected " +
+        canonicalReportedRoot +
+        ", received " +
+        canonicalRoot,
+    );
+  }
+  return canonicalRoot;
+}
+
+function gitTypeForMode(mode, repositoryPath) {
+  if (REGULAR_GIT_MODES.has(mode)) return "blob";
+  if (mode === "120000") {
+    throw new Error(`Tracked symlinks are forbidden by source-tree policy: ${repositoryPath}`);
+  }
+  if (mode === "160000") {
+    throw new Error(
+      `Tracked gitlinks/submodules are forbidden by source-tree policy: ${repositoryPath}`,
+    );
+  }
+  throw new Error(`Non-regular tracked Git mode ${mode} is forbidden: ${repositoryPath}`);
+}
+
+function newPathValidationState() {
+  return {
+    exact: new Set(),
+    caseFolded: new Map(),
+    unicodeNormalized: new Map(),
+  };
+}
+
+function validateTrackedRepositoryPath(repositoryPath, state) {
+  if (
+    repositoryPath.length === 0 ||
+    repositoryPath.includes("\\") ||
+    repositoryPath.startsWith("/") ||
+    repositoryPath.endsWith("/") ||
+    repositoryPath.includes("//") ||
+    repositoryPath === "." ||
+    repositoryPath === ".." ||
+    repositoryPath.startsWith("../") ||
+    path.posix.normalize(repositoryPath) !== repositoryPath
+  ) {
+    throw new Error(
+      `Tracked path must be a normalized in-root POSIX path: ${JSON.stringify(repositoryPath)}`,
+    );
+  }
+  if (state.exact.has(repositoryPath)) {
+    throw new Error(`Duplicate tracked path: ${JSON.stringify(repositoryPath)}`);
+  }
+
+  const unicodeNormalized = repositoryPath.normalize("NFC");
+  const normalizedOwner = state.unicodeNormalized.get(unicodeNormalized);
+  if (normalizedOwner && normalizedOwner !== repositoryPath) {
+    throw new Error(
+      "Unicode-normalization tracked path collision: " +
+        JSON.stringify(normalizedOwner) +
+        " and " +
+        JSON.stringify(repositoryPath),
+    );
+  }
+  const caseFolded = unicodeNormalized.toUpperCase().toLowerCase();
+  const caseOwner = state.caseFolded.get(caseFolded);
+  if (caseOwner && caseOwner !== repositoryPath) {
+    throw new Error(
+      "Case-fold tracked path collision: " +
+        JSON.stringify(caseOwner) +
+        " and " +
+        JSON.stringify(repositoryPath),
+    );
+  }
+  if (repositoryPath !== unicodeNormalized) {
+    throw new Error(
+      `Tracked path must use Unicode NFC normalization: ${JSON.stringify(repositoryPath)}`,
+    );
+  }
+
+  state.exact.add(repositoryPath);
+  state.unicodeNormalized.set(unicodeNormalized, repositoryPath);
+  state.caseFolded.set(caseFolded, repositoryPath);
+  return repositoryPath;
+}
+
+export function parseGitTrackedEntries(indexOutput) {
+  if (!Buffer.isBuffer(indexOutput)) {
+    throw new Error("Git tracked-entry inventory must be provided as bytes");
+  }
+  const entries = [];
+  const paths = newPathValidationState();
+  let offset = 0;
+  while (offset < indexOutput.length) {
+    const terminator = indexOutput.indexOf(0, offset);
+    if (terminator < 0) {
+      throw new Error("git ls-files output is missing a NUL record terminator");
+    }
+    const record = indexOutput.subarray(offset, terminator);
+    offset = terminator + 1;
+    if (record.length === 0) {
+      throw new Error("git ls-files output contains an empty record");
+    }
+    const separator = record.indexOf(0x09);
+    if (separator < 0) {
+      throw new Error("git ls-files output contains a malformed stage record");
+    }
+    const metadata = decodeUtf8(record.subarray(0, separator), "Git index metadata");
+    const match = GIT_INDEX_RECORD.exec(metadata);
+    if (!match) {
+      throw new Error(`git ls-files output contains invalid index metadata: ${metadata}`);
+    }
+    if (match[3] !== "0") {
+      throw new Error("Unmerged tracked entry is forbidden in source-tree policy");
+    }
+    const repositoryPath = validateTrackedRepositoryPath(
+      decodeUtf8(record.subarray(separator + 1), "Tracked repository path"),
+      paths,
+    );
+    const gitMode = match[1];
+    entries.push({
+      path: repositoryPath,
+      gitMode,
+      gitType: gitTypeForMode(gitMode, repositoryPath),
+    });
+  }
+  entries.sort((left, right) => compareUtf8(left.path, right.path));
+  return entries;
+}
+
+async function readTrackedRepositoryEntries(root) {
+  const canonicalRoot = await canonicalGitRoot(root);
+  const indexOutput = runGit(canonicalRoot, ["ls-files", "--stage", "-z"]);
+  return {
+    canonicalRoot,
+    entries: parseGitTrackedEntries(indexOutput),
+  };
+}
+
+async function contentBindTrackedEntry(canonicalRoot, trackedEntry) {
+  const absolute = path.resolve(canonicalRoot, trackedEntry.path);
+  if (absolute === canonicalRoot || !absolute.startsWith(canonicalRoot + path.sep)) {
+    throw new Error(`Tracked path resolves outside the repository root: ${trackedEntry.path}`);
+  }
+  const info = await lstat(absolute).catch(() => undefined);
+  if (!info) {
+    throw new Error(`Tracked file is missing from the checkout: ${trackedEntry.path}`);
+  }
+  if (info.isSymbolicLink()) {
+    throw new Error(`Tracked symlinks are forbidden by source-tree policy: ${trackedEntry.path}`);
+  }
+  if (!info.isFile()) {
+    throw new Error(`Tracked entry must be a regular file: ${trackedEntry.path}`);
+  }
+  const resolved = await realpath(absolute);
+  if (!resolved.startsWith(canonicalRoot + path.sep)) {
+    throw new Error(`Tracked file resolves outside the repository root: ${trackedEntry.path}`);
+  }
+  if (process.platform !== "win32") {
+    const executable = (info.mode & 0o111) !== 0;
+    const expectedExecutable = trackedEntry.gitMode === "100755";
+    if (executable !== expectedExecutable) {
+      throw new Error(
+        "Tracked file mode drift for " +
+          trackedEntry.path +
+          ": Git mode " +
+          trackedEntry.gitMode +
+          ", checkout executable=" +
+          String(executable),
+      );
     }
   }
-  return targets;
+  const content = await readFile(absolute);
+  return {
+    path: trackedEntry.path,
+    gitMode: trackedEntry.gitMode,
+    gitType: trackedEntry.gitType,
+    byteLength: content.byteLength,
+    sha256: sha256(content),
+  };
 }
 
 export function parseStrictJson(source, filename = "JSON input") {
@@ -661,707 +820,200 @@ export function parseStrictJson(source, filename = "JSON input") {
   return parsed;
 }
 
-function manifestEntriesByPath(entries) {
-  return new Map(
-    Array.isArray(entries)
-      ? entries
-          .filter((entry) => entry && typeof entry === "object" && typeof entry.path === "string")
-          .map((entry) => [entry.path, entry])
-      : [],
-  );
+function sourceTreeDigest(entries) {
+  return sha256(Buffer.from(JSON.stringify(entries), "utf8"));
 }
 
-function describeExecutableManifestDrift(actual, expected) {
-  if (actual?.schemaVersion !== EXECUTABLE_SURFACE_SCHEMA_VERSION) {
-    return `schemaVersion must be ${EXECUTABLE_SURFACE_SCHEMA_VERSION}`;
-  }
-  const actualWorkflows = manifestEntriesByPath(actual.workflows);
-  const expectedWorkflows = manifestEntriesByPath(expected.workflows);
-  for (const workflowPath of expectedWorkflows.keys()) {
-    if (!actualWorkflows.has(workflowPath)) return `missing workflow ${workflowPath}`;
-  }
-  for (const workflowPath of actualWorkflows.keys()) {
-    if (!expectedWorkflows.has(workflowPath)) return `extra workflow ${workflowPath}`;
-  }
-  for (const [workflowPath, expectedEntry] of expectedWorkflows) {
-    if (actualWorkflows.get(workflowPath)?.sha256 !== expectedEntry.sha256) {
-      return `workflow content digest drift: ${workflowPath}`;
-    }
-  }
-
-  const actualSurfaces = manifestEntriesByPath(actual.surfaces);
-  const expectedSurfaces = manifestEntriesByPath(expected.surfaces);
-  for (const surfacePath of expectedSurfaces.keys()) {
-    if (!actualSurfaces.has(surfacePath)) return `missing reachable surface ${surfacePath}`;
-  }
-  for (const surfacePath of actualSurfaces.keys()) {
-    if (!expectedSurfaces.has(surfacePath)) return `extra unreachable surface ${surfacePath}`;
-  }
-  for (const [surfacePath, expectedEntry] of expectedSurfaces) {
-    if (actualSurfaces.get(surfacePath)?.sha256 !== expectedEntry.sha256) {
-      return `executable surface content digest drift: ${surfacePath}`;
-    }
-  }
-  if (!isDeepStrictEqual(actual.localActions, expected.localActions)) {
-    return "local action inventory or entrypoint drift";
-  }
-  if (!isDeepStrictEqual(actual.packageScripts, expected.packageScripts)) {
-    return "reachable package script inventory drift";
-  }
-  return "manifest metadata drift";
+function plainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export async function createExecutableSurfaceManifest(root) {
-  const canonicalRoot = await realpath(root);
-  const allFiles = await listFiles(canonicalRoot, new Set([".git", ".turbo", "node_modules"]));
-  const fileSet = new Set(allFiles);
-  const workflowPaths = allFiles
-    .filter((filename) => filename.startsWith(".github/workflows/") && /\.ya?ml$/iu.test(filename))
-    .sort();
-  for (const workflowPath of workflowPaths) {
-    if (!/^\.github\/workflows\/[^/]+\.yml$/u.test(workflowPath)) {
-      throw new Error(`Workflow path must be a canonical top-level .yml file: ${workflowPath}`);
-    }
+function exactObjectKeys(value, expectedKeys, label) {
+  if (!plainObject(value)) throw new Error(`${label} must be a JSON object`);
+  const actualKeys = Object.keys(value).sort();
+  if (!isDeepStrictEqual(actualKeys, [...expectedKeys].sort())) {
+    throw new Error(
+      label +
+        " must contain exactly keys " +
+        expectedKeys.join(", ") +
+        "; found " +
+        actualKeys.join(", "),
+    );
   }
-  if (workflowPaths.length === 0) throw new Error("No GitHub Actions workflows found");
+}
 
-  const packagePaths = allFiles.filter(
-    (filename) => filename === "package.json" || filename.endsWith("/package.json"),
-  );
-  const packages = new Map();
-  const packageByName = new Map();
-  for (const packagePath of packagePaths.sort()) {
-    let manifest;
-    try {
-      manifest = JSON.parse(await readFile(path.join(canonicalRoot, packagePath), "utf8"));
-    } catch (error) {
-      throw new Error(
-        `${packagePath}: invalid package manifest: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    packages.set(packagePath, manifest);
-    if (typeof manifest.name === "string") {
-      if (packageByName.has(manifest.name)) {
-        throw new Error(`Duplicate package name ${manifest.name} in executable-surface inventory`);
-      }
-      packageByName.set(manifest.name, packagePath);
-    }
+export function assertSourceTreeManifestShape(manifest) {
+  exactObjectKeys(manifest, MANIFEST_TOP_LEVEL_KEYS, "Source-tree manifest");
+  if (manifest.schemaVersion !== SOURCE_TREE_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Source-tree manifest schemaVersion must be ${SOURCE_TREE_MANIFEST_SCHEMA_VERSION}`,
+    );
   }
-
-  const workflowSources = new Map();
-  const workflows = new Map();
-  for (const workflowPath of workflowPaths) {
-    const source = await readFile(path.join(canonicalRoot, workflowPath));
-    workflowSources.set(workflowPath, source);
-    workflows.set(workflowPath, parseWorkflowSource(source.toString("utf8"), workflowPath));
-  }
-
-  const actionManifestByDirectory = new Map();
-  for (const filename of allFiles) {
-    if (!/^\.github\/actions\/.+\/action\.ya?ml$/u.test(filename)) continue;
-    const directory = path.posix.dirname(filename);
-    if (actionManifestByDirectory.has(directory)) {
-      throw new Error(`${directory}: local action must have exactly one action.yml or action.yaml`);
-    }
-    actionManifestByDirectory.set(directory, filename);
-  }
-
-  const surfaceReasons = new Map();
-  const surfaceDigests = new Map();
-  const packageScriptNames = new Map();
-  const packageScriptStates = new Map();
-  const actionStates = new Map();
-  const actionEntrypoints = new Map();
-  const workflowStates = new Map();
-  const fileStates = new Map();
-
-  function repositoryPath(candidate, baseDirectory, location) {
-    if (typeof candidate !== "string" || candidate.length === 0) {
-      throw new Error(`${location}: execution target must be a non-empty static string`);
-    }
-    if (/\$\{\{|\$[A-Za-z_]|`/u.test(candidate)) {
-      throw new Error(`${location}: dynamic first-party execution targets are forbidden`);
-    }
-    const unquoted = stripStaticQuotes(candidate).replaceAll("\\", "/");
-    if (path.posix.isAbsolute(unquoted)) {
-      throw new Error(`${location}: execution target is outside the repository root: ${candidate}`);
-    }
-    const relative = path.posix.normalize(path.posix.join(baseDirectory, unquoted));
-    if (relative === ".." || relative.startsWith("../")) {
-      throw new Error(`${location}: execution target is outside the repository root: ${candidate}`);
-    }
-    return relative.replace(/^\.\//u, "");
-  }
-
-  async function readSurface(relative, reason, requireExecutable = false) {
-    const normalized = normalizedRepositoryPath(relative);
-    const absolute = path.resolve(canonicalRoot, normalized);
-    if (absolute !== canonicalRoot && !absolute.startsWith(`${canonicalRoot}${path.sep}`)) {
-      throw new Error(`${reason}: execution target is outside the repository root: ${relative}`);
-    }
-    const info = await lstat(absolute).catch(() => undefined);
-    if (!info) throw new Error(`${reason}: unresolved first-party execution target ${normalized}`);
-    if (info.isSymbolicLink()) {
-      throw new Error(`${reason}: executable surface must not be a symlink: ${normalized}`);
-    }
-    if (!info.isFile()) {
-      throw new Error(`${reason}: executable surface must be a regular file: ${normalized}`);
-    }
-    if (requireExecutable && process.platform !== "win32" && (info.mode & 0o111) === 0) {
-      throw new Error(
-        `${reason}: directly executed first-party path lacks executable permission: ${normalized}`,
-      );
-    }
-    const resolved = await realpath(absolute);
-    if (resolved !== canonicalRoot && !resolved.startsWith(`${canonicalRoot}${path.sep}`)) {
-      throw new Error(
-        `${reason}: executable surface resolves outside the repository root: ${normalized}`,
-      );
-    }
-    const source = await readFile(absolute);
-    surfaceDigests.set(normalized, sha256(source));
-    const reasons = surfaceReasons.get(normalized) ?? new Set();
-    reasons.add(reason);
-    surfaceReasons.set(normalized, reasons);
-    return source;
-  }
-
-  async function addIfPresent(relative, reason) {
-    if (fileSet.has(relative)) await visitFile(relative, reason, path.posix.dirname(relative));
-  }
-
-  function selectedPackagePath(selector, location) {
-    const normalized = selector.replace(/^\.\.\./u, "").replace(/\.\.\.$/u, "");
-    if (/\$\{\{|\$[A-Za-z_]|\*/u.test(normalized)) {
-      throw new Error(`${location}: dynamic or wildcard package filters are not auditable`);
-    }
-    const selected = packageByName.get(normalized);
-    if (!selected) throw new Error(`${location}: unresolved workspace package ${selector}`);
-    return selected;
-  }
-
-  async function addToolConfiguration(source, baseDirectory, location) {
-    if (/\bturbo\b/u.test(source)) await addIfPresent("turbo.json", `${location}: turbo config`);
-    if (/\bbiome\b/u.test(source)) await addIfPresent("biome.json", `${location}: Biome config`);
-    if (/\bvitest\b/u.test(source)) {
-      await addIfPresent("vitest.config.ts", `${location}: Vitest config`);
-      await addIfPresent("packages/testkit/src/pin-test-env.ts", `${location}: Vitest setup file`);
-    }
-    if (/\bprisma\b/u.test(source)) {
-      await addIfPresent(
-        path.posix.join(baseDirectory, "prisma.config.ts"),
-        `${location}: Prisma executable config`,
-      );
-      await addIfPresent(
-        "packages/db/prisma/schema.prisma",
-        `${location}: Prisma generator config`,
-      );
-    }
-    if (/\bvite\b/u.test(source)) {
-      await addIfPresent(
-        path.posix.join(baseDirectory, "vite.config.ts"),
-        `${location}: Vite config`,
-      );
-      await addIfPresent(
-        path.posix.join(baseDirectory, "lingui.config.ts"),
-        `${location}: Lingui config`,
-      );
-    }
-    if (/\bastro\b/u.test(source)) {
-      await addIfPresent(
-        path.posix.join(baseDirectory, "astro.config.mjs"),
-        `${location}: Astro config`,
-      );
-    }
-    if (/\bplaywright\b/u.test(source)) {
-      const explicit = /(?:--config(?:=|\s+))([^\s;&|]+)/u.exec(source)?.[1];
-      const config = explicit
-        ? repositoryPath(explicit, baseDirectory, `${location}: Playwright config`)
-        : path.posix.join(baseDirectory, "playwright.config.ts");
-      await addIfPresent(config, `${location}: Playwright config`);
-    }
-    const typescriptConfig = /\btsc\b[^\n;&|]*?(?:-p|--project)\s+([^\s;&|]+)/u.exec(source)?.[1];
-    if (typescriptConfig) {
-      const config = repositoryPath(
-        typescriptConfig,
-        baseDirectory,
-        `${location}: TypeScript config`,
-      );
-      await visitFile(config, `${location}: TypeScript config`, path.posix.dirname(config));
-    }
-  }
-
-  async function visitPackageScript(packagePath, scriptName, reason) {
-    const key = `${packagePath}#${scriptName}`;
-    const state = packageScriptStates.get(key);
-    if (state === "visiting") throw new Error(`Package script execution cycle at ${key}`);
-    const names = packageScriptNames.get(packagePath) ?? new Set();
-    names.add(scriptName);
-    packageScriptNames.set(packagePath, names);
-    if (state === "visited") return;
-
-    const command = packages.get(packagePath)?.scripts?.[scriptName];
-    if (typeof command !== "string") {
-      throw new Error(`${reason}: unresolved package script ${key}`);
-    }
-    packageScriptStates.set(key, "visiting");
-    const baseDirectory = path.posix.dirname(packagePath);
-    await scanExecutionText(command, {
-      baseDirectory: baseDirectory === "." ? "" : baseDirectory,
-      location: `package-script:${key}`,
-      packagePath,
-    });
-    packageScriptStates.set(key, "visited");
-  }
-
-  async function visitPnpmInvocation(words, context) {
-    let selector;
-    let index = 0;
-    while (index < words.length && words[index].startsWith("-")) {
-      const option = words[index];
-      if (option === "--filter" || option === "-F") {
-        selector = words[index + 1];
-        if (!selector) throw new Error(`${context.location}: pnpm --filter needs a value`);
-        index += 2;
-      } else {
-        index += 1;
-      }
-    }
-    let command = words[index];
-    if (!command) return;
-    if (command === "run") {
-      index += 1;
-      command = words[index];
-      if (!command) throw new Error(`${context.location}: pnpm run needs a static script name`);
-    }
-    const selectedPackage = selector
-      ? selectedPackagePath(selector, context.location)
-      : (context.packagePath ?? "package.json");
-    const selectedDirectory = path.posix.dirname(selectedPackage);
-
-    if (command === "exec") {
-      await addToolConfiguration(
-        words.slice(index + 1).join(" "),
-        selectedDirectory === "." ? "" : selectedDirectory,
-        `${context.location}: pnpm exec`,
-      );
-      return;
-    }
-    if (
-      [
-        "add",
-        "audit",
-        "config",
-        "dlx",
-        "fetch",
-        "install",
-        "list",
-        "outdated",
-        "remove",
-        "why",
-      ].includes(command)
-    ) {
-      return;
-    }
-    if (/\$\{\{|\$[A-Za-z_]|["'`]/u.test(command)) {
-      throw new Error(`${context.location}: dynamic package script references are forbidden`);
-    }
-    await visitPackageScript(selectedPackage, command, context.location);
-  }
-
-  async function scanExecutionText(source, context) {
-    if (DYNAMIC_EXECUTION_TARGET.test(source)) {
-      throw new Error(`${context.location}: dynamic first-party execution target is forbidden`);
-    }
-
-    async function visitStaticCandidate(candidate, requireExecutable = false) {
-      const explicitlyRelative = candidate.startsWith("./") || candidate.startsWith("../");
-      const packageRelative = repositoryPath(
-        candidate,
-        context.baseDirectory,
-        `${context.location}: first-party execution target`,
-      );
-      const resolved =
-        explicitlyRelative || fileSet.has(packageRelative) ? packageRelative : candidate;
-      await visitFile(
-        resolved,
-        `${context.location}: static file reference`,
-        context.baseDirectory,
-        false,
-        requireExecutable,
-        requireExecutable,
-      );
-    }
-    for (const candidate of directRepositoryExecutionTargets(source)) {
-      await visitStaticCandidate(candidate, true);
-    }
-    for (const candidate of interpretedRepositoryExecutionTargets(source)) {
-      await visitStaticCandidate(candidate);
-    }
-    for (const match of source.matchAll(STATIC_REPOSITORY_FILE)) {
-      await visitStaticCandidate(match[1]);
-    }
-
-    for (const match of source.matchAll(/(?<![A-Za-z0-9_-])pnpm(?![A-Za-z0-9_-])([^\n;&|]*)/gu)) {
-      await visitPnpmInvocation(staticWords(match[1]), context);
-    }
-
-    for (const match of source.matchAll(/\bturbo\s+(?:run\s+)?([A-Za-z0-9:_-]+)/gu)) {
-      const scriptName = match[1];
-      for (const [packagePath, manifest] of packages) {
-        if (packagePath !== "package.json" && typeof manifest.scripts?.[scriptName] === "string") {
-          await visitPackageScript(
-            packagePath,
-            scriptName,
-            `${context.location}: turbo ${scriptName}`,
-          );
-        }
-      }
-    }
-    await addToolConfiguration(source, context.baseDirectory, context.location);
-  }
-
-  async function visitFile(
-    relative,
-    reason,
-    baseDirectory = "",
-    followStaticModules = false,
-    requireExecutable = false,
-    followExecutionReferences = false,
+  if (
+    !Array.isArray(manifest.exclusions) ||
+    !isDeepStrictEqual(manifest.exclusions, [...SOURCE_TREE_MANIFEST_EXCLUSIONS])
   ) {
-    const normalized = repositoryPath(relative, "", reason);
-    const state = fileStates.get(normalized);
-    if (state === "visiting")
-      throw new Error(`First-party executable reference cycle at ${normalized}`);
-    const source = await readSurface(normalized, reason, requireExecutable);
-    if (state === "visited") return;
-    fileStates.set(normalized, "visiting");
-    const text = source.toString("utf8");
-    const moduleDirectory = path.posix.dirname(normalized);
-    const executableModuleRoot =
-      normalized.startsWith(".github/actions/") ||
-      normalized.startsWith("scripts/") ||
-      normalized.includes("/scripts/") ||
-      /(?:^|\.)config\.(?:[cm]?js|tsx?)$/u.test(path.posix.basename(normalized));
-    if (/\.(?:[cm]?js|tsx?)$/u.test(normalized) && (followStaticModules || executableModuleRoot)) {
-      for (const match of [
-        ...text.matchAll(STATIC_LOCAL_MODULE),
-        ...text.matchAll(STATIC_LOCAL_LOADER),
-      ]) {
-        const unresolved = repositoryPath(
-          match[1],
-          moduleDirectory === "." ? "" : moduleDirectory,
-          `file:${normalized}: static local module`,
-        );
-        const extension = path.posix.extname(unresolved);
-        const stem = extension ? unresolved.slice(0, -extension.length) : unresolved;
-        const candidates = [
-          unresolved,
-          ...(extension === ".js" ? [`${stem}.ts`, `${stem}.tsx`] : []),
-          ...(!extension
-            ? [
-                `${unresolved}.ts`,
-                `${unresolved}.tsx`,
-                `${unresolved}.js`,
-                `${unresolved}.mjs`,
-                `${unresolved}.cjs`,
-                `${unresolved}/index.ts`,
-                `${unresolved}/index.tsx`,
-                `${unresolved}/index.js`,
-              ]
-            : []),
-        ];
-        const target = candidates.find((candidate) => fileSet.has(candidate));
-        if (!target) {
-          throw new Error(`file:${normalized}: unresolved static local module ${match[1]}`);
-        }
-        await visitFile(
-          target,
-          `file:${normalized}: static local module`,
-          path.posix.dirname(target),
-          true,
-        );
-      }
-    }
-    if (/^tsconfig(?:\.[A-Za-z0-9_-]+)?\.json$/u.test(path.posix.basename(normalized))) {
-      let config;
-      try {
-        config = JSON.parse(text);
-      } catch (error) {
-        throw new Error(
-          `${normalized}: invalid TypeScript config: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      if (typeof config.extends === "string" && config.extends.startsWith(".")) {
-        const target = repositoryPath(
-          config.extends,
-          moduleDirectory === "." ? "" : moduleDirectory,
-          `file:${normalized}: TypeScript config extends`,
-        );
-        await visitFile(
-          path.posix.extname(target) ? target : `${target}.json`,
-          `file:${normalized}: TypeScript config extends`,
-          path.posix.dirname(target),
-        );
-      }
-    }
-    if (
-      followExecutionReferences ||
-      normalized.endsWith(".sh") ||
-      path.posix.basename(normalized) === "Dockerfile" ||
-      /^#![^\n]*\b(?:bash|dash|sh|zsh)\b/u.test(text)
-    ) {
-      await scanExecutionText(text, {
-        baseDirectory,
-        location: `file:${normalized}`,
-        packagePath: "package.json",
-      });
-    }
-    fileStates.set(normalized, "visited");
+    throw new Error(`Source-tree manifest must exclude only ${SOURCE_TREE_MANIFEST_PATH}`);
+  }
+  if (!Number.isSafeInteger(manifest.entryCount) || manifest.entryCount < 0) {
+    throw new Error("Source-tree manifest entryCount must be a non-negative safe integer");
+  }
+  if (!SHA256_DIGEST.test(manifest.treeSha256)) {
+    throw new Error("Source-tree manifest treeSha256 must be a lowercase SHA-256 digest");
+  }
+  if (!Array.isArray(manifest.entries)) {
+    throw new Error("Source-tree manifest entries must be an array");
+  }
+  if (manifest.entryCount !== manifest.entries.length) {
+    throw new Error("Source-tree manifest entryCount does not match entries.length");
   }
 
-  function localActionDirectory(value, callerDirectory, location) {
-    if (typeof value !== "string" || /\$\{\{|\$[A-Za-z_]|`/u.test(value)) {
-      throw new Error(`${location}: local action reference must be static`);
+  const paths = newPathValidationState();
+  let previousPath;
+  for (const [index, entry] of manifest.entries.entries()) {
+    const label = `Source-tree manifest entries[${index}]`;
+    exactObjectKeys(entry, MANIFEST_ENTRY_KEYS, label);
+    validateTrackedRepositoryPath(entry.path, paths);
+    if (entry.path === SOURCE_TREE_MANIFEST_PATH) {
+      throw new Error("Source-tree manifest must not contain its self-excluded path");
     }
-    const target = value.startsWith("./.github/actions/")
-      ? value.slice(2)
-      : path.posix.normalize(path.posix.join(callerDirectory, value));
-    if (!target.startsWith(".github/actions/") || target.split("/").includes("..")) {
-      throw new Error(`${location}: local action target is outside .github/actions: ${value}`);
+    if (previousPath !== undefined && compareUtf8(previousPath, entry.path) >= 0) {
+      throw new Error("Source-tree manifest entries must use deterministic UTF-8 path ordering");
     }
-    return target;
-  }
-
-  async function visitLocalAction(directory, callers = []) {
-    const state = actionStates.get(directory);
-    if (state === "visited") return;
-    if (state === "visiting") {
-      throw new Error(`Local action execution cycle: ${[...callers, directory].join(" -> ")}`);
+    previousPath = entry.path;
+    if (!REGULAR_GIT_MODES.has(entry.gitMode)) {
+      throw new Error(`${label} has a forbidden or invalid Git mode`);
     }
-    const manifestPath = actionManifestByDirectory.get(directory);
-    if (!manifestPath) throw new Error(`Unresolved local action manifest: ${directory}`);
-    actionStates.set(directory, "visiting");
-    const source = await readFile(path.join(canonicalRoot, manifestPath));
-    const manifest = parseWorkflowSource(source.toString("utf8"), manifestPath);
-    const runs = manifest?.runs;
-    if (!runs || typeof runs !== "object" || Array.isArray(runs)) {
-      throw new Error(`${manifestPath}: local action must define runs`);
+    if (entry.gitType !== "blob") {
+      throw new Error(`${label} Git type must be blob`);
     }
-    const using = runs.using;
-    const entrypoints = actionEntrypoints.get(manifestPath) ?? new Set();
-    actionEntrypoints.set(manifestPath, entrypoints);
-
-    if (using === "composite") {
-      if (!Array.isArray(runs.steps)) {
-        throw new Error(`${manifestPath}: composite local action must define steps`);
-      }
-      for (const [stepIndex, step] of runs.steps.entries()) {
-        if (!step || typeof step !== "object" || Array.isArray(step)) {
-          throw new Error(`${manifestPath}:runs.steps[${stepIndex}] must be an object`);
-        }
-        if (Object.hasOwn(step, "uses")) {
-          if (typeof step.uses !== "string") {
-            throw new Error(`${manifestPath}:runs.steps[${stepIndex}].uses must be a string`);
-          }
-          if (step.uses.startsWith("./") || step.uses.startsWith("../")) {
-            const target = localActionDirectory(
-              step.uses,
-              directory,
-              `${manifestPath}:runs.steps[${stepIndex}].uses`,
-            );
-            await visitLocalAction(target, [...callers, directory]);
-          } else {
-            assertPinnedUse(step.uses, manifestPath, `$.runs.steps[${stepIndex}].uses`, false);
-          }
-        }
-        if (Object.hasOwn(step, "run")) {
-          if (typeof step.run !== "string") {
-            throw new Error(`${manifestPath}:runs.steps[${stepIndex}].run must be a string`);
-          }
-          await scanExecutionText(step.run, {
-            baseDirectory: "",
-            location: `${manifestPath}:runs.steps[${stepIndex}].run`,
-            packagePath: "package.json",
-          });
-        }
-      }
-    } else if (typeof using === "string" && /^node(?:12|16|20|24)$/u.test(using)) {
-      for (const key of ["pre", "main", "post"]) {
-        if (!Object.hasOwn(runs, key)) continue;
-        const entrypoint = repositoryPath(runs[key], directory, `${manifestPath}:runs.${key}`);
-        entrypoints.add(entrypoint);
-        await visitFile(entrypoint, `${manifestPath}:runs.${key}`, directory, true);
-      }
-      if (!Object.hasOwn(runs, "main"))
-        throw new Error(`${manifestPath}: node action needs runs.main`);
-    } else if (using === "docker") {
-      if (typeof runs.image !== "string" || /\$\{\{|\$[A-Za-z_]|`/u.test(runs.image)) {
-        throw new Error(`${manifestPath}: Docker action image must be a static string`);
-      }
-      if (!runs.image.startsWith("docker://")) {
-        const dockerfile = repositoryPath(runs.image, directory, `${manifestPath}:runs.image`);
-        entrypoints.add(dockerfile);
-        await visitFile(dockerfile, `${manifestPath}:runs.image`, directory);
-      }
-    } else {
-      throw new Error(`${manifestPath}: unsupported local action runtime ${String(using)}`);
+    if (!Number.isSafeInteger(entry.byteLength) || entry.byteLength < 0) {
+      throw new Error(`${label} byteLength must be a non-negative safe integer`);
     }
-    actionStates.set(directory, "visited");
-  }
-
-  async function visitWorkflow(workflowPath, callers = []) {
-    const state = workflowStates.get(workflowPath);
-    if (state === "visited") return;
-    if (state === "visiting") {
-      throw new Error(`Local reusable workflow cycle: ${[...callers, workflowPath].join(" -> ")}`);
+    if (!SHA256_DIGEST.test(entry.sha256)) {
+      throw new Error(`${label} sha256 must be a lowercase SHA-256 digest`);
     }
-    const workflow = workflows.get(workflowPath);
-    if (!workflow) throw new Error(`Unresolved local reusable workflow ${workflowPath}`);
-    workflowStates.set(workflowPath, "visiting");
-    const jobs = workflow.jobs;
-    if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
-      for (const [jobName, job] of Object.entries(jobs)) {
-        if (!job || typeof job !== "object" || Array.isArray(job)) continue;
-        if (Object.hasOwn(job, "uses")) {
-          if (typeof job.uses === "string" && isCanonicalLocalReusableWorkflow(job.uses)) {
-            await visitWorkflow(job.uses.slice(2), [...callers, workflowPath]);
-          }
-          continue;
-        }
-        if (!Array.isArray(job.steps)) continue;
-        for (const [stepIndex, step] of job.steps.entries()) {
-          if (!step || typeof step !== "object" || Array.isArray(step)) continue;
-          if (typeof step.uses === "string" && step.uses.startsWith("./")) {
-            const directory = localActionDirectory(
-              step.uses,
-              ".",
-              `${workflowPath}:jobs.${jobName}.steps[${stepIndex}].uses`,
-            );
-            await visitLocalAction(directory);
-          }
-          if (Object.hasOwn(step, "run")) {
-            if (typeof step.run !== "string") {
-              throw new Error(
-                `${workflowPath}:jobs.${jobName}.steps[${stepIndex}].run must be a string`,
-              );
-            }
-            const workingDirectory =
-              step["working-directory"] ??
-              job.defaults?.run?.["working-directory"] ??
-              workflow.defaults?.run?.["working-directory"] ??
-              "";
-            const baseDirectory = repositoryPath(
-              workingDirectory || ".",
-              "",
-              `${workflowPath}:jobs.${jobName}.steps[${stepIndex}].working-directory`,
-            );
-            await scanExecutionText(step.run, {
-              baseDirectory: baseDirectory === "." ? "" : baseDirectory,
-              location: `${workflowPath}:jobs.${jobName}.steps[${stepIndex}].run`,
-              packagePath: "package.json",
-            });
-          }
-        }
-        for (const include of job.strategy?.matrix?.include ?? []) {
-          if (include && typeof include === "object" && typeof include.dockerfile === "string") {
-            await visitFile(
-              repositoryPath(
-                include.dockerfile,
-                "",
-                `${workflowPath}:jobs.${jobName}.strategy.matrix.include.dockerfile`,
-              ),
-              `${workflowPath}: image Dockerfile`,
-            );
-          }
-        }
-      }
-    }
-    workflowStates.set(workflowPath, "visited");
   }
-
-  for (const packagePath of packagePaths) {
-    await readSurface(packagePath, "pnpm package-manager manifest");
+  if (sourceTreeDigest(manifest.entries) !== manifest.treeSha256) {
+    throw new Error("Source-tree manifest treeSha256 does not match its entries");
   }
-  for (const managerPath of PACKAGE_MANAGER_FILES) {
-    if (fileSet.has(managerPath)) await readSurface(managerPath, "pnpm package-manager config");
-  }
-  if (fileSet.has(".dockerignore")) {
-    await readSurface(".dockerignore", "image build context config");
-  }
-  for (const workflowPath of workflowPaths) await visitWorkflow(workflowPath);
-  for (const actionDirectory of [...actionManifestByDirectory.keys()].sort()) {
-    await visitLocalAction(actionDirectory);
-  }
-
-  const localActions = [];
-  for (const [directory, manifestPath] of [...actionManifestByDirectory].sort(([a], [b]) =>
-    a.localeCompare(b),
-  )) {
-    const source = await readFile(path.join(canonicalRoot, manifestPath));
-    localActions.push({
-      directory,
-      entrypoints: [...(actionEntrypoints.get(manifestPath) ?? [])].sort(),
-      manifest: manifestPath,
-      sha256: sha256(source),
-    });
-  }
-
-  return {
-    schemaVersion: EXECUTABLE_SURFACE_SCHEMA_VERSION,
-    workflows: workflowPaths.map((workflowPath) => ({
-      path: workflowPath,
-      sha256: sha256(workflowSources.get(workflowPath)),
-    })),
-    localActions,
-    packageScripts: [...packageScriptNames]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([manifest, names]) => ({ manifest, scripts: [...names].sort() })),
-    surfaces: [...surfaceDigests]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([surfacePath, digest]) => ({
-        path: surfacePath,
-        reasons: [...surfaceReasons.get(surfacePath)].sort(),
-        sha256: digest,
-      })),
-  };
+  return manifest;
 }
 
-export async function writeExecutableSurfaceManifest(root) {
-  const filename = path.join(root, EXECUTABLE_SURFACE_MANIFEST_PATH);
-  try {
-    parseStrictJson(await readFile(filename, "utf8"), EXECUTABLE_SURFACE_MANIFEST_PATH);
-  } catch (error) {
-    if (!(error && typeof error === "object" && error.code === "ENOENT")) {
-      throw new Error(
-        `Refusing to regenerate over an invalid executable-surface manifest at ${EXECUTABLE_SURFACE_MANIFEST_PATH}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+export async function createSourceTreeManifest(root) {
+  const { canonicalRoot, entries: trackedEntries } = await readTrackedRepositoryEntries(root);
+  const entries = [];
+  for (const trackedEntry of trackedEntries) {
+    if (trackedEntry.path === SOURCE_TREE_MANIFEST_PATH) continue;
+    entries.push(await contentBindTrackedEntry(canonicalRoot, trackedEntry));
+  }
+  const manifest = {
+    schemaVersion: SOURCE_TREE_MANIFEST_SCHEMA_VERSION,
+    exclusions: [...SOURCE_TREE_MANIFEST_EXCLUSIONS],
+    entryCount: entries.length,
+    treeSha256: sourceTreeDigest(entries),
+    entries,
+  };
+  return assertSourceTreeManifestShape(manifest);
+}
+
+function describeSourceTreeManifestDrift(actual, expected) {
+  const actualByPath = new Map(actual.entries.map((entry) => [entry.path, entry]));
+  const expectedByPath = new Map(expected.entries.map((entry) => [entry.path, entry]));
+  for (const repositoryPath of expectedByPath.keys()) {
+    if (!actualByPath.has(repositoryPath)) {
+      return `tracked file added or renamed: ${repositoryPath}`;
     }
   }
-  const manifest = await createExecutableSurfaceManifest(root);
+  for (const repositoryPath of actualByPath.keys()) {
+    if (!expectedByPath.has(repositoryPath)) {
+      return `tracked file removed or renamed: ${repositoryPath}`;
+    }
+  }
+  for (const [repositoryPath, expectedEntry] of expectedByPath) {
+    const actualEntry = actualByPath.get(repositoryPath);
+    if (actualEntry.gitMode !== expectedEntry.gitMode) {
+      return `tracked Git mode drift: ${repositoryPath}`;
+    }
+    if (actualEntry.gitType !== expectedEntry.gitType) {
+      return `tracked Git type drift: ${repositoryPath}`;
+    }
+    if (actualEntry.byteLength !== expectedEntry.byteLength) {
+      return `tracked content drift (byte length): ${repositoryPath}`;
+    }
+    if (actualEntry.sha256 !== expectedEntry.sha256) {
+      return `tracked content drift: ${repositoryPath}`;
+    }
+  }
+  return "source-tree manifest metadata or ordering drift";
+}
+
+async function readExistingManifestForRegeneration(filename) {
+  const info = await lstat(filename).catch(() => undefined);
+  if (!info) return undefined;
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error(
+      "Refusing to regenerate over a non-regular source-tree manifest at " +
+        SOURCE_TREE_MANIFEST_PATH,
+    );
+  }
+  let manifest;
+  try {
+    manifest = parseStrictJson(await readFile(filename, "utf8"), SOURCE_TREE_MANIFEST_PATH);
+  } catch (error) {
+    throw new Error(
+      "Refusing to regenerate over an invalid source-tree manifest at " +
+        SOURCE_TREE_MANIFEST_PATH +
+        ": " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+  return manifest;
+}
+
+export async function writeSourceTreeManifest(root) {
+  const filename = path.join(root, SOURCE_TREE_MANIFEST_PATH);
+  await readExistingManifestForRegeneration(filename);
+  const manifest = await createSourceTreeManifest(root);
   await writeFile(filename, `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
 
-export async function assertExecutableSurfaceManifest(root) {
-  const filename = path.join(root, EXECUTABLE_SURFACE_MANIFEST_PATH);
-  let actual;
-  try {
-    actual = parseStrictJson(await readFile(filename, "utf8"), EXECUTABLE_SURFACE_MANIFEST_PATH);
-  } catch (error) {
+function assertManifestIsTracked(root) {
+  runGit(root, ["ls-files", "--error-unmatch", "--", SOURCE_TREE_MANIFEST_PATH]);
+}
+
+export async function assertSourceTreeManifest(root) {
+  const filename = path.join(root, SOURCE_TREE_MANIFEST_PATH);
+  const info = await lstat(filename).catch(() => undefined);
+  if (!info || info.isSymbolicLink() || !info.isFile()) {
     throw new Error(
-      `Executable-surface manifest is missing or invalid at ${EXECUTABLE_SURFACE_MANIFEST_PATH}: ${error instanceof Error ? error.message : String(error)}`,
+      `Source-tree manifest is missing or non-regular at ${SOURCE_TREE_MANIFEST_PATH}`,
     );
   }
-  const expected = await createExecutableSurfaceManifest(root);
+  let actual;
+  try {
+    actual = parseStrictJson(await readFile(filename, "utf8"), SOURCE_TREE_MANIFEST_PATH);
+    assertSourceTreeManifestShape(actual);
+  } catch (error) {
+    throw new Error(
+      "Source-tree manifest is invalid at " +
+        SOURCE_TREE_MANIFEST_PATH +
+        ": " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+  assertManifestIsTracked(root);
+  const expected = await createSourceTreeManifest(root);
   if (!isDeepStrictEqual(actual, expected)) {
     throw new Error(
-      `Executable-surface manifest drift in the CI executable and image build inventory: ${describeExecutableManifestDrift(actual, expected)}. Regenerate intentionally with \`pnpm policy:manifest\`.`,
+      "Source-tree manifest drift: " +
+        describeSourceTreeManifestDrift(actual, expected) +
+        ". Regenerate intentionally with pnpm policy:manifest.",
     );
   }
   return expected;
 }
-
 export function assertCandidateCheckoutPolicy(source, filename, requirements) {
   const workflow = parseWorkflowSource(source, filename);
   const jobs = workflow?.jobs;
@@ -1665,6 +1317,27 @@ export function assertProtectedCodeowners(source, protectedPaths, expectedOwner)
   }
 }
 
+export function assertSourceTreeManifestCodeowner(source) {
+  const rules = parseCodeowners(source);
+  const exactPattern = `/${SOURCE_TREE_MANIFEST_PATH}`;
+  const matches = rules.filter((rule) => rule.pattern === exactPattern);
+  if (
+    matches.length !== 1 ||
+    matches[0].owners.length !== 1 ||
+    matches[0].owners[0] !== CODEOWNER
+  ) {
+    throw new Error(
+      `${SOURCE_TREE_MANIFEST_PATH} must have one exact CODEOWNERS rule owned only by ${CODEOWNER}`,
+    );
+  }
+  const effectiveOwners = effectiveCodeowners(rules, SOURCE_TREE_MANIFEST_PATH);
+  if (!isDeepStrictEqual(effectiveOwners, [CODEOWNER])) {
+    throw new Error(
+      `${SOURCE_TREE_MANIFEST_PATH} must remain effectively owned only by ${CODEOWNER}`,
+    );
+  }
+}
+
 export function assertGitleaksPolicy(source) {
   let config;
   try {
@@ -1683,23 +1356,20 @@ export function assertGitleaksPolicy(source) {
 }
 
 export async function assertRepositoryPolicy(root) {
-  const executableManifest = await assertExecutableSurfaceManifest(root);
-  const workflowsRoot = path.join(root, ".github/workflows");
-  const workflowFiles = (await listFiles(workflowsRoot))
-    .filter((filename) => /\.ya?ml$/iu.test(filename))
+  const sourceTreeManifest = await assertSourceTreeManifest(root);
+  const trackedFiles = sourceTreeManifest.entries.map((entry) => entry.path);
+  const workflowPaths = trackedFiles
+    .filter((filename) => filename.startsWith(".github/workflows/") && /\.ya?ml$/iu.test(filename))
     .sort();
-  if (workflowFiles.length === 0) throw new Error("No GitHub Actions workflows found");
-  for (const repositoryFilename of CANDIDATE_CHECKOUT_REQUIREMENTS.keys()) {
-    const filename = repositoryFilename.slice(".github/workflows/".length);
-    if (!workflowFiles.includes(filename)) {
-      throw new Error(`Required candidate workflow is missing: ${repositoryFilename}`);
-    }
+  if (!isDeepStrictEqual(workflowPaths, [...EXPECTED_WORKFLOW_PATHS])) {
+    throw new Error(
+      `Tracked GitHub Actions workflow set must be exactly ${EXPECTED_WORKFLOW_PATHS.join(", ")}; found ${workflowPaths.join(", ") || "none"}`,
+    );
   }
   const workflowSources = new Map();
   const workflows = new Map();
-  for (const filename of workflowFiles) {
-    const repositoryFilename = `.github/workflows/${filename}`;
-    const source = await readFile(path.join(workflowsRoot, filename), "utf8");
+  for (const repositoryFilename of workflowPaths) {
+    const source = await readFile(path.join(root, repositoryFilename), "utf8");
     const workflow = parseWorkflowSource(source, repositoryFilename);
     assertPinnedWorkflow(workflow, repositoryFilename);
     workflowSources.set(repositoryFilename, source);
@@ -1717,9 +1387,8 @@ export async function assertRepositoryPolicy(root) {
   }
   assertDependabotPolicy(await readFile(path.join(root, ".github/dependabot.yml"), "utf8"));
 
-  const allFiles = await listFiles(root, new Set([".git", ".turbo", "node_modules"]));
   const protectedPaths = new Set([...REQUIRED_PROTECTED_PATHS, ...REQUIRED_OWNERSHIP_PROBES]);
-  for (const filename of allFiles) {
+  for (const filename of trackedFiles) {
     if (PROTECTED_FILE_GLOBS.some((glob) => minimatch(filename, glob, { dot: true }))) {
       protectedPaths.add(filename);
     }
@@ -1730,6 +1399,7 @@ export async function assertRepositoryPolicy(root) {
   }
 
   const codeownersSource = await readFile(path.join(root, ".github/CODEOWNERS"), "utf8");
+  assertSourceTreeManifestCodeowner(codeownersSource);
   assertProtectedCodeowners(codeownersSource, [...protectedPaths].sort(), CODEOWNER);
 
   const gitleaksSource = await readFile(path.join(root, ".gitleaks.toml"), "utf8");
@@ -1742,52 +1412,45 @@ export async function assertRepositoryPolicy(root) {
 
   return {
     codeowner: CODEOWNER,
-    executableSurfaceCount: executableManifest.surfaces.length,
     protectedPathCount: protectedPaths.size,
-    workflowCount: workflowFiles.length,
+    sourceTreeEntryCount: sourceTreeManifest.entryCount,
+    sourceTreeSha256: sourceTreeManifest.treeSha256,
+    workflowCount: workflowPaths.length,
   };
-}
-
-async function listFiles(root, ignoredDirectories = new Set()) {
-  const files = [];
-  async function visit(directory, prefix) {
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isSymbolicLink())
-        throw new Error(`Policy input must not be a symlink: ${relative}`);
-      if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name))
-          await visit(path.join(directory, entry.name), relative);
-      } else if (entry.isFile()) {
-        files.push(relative);
-      }
-    }
-  }
-  await visit(root, "");
-  return files;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
   const command = process.argv[2] ?? "--check";
   const operation =
-    command === "--write-executable-manifest"
-      ? writeExecutableSurfaceManifest(root)
-      : command === "--check" || command === "--check-executable-manifest"
+    command === "--write-source-tree-manifest"
+      ? writeSourceTreeManifest(root)
+      : command === "--check" || command === "--check-source-tree-manifest"
         ? assertRepositoryPolicy(root)
         : Promise.reject(new Error(`Unknown repository policy command: ${command}`));
   operation
     .then((result) => {
-      if (command === "--write-executable-manifest") {
+      if (command === "--write-source-tree-manifest") {
         console.log(
-          `Wrote ${EXECUTABLE_SURFACE_MANIFEST_PATH}: ${result.workflows.length} workflows, ${result.surfaces.length} executable surfaces`,
+          `Wrote ${SOURCE_TREE_MANIFEST_PATH}: ${result.entryCount} tracked regular files, tree SHA-256 ${result.treeSha256}; the manifest itself is the only exclusion`,
         );
         return;
       }
-      const { codeowner, executableSurfaceCount, protectedPathCount, workflowCount } = result;
+      const {
+        codeowner,
+        protectedPathCount,
+        sourceTreeEntryCount,
+        sourceTreeSha256,
+        workflowCount,
+      } = result;
       console.log(
-        `Repository policy passed: ${workflowCount} workflows, ${executableSurfaceCount} executable surfaces, ${protectedPathCount} protected paths, owner ${codeowner}`,
+        `Repository policy passed: ${workflowCount} exact workflows, ${sourceTreeEntryCount} tracked regular files, tree SHA-256 ${sourceTreeSha256}, ${protectedPathCount} protected paths, manifest owner ${codeowner}`,
+      );
+      console.log(
+        "Conservative pilot governance: every tracked byte or Git mode change requires refreshing the CODEOWNED manifest; this is whole-tree binding, not shell understanding.",
+      );
+      console.log(
+        "Live branch protection remains required to enforce manifest-owner review; repository files cannot enforce their own approval.",
       );
     })
     .catch((error) => {

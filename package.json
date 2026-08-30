@@ -29,7 +29,7 @@
     "test:computer": "tsx packages/testkit/src/cli/computer.ts",
     "perf:desktop": "tsx packages/testkit/src/cli/desktop-performance.ts",
     "perf:compare": "tsx packages/testkit/src/cli/compare-performance.ts",
-    "policy:manifest": "node scripts/repository-policy.mjs --write-executable-manifest && biome format --write .github/ci-executable-surface.json",
+    "policy:manifest": "node scripts/repository-policy.mjs --write-source-tree-manifest && biome format --write .github/ci-executable-surface.json",
     "compose:up": "docker compose --env-file .env -f infra/compose/docker-compose.yml up --build",
     "compose:down": "docker compose --env-file .env -f infra/compose/docker-compose.yml down -v"
   },

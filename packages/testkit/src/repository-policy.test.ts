@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,10 +12,12 @@ import {
   assertPinnedWorkflowSource,
   assertProtectedCodeowners,
   assertRepositoryPolicy,
+  assertSourceTreeManifestCodeowner,
   CANARY_RULE_ID,
   effectiveCodeowners,
   GITLEAKS_CANARY_PATH,
   parseCodeowners,
+  parseGitTrackedEntries,
 } from "../../../scripts/repository-policy.mjs";
 
 const root = path.resolve(import.meta.dirname, "../../..");
@@ -100,23 +103,42 @@ function mutateImageBuildContext(
 let repositoryFixtureParent: string;
 let repositoryFixtureRoot: string;
 
+function runGit(repository: string, ...arguments_: string[]) {
+  return execFileSync("git", ["-C", repository, ...arguments_], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function stageFixture() {
+  runGit(repositoryFixtureRoot, "add", "-A");
+}
+
 async function prepareRepositoryFixture() {
   repositoryFixtureParent = await mkdtemp(path.join(tmpdir(), "rakazo-repository-policy-"));
   repositoryFixtureRoot = path.join(repositoryFixtureParent, "repository");
-  const ignoredRoots = new Set([
-    ".git",
-    ".turbo",
-    "node_modules",
-    "playwright-report",
-    "test-report",
-  ]);
+  const trackedOutput = execFileSync("git", ["-C", root, "ls-files", "-z"]);
+  const trackedFiles = new Set(trackedOutput.toString("utf8").split("\0").filter(Boolean));
+  const trackedDirectories = new Set<string>();
+  for (const filename of trackedFiles) {
+    let directory = path.posix.dirname(filename);
+    while (directory !== ".") {
+      trackedDirectories.add(directory);
+      directory = path.posix.dirname(directory);
+    }
+  }
   await cp(root, repositoryFixtureRoot, {
     filter: (source) => {
-      const relative = path.relative(root, source);
-      return relative === "" || !ignoredRoots.has(relative.split(path.sep)[0] ?? "");
+      const relative = path.relative(root, source).split(path.sep).join("/");
+      return relative === "" || trackedFiles.has(relative) || trackedDirectories.has(relative);
     },
     recursive: true,
   });
+  runGit(repositoryFixtureRoot, "init", "--quiet");
+  runGit(repositoryFixtureRoot, "config", "user.email", "policy-tests@example.invalid");
+  runGit(repositoryFixtureRoot, "config", "user.name", "Repository Policy Tests");
+  stageFixture();
+  runGit(repositoryFixtureRoot, "commit", "--quiet", "-m", "test fixture");
 }
 
 async function withWorkflowSources(
@@ -138,70 +160,16 @@ async function withWorkflowSources(
       if (original === undefined) await rm(target, { force: true });
       else await writeFile(target, original);
     }
+    stageFixture();
   }
 }
 
-async function withRepositoryFiles(files: Record<string, string>, assertion: () => Promise<void>) {
-  const originals = new Map<string, string | undefined>();
-  try {
-    const manifest = path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json");
-    originals.set(manifest, await readFile(manifest, "utf8").catch(() => undefined));
-    for (const [filename, source] of Object.entries(files)) {
-      const target = path.join(repositoryFixtureRoot, filename);
-      originals.set(target, await readFile(target, "utf8").catch(() => undefined));
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, source);
-    }
-    await assertion();
-  } finally {
-    for (const [target, original] of originals) {
-      if (original === undefined) await rm(target, { force: true });
-      else await writeFile(target, original);
-    }
-  }
-}
-
-async function withExecutableRepositoryFiles(
-  files: Record<string, string>,
-  executablePaths: string[],
-  assertion: () => Promise<void>,
-) {
-  await withRepositoryFiles(files, async () => {
-    if (process.platform !== "win32") {
-      for (const filename of executablePaths) {
-        await chmod(path.join(repositoryFixtureRoot, filename), 0o755);
-      }
-    }
-    await assertion();
-  });
-}
-
-async function regenerateExecutableSurfaceManifest() {
+async function regenerateSourceTreeManifest() {
+  stageFixture();
   const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
-    writeExecutableSurfaceManifest?: (root: string) => Promise<void>;
+    writeSourceTreeManifest?: (root: string) => Promise<void>;
   };
-  await policy.writeExecutableSurfaceManifest?.(repositoryFixtureRoot);
-}
-
-async function executableSurfaceManifestGenerator() {
-  const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
-    createExecutableSurfaceManifest?: (root: string) => Promise<unknown>;
-  };
-  expect(policy.createExecutableSurfaceManifest).toBeTypeOf("function");
-  return policy.createExecutableSurfaceManifest;
-}
-
-async function executableSurfaceManifestWriter() {
-  const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
-    writeExecutableSurfaceManifest?: (root: string) => Promise<unknown>;
-  };
-  expect(policy.writeExecutableSurfaceManifest).toBeTypeOf("function");
-  return policy.writeExecutableSurfaceManifest;
-}
-
-function executableSurfacePaths(manifest: unknown) {
-  const value = manifest as { surfaces?: Array<{ path?: unknown }> };
-  return (value.surfaces ?? []).map((surface) => surface.path);
+  await policy.writeSourceTreeManifest?.(repositoryFixtureRoot);
 }
 
 function actionBuildWorkflow(context?: unknown) {
@@ -221,10 +189,6 @@ function actionBuildWorkflow(context?: unknown) {
     },
   };
   return stringifyYaml(workflow);
-}
-
-function runWorkflow(runEntry: string) {
-  return `name: unmanifested-run\non: workflow_dispatch\njobs:\n  image:\n    runs-on: ubuntu-latest\n    steps:\n      - ${runEntry}\n`;
 }
 
 describe("GitHub Actions pin policy", () => {
@@ -705,677 +669,463 @@ describe("exact candidate checkout policy", () => {
   });
 });
 
-describe("content-addressed executable surface and image build policy", () => {
-  beforeAll(prepareRepositoryFixture);
+type SourceTreeEntry = {
+  path: string;
+  gitMode: "100644" | "100755";
+  gitType: "blob";
+  byteLength: number;
+  sha256: string;
+};
 
-  afterAll(async () => {
-    await rm(repositoryFixtureParent, { force: true, recursive: true });
-  });
+type SourceTreeManifest = {
+  schemaVersion: number;
+  exclusions: string[];
+  entryCount: number;
+  treeSha256: string;
+  entries: SourceTreeEntry[];
+};
 
-  it("accepts the checked-in exact image-build manifest", async () => {
+async function sourceTreePolicy() {
+  const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
+    assertSourceTreeManifest: (root: string) => Promise<SourceTreeManifest>;
+    createSourceTreeManifest: (root: string) => Promise<SourceTreeManifest>;
+    writeSourceTreeManifest: (root: string) => Promise<SourceTreeManifest>;
+  };
+  expect(policy.assertSourceTreeManifest).toBeTypeOf("function");
+  expect(policy.createSourceTreeManifest).toBeTypeOf("function");
+  expect(policy.writeSourceTreeManifest).toBeTypeOf("function");
+  return policy;
+}
+
+async function writeRepositoryFiles(
+  repository: string,
+  files: Record<string, string | Uint8Array>,
+) {
+  for (const [filename, content] of Object.entries(files)) {
+    const target = path.join(repository, filename);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content);
+  }
+}
+
+async function withGitRepository(
+  files: Record<string, string | Uint8Array>,
+  assertion: (repository: string) => Promise<void>,
+) {
+  const parent = await mkdtemp(path.join(tmpdir(), "rakazo-source-tree-policy-"));
+  const repository = path.join(parent, "repository");
+  await mkdir(path.join(repository, ".github"), { recursive: true });
+  runGit(repository, "init", "--quiet");
+  runGit(repository, "config", "user.email", "policy-tests@example.invalid");
+  runGit(repository, "config", "user.name", "Repository Policy Tests");
+  await writeRepositoryFiles(repository, files);
+  runGit(repository, "add", "-A");
+  runGit(repository, "commit", "--quiet", "-m", "fixture");
+  try {
+    await assertion(repository);
+  } finally {
+    await rm(parent, { force: true, recursive: true });
+  }
+}
+
+async function writeAndTrackSourceTreeManifest(repository: string) {
+  const policy = await sourceTreePolicy();
+  const manifest = await policy.writeSourceTreeManifest(repository);
+  runGit(repository, "add", ".github/ci-executable-surface.json");
+  return manifest;
+}
+
+function gitIndexRecord(mode: string, repositoryPath: string, stage = "0") {
+  return Buffer.concat([
+    Buffer.from(`${mode} ${"0".repeat(40)} ${stage}\t`, "utf8"),
+    Buffer.from(repositoryPath, "utf8"),
+    Buffer.from([0]),
+  ]);
+}
+
+function gitIndexRecords(...records: Array<[string, string, string?]>) {
+  return Buffer.concat(
+    records.map(([mode, repositoryPath, stage]) => gitIndexRecord(mode, repositoryPath, stage)),
+  );
+}
+
+beforeAll(prepareRepositoryFixture);
+
+afterAll(async () => {
+  await rm(repositoryFixtureParent, { force: true, recursive: true });
+});
+
+describe("content-addressed source tree policy", () => {
+  it("accepts the checked-in whole-tree manifest and keeps check mode read-only", async () => {
+    const filename = path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json");
+    const before = await readFile(filename);
+
     await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
       workflowCount: 6,
+      sourceTreeEntryCount: expect.any(Number),
+      sourceTreeSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
     });
+    await expect(readFile(filename)).resolves.toEqual(before);
   });
 
-  it("keeps check mode read-only", async () => {
-    const filename = path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json");
-    const before = await readFile(filename, "utf8");
+  it("binds every tracked regular file in deterministic UTF-8 path order and excludes only itself", async () => {
+    const files = {
+      ".github/not-the-manifest.json": "{}\n",
+      "arbitrary/deep/data.bin": new Uint8Array([0, 1, 2, 255]),
+      "café/日本語.txt": "non-ASCII\n",
+      "empty-file": new Uint8Array(),
+      "generated/tracked.out": "tracked generated bytes\n",
+      "line-endings/crlf.txt": new Uint8Array([0x61, 0x0d, 0x0a, 0x62, 0x0d, 0x0a]),
+      "src/application.ts": "export const application = true;\n",
+    };
 
-    await assertRepositoryPolicy(repositoryFixtureRoot);
+    await withGitRepository(files, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const manifest = await policy.createSourceTreeManifest(repository);
+      const paths = manifest.entries.map((entry) => entry.path);
+      const expectedPaths = Object.keys(files).sort((left, right) =>
+        Buffer.compare(Buffer.from(left), Buffer.from(right)),
+      );
 
-    await expect(readFile(filename, "utf8")).resolves.toBe(before);
+      expect(manifest).toMatchObject({
+        schemaVersion: 2,
+        exclusions: [".github/ci-executable-surface.json"],
+        entryCount: expectedPaths.length,
+        treeSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      });
+      expect(paths).toEqual(expectedPaths);
+      expect(paths).not.toContain(".github/ci-executable-surface.json");
+      expect(paths).toContain(".github/not-the-manifest.json");
+      expect(manifest.entries.find((entry) => entry.path === "empty-file")).toMatchObject({
+        byteLength: 0,
+        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      });
+      expect(
+        manifest.entries.find((entry) => entry.path === "arbitrary/deep/data.bin"),
+      ).toMatchObject({
+        byteLength: 4,
+        gitMode: "100644",
+        gitType: "blob",
+      });
+      for (const entry of manifest.entries) {
+        expect(Object.keys(entry).sort()).toEqual(
+          ["byteLength", "gitMode", "gitType", "path", "sha256"].sort(),
+        );
+      }
+    });
   });
 
   it.each([
-    ["bash -lc", `bash -lc 'docker build .'`],
-    ["sh -ec", `sh -ec 'docker build .'`],
-    ["timeout", "timeout 30 docker build ."],
-    ["nice", "nice -n 5 docker build ."],
-    ["env -S", `env -S 'docker build .'`],
-    ["find -exec", String.raw`find . -exec docker build {} \;`],
-    ["GNU xargs option arguments", "printf '.\\n' | xargs --max-procs 1 docker build"],
-    ["buildctl-daemonless.sh", "buildctl-daemonless.sh build --frontend dockerfile.v0"],
-  ])(
-    "rejects %s by workflow content drift without shell interpretation",
-    async (_name, command) => {
-      const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-      const mutated = mutateRequired(source, "      - run: pnpm lint", `      - run: ${command}`);
-
-      await withWorkflowSources({ "ci.yml": mutated }, async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest|workflow inventory/i,
-        );
-      });
-    },
-  );
-
-  it("rejects workflow-to-local-script indirection by workflow content drift", async () => {
-    const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutated = mutateRequired(
-      source,
-      "      - run: pnpm lint",
-      "      - run: bash scripts/ci-image-build.sh",
-    );
-
-    await withRepositoryFiles(
-      {
-        ".github/workflows/ci.yml": mutated,
-        "scripts/ci-image-build.sh": "#!/usr/bin/env bash\nset -euo pipefail\ndocker build .\n",
-      },
-      async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest|workflow inventory/i,
-        );
-      },
-    );
-  });
-
-  it("does not interpret inert heredoc, echo, or comment payload text as commands", async () => {
-    const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const inert = `      - run: |\n          # docker build . is documentation\n          echo "docker build ."\n          cat <<'PAYLOAD'\n          docker build .\n          buildctl-daemonless.sh build\n          PAYLOAD`;
-    const mutated = mutateRequired(source, "      - run: pnpm lint", inert);
-
-    await withWorkflowSources({ "ci.yml": mutated }, async () => {
-      await regenerateExecutableSurfaceManifest();
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
-        workflowCount: 6,
-      });
-    });
-  });
-
-  it("fails closed when an allowed workflow run scalar changes", async () => {
-    const source = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutated = mutateRequired(source, "      - run: pnpm lint", "      - run: echo changed");
-
-    await withWorkflowSources({ "ci.yml": mutated }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /content|digest|executable-surface manifest/i,
-      );
-    });
-  });
-
-  it("fails closed when a referenced local script changes", async () => {
-    const filename = "scripts/publish-playwright-report.sh";
-    const source = await readFile(path.join(root, filename), "utf8");
-
-    await withRepositoryFiles(
-      { [filename]: `${source}\n# changed executable bytes\n` },
-      async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
-        );
-      },
-    );
-  });
-
-  it("content-binds recursively referenced extensionless shell scripts", async () => {
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: sh scripts/outer",
-    );
-
-    await withRepositoryFiles(
-      {
-        ".github/workflows/ci.yml": mutatedWorkflow,
-        "scripts/inner": "#!/usr/bin/env sh\nexit 0\n",
-        "scripts/outer": "#!/usr/bin/env sh\nsh scripts/inner\n",
-      },
-      async () => {
-        await regenerateExecutableSurfaceManifest();
+    [
+      "tracked content in application source",
+      async (repository: string) => {
         await writeFile(
-          path.join(repositoryFixtureRoot, "scripts/inner"),
-          "#!/usr/bin/env sh\ndocker build .\n",
-        );
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
+          path.join(repository, "src/application.ts"),
+          "export const changed = true;\n",
         );
       },
-    );
-  });
-
-  it("content-binds a quoted extensionless direct workflow wrapper with spaces", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: '\"./scripts/nested wrappers/ci wrapper\"'",
-    );
-    const wrapper = "scripts/nested wrappers/ci wrapper";
-
-    await withExecutableRepositoryFiles(
-      {
-        ".github/workflows/ci.yml": mutatedWorkflow,
-        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
+      /tracked content drift.*src\/application\.ts/iu,
+    ],
+    [
+      "a tracked file added in an arbitrary directory",
+      async (repository: string) => {
+        await writeRepositoryFiles(repository, { "arbitrary/new/file.txt": "new\n" });
+        runGit(repository, "add", "arbitrary/new/file.txt");
       },
-      [wrapper],
-      async () => {
-        await regenerateExecutableSurfaceManifest();
-        expect(executableSurfacePaths(await createManifest(repositoryFixtureRoot))).toContain(
-          wrapper,
-        );
-        await writeFile(
-          path.join(repositoryFixtureRoot, wrapper),
-          "#!/usr/bin/env sh\ndocker build .\n",
-        );
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
-        );
+      /tracked file added.*arbitrary\/new\/file\.txt/iu,
+    ],
+    [
+      "a tracked file removed",
+      async (repository: string) => {
+        await rm(path.join(repository, "src/application.ts"));
+        runGit(repository, "add", "-A");
       },
-    );
-  });
-
-  it("content-binds a normalized extensionless direct path from a reached package script", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const packageSource = await readFile(path.join(root, "package.json"), "utf8");
-    const mutatedPackage = mutateRequired(
-      packageSource,
-      '"test:integration": "tsx packages/testkit/src/cli/harness.ts --integration"',
-      '"test:integration": "scripts/./nested/ci-wrapper"',
-    );
-    const wrapper = "scripts/nested/ci-wrapper";
-
-    await withExecutableRepositoryFiles(
-      {
-        "package.json": mutatedPackage,
-        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
+      /tracked file removed.*src\/application\.ts/iu,
+    ],
+    [
+      "a tracked file renamed",
+      async (repository: string) => {
+        await mkdir(path.join(repository, "arbitrary"), { recursive: true });
+        runGit(repository, "mv", "src/application.ts", "arbitrary/renamed.ts");
       },
-      [wrapper],
-      async () => {
-        await regenerateExecutableSurfaceManifest();
-        expect(executableSurfacePaths(await createManifest(repositoryFixtureRoot))).toContain(
-          wrapper,
-        );
-        await writeFile(
-          path.join(repositoryFixtureRoot, wrapper),
-          "#!/usr/bin/env sh\ndocker build .\n",
-        );
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
-        );
-      },
-    );
-  });
-
-  it("recursively content-binds nested extensionless direct wrappers from a referenced script", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: sh scripts/direct-wrapper-entry.sh",
-    );
-    const outer = "scripts/nested-direct/outer";
-    const inner = "scripts/nested-direct/deeper/inner";
-
-    await withExecutableRepositoryFiles(
-      {
-        ".github/workflows/ci.yml": mutatedWorkflow,
-        "scripts/direct-wrapper-entry.sh": `#!/usr/bin/env sh\n./${outer}\n`,
-        [outer]: `./${inner}\n`,
-        [inner]: "#!/usr/bin/env sh\nexit 0\n",
-      },
-      [outer, inner],
-      async () => {
-        await regenerateExecutableSurfaceManifest();
-        const surfaces = executableSurfacePaths(await createManifest(repositoryFixtureRoot));
-        expect(surfaces).toContain(outer);
-        expect(surfaces).toContain(inner);
-        await writeFile(
-          path.join(repositoryFixtureRoot, inner),
-          "#!/usr/bin/env sh\ndocker build .\n",
-        );
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
-        );
-      },
-    );
-  });
-
-  it("resolves an explicit parent path inside the root from a nested workflow directory", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: ../../scripts/./parent-wrapper\n        working-directory: apps/web",
-    );
-    const wrapper = "scripts/parent-wrapper";
-
-    await withExecutableRepositoryFiles(
-      {
-        ".github/workflows/ci.yml": mutatedWorkflow,
-        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
-      },
-      [wrapper],
-      async () => {
-        const manifest = await createManifest(repositoryFixtureRoot);
-        expect(executableSurfacePaths(manifest)).toContain(wrapper);
+      /tracked file added|tracked file removed|renamed/iu,
+    ],
+  ])("rejects %s anywhere in the repository", async (_name, mutate, expectedError) => {
+    await withGitRepository(
+      { "src/application.ts": "export const application = true;\n" },
+      async (repository) => {
+        const policy = await sourceTreePolicy();
+        await writeAndTrackSourceTreeManifest(repository);
+        await mutate(repository);
+        await expect(policy.assertSourceTreeManifest(repository)).rejects.toThrow(expectedError);
       },
     );
   });
 
   it.skipIf(process.platform === "win32")(
-    "fails closed when a directly executed repository wrapper is not executable",
+    "rejects both checkout mode drift and a staged tracked mode change",
     async () => {
-      const createManifest = await executableSurfaceManifestGenerator();
-      if (!createManifest) return;
-      const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-      const mutatedWorkflow = mutateRequired(
-        workflow,
-        "      - run: pnpm lint",
-        "      - run: ./scripts/non-executable-wrapper",
-      );
+      await withGitRepository({ "scripts/tool": "exit 0\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        await writeAndTrackSourceTreeManifest(repository);
 
-      await withRepositoryFiles(
-        {
-          ".github/workflows/ci.yml": mutatedWorkflow,
-          "scripts/non-executable-wrapper": "#!/usr/bin/env sh\nexit 0\n",
-        },
-        async () => {
-          await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(
-            /executable|permission|mode/i,
+        await chmod(path.join(repository, "scripts/tool"), 0o755);
+        await expect(policy.createSourceTreeManifest(repository)).rejects.toThrow(
+          /mode drift.*scripts\/tool/iu,
+        );
+
+        runGit(repository, "add", "scripts/tool");
+        await expect(policy.assertSourceTreeManifest(repository)).rejects.toThrow(
+          /Git mode drift.*scripts\/tool/iu,
+        );
+      });
+    },
+  );
+
+  it("fails closed when a tracked file is missing from the checkout", async () => {
+    await withGitRepository({ "tracked/missing.txt": "present\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      await rm(path.join(repository, "tracked/missing.txt"));
+
+      await expect(policy.createSourceTreeManifest(repository)).rejects.toThrow(
+        /tracked file is missing.*tracked\/missing\.txt/iu,
+      );
+    });
+  });
+
+  it.each([
+    ["env -u", ".github/workflows/ci.yml", "run: env -u CI ./scripts/wrapper\n"],
+    ["parenthesized invocation", ".github/workflows/ci.yml", "run: (./scripts/wrapper)\n"],
+    ["xargs", ".github/workflows/ci.yml", "run: printf input | xargs ./scripts/wrapper\n"],
+    [
+      "nested interpreted no-shebang wrapper",
+      "scripts/inner-wrapper",
+      "sh ./scripts/deeper-wrapper\n",
+    ],
+    [
+      "direct extensionless wrapper",
+      "scripts/direct-wrapper",
+      "buildctl build --frontend dockerfile.v0\n",
+    ],
+    [
+      "buildctl invocation",
+      ".github/workflows/ci.yml",
+      "run: buildctl-daemonless.sh build --frontend dockerfile.v0\n",
+    ],
+    ["script indirection", "scripts/indirect.sh", "env -u CI ./scripts/deeper-wrapper\n"],
+  ])(
+    "catches the prior %s bypass solely as whole-tree content drift",
+    async (_name, target, changed) => {
+      await withGitRepository(
+        { [target]: "intentionally reviewed bytes\n" },
+        async (repository) => {
+          const policy = await sourceTreePolicy();
+          await writeAndTrackSourceTreeManifest(repository);
+          await writeFile(path.join(repository, target), changed);
+
+          await expect(policy.assertSourceTreeManifest(repository)).rejects.toThrow(
+            /tracked content drift/iu,
           );
         },
       );
     },
   );
 
-  it("does not require executable permission when an explicit wrapper is passed to an interpreter", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: sh ./scripts/interpreted-wrapper",
-    );
-    const wrapper = "scripts/interpreted-wrapper";
+  it("accepts inert heredoc, comment, and echo text once intentionally manifested", async () => {
+    const inert = `# ./scripts/comment-only
+echo "./scripts/echo-only"
+cat <<'PAYLOAD'
+./scripts/heredoc-only
+buildctl-daemonless.sh build
+PAYLOAD
+`;
+    await withGitRepository({ ".github/workflows/inert.txt": inert }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
 
-    await withRepositoryFiles(
-      {
-        ".github/workflows/ci.yml": mutatedWorkflow,
-        [wrapper]: "#!/usr/bin/env sh\nexit 0\n",
-      },
-      async () => {
-        expect(executableSurfacePaths(await createManifest(repositoryFixtureRoot))).toContain(
-          wrapper,
-        );
-      },
-    );
-  });
-
-  it.each([
-    ["missing", "./scripts/missing-direct-wrapper", /missing|unresolved/i],
-    ["outside-root", "../outside-direct-wrapper", /outside|repository root/i],
-  ])("fails closed on a %s explicit direct wrapper", async (_name, command, expectedError) => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      `      - run: ${command}`,
-    );
-
-    await withRepositoryFiles({ ".github/workflows/ci.yml": mutatedWorkflow }, async () => {
-      await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(expectedError);
-    });
-  });
-
-  it("fails closed on a symlinked explicit direct wrapper", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: ./scripts/symlinked-direct-wrapper",
-    );
-    const outside = path.join(repositoryFixtureParent, "outside-direct-wrapper");
-    const wrapper = path.join(repositoryFixtureRoot, "scripts/symlinked-direct-wrapper");
-    await writeFile(path.join(repositoryFixtureRoot, ".github/workflows/ci.yml"), mutatedWorkflow);
-    await writeFile(outside, "#!/usr/bin/env sh\nexit 0\n");
-    await symlink(outside, wrapper);
-
-    try {
-      await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/symlink/i);
-    } finally {
-      await rm(wrapper, { force: true });
-      await rm(outside, { force: true });
-      await writeFile(path.join(repositoryFixtureRoot, ".github/workflows/ci.yml"), workflow);
-    }
-  });
-
-  it("fails closed when an explicit direct wrapper is not a regular file", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-    const mutatedWorkflow = mutateRequired(
-      workflow,
-      "      - run: pnpm lint",
-      "      - run: ./scripts/direct-wrapper-directory",
-    );
-    const directory = path.join(repositoryFixtureRoot, "scripts/direct-wrapper-directory");
-
-    await withRepositoryFiles({ ".github/workflows/ci.yml": mutatedWorkflow }, async () => {
-      await mkdir(directory, { recursive: true });
-      try {
-        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/regular file/i);
-      } finally {
-        await rm(directory, { force: true, recursive: true });
-      }
-    });
-  });
-
-  it("content-binds local action manifests and entrypoints", async () => {
-    await withRepositoryFiles(
-      {
-        ".github/actions/bound/action.yml":
-          "name: bound\nruns:\n  using: node20\n  main: index.mjs\n",
-        ".github/actions/bound/index.mjs": "import './nested.mjs';\n",
-        ".github/actions/bound/nested.mjs": "console.log('reviewed');\n",
-      },
-      async () => {
-        await regenerateExecutableSurfaceManifest();
-        await writeFile(
-          path.join(repositoryFixtureRoot, ".github/actions/bound/nested.mjs"),
-          "console.log('changed');\n",
-        );
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
-        );
-      },
-    );
-  });
-
-  it.each(["packages/db/prisma.config.ts", "tsconfig.base.json"])(
-    "content-binds the transitive config root %s",
-    async (filename) => {
-      const source = await readFile(path.join(root, filename), "utf8");
-
-      await withRepositoryFiles({ [filename]: `${source}\n` }, async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /content|digest|executable-surface manifest/i,
-        );
-      });
-    },
-  );
-
-  it("fails closed when a workflow-reachable package script changes", async () => {
-    const source = await readFile(path.join(root, "package.json"), "utf8");
-    const mutated = mutateRequired(
-      source,
-      '"test:integration": "tsx packages/testkit/src/cli/harness.ts --integration"',
-      '"test:integration": "docker build ."',
-    );
-
-    await withRepositoryFiles({ "package.json": mutated }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /content|digest|executable-surface manifest/i,
-      );
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
     });
   });
 
   it.each([
     [
-      "workflow",
-      ".github/workflows/extra-reusable.yml",
-      "name: extra reusable\non: workflow_call\njobs: {}\n",
-    ],
-    [
-      "local action",
-      ".github/actions/extra/action.yml",
-      "name: extra action\nruns:\n  using: composite\n  steps: []\n",
-    ],
-  ])("fails closed on an extra or renamed %s", async (_kind, filename, source) => {
-    await withRepositoryFiles({ [filename]: source }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /executable-surface manifest|inventory|workflow|local action/i,
-      );
-    });
-  });
-
-  it("fails closed on an outside-root local action entrypoint", async () => {
-    const action =
-      "name: outside root\nruns:\n  using: node20\n  main: ../../../../outside-entrypoint.mjs\n";
-
-    await withRepositoryFiles({ ".github/actions/outside/action.yml": action }, async () => {
-      await expect(
-        (async () => {
-          await regenerateExecutableSurfaceManifest();
-          await assertRepositoryPolicy(repositoryFixtureRoot);
-        })(),
-      ).rejects.toThrow(/outside|repository root|entrypoint/i);
-    });
-  });
-
-  it("fails closed on a symlinked local action entrypoint", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-    const actionDirectory = path.join(repositoryFixtureRoot, ".github/actions/symlinked");
-    const outside = path.join(repositoryFixtureParent, "outside-entrypoint.mjs");
-    await mkdir(actionDirectory, { recursive: true });
-    await writeFile(
-      path.join(actionDirectory, "action.yml"),
-      "name: symlinked\nruns:\n  using: node20\n  main: index.mjs\n",
-    );
-    await writeFile(outside, "console.log('outside');\n");
-    await symlink(outside, path.join(actionDirectory, "index.mjs"));
-
-    try {
-      await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/symlink/i);
-    } finally {
-      await rm(actionDirectory, { force: true, recursive: true });
-      await rm(outside, { force: true });
-    }
-  });
-
-  it("fails closed on cyclic local composite actions", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-
-    await withRepositoryFiles(
-      {
-        ".github/actions/a/action.yml":
-          "name: a\nruns:\n  using: composite\n  steps:\n    - uses: ../b\n",
-        ".github/actions/b/action.yml":
-          "name: b\nruns:\n  using: composite\n  steps:\n    - uses: ../a\n",
-      },
-      async () => {
-        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(/cycle/i);
-      },
-    );
-  });
-
-  it("fails closed on a dynamic or unresolved local action entrypoint", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-
-    await withRepositoryFiles(
-      {
-        ".github/actions/dynamic/action.yml": `name: dynamic\nruns:\n  using: node20\n  main: ${githubExpression("inputs.entrypoint")}\n`,
-      },
-      async () => {
-        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(
-          /dynamic|static|entrypoint|unresolved/i,
-        );
-      },
-    );
-  });
-
-  it("fails closed on a missing static local action entrypoint", async () => {
-    const createManifest = await executableSurfaceManifestGenerator();
-    if (!createManifest) return;
-
-    await withRepositoryFiles(
-      {
-        ".github/actions/missing/action.yml":
-          "name: missing\nruns:\n  using: node20\n  main: missing.mjs\n",
-      },
-      async () => {
-        await expect(createManifest(repositoryFixtureRoot)).rejects.toThrow(
-          /missing|unresolved|entrypoint/i,
-        );
-      },
-    );
-  });
-
-  it("fails closed on executable-surface manifest drift", async () => {
-    await withRepositoryFiles(
-      { ".github/ci-executable-surface.json": '{"schemaVersion":1}\n' },
-      async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /executable-surface manifest|manifest drift|schema/i,
-        );
-      },
-    );
-  });
-
-  it.each([
-    [
-      "root",
+      "a duplicate root key",
       (source: string) =>
         mutateRequired(
           source,
-          '{\n  "schemaVersion": 1,',
-          '{\n  "schemaVersion": 999,\n  "schemaVersion": 1,',
+          '{\n  "schemaVersion": 2,',
+          '{\n  "schemaVersion": 999,\n  "schemaVersion": 2,',
         ),
     ],
     [
-      "nested workflow object",
+      "a duplicate nested entry key",
       (source: string) =>
-        mutateRequired(
-          source,
-          '{\n      "path": ".github/workflows/ci.yml",',
-          '{\n      "path": "ignored.yml",\n      "path": ".github/workflows/ci.yml",',
-        ),
+        mutateRequired(source, '{\n      "path":', '{\n      "path": "ignored",\n      "path":'),
     ],
     [
-      "nested surface object",
+      "an escaped-equivalent key",
       (source: string) =>
         mutateRequired(
           source,
-          '{\n      "path": ".dockerignore",',
-          '{\n      "path": "ignored",\n      "path": ".dockerignore",',
+          '{\n  "schemaVersion": 2,',
+          '{\n  "schema\\u0056ersion": 999,\n  "schemaVersion": 2,',
         ),
     ],
-    [
-      "escaped-equivalent root key",
-      (source: string) =>
-        mutateRequired(
-          source,
-          '{\n  "schemaVersion": 1,',
-          '{\n  "schema\\u0056ersion": 999,\n  "schemaVersion": 1,',
-        ),
-    ],
-  ])(
-    "rejects a duplicate JSON key at the %s and keeps check mode read-only",
-    async (_name, mutate) => {
-      await regenerateExecutableSurfaceManifest();
-      const source = await readFile(
-        path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"),
-        "utf8",
-      );
-      const malformed = mutate(source);
-
-      await withRepositoryFiles({ ".github/ci-executable-surface.json": malformed }, async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /duplicate.*key|invalid.*manifest/i,
-        );
-        await expect(
-          readFile(path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"), "utf8"),
-        ).resolves.toBe(malformed);
-      });
-    },
-  );
-
-  it.each([
     ["malformed JSON", (source: string) => source.slice(0, -2)],
     ["trailing content", (source: string) => `${source}true\n`],
-    ["a trailing comment", (source: string) => `${source}// not JSON\n`],
-  ])("rejects %s without changing the manifest", async (_name, mutate) => {
-    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
-    const malformed = mutate(source);
+  ])("rejects %s in check and regeneration without rewriting", async (_name, mutate) => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, ".github/ci-executable-surface.json");
+      const malformed = mutate(await readFile(filename, "utf8"));
+      await writeFile(filename, malformed);
 
-    await withRepositoryFiles({ ".github/ci-executable-surface.json": malformed }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /invalid.*manifest|JSON|position|unexpected|trailing/i,
+      await expect(policy.assertSourceTreeManifest(repository)).rejects.toThrow(
+        /duplicate|invalid|JSON|unexpected|source-tree manifest/iu,
       );
-      await expect(
-        readFile(path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"), "utf8"),
-      ).resolves.toBe(malformed);
+      await expect(policy.writeSourceTreeManifest(repository)).rejects.toThrow(
+        /refusing to regenerate.*invalid source-tree manifest/iu,
+      );
+      await expect(readFile(filename, "utf8")).resolves.toBe(malformed);
     });
   });
 
-  it("does not treat key-like text inside a valid JSON string as an object key", async () => {
-    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
-    const stale = mutateRequired(
-      source,
-      '"image build context config"',
-      '"text containing \\"schemaVersion\\": 999 is still a string"',
-    );
+  it("allows explicit regeneration of a valid stale manifest", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
 
-    await withRepositoryFiles({ ".github/ci-executable-surface.json": stale }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /manifest drift|metadata drift/i,
+      await expect(policy.assertSourceTreeManifest(repository)).rejects.toThrow(
+        /tracked content drift/iu,
       );
+      await expect(policy.writeSourceTreeManifest(repository)).resolves.toBeDefined();
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
     });
+  });
+
+  it("bootstraps a missing manifest and produces byte-identical repeated regeneration", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      const filename = path.join(repository, ".github/ci-executable-surface.json");
+
+      await expect(policy.writeSourceTreeManifest(repository)).resolves.toBeDefined();
+      runGit(repository, "add", ".github/ci-executable-surface.json");
+      const first = await readFile(filename);
+      await policy.writeSourceTreeManifest(repository);
+      const second = await readFile(filename);
+      await policy.writeSourceTreeManifest(repository);
+      const third = await readFile(filename);
+
+      expect(second).toEqual(first);
+      expect(third).toEqual(first);
+    });
+  });
+
+  it("ignores untracked node_modules and generated files", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      await writeRepositoryFiles(repository, {
+        "node_modules/untracked/package.json": "{}\n",
+        "generated-untracked/output.bin": new Uint8Array([0, 255]),
+      });
+
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+    });
+  });
+
+  it("passes in a clean Git clone", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      runGit(repository, "commit", "--quiet", "-m", "add source-tree manifest");
+      const clone = path.join(path.dirname(repository), "clean-clone");
+      execFileSync("git", ["clone", "--quiet", repository, clone]);
+
+      await expect(policy.assertSourceTreeManifest(clone)).resolves.toBeDefined();
+    });
+  });
+
+  it("fails closed in a metadata-free archive directory", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "rakazo-no-git-policy-"));
+    try {
+      await writeFile(path.join(parent, "tracked.txt"), "not actually tracked\n");
+      const policy = await sourceTreePolicy();
+      await expect(policy.createSourceTreeManifest(parent)).rejects.toThrow(
+        /Git metadata is required|not a git repository/iu,
+      );
+    } finally {
+      await rm(parent, { force: true, recursive: true });
+    }
+  });
+
+  it("accepts normalized non-ASCII paths and rejects duplicate, case, Unicode, and traversal collisions", () => {
+    expect(parseGitTrackedEntries(gitIndexRecord("100644", "café/日本語.txt"))).toEqual([
+      { path: "café/日本語.txt", gitMode: "100644", gitType: "blob" },
+    ]);
+    expect(() =>
+      parseGitTrackedEntries(gitIndexRecords(["100644", "Case.txt"], ["100644", "case.txt"])),
+    ).toThrow(/case-fold.*collision/iu);
+    expect(() =>
+      parseGitTrackedEntries(gitIndexRecords(["100644", "Straße.txt"], ["100644", "STRASSE.txt"])),
+    ).toThrow(/case-fold.*collision/iu);
+    expect(() =>
+      parseGitTrackedEntries(gitIndexRecords(["100644", "café.txt"], ["100644", "cafe\u0301.txt"])),
+    ).toThrow(/Unicode-normalization.*collision/iu);
+    expect(() =>
+      parseGitTrackedEntries(
+        gitIndexRecords(["100644", "duplicate.txt"], ["100644", "duplicate.txt"]),
+      ),
+    ).toThrow(/duplicate tracked path/iu);
+    for (const invalidPath of ["../outside", "/absolute", "dir/../escape", "dir\\windows"]) {
+      expect(() => parseGitTrackedEntries(gitIndexRecord("100644", invalidPath))).toThrow(
+        /normalized in-root POSIX path/iu,
+      );
+    }
   });
 
   it.each([
-    [
-      "duplicate-key",
-      (source: string) =>
-        mutateRequired(
-          source,
-          '{\n  "schemaVersion": 1,',
-          '{\n  "schemaVersion": 999,\n  "schemaVersion": 1,',
-        ),
-      /duplicate.*key|invalid.*manifest/i,
-    ],
-    [
-      "malformed",
-      (source: string) => `${source}// comment\n`,
-      /invalid.*manifest|JSON|unexpected/i,
-    ],
-  ])("refuses to regenerate over an existing %s manifest", async (_name, mutate, expectedError) => {
-    const writeManifest = await executableSurfaceManifestWriter();
-    if (!writeManifest) return;
-    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
-    const malformed = mutate(source);
-
-    await withRepositoryFiles({ ".github/ci-executable-surface.json": malformed }, async () => {
-      await expect(writeManifest(repositoryFixtureRoot)).rejects.toThrow(expectedError);
-      await expect(
-        readFile(path.join(repositoryFixtureRoot, ".github/ci-executable-surface.json"), "utf8"),
-      ).resolves.toBe(malformed);
-    });
-  });
-
-  it("allows explicit regeneration to replace a valid stale manifest", async () => {
-    const writeManifest = await executableSurfaceManifestWriter();
-    if (!writeManifest) return;
-    const source = await readFile(path.join(root, ".github/ci-executable-surface.json"), "utf8");
-    const stale = mutateRequired(
-      source,
-      '"sha256": "f5738dbf76bd9a9ea32b3d4eab7b44048f9555e7619a6f4adce9092623469c86"',
-      `"sha256": "${"0".repeat(64)}"`,
+    ["tracked symlink", "120000", /symlink/iu],
+    ["gitlink/submodule", "160000", /gitlink|submodule/iu],
+    ["non-regular mode", "100664", /non-regular/iu],
+  ])("rejects a %s from Git index metadata", (_name, mode, expectedError) => {
+    expect(() => parseGitTrackedEntries(gitIndexRecord(mode, "unsafe-entry"))).toThrow(
+      expectedError,
     );
-
-    await withRepositoryFiles({ ".github/ci-executable-surface.json": stale }, async () => {
-      await expect(writeManifest(repositoryFixtureRoot)).resolves.toBeDefined();
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toBeDefined();
-    });
   });
 
+  it.skipIf(process.platform === "win32")(
+    "rejects actual tracked symlinks and gitlinks",
+    async () => {
+      await withGitRepository({ "target.txt": "target\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        await symlink("target.txt", path.join(repository, "tracked-link"));
+        runGit(repository, "add", "tracked-link");
+        await expect(policy.createSourceTreeManifest(repository)).rejects.toThrow(/symlink/iu);
+
+        runGit(repository, "reset", "--quiet", "HEAD", "--", "tracked-link");
+        await rm(path.join(repository, "tracked-link"));
+        const head = runGit(repository, "rev-parse", "HEAD");
+        runGit(
+          repository,
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `160000,${head},vendor/submodule`,
+        );
+        await expect(policy.createSourceTreeManifest(repository)).rejects.toThrow(
+          /gitlink|submodule/iu,
+        );
+      });
+    },
+  );
+});
+
+describe("authorized image build policy", () => {
   it.each([
     ["local context", "."],
     ["remote URL/ref context", "https://github.com/TukaTek/agent-hub.git#main"],
@@ -1385,9 +1135,9 @@ describe("content-addressed executable surface and image build policy", () => {
     await withWorkflowSources(
       { "unmanifested-image.yml": actionBuildWorkflow(context) },
       async () => {
-        await regenerateExecutableSurfaceManifest();
+        await regenerateSourceTreeManifest();
         await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /image build|image-building|authorized image/i,
+          /workflow set|image build|authorized image/i,
         );
       },
     );
@@ -1401,6 +1151,7 @@ describe("content-addressed executable surface and image build policy", () => {
     const mutated = `${source}\n  unmanifested:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: docker/build-push-action@${sha}\n        with:\n          context: .\n`;
 
     await withWorkflowSources({ "publish-server-image.yml": mutated }, async () => {
+      await regenerateSourceTreeManifest();
       await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
         /image build|manifest|authorized/i,
       );
@@ -1421,7 +1172,7 @@ describe("content-addressed executable surface and image build policy", () => {
     });
 
     await withWorkflowSources({ "publish-server-image.yml": stringifyYaml(workflow) }, async () => {
-      await regenerateExecutableSurfaceManifest();
+      await regenerateSourceTreeManifest();
       await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
         /image build|exactly one|authorized/i,
       );
@@ -1463,146 +1214,9 @@ describe("content-addressed executable surface and image build policy", () => {
     mutate(workflow);
 
     await withWorkflowSources({ "publish-server-image.yml": stringifyYaml(workflow) }, async () => {
+      await regenerateSourceTreeManifest();
       await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
         /image build|manifest|authorized|candidate job/i,
-      );
-    });
-  });
-
-  it.each([
-    ["docker build", "docker build ."],
-    ["an absolute Docker path", "/usr/bin/docker build ."],
-    ["a quoted Docker executable", `'docker' build .`],
-    ["an escaped Docker subcommand", "docker bui\\ld ."],
-    ["a command wrapper", "command docker build ."],
-    ["an environment wrapper", "env DOCKER_BUILDKIT=1 docker build ."],
-    ["a sudo option wrapper", "sudo -u root docker build ."],
-    ["a Docker global option", "docker --context local build ."],
-    ["docker buildx build", "docker buildx build ."],
-    ["docker image build", "docker image build ."],
-    ["docker compose build", "docker compose build"],
-    ["docker compose build after an option", "docker compose -f compose.yml build"],
-    ["docker compose up --build", "docker compose up --build"],
-    ["docker-compose build", "docker-compose build"],
-    ["docker-compose up --build", "docker-compose up --build"],
-    ["podman build", "podman build ."],
-    ["podman image build", "podman image build ."],
-    ["podman compose up --build", "podman compose up --build"],
-    ["buildah bud", "buildah bud ."],
-    ["nerdctl build", "nerdctl build ."],
-    ["nerdctl compose build", "nerdctl compose build"],
-    ["nerdctl compose up --build", "nerdctl compose up --build"],
-    ["docker buildx bake", "docker buildx bake"],
-  ])("rejects an unmanifested direct %s command", async (_name, command) => {
-    await withWorkflowSources(
-      { "unmanifested-run.yml": runWorkflow(`run: ${JSON.stringify(command)}`) },
-      async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /image build|image-building|authorized image/i,
-        );
-      },
-    );
-  });
-
-  it("rejects a direct image build added to the governed workflow", async () => {
-    const source = await readFile(
-      path.join(root, ".github/workflows/publish-server-image.yml"),
-      "utf8",
-    );
-    const mutated = `${source}\n  shell-build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker build https://github.com/TukaTek/agent-hub.git#main\n`;
-
-    await withWorkflowSources({ "publish-server-image.yml": mutated }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /image build|image-building|authorized image/i,
-      );
-    });
-  });
-
-  it.each([
-    ["quoted scalar", `run: "docker build ."`],
-    ["block scalar", "run: |\n          docker build ."],
-    ["folded scalar", "run: >-\n          docker build\n          ."],
-    ["semicolon separator", `run: "echo safe; docker build ."`],
-    ["AND separator", `run: "true && docker buildx build ."`],
-    ["OR separator", `run: "false || docker compose build"`],
-    ["pipeline separator", `run: "printf context | docker build -"`],
-    ["newline separator", "run: |\n          echo safe\n          docker build ."],
-  ])("rejects image builds hidden by a %s", async (_name, runEntry) => {
-    await withWorkflowSources({ "unmanifested-run.yml": runWorkflow(runEntry) }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /image build|image-building|authorized image/i,
-      );
-    });
-  });
-
-  it("rejects an image build carried through a YAML alias", async () => {
-    const source = `name: aliased-build\non: workflow_dispatch\nx-image-build: &image-build "docker build ."\njobs:\n  image:\n    runs-on: ubuntu-latest\n    steps:\n      - run: *image-build\n`;
-
-    await withWorkflowSources({ "unmanifested-run.yml": source }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /image build|image-building|authorized image/i,
-      );
-    });
-  });
-
-  it.each([
-    ["a dynamic Docker subcommand", `docker "$IMAGE_SUBCOMMAND" .`],
-    ["a dynamic image tool", `${githubExpression("inputs.image_tool")} build .`],
-    ["eval", `eval 'docker build .'`],
-    ["a nested shell", `bash -c 'docker build .'`],
-  ])("fails closed for %s that can hide an image build", async (_name, command) => {
-    await withWorkflowSources(
-      { "unmanifested-run.yml": runWorkflow(`run: ${JSON.stringify(command)}`) },
-      async () => {
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /ambiguous|image build|image-building|authorized image/i,
-        );
-      },
-    );
-  });
-
-  it("does not flag comments, echo text, labels, assignments, or unrelated words", async () => {
-    const source = `name: image-build-words-only\non: workflow_dispatch\njobs:\n  words:\n    name: docker build label only\n    runs-on: ubuntu-latest\n    env:\n      IMAGE_LABEL: docker build .\n    steps:\n      - name: docker build is only a label\n        run: |\n          # docker build .\n          echo "docker build ."\n          printf '%s\\n' 'docker buildx build .'\n          IMAGE_LABEL='docker compose build'\n          echo docker build .\n          echo image-builder unrelated-build-word\n`;
-
-    await withWorkflowSources({ "words-only.yml": source }, async () => {
-      await regenerateExecutableSurfaceManifest();
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).resolves.toMatchObject({
-        workflowCount: 7,
-      });
-    });
-  });
-
-  it("rejects image building reached through a local reusable workflow", async () => {
-    const caller = `name: call-image-builder\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/reusable-image.yml\n`;
-    const reusable = `name: reusable-image\non: workflow_call\njobs:\n  image:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: docker/build-push-action@${sha}\n        with:\n          context: .\n`;
-
-    await withWorkflowSources(
-      { "call-image-builder.yml": caller, "reusable-image.yml": reusable },
-      async () => {
-        await regenerateExecutableSurfaceManifest();
-        await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-          /image build|reusable workflow|authorized image/i,
-        );
-      },
-    );
-  });
-
-  it("rejects opaque remote reusable workflows that could hide image building", async () => {
-    const source = `name: opaque-builder\non: workflow_dispatch\njobs:\n  call:\n    uses: TukaTek/agent-hub/.github/workflows/image.yml@${sha}\n`;
-
-    await withWorkflowSources({ "opaque-builder.yml": source }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /opaque|remote reusable|image build/i,
-      );
-    });
-  });
-
-  it("rejects a local reusable workflow reference that cannot be inventoried", async () => {
-    const source = `name: missing-reusable\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/missing-image-builder.yml\n`;
-
-    await withWorkflowSources({ "missing-reusable.yml": source }, async () => {
-      await expect(assertRepositoryPolicy(repositoryFixtureRoot)).rejects.toThrow(
-        /missing|local reusable|inventory/i,
       );
     });
   });
@@ -1682,48 +1296,27 @@ describe("CODEOWNERS policy", () => {
     expect(() => assertProtectedCodeowners(source, [probe], "@acepgh")).not.toThrow();
   });
 
-  it("protects the complete present and future root script surface without weakening other executables", async () => {
+  it("requires the whole-tree manifest to have one exact @acepgh CODEOWNERS rule", async () => {
     const source = await readFile(path.join(root, ".github/CODEOWNERS"), "utf8");
-    const rules = parseCodeowners(source);
-    const scriptBoundary = [
-      "scripts/future-extensionless-wrapper",
-      "scripts/nested/future wrapper",
-      "scripts/repository-policy.mjs",
-      "scripts/backup.sh",
-    ];
-    const nonScriptBoundary = [
-      ".github/workflows/ci.yml",
-      ".github/actions/future/action.yml",
-      "package.json",
-      "infra/updater/Dockerfile",
-      "packages/adapters/src/desktop-sandbox.ts",
-    ];
-
-    expect(source.match(/^\/scripts\/\*\* @acepgh$/gmu)).toHaveLength(1);
-    for (const protectedPath of [...scriptBoundary, ...nonScriptBoundary]) {
-      expect(effectiveCodeowners(rules, protectedPath), protectedPath).toEqual(["@acepgh"]);
-    }
-    expect(() =>
-      assertProtectedCodeowners(source, [...scriptBoundary, ...nonScriptBoundary], "@acepgh"),
-    ).not.toThrow();
+    expect(source.match(/^\/\.github\/ci-executable-surface\.json @acepgh$/gmu)).toHaveLength(1);
+    expect(() => assertSourceTreeManifestCodeowner(source)).not.toThrow();
   });
 
-  it("rejects omission, later overrides, and duplicate rules for the root script surface", async () => {
+  it("rejects omission, wrong ownership, later overrides, and duplicate manifest rules", async () => {
     const source = await readFile(path.join(root, ".github/CODEOWNERS"), "utf8");
-    const probes = ["scripts/future-extensionless-wrapper", "scripts/nested/future wrapper"];
-    const omitted = mutateRequired(source, "/scripts/** @acepgh\n", "");
-
-    expect(() => assertProtectedCodeowners(omitted, probes, "@acepgh")).toThrow(/scripts/i);
-    for (const override of [
-      "* @someone-else\n",
-      "/scripts/future-extensionless-wrapper @someone-else\n",
-      "/scripts/nested/** @someone-else\n",
+    const exactRule = "/.github/ci-executable-surface.json @acepgh\n";
+    for (const mutated of [
+      mutateRequired(source, exactRule, ""),
+      mutateRequired(source, exactRule, "/.github/ci-executable-surface.json @someone-else\n"),
+      `${source}\n* @someone-else\n`,
     ]) {
-      expect(() => assertProtectedCodeowners(`${source}\n${override}`, probes, "@acepgh")).toThrow(
-        /scripts/i,
+      expect(() => assertSourceTreeManifestCodeowner(mutated)).toThrow(
+        /ci-executable-surface|exact CODEOWNERS|effectively owned/iu,
       );
     }
-    expect(() => parseCodeowners(`${source}\n/scripts/** @acepgh\n`)).toThrow(/duplicate/i);
+    expect(() => assertSourceTreeManifestCodeowner(`${source}\n${exactRule}`)).toThrow(
+      /duplicate/iu,
+    );
   });
 });
 
