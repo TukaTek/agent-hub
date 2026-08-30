@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   readdir,
   readFile,
   realpath,
@@ -47,6 +48,7 @@ import {
 } from "./desktop-sandbox-win32-path.js";
 
 const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const MAX_RETAINED_FILE_SCAN_ENTRIES = 4_096;
 
 /** Node FileHandle or Win32 duck-typed handle opened relative to a parent directory. */
 type ContainedHandle = Awaited<ReturnType<typeof open>> | Win32FileHandle;
@@ -478,6 +480,10 @@ async function openContainedWorkspaceFile(home: string, target: string, mode: nu
     }
 
     const opened = await handle.stat({ bigint: true });
+    // Re-bind the parent after opening and before trusting the child's pathname.
+    // On pathname-only platforms this catches a parent swap used for the open,
+    // even if the attacker restores the parent while the child is inspected.
+    await assertContainedDirectoryHandle(parentHandle, containedParent, resolvedHome, parentBefore);
     // lstat the same child path we opened so a followed final symlink cannot match.
     const named = await lstat(openedPath, { bigint: true });
     if (
@@ -613,23 +619,74 @@ async function assertContainedFileHandle(
     throw new Error("Path escapes the computer workspace");
   }
   const verifyPath = path.join(parentReal, childName);
+  const named = await lstat(verifyPath, { bigint: true }).catch((error: unknown) => {
+    if (hasErrorCode(error, "ENOENT")) return undefined;
+    throw error;
+  });
+  if (
+    !named ||
+    named.isSymbolicLink() ||
+    !named.isFile() ||
+    named.dev !== opened.dev ||
+    named.ino !== opened.ino
+  ) {
+    // The original open and lstat already bound the handle to a regular,
+    // single-link file under this verified parent. If the final name changes
+    // afterward, do not follow or mutate its replacement. Require the opened
+    // inode to remain single-linked under the same parent before retaining it.
+    const again = await handle.stat({ bigint: true });
+    if (
+      !again.isFile() ||
+      again.dev !== opened.dev ||
+      again.ino !== opened.ino ||
+      again.nlink !== 1n
+    ) {
+      throw new Error("Path escapes the computer workspace");
+    }
+    const retainedPath = await findRetainedFilePath(parentReal, opened);
+    if (!retainedPath) throw new Error("Path escapes the computer workspace");
+
+    // Re-bind both path components around the fallback scan. Pathname-only
+    // platforms cannot resolve an fd directly, so a bounded scan is the only
+    // way to preserve the already-opened inode without touching its replacement.
+    await assertContainedDirectoryHandle(parentHandle, parentReal, resolvedHome);
+    const retained = await lstat(retainedPath, { bigint: true });
+    const final = await handle.stat({ bigint: true });
+    if (
+      retained.isSymbolicLink() ||
+      !retained.isFile() ||
+      retained.dev !== opened.dev ||
+      retained.ino !== opened.ino ||
+      retained.nlink !== 1n ||
+      !final.isFile() ||
+      final.dev !== opened.dev ||
+      final.ino !== opened.ino ||
+      final.nlink !== 1n
+    ) {
+      throw new Error("Path escapes the computer workspace");
+    }
+    return;
+  }
+  if (named.nlink !== 1n) {
+    throw new Error("Path escapes the computer workspace");
+  }
   const verify = await open(verifyPath, constants.O_RDONLY | O_NOFOLLOW);
   try {
     const verified = await verify.stat({ bigint: true });
-    const named = await lstat(verifyPath, { bigint: true });
+    const namedAfterOpen = await lstat(verifyPath, { bigint: true });
     // Re-stat the write handle last so a hardlink planted during verify cannot
     // make an outside inode appear to live under the restored parent.
     const again = await handle.stat({ bigint: true });
     if (
       !verified.isFile() ||
-      !named.isFile() ||
-      named.isSymbolicLink() ||
+      !namedAfterOpen.isFile() ||
+      namedAfterOpen.isSymbolicLink() ||
       verified.dev !== opened.dev ||
       verified.ino !== opened.ino ||
-      named.dev !== opened.dev ||
-      named.ino !== opened.ino ||
+      namedAfterOpen.dev !== opened.dev ||
+      namedAfterOpen.ino !== opened.ino ||
       verified.nlink !== 1n ||
-      named.nlink !== 1n ||
+      namedAfterOpen.nlink !== 1n ||
       again.dev !== opened.dev ||
       again.ino !== opened.ino ||
       again.nlink !== 1n
@@ -639,6 +696,37 @@ async function assertContainedFileHandle(
   } finally {
     await verify.close().catch(() => undefined);
   }
+}
+
+async function findRetainedFilePath(
+  parentPath: string,
+  opened: { dev: number | bigint; ino: number | bigint },
+) {
+  const openedDev = BigInt(opened.dev);
+  const openedIno = BigInt(opened.ino);
+  const directory = await opendir(parentPath);
+  let inspected = 0;
+  for await (const entry of directory) {
+    inspected += 1;
+    if (inspected > MAX_RETAINED_FILE_SCAN_ENTRIES) {
+      throw new Error("Path escapes the computer workspace");
+    }
+    const candidatePath = path.join(parentPath, entry.name);
+    const candidate = await lstat(candidatePath, { bigint: true }).catch((error: unknown) => {
+      if (hasErrorCode(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    if (
+      candidate?.isFile() &&
+      !candidate.isSymbolicLink() &&
+      candidate.dev === openedDev &&
+      candidate.ino === openedIno &&
+      candidate.nlink === 1n
+    ) {
+      return candidatePath;
+    }
+  }
+  return undefined;
 }
 
 function childPathViaDirFd(fd: number, name: string) {

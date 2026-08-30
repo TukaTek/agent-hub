@@ -1,0 +1,15 @@
+title = "Rakazo secret scanning policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "rakazo-gitleaks-canary"
+description = "Repository-owned canary proving the Gitleaks gate executes"
+regex = '''CAAH30_GITLEAKS_CANARY_[A-Z0-9]{32}'''
+keywords = ["CAAH30_GITLEAKS_CANARY_"]
+
+[[allowlists]]
+description = "Ignore only the inert committed canary at its canonical path"
+condition = "OR"
+paths = ['''^scripts/fixtures/gitleaks-canary\.txt$''']

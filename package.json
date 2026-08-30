@@ -17,7 +17,10 @@
     "db:generate": "pnpm --filter @rakazo/db generate",
     "db:migrate": "pnpm --filter @rakazo/db migrate",
     "sandbox:build": "docker build -t rakazo/computer:local infra/sandboxes/computer",
+    "security:audit": "pnpm audit --prod --audit-level high",
+    "security:secrets": "node scripts/gitleaks-scan.mjs .",
     "test": "vitest run",
+    "test:policy": "vitest run packages/testkit/src/repository-policy.test.ts && node scripts/repository-policy.mjs && node scripts/gitleaks-canary.mjs",
     "test:integration": "tsx packages/testkit/src/cli/harness.ts --integration",
     "test:e2e": "tsx packages/testkit/src/cli/harness.ts --e2e",
     "test:topology": "tsx packages/testkit/src/cli/topology.ts",
@@ -32,15 +35,21 @@
     "@biomejs/biome": "^2.5.8",
     "@types/node": "^24.3.0",
     "cross-env": "^10.1.0",
+    "minimatch": "^10.2.6",
+    "smol-toml": "^1.8.0",
     "tsx": "^4.20.5",
     "turbo": "^2.5.6",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.0"
   },
   "pnpm": {
     "overrides": {
+      "@prisma/config>deepmerge-ts": "8.0.0",
+      "dockerode>uuid": "11.1.1",
       "react": "19.2.3",
-      "react-dom": "19.2.3"
+      "react-dom": "19.2.3",
+      "xcode>uuid": "11.1.1"
     }
   }
 }

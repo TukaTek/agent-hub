@@ -1,0 +1,55 @@
+# CI, dependency automation, ownership, and security policy
+/.github/workflows/ @acepgh
+/.github/dependabot.yml @acepgh
+/.github/CODEOWNERS @acepgh
+/.gitleaks.toml @acepgh
+/.env.example @acepgh
+/scripts/repository-policy.mjs @acepgh
+/scripts/gitleaks-canary.mjs @acepgh
+/scripts/gitleaks-scan.mjs @acepgh
+/scripts/fixtures/gitleaks-canary.txt @acepgh
+/packages/testkit/src/repository-policy.test.ts @acepgh
+
+# Manifests and the shared lockfile
+/package.json @acepgh
+/pnpm-lock.yaml @acepgh
+/pnpm-workspace.yaml @acepgh
+/**/package.json @acepgh
+
+# Production images, Compose, host hardening, backup, and deployment helpers
+/infra/compose/ @acepgh
+/infra/updater/ @acepgh
+/infra/sandboxes/*/Dockerfile @acepgh
+/scripts/backup.sh @acepgh
+/scripts/restore.sh @acepgh
+/scripts/publish-playwright-report.sh @acepgh
+
+# Authentication and authorization boundaries
+/packages/auth/ @acepgh
+/packages/core/src/model-oauth* @acepgh
+/packages/core/src/signup-policy* @acepgh
+/apps/desktop/src/oauth-callback* @acepgh
+/apps/mobile/lib/model-auth* @acepgh
+/apps/web/src/lib/auth.ts @acepgh
+/apps/web/src/lib/model-auth* @acepgh
+/apps/web/src/lib/use-model-oauth-signin.ts @acepgh
+
+# Connectors, OAuth, and secret translation
+/packages/core/src/secrets-guard* @acepgh
+/packages/adapters/src/*connector* @acepgh
+/packages/adapters/src/connector-safety.ts @acepgh
+/packages/adapters/src/executor-secret-pi* @acepgh
+/packages/adapters/src/installed-connectors* @acepgh
+/packages/adapters/src/mcp-oauth* @acepgh
+/packages/adapters/src/pi-anthropic-oauth* @acepgh
+/packages/adapters/src/pi-oauth* @acepgh
+/packages/adapters/src/run-secret* @acepgh
+/packages/adapters/src/secrets.ts @acepgh
+
+# Screen proxy, leases, and host-control paths
+/packages/core/src/screen-lease* @acepgh
+/packages/adapters/src/computer-control* @acepgh
+/packages/adapters/src/computer-screens* @acepgh
+/packages/adapters/src/executor-computer-safety* @acepgh
+/apps/api/src/screen-proxy* @acepgh
+/apps/web/src/screen-proxy* @acepgh

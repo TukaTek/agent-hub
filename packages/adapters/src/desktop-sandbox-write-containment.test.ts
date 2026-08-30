@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   realpath,
   rename,
   rm,
@@ -16,6 +17,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const lstatRace = vi.hoisted(() => ({
   after: undefined as undefined | ((target: string) => Promise<void>),
   afterRealpath: undefined as undefined | ((target: string) => Promise<void>),
+}));
+const directoryScan = vi.hoisted(() => ({
+  entries: undefined as string[] | undefined,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -34,6 +38,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const result = await actual.lstat(target, options as never);
       await lstatRace.after?.(target);
       return result;
+    },
+    opendir: async (target: string, options?: Parameters<typeof actual.opendir>[1]) => {
+      if (!directoryScan.entries) return actual.opendir(target, options);
+      const entries = directoryScan.entries;
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const name of entries) yield { name };
+        },
+      } as Awaited<ReturnType<typeof actual.opendir>>;
     },
     realpath: async (target: string) => {
       const result = await actual.realpath(target);
@@ -57,6 +70,7 @@ const roots: string[] = [];
 afterEach(async () => {
   lstatRace.after = undefined;
   lstatRace.afterRealpath = undefined;
+  directoryScan.entries = undefined;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -115,6 +129,35 @@ describe("desktop sandbox write containment without O_NOFOLLOW", () => {
     expect(swapped).toBe(true);
     expect(await readFile(outside, "utf8")).toBe("outside-before");
     expect(await readFile(displaced, "utf8")).toBe("after");
+    expect(await readlink(target)).toBe(outside);
+  });
+
+  it("fails closed when a relocated inode lookup exceeds its scan bound", async () => {
+    const { root, desktop, computer } = await fixture("bounded-scan");
+    const target = path.join(computer.providerRef, "result.txt");
+    const displaced = path.join(computer.providerRef, "result-original.txt");
+    const outside = path.join(root, "outside.txt");
+    await writeFile(target, "inside-before");
+    await writeFile(outside, "outside-before");
+    directoryScan.entries = Array.from({ length: 4_097 }, (_, index) => `missing-${index}`);
+    let swapped = false;
+    lstatRace.after = async (inspected) => {
+      if (swapped || path.basename(inspected) !== "result.txt") return;
+      swapped = true;
+      await rename(target, displaced);
+      await symlink(outside, target);
+    };
+
+    await expect(
+      desktop.writeFile(computer, {
+        path: "result.txt",
+        content: new TextEncoder().encode("after"),
+      }),
+    ).rejects.toThrow("Path escapes the computer workspace");
+    expect(swapped).toBe(true);
+    expect(await readFile(outside, "utf8")).toBe("outside-before");
+    expect(await readFile(displaced, "utf8")).toBe("inside-before");
+    expect(await readlink(target)).toBe(outside);
   });
 
   it("rejects a parent symlink that resolves outside the workspace", async () => {
