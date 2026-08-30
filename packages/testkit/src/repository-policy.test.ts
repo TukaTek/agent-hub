@@ -1,5 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -685,11 +701,103 @@ type SourceTreeManifest = {
   entries: SourceTreeEntry[];
 };
 
+type ManifestWriterFileSystem = {
+  lstat: typeof lstat;
+  open: typeof open;
+  rename: typeof rename;
+  unlink: typeof unlink;
+};
+
+type ManifestWriterOptions = {
+  fileSystem?: ManifestWriterFileSystem;
+  nonceFactory?: () => string;
+  platform?: NodeJS.Platform;
+};
+
+type ManifestFailureStage = "create" | "write" | "sync" | "close" | "rename";
+
+const manifestBasename = "ci-executable-surface.json";
+const manifestRelativePath = `.github/${manifestBasename}`;
+const manifestTempPrefix = `.${manifestBasename}.${process.pid}.`;
+
+function manifestTempPath(repository: string, nonce: string) {
+  return path.join(repository, ".github", `${manifestTempPrefix}${nonce}.tmp`);
+}
+
+async function manifestTempEntries(repository: string) {
+  return (await readdir(path.join(repository, ".github"))).filter(
+    (entry) => entry.startsWith(manifestTempPrefix) && entry.endsWith(".tmp"),
+  );
+}
+
+function sha256(content: Uint8Array) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function injectedManifestFileSystem(stage: ManifestFailureStage) {
+  let partialBytesWritten = 0;
+  let tempCloseFailed = false;
+  const fileSystem: ManifestWriterFileSystem = {
+    lstat,
+    open: (async (...arguments_: Parameters<typeof open>) => {
+      const filename = String(arguments_[0]);
+      const isTemp = path.basename(filename).startsWith(manifestTempPrefix);
+      if (isTemp && stage === "create") {
+        throw new Error("injected create failure");
+      }
+      const handle = await open(...arguments_);
+      if (!isTemp) return handle;
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "write" && stage === "write") {
+            return async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+              if (partialBytesWritten === 0) {
+                const partialLength = Math.min(1024, length);
+                const result = await target.write(buffer, offset, partialLength, position);
+                partialBytesWritten = result.bytesWritten;
+                return result;
+              }
+              throw new Error("injected write failure after partial write");
+            };
+          }
+          if (property === "sync" && stage === "sync") {
+            return async () => {
+              throw new Error("injected sync failure");
+            };
+          }
+          if (property === "close" && stage === "close" && !tempCloseFailed) {
+            return async () => {
+              tempCloseFailed = true;
+              await target.close();
+              throw new Error("injected close failure");
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as Awaited<ReturnType<typeof open>>;
+    }) as typeof open,
+    rename: async (oldPath, newPath) => {
+      if (stage === "rename") throw new Error("injected rename failure");
+      await rename(oldPath, newPath);
+    },
+    unlink,
+  };
+  return {
+    fileSystem,
+    partialBytesWritten: () => partialBytesWritten,
+  };
+}
+
 async function sourceTreePolicy() {
   const policy = (await import("../../../scripts/repository-policy.mjs")) as unknown as {
     assertSourceTreeManifest: (root: string) => Promise<SourceTreeManifest>;
     createSourceTreeManifest: (root: string) => Promise<SourceTreeManifest>;
-    writeSourceTreeManifest: (root: string) => Promise<SourceTreeManifest>;
+    serializeSourceTreeManifest: (manifest: SourceTreeManifest) => string;
+    writeSourceTreeManifest: (
+      root: string,
+      options?: ManifestWriterOptions,
+    ) => Promise<SourceTreeManifest>;
   };
   expect(policy.assertSourceTreeManifest).toBeTypeOf("function");
   expect(policy.createSourceTreeManifest).toBeTypeOf("function");
@@ -1023,6 +1131,366 @@ PAYLOAD
       expect(second).toEqual(first);
       expect(third).toEqual(first);
     });
+  });
+
+  it.each(["create", "write", "sync", "close", "rename"] as const)(
+    "preserves the previous manifest and cleans its temp file after an injected %s failure",
+    async (stage) => {
+      const files = Object.fromEntries(
+        Array.from({ length: 12 }, (_, index) => [`tracked-${index}.txt`, "before\n"]),
+      );
+      await withGitRepository(files, async (repository) => {
+        const policy = await sourceTreePolicy();
+        await writeAndTrackSourceTreeManifest(repository);
+        const filename = path.join(repository, manifestRelativePath);
+        const before = await readFile(filename);
+        const beforeHash = sha256(before);
+        await writeFile(path.join(repository, "tracked-0.txt"), "after\n");
+        const injection = injectedManifestFileSystem(stage);
+
+        await expect(
+          policy.writeSourceTreeManifest(repository, {
+            fileSystem: injection.fileSystem,
+            nonceFactory: () => "0".repeat(32),
+            platform: "linux",
+          }),
+        ).rejects.toThrow(new RegExp(`injected ${stage} failure`, "iu"));
+
+        const after = await readFile(filename);
+        expect(after).toEqual(before);
+        expect(sha256(after)).toBe(beforeHash);
+        expect(await manifestTempEntries(repository)).toEqual([]);
+        if (stage === "write") expect(injection.partialBytesWritten()).toBe(1024);
+      });
+    },
+  );
+
+  it("creates its temp file exclusively with mode 0600 and O_NOFOLLOW", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      const opened: Array<{ filename: string; flags: number; mode?: number }> = [];
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open: (async (...arguments_: Parameters<typeof open>) => {
+          const [filename, flags, mode] = arguments_;
+          if (path.basename(String(filename)).startsWith(manifestTempPrefix)) {
+            opened.push({ filename: String(filename), flags: Number(flags), mode });
+          }
+          return open(...arguments_);
+        }) as typeof open,
+        rename,
+        unlink,
+      };
+
+      await policy.writeSourceTreeManifest(repository, {
+        fileSystem,
+        nonceFactory: () => "1".repeat(32),
+        platform: "linux",
+      });
+
+      expect(opened).toHaveLength(1);
+      expect(opened[0]?.mode).toBe(0o600);
+      expect(opened[0]!.flags & constants.O_CREAT).toBe(constants.O_CREAT);
+      expect(opened[0]!.flags & constants.O_EXCL).toBe(constants.O_EXCL);
+      if (constants.O_NOFOLLOW !== undefined) {
+        expect(opened[0]!.flags & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);
+      }
+      expect(await manifestTempEntries(repository)).toEqual([]);
+    });
+  });
+
+  it("leaves a pre-existing colliding temp path untouched and retries with a new nonce", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      const collisionNonce = "2".repeat(32);
+      const replacementNonce = "3".repeat(32);
+      const collision = manifestTempPath(repository, collisionNonce);
+      const collisionBytes = Buffer.from("pre-existing collision\n");
+      await writeFile(collision, collisionBytes);
+      const nonces = [collisionNonce, replacementNonce];
+
+      await policy.writeSourceTreeManifest(repository, {
+        nonceFactory: () => nonces.shift() ?? replacementNonce,
+        platform: "linux",
+      });
+
+      expect(await readFile(collision)).toEqual(collisionBytes);
+      expect(await manifestTempEntries(repository)).toEqual([path.basename(collision)]);
+      runGit(repository, "add", manifestRelativePath);
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+    });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "does not follow a pre-existing colliding temp symlink",
+    async () => {
+      await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        const collisionNonce = "4".repeat(32);
+        const replacementNonce = "5".repeat(32);
+        const collision = manifestTempPath(repository, collisionNonce);
+        const linkTarget = path.join(repository, "collision-target.txt");
+        await writeFile(linkTarget, "do not overwrite\n");
+        await symlink(linkTarget, collision);
+        const nonces = [collisionNonce, replacementNonce];
+
+        await policy.writeSourceTreeManifest(repository, {
+          nonceFactory: () => nonces.shift() ?? replacementNonce,
+          platform: "linux",
+        });
+
+        expect((await lstat(collision)).isSymbolicLink()).toBe(true);
+        await expect(readFile(linkTarget, "utf8")).resolves.toBe("do not overwrite\n");
+        runGit(repository, "add", manifestRelativePath);
+        await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+      });
+    },
+  );
+
+  it.each(["symlink", "directory"] as const)(
+    "does not rename or unlink a temp path replaced with a %s after creation",
+    async (replacementKind) => {
+      if (replacementKind === "symlink" && process.platform === "win32") return;
+      await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        await writeAndTrackSourceTreeManifest(repository);
+        const filename = path.join(repository, manifestRelativePath);
+        const before = await readFile(filename);
+        const nonce = "a".repeat(32);
+        const temporaryFilename = manifestTempPath(repository, nonce);
+        const displacedTemp = `${temporaryFilename}.displaced`;
+        const symlinkTarget = path.join(repository, "attacker-target.txt");
+        await writeFile(symlinkTarget, "do not overwrite or unlink\n");
+        await writeFile(path.join(repository, "tracked.txt"), "after\n");
+        let replaced = false;
+        const fileSystem: ManifestWriterFileSystem = {
+          lstat: (async (...arguments_: Parameters<typeof lstat>) => {
+            const [candidate] = arguments_;
+            if (!replaced && path.resolve(String(candidate)) === temporaryFilename) {
+              replaced = true;
+              await rename(temporaryFilename, displacedTemp);
+              if (replacementKind === "symlink") await symlink(symlinkTarget, temporaryFilename);
+              else await mkdir(temporaryFilename);
+            }
+            return lstat(...arguments_);
+          }) as typeof lstat,
+          open,
+          rename,
+          unlink,
+        };
+
+        await expect(
+          policy.writeSourceTreeManifest(repository, {
+            fileSystem,
+            nonceFactory: () => nonce,
+            platform: "linux",
+          }),
+        ).rejects.toThrow(/temp path changed.*cleanup also failed/iu);
+
+        expect(await readFile(filename)).toEqual(before);
+        await expect(readFile(symlinkTarget, "utf8")).resolves.toBe("do not overwrite or unlink\n");
+        const replacementInfo = await lstat(temporaryFilename);
+        expect(
+          replacementKind === "symlink"
+            ? replacementInfo.isSymbolicLink()
+            : replacementInfo.isDirectory(),
+        ).toBe(true);
+        expect((await lstat(displacedTemp)).isFile()).toBe(true);
+      });
+    },
+  );
+
+  it.each(["symlink", "directory"] as const)(
+    "refuses an existing manifest target that is a %s without replacing it",
+    async (targetKind) => {
+      if (targetKind === "symlink" && process.platform === "win32") return;
+      await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        const filename = path.join(repository, manifestRelativePath);
+        if (targetKind === "symlink") {
+          const target = path.join(repository, "outside-manifest.json");
+          await writeFile(target, "outside\n");
+          await symlink(target, filename);
+        } else {
+          await mkdir(filename);
+        }
+
+        await expect(policy.writeSourceTreeManifest(repository)).rejects.toThrow(/non-regular/iu);
+        const info = await lstat(filename);
+        expect(targetKind === "symlink" ? info.isSymbolicLink() : info.isDirectory()).toBe(true);
+        expect(await manifestTempEntries(repository)).toEqual([]);
+      });
+    },
+  );
+
+  it.each(["symlink", "directory"] as const)(
+    "rejects a manifest target that becomes a %s before rename",
+    async (targetKind) => {
+      if (targetKind === "symlink" && process.platform === "win32") return;
+      await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+        const policy = await sourceTreePolicy();
+        await writeAndTrackSourceTreeManifest(repository);
+        const filename = path.join(repository, manifestRelativePath);
+        const preserved = `${filename}.preserved`;
+        const before = await readFile(filename);
+        await writeFile(path.join(repository, "tracked.txt"), "after\n");
+        let targetLstatCalls = 0;
+        const fileSystem: ManifestWriterFileSystem = {
+          lstat: (async (...arguments_: Parameters<typeof lstat>) => {
+            const [candidate] = arguments_;
+            if (path.resolve(String(candidate)) === filename) {
+              targetLstatCalls += 1;
+              if (targetLstatCalls === 2) {
+                await rename(filename, preserved);
+                if (targetKind === "symlink") await symlink(preserved, filename);
+                else await mkdir(filename);
+              }
+            }
+            return lstat(...arguments_);
+          }) as typeof lstat,
+          open,
+          rename,
+          unlink,
+        };
+
+        await expect(
+          policy.writeSourceTreeManifest(repository, {
+            fileSystem,
+            nonceFactory: () => "9".repeat(32),
+            platform: "linux",
+          }),
+        ).rejects.toThrow(/non-regular/iu);
+
+        expect(await readFile(preserved)).toEqual(before);
+        const targetInfo = await lstat(filename);
+        expect(
+          targetKind === "symlink" ? targetInfo.isSymbolicLink() : targetInfo.isDirectory(),
+        ).toBe(true);
+        expect(await manifestTempEntries(repository)).toEqual([]);
+      });
+    },
+  );
+
+  it("allows concurrent regenerators to install identical complete bytes without temp residue", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+
+      await Promise.all([
+        policy.writeSourceTreeManifest(repository, {
+          nonceFactory: () => "6".repeat(32),
+          platform: "linux",
+        }),
+        policy.writeSourceTreeManifest(repository, {
+          nonceFactory: () => "7".repeat(32),
+          platform: "linux",
+        }),
+      ]);
+
+      const installed = await readFile(path.join(repository, manifestRelativePath), "utf8");
+      expect(policy.serializeSourceTreeManifest).toBeTypeOf("function");
+      expect(installed).toBe(
+        policy.serializeSourceTreeManifest(await policy.createSourceTreeManifest(repository)),
+      );
+      expect(await manifestTempEntries(repository)).toEqual([]);
+    });
+  });
+
+  it("reports a post-rename directory-sync failure without rolling back the installed manifest", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const githubDirectory = path.join(repository, ".github");
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open: (async (...arguments_: Parameters<typeof open>) => {
+          const handle = await open(...arguments_);
+          if (path.resolve(String(arguments_[0])) !== githubDirectory) return handle;
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === "sync") {
+                return async () => {
+                  throw new Error("injected directory sync failure");
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Awaited<ReturnType<typeof open>>;
+        }) as typeof open,
+        rename,
+        unlink,
+      };
+
+      await expect(
+        policy.writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => "8".repeat(32),
+          platform: "linux",
+        }),
+      ).rejects.toThrow(/replacement completed.*directory sync.*injected/iu);
+
+      expect(await readFile(filename)).not.toEqual(before);
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+      expect(await manifestTempEntries(repository)).toEqual([]);
+    });
+  });
+
+  it("makes raw CLI and documented regeneration write the same canonical bytes", async () => {
+    const filename = path.join(repositoryFixtureRoot, manifestRelativePath);
+    const original = await readFile(filename);
+    const environment = {
+      ...process.env,
+      npm_config_engine_strict: "false",
+      PATH: `${path.join(root, "node_modules/.bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+    };
+    try {
+      await symlink(
+        path.join(root, "node_modules"),
+        path.join(repositoryFixtureRoot, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      stageFixture();
+      execFileSync(
+        process.execPath,
+        ["scripts/repository-policy.mjs", "--write-source-tree-manifest"],
+        {
+          cwd: repositoryFixtureRoot,
+          env: environment,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      const raw = await readFile(filename);
+      execFileSync(
+        path.join(root, "node_modules/.bin/biome"),
+        ["format", "--write", manifestRelativePath],
+        { cwd: repositoryFixtureRoot, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const canonical = await readFile(filename);
+
+      await writeFile(filename, original);
+      execFileSync("pnpm", ["policy:manifest"], {
+        cwd: repositoryFixtureRoot,
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const documented = await readFile(filename);
+      const packageJson = JSON.parse(
+        await readFile(path.join(repositoryFixtureRoot, "package.json"), "utf8"),
+      );
+
+      expect(raw).toEqual(canonical);
+      expect(documented).toEqual(raw);
+      expect(packageJson.scripts["policy:manifest"]).toBe(
+        "node scripts/repository-policy.mjs --write-source-tree-manifest && node scripts/repository-policy.mjs --check-source-tree-manifest",
+      );
+    } finally {
+      await rm(path.join(repositoryFixtureRoot, "node_modules"), { force: true });
+      await writeFile(filename, original);
+      stageFixture();
+    }
   });
 
   it("ignores untracked node_modules and generated files", async () => {
