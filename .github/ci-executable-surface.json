@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "exclusions": [".github/ci-executable-surface.json"],
-  "entryCount": 885,
-  "treeSha256": "0719d2aed10dacb3b90ebcaccd91faa5fc9d18711afd7015545ed72ce0d37b14",
+  "entryCount": 886,
+  "treeSha256": "5a66540d7c56854d8f188a6fb96d735a74451c837baf693fcd23efa5777a912a",
   "entries": [
     {
       "path": ".agents/skills/composio/SKILL.md",
@@ -43,8 +43,8 @@
       "path": ".env.example",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 5041,
-      "sha256": "b78f0c5ad178916c98d8d323ce392cc8b18cde6c54f702e5dde4a5d5f3ac8303"
+      "byteLength": 5314,
+      "sha256": "db2d9f79ab5e3286ea7053500190f270decc4dce379c539051bfd3f9e29ee8ad"
     },
     {
       "path": ".gitattributes",
@@ -1562,8 +1562,8 @@
       "path": "apps/web/src/components/SoftwareUpdateSection.tsx",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 8099,
-      "sha256": "cdd3e029d0d67c6cf3cf2b06b3fec0178240d05fc55eef6233fc8f9da2d16b12"
+      "byteLength": 8395,
+      "sha256": "bf28cd2c749fe2b44edf656c5f0a4d14748df21fe8272e448160d2ec2fd15460"
     },
     {
       "path": "apps/web/src/components/beautiful-ui/CollaborationMarker.test.tsx",
@@ -1919,15 +1919,15 @@
       "path": "apps/web/src/lib/updater-recreate.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 4836,
-      "sha256": "126d701609f73cbee4bd02e0fce9e3fdfc0f9acbd8b12706f9f102dd592dfe13"
+      "byteLength": 5402,
+      "sha256": "a8a75eb15a03c36d60805b0b4f6fde45313f4cbea0c25c2e61652cfa0d1ea225"
     },
     {
       "path": "apps/web/src/lib/updater-recreate.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 2800,
-      "sha256": "959fd0437f8893c8a15efd430be7cbf47fc251ebb6e5da2d437258ece0c651a3"
+      "byteLength": 2987,
+      "sha256": "c022b13f203509b71e826ddf41ddbe9dff38b66df6131fd4677ea035c58a585a"
     },
     {
       "path": "apps/web/src/lib/use-model-oauth-signin.ts",
@@ -2773,8 +2773,8 @@
       "path": "docs/self-host.md",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 35166,
-      "sha256": "5f7447bb2137118d84f9f046f32b9ded03309e3126daf1e8534ed04c30576dda"
+      "byteLength": 39187,
+      "sha256": "e2238c3e4ec76f1172076f7bed6a4c05741e8e7a1954e4498edb4243e751884d"
     },
     {
       "path": "infra/compose/.env.images.example",
@@ -2833,18 +2833,25 @@
       "sha256": "a87300a4637d6cbc1d7b02809c672e3f94c714556756fcb81d6e9d164c41ef2b"
     },
     {
+      "path": "infra/compose/deployment-identity-transaction.test.ts",
+      "gitMode": "100644",
+      "gitType": "blob",
+      "byteLength": 18238,
+      "sha256": "3b4fe070088c8c53e182657724286427dad179907d85da33fc408ff57a8c19a7"
+    },
+    {
       "path": "infra/compose/deployment-preflight.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 13453,
-      "sha256": "7098db5f8ff7fce44bab5ef26f7c5f3cfdb8c1002d836bdfa9e31f3af759da93"
+      "byteLength": 14610,
+      "sha256": "4b44fd133c560834752c785016f884a5d9f5f47d024c4d38d1825a2fdfbc7568"
     },
     {
       "path": "infra/compose/deployment-preflight.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 15801,
-      "sha256": "ad9b3082efc81fd3a18322aee3b5e10ab04445613ac22ca7b53a5ab60936c3ba"
+      "byteLength": 17218,
+      "sha256": "ed72a8ba7da0dceeaf2f011239b10474d512b0903ae8c0cb5e57ecb14f33b0b5"
     },
     {
       "path": "infra/compose/docker-compose.images.yml",
@@ -2857,8 +2864,8 @@
       "path": "infra/compose/docker-compose.prod.yml",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 8284,
-      "sha256": "440eccb1248276a56675c42d68a18d5385d7b9946bb0f46a425b74ff4937d6cd"
+      "byteLength": 8445,
+      "sha256": "3f3d74dce199463729dd58dd4e69daf1881ec8d322d8c6d1fe199f89528e954e"
     },
     {
       "path": "infra/compose/docker-compose.topology.yml",
@@ -2913,8 +2920,8 @@
       "path": "infra/compose/production-wiring.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 4843,
-      "sha256": "a72fb98f579728aaecd7965cb46c03e57f57429eb21ce8b09d3c53ebb83e68c4"
+      "byteLength": 4945,
+      "sha256": "70ac0f224c101dddd0d2d441f058cfa37689dbeea7dd7d3eddeaaeb251257da3"
     },
     {
       "path": "infra/compose/restore-prod.sh",
@@ -3158,8 +3165,8 @@
       "path": "infra/updater/src/index.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 26671,
-      "sha256": "65d59fd6db43c957677d672adbd2d3dc5b51596877c9effffc4f711bdb63679d"
+      "byteLength": 34643,
+      "sha256": "22e9e544c4c4ba1dcacd02e0246cfcf156c63d80f5827ad7121b82ad31dabca6"
     },
     {
       "path": "infra/updater/src/updater-logic.test.ts",
@@ -3172,8 +3179,8 @@
       "path": "infra/updater/src/updater-logic.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 4027,
-      "sha256": "77a446503183b6b143b0db715070282d1a7dc575c0ea311e15f5f5c642a4c252"
+      "byteLength": 11430,
+      "sha256": "599034e2848283aac4f4b6c580965618bbc0dfc40d0437cb976a39603180705d"
     },
     {
       "path": "infra/updater/tsconfig.json",
@@ -4663,8 +4670,8 @@
       "path": "packages/contracts/src/domain.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 28259,
-      "sha256": "f2930338a63854c2184ab32d32b8bb5136b552678783cbc8602d184f05a1d8e2"
+      "byteLength": 28414,
+      "sha256": "eb5d7c27fadc460c3bd4c8e0663965148eb679be4ec45c18d5625f305948f580"
     },
     {
       "path": "packages/contracts/src/events.ts",
@@ -4880,15 +4887,15 @@
       "path": "packages/core/src/compose-update.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 21621,
-      "sha256": "7dcaacf8017be71a0731651aaa0ded265949e4914ebd39f108a40f391c8e9649"
+      "byteLength": 22824,
+      "sha256": "fe4801dd2323797d24e5bd8cb93190099a65165dfdb4767c12685c425002a49a"
     },
     {
       "path": "packages/core/src/compose-update.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 25962,
-      "sha256": "445cc7cf6bd5d9c924feac331a80899e545ec760ea132bbd58b8a87d2f1962b7"
+      "byteLength": 27363,
+      "sha256": "d11d7d6e6999027dad5c9a39361212f1430d5eab20bd57fdf1937b1378792ffb"
     },
     {
       "path": "packages/core/src/composer-mentions.test.ts",
