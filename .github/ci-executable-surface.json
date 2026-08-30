@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "exclusions": [".github/ci-executable-surface.json"],
   "entryCount": 885,
-  "treeSha256": "b0a73558c72800573f79b1eac0d3021359a8e28f43f324979c41d993cd16f4d8",
+  "treeSha256": "0719d2aed10dacb3b90ebcaccd91faa5fc9d18711afd7015545ed72ce0d37b14",
   "entries": [
     {
       "path": ".agents/skills/composio/SKILL.md",
@@ -5860,8 +5860,8 @@
       "path": "packages/testkit/src/gitleaks-history.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 10742,
-      "sha256": "76573a975f0e3ca25c1b7e4ffaeef192e2bf200aadbd6b3dba445c688912ab34"
+      "byteLength": 10746,
+      "sha256": "3a6248cb4b79eb195c90be9aecf5374badddfdd842d9f50f09ef614a715fc9f1"
     },
     {
       "path": "packages/testkit/src/index.ts",
@@ -6140,8 +6140,8 @@
       "path": "scripts/gitleaks-history.mjs",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 9916,
-      "sha256": "74441b54bfc6724a0999581d2ac9045a883ecc78cc51e608820307325c56a6ee"
+      "byteLength": 11466,
+      "sha256": "5f6d6520d0748d961787049170575307a515e1b9aa692d5284101eb620b2833b"
     },
     {
       "path": "scripts/gitleaks-scan.mjs",
