@@ -1535,6 +1535,10 @@ describeJourneys("required product journeys", () => {
       const run = await prisma.run.findUnique({ where: { id: groupAsk.runId } });
       return run?.status === "waiting_input";
     });
+    const groupAskRun = await prisma.run.findUniqueOrThrow({
+      where: { id: groupAsk.runId },
+      select: { createdAt: true },
+    });
     const groupsWithActiveMember = await rpc<
       Array<{ id: string; members: Array<{ botId: string; status?: string }> }>
     >(app, ada, "groups/list");
@@ -1568,7 +1572,7 @@ describeJourneys("required product journeys", () => {
         userId: adaMe.userId,
         status: "running",
         trigger: "user",
-        createdAt: new Date(Date.now() + 1_000),
+        createdAt: new Date(groupAskRun.createdAt.getTime() + 1_000),
       },
     });
     const askSnapshot = await rpc<Snap>(app, ada, "threads/get", { groupId: group.id });
