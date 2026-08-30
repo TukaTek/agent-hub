@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import {
   chmod,
   cp,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -703,6 +704,7 @@ type SourceTreeManifest = {
 };
 
 type ManifestWriterFileSystem = {
+  link?: typeof link;
   lstat: typeof lstat;
   open: typeof open;
   opendir?: typeof opendir;
@@ -729,6 +731,12 @@ function manifestTempPath(repository: string, nonce: string) {
 async function manifestTempEntries(repository: string) {
   return (await readdir(path.join(repository, ".github"))).filter(
     (entry) => entry.startsWith(manifestTempPrefix) && entry.endsWith(".tmp"),
+  );
+}
+
+async function manifestCleanupEntries(repository: string) {
+  return (await readdir(path.join(repository, ".github"))).filter(
+    (entry) => entry.startsWith(manifestTempPrefix) && entry.endsWith(".tmp.cleanup"),
   );
 }
 
@@ -1209,7 +1217,7 @@ PAYLOAD
   });
 
   it.each(["create", "write", "sync", "close", "rename"] as const)(
-    "preserves the previous manifest and cleans its temp file after an injected %s failure",
+    "fails closed without deleting an uncertain temp pathname after an injected %s failure",
     async (stage) => {
       const files = Object.fromEntries(
         Array.from({ length: 12 }, (_, index) => [`tracked-${index}.txt`, "before\n"]),
@@ -1232,9 +1240,16 @@ PAYLOAD
         ).rejects.toThrow(new RegExp(`injected ${stage} failure`, "iu"));
 
         const after = await readFile(filename);
-        expect(after).toEqual(before);
-        expect(sha256(after)).toBe(beforeHash);
-        expect(await manifestTempEntries(repository)).toEqual([]);
+        if (stage === "close") {
+          expect(after).not.toEqual(before);
+          await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+        } else {
+          expect(after).toEqual(before);
+          expect(sha256(after)).toBe(beforeHash);
+        }
+        const expectedResidual = stage === "create" || stage === "close" ? 0 : 1;
+        expect(await manifestTempEntries(repository)).toHaveLength(expectedResidual);
+        expect(await manifestCleanupEntries(repository)).toHaveLength(expectedResidual);
         if (stage === "write") expect(injection.partialBytesWritten()).toBe(1024);
       });
     },
@@ -1373,7 +1388,8 @@ PAYLOAD
             ? replacementInfo.isSymbolicLink()
             : replacementInfo.isDirectory(),
         ).toBe(true);
-        await expect(lstat(displacedTemp)).rejects.toMatchObject({ code: "ENOENT" });
+        expect((await lstat(displacedTemp)).isFile()).toBe(true);
+        expect(await manifestCleanupEntries(repository)).toHaveLength(1);
       });
     },
   );
@@ -1417,8 +1433,8 @@ PAYLOAD
       const installed = await readFile(filename);
       expect(installed).toEqual(before);
       expect(installed).not.toEqual(attackerBytes);
-      await expect(lstat(displacedTemp)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect((await lstat(displacedTemp)).isFile()).toBe(true);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1466,8 +1482,8 @@ PAYLOAD
       expect(substituted).toBe(true);
       expect(await readFile(filename)).toEqual(before);
       expect(await readFile(filename)).not.toEqual(attackerBytes);
-      await expect(lstat(displacedTemp)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect((await lstat(displacedTemp)).isFile()).toBe(true);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1508,8 +1524,8 @@ PAYLOAD
 
       expect(await readFile(filename)).toEqual(before);
       expect(await readFile(filename)).not.toEqual(attackerBytes);
-      await expect(lstat(displacedTemp)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect((await lstat(displacedTemp)).isFile()).toBe(true);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1594,7 +1610,7 @@ PAYLOAD
     });
   });
 
-  it("finds and removes its displaced inode under an unrelated filename", async () => {
+  it("finds and quarantines its displaced inode under an unrelated filename", async () => {
     await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
       const policy = await sourceTreePolicy();
       await writeAndTrackSourceTreeManifest(repository);
@@ -1627,8 +1643,8 @@ PAYLOAD
       ).rejects.toThrow(/ENOENT|no such file/iu);
 
       expect(await readFile(filename)).toEqual(before);
-      await expect(lstat(displacedTemp)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect((await lstat(displacedTemp)).isFile()).toBe(true);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1641,13 +1657,26 @@ PAYLOAD
       await writeFile(path.join(repository, "tracked.txt"), "after\n");
       const nonce = "7".repeat(32);
       const temporaryFilename = manifestTempPath(repository, nonce);
+      const cleanupQuarantine = `${temporaryFilename}.cleanup`;
       const cleanupCandidate = path.join(repository, ".github", "cleanup-race-candidate");
       const ownedResidual = path.join(repository, "owned-cleanup-residual");
       const unrelatedBytes = Buffer.from("unrelated replacement must survive\n");
       let installDisplaced = false;
       let unlinkSubstitutionInjected = false;
       const fileSystem: ManifestWriterFileSystem = {
-        lstat,
+        lstat: (async (...arguments_: Parameters<typeof lstat>) => {
+          const info = await lstat(...arguments_);
+          if (
+            !unlinkSubstitutionInjected &&
+            path.resolve(String(arguments_[0])) === cleanupQuarantine &&
+            info.isFile()
+          ) {
+            unlinkSubstitutionInjected = true;
+            await rename(cleanupQuarantine, ownedResidual);
+            await writeFile(cleanupQuarantine, unrelatedBytes, { mode: 0o600 });
+          }
+          return info;
+        }) as typeof lstat,
         open,
         rename: async (oldPath, newPath) => {
           if (!installDisplaced && path.resolve(String(oldPath)) === temporaryFilename) {
@@ -1656,16 +1685,7 @@ PAYLOAD
           }
           await rename(oldPath, newPath);
         },
-        unlink: async (candidate) => {
-          if (!unlinkSubstitutionInjected) {
-            unlinkSubstitutionInjected = true;
-            if (path.resolve(String(candidate)) === cleanupCandidate) {
-              await rename(cleanupCandidate, ownedResidual);
-            }
-            await writeFile(cleanupCandidate, unrelatedBytes, { mode: 0o600 });
-          }
-          await unlink(candidate);
-        },
+        unlink,
       };
 
       const operation = await policy
@@ -1686,7 +1706,7 @@ PAYLOAD
         ...operation,
         installed: await readFile(filename),
         unlinkSubstitutionInjected,
-        unrelatedReplacement: await readFile(cleanupCandidate).catch(() => undefined),
+        unrelatedReplacement: await readFile(cleanupQuarantine).catch(() => undefined),
       }).toMatchObject({
         error: expect.stringMatching(/FAIL-CLOSED CLEANUP INTEGRITY ERROR.*residual.*uncertain/iu),
         installed: before,
@@ -1697,7 +1717,133 @@ PAYLOAD
     });
   });
 
-  it("cleans an owned temp when the directory scan has exactly 4,096 entries", async () => {
+  it("surfaces nested cleanup read and close causes through writer and CLI formatting", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      let installRenameFailed = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open,
+        opendir: (async () => ({
+          close: async () => {
+            throw Object.assign(new Error("scan close EIO"), { code: "EIO" });
+          },
+          read: async () => {
+            throw Object.assign(
+              new Error(`scan read EIO at ${repository}; token=fixture-sensitive-value`),
+              { code: "EIO" },
+            );
+          },
+        })) as unknown as typeof opendir,
+        rename: async (oldPath, newPath) => {
+          if (
+            !installRenameFailed &&
+            path.resolve(String(newPath)) === path.join(repository, manifestRelativePath)
+          ) {
+            installRenameFailed = true;
+            throw Object.assign(new Error("install rename EACCES"), { code: "EACCES" });
+          }
+          await rename(oldPath, newPath);
+        },
+        unlink,
+      };
+
+      const writerError = await policy
+        .writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => "e".repeat(32),
+          platform: "linux",
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(writerError).toBeInstanceOf(Error);
+      const writerMessage =
+        writerError instanceof Error ? writerError.message : String(writerError);
+      expect(writerMessage).toMatch(/install rename EACCES/iu);
+      expect(writerMessage).toMatch(/scan read EIO/iu);
+      expect(writerMessage).toMatch(/scan close EIO/iu);
+      expect(writerMessage).not.toContain(repository);
+      expect(writerMessage).not.toContain("fixture-sensitive-value");
+
+      const formatterModule = (await import(
+        "../../../scripts/repository-policy.mjs"
+      )) as unknown as {
+        errorMessage?: (error: unknown) => string;
+      };
+      expect(formatterModule.errorMessage).toBeTypeOf("function");
+      const cliMessage = formatterModule.errorMessage?.(writerError) ?? "";
+      expect(cliMessage).toMatch(/install rename EACCES/iu);
+      expect(cliMessage).toMatch(/scan read EIO/iu);
+      expect(cliMessage).toMatch(/scan close EIO/iu);
+      expect(cliMessage).not.toContain(repository);
+      expect(cliMessage).not.toContain("fixture-sensitive-value");
+    });
+  });
+
+  it("does not overwrite a cleanup quarantine replaced during exclusive staging", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const nonce = "6".repeat(32);
+      const temporaryFilename = manifestTempPath(repository, nonce);
+      const cleanupQuarantine = `${temporaryFilename}.cleanup`;
+      const cleanupCandidate = path.join(repository, ".github", "cleanup-stage-candidate");
+      const unrelatedBytes = Buffer.from("unrelated quarantine replacement must survive\n");
+      let installDisplaced = false;
+      let stagingSubstitutionInjected = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        link: async (existingPath, newPath) => {
+          if (!stagingSubstitutionInjected && path.resolve(String(newPath)) === cleanupQuarantine) {
+            stagingSubstitutionInjected = true;
+            await writeFile(cleanupQuarantine, unrelatedBytes, { mode: 0o600 });
+          }
+          await link(existingPath, newPath);
+        },
+        lstat,
+        open,
+        rename: async (oldPath, newPath) => {
+          if (!installDisplaced && path.resolve(String(oldPath)) === temporaryFilename) {
+            installDisplaced = true;
+            await rename(temporaryFilename, cleanupCandidate);
+          }
+          await rename(oldPath, newPath);
+        },
+        unlink,
+      };
+
+      const operation = await policy
+        .writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => nonce,
+          platform: "linux",
+        })
+        .then(
+          () => ({ status: "resolved" as const }),
+          (error: unknown) => ({
+            error: error instanceof Error ? error.message : String(error),
+            status: "rejected" as const,
+          }),
+        );
+
+      expect(operation).toMatchObject({
+        error: expect.stringMatching(/cleanup quarantine|staged for cleanup|EEXIST/iu),
+        status: "rejected",
+      });
+      expect(stagingSubstitutionInjected).toBe(true);
+      expect(await readFile(filename)).toEqual(before);
+      expect(await readFile(cleanupQuarantine)).toEqual(unrelatedBytes);
+      expect((await lstat(cleanupCandidate)).isFile()).toBe(true);
+    });
+  });
+
+  it("quarantines an owned temp when the directory scan has exactly 4,096 entries", async () => {
     await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
       const policy = await sourceTreePolicy();
       await writeAndTrackSourceTreeManifest(repository);
@@ -1744,9 +1890,10 @@ PAYLOAD
         }),
       ).rejects.toThrow(/injected install rename failure at exact scan bound/iu);
 
-      expect(directoryOpenCount).toBe(2);
+      expect(directoryOpenCount).toBe(1);
       expect(await readFile(filename)).toEqual(before);
-      await expect(lstat(temporaryFilename)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await lstat(temporaryFilename)).isFile()).toBe(true);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1844,7 +1991,8 @@ PAYLOAD
 
       expect(restorationRenameAttempts).toBe(1);
       expect(await readFile(filename)).not.toEqual(before);
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect(await manifestTempEntries(repository)).toHaveLength(1);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1892,7 +2040,8 @@ PAYLOAD
       ).rejects.toThrow(/read-back SHA-256 mismatch/iu);
 
       expect(await readFile(filename)).toEqual(before);
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect(await manifestTempEntries(repository)).toHaveLength(1);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -1945,7 +2094,8 @@ PAYLOAD
       ).rejects.toThrow(/inode metadata mismatch/iu);
 
       expect(await readFile(filename)).toEqual(before);
-      expect(await manifestTempEntries(repository)).toEqual([]);
+      expect(await manifestTempEntries(repository)).toHaveLength(1);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
@@ -2104,7 +2254,8 @@ PAYLOAD
         expect(
           targetKind === "symlink" ? targetInfo.isSymbolicLink() : targetInfo.isDirectory(),
         ).toBe(true);
-        expect(await manifestTempEntries(repository)).toEqual([]);
+        expect(await manifestTempEntries(repository)).toHaveLength(1);
+        expect(await manifestCleanupEntries(repository)).toHaveLength(1);
       });
     },
   );
@@ -2239,33 +2390,47 @@ PAYLOAD
         installed: before,
         status: "rejected",
       });
-      await expect(lstat(displacedCanonical)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await lstat(displacedCanonical)).isFile()).toBe(true);
+      expect(await manifestCleanupEntries(repository)).toHaveLength(1);
     });
   });
 
-  it("accepts canonical bytes installed during a successful directory sync", async () => {
+  it("rejects canonical bytes when successful directory sync displaces its owned inode outside .github", async () => {
     await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
       const policy = await sourceTreePolicy();
       await writeAndTrackSourceTreeManifest(repository);
       await writeFile(path.join(repository, "tracked.txt"), "after\n");
       const filename = path.join(repository, manifestRelativePath);
       const githubDirectory = path.join(repository, ".github");
-      const displacedCanonical = path.join(repository, ".github", "sync-canonical-loser");
+      const displacedCanonical = path.join(repository, "sync-canonical-loser");
       const concurrentTemp = path.join(repository, ".github", "sync-canonical-winner");
       const canonicalBytes = Buffer.from(
         policy.serializeSourceTreeManifest(await policy.createSourceTreeManifest(repository)),
       );
       let destinationReplaced = false;
+      let ownedHandle: Awaited<ReturnType<typeof open>> | undefined;
+      let ownedHandleOpenDuringSync = false;
       const fileSystem: ManifestWriterFileSystem = {
         lstat,
         open: (async (...arguments_: Parameters<typeof open>) => {
           const handle = await open(...arguments_);
+          if (
+            path.basename(String(arguments_[0])).startsWith(manifestTempPrefix) &&
+            (Number(arguments_[1]) & constants.O_CREAT) !== 0
+          ) {
+            ownedHandle = handle;
+          }
           if (path.resolve(String(arguments_[0])) !== githubDirectory) return handle;
           return new Proxy(handle, {
             get(target, property) {
               if (property === "sync") {
                 return async () => {
                   await target.sync();
+                  ownedHandleOpenDuringSync =
+                    (await ownedHandle?.stat().then(
+                      () => true,
+                      () => false,
+                    )) ?? false;
                   if (!destinationReplaced) {
                     destinationReplaced = true;
                     await rename(filename, displacedCanonical);
@@ -2283,17 +2448,108 @@ PAYLOAD
         unlink,
       };
 
-      await expect(
-        policy.writeSourceTreeManifest(repository, {
+      const operation = await policy
+        .writeSourceTreeManifest(repository, {
           fileSystem,
           nonceFactory: () => "b".repeat(32),
           platform: "linux",
-        }),
-      ).resolves.toBeDefined();
+        })
+        .then(
+          () => ({ status: "resolved" as const }),
+          (error: unknown) => ({
+            error: error instanceof Error ? error.message : String(error),
+            status: "rejected" as const,
+          }),
+        );
 
+      expect(operation).toMatchObject({
+        error: expect.stringMatching(/owned inode.*unaccounted|residual.*uncertain/iu),
+        status: "rejected",
+      });
+      expect(ownedHandleOpenDuringSync).toBe(true);
       expect(await readFile(filename)).toEqual(canonicalBytes);
       await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
-      await expect(lstat(displacedCanonical)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await lstat(displacedCanonical)).isFile()).toBe(true);
+    });
+  });
+
+  it("reports residual uncertainty when failed directory sync displaces its owned inode outside .github", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const filename = path.join(repository, manifestRelativePath);
+      const githubDirectory = path.join(repository, ".github");
+      const displacedCanonical = path.join(repository, "sync-failure-canonical-loser");
+      const concurrentTemp = path.join(repository, ".github", "sync-failure-canonical-winner");
+      const canonicalBytes = Buffer.from(
+        policy.serializeSourceTreeManifest(await policy.createSourceTreeManifest(repository)),
+      );
+      let destinationReplaced = false;
+      let ownedHandle: Awaited<ReturnType<typeof open>> | undefined;
+      let ownedHandleOpenDuringSync = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open: (async (...arguments_: Parameters<typeof open>) => {
+          const handle = await open(...arguments_);
+          if (
+            path.basename(String(arguments_[0])).startsWith(manifestTempPrefix) &&
+            (Number(arguments_[1]) & constants.O_CREAT) !== 0
+          ) {
+            ownedHandle = handle;
+          }
+          if (path.resolve(String(arguments_[0])) !== githubDirectory) return handle;
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === "sync") {
+                return async () => {
+                  ownedHandleOpenDuringSync =
+                    (await ownedHandle?.stat().then(
+                      () => true,
+                      () => false,
+                    )) ?? false;
+                  if (!destinationReplaced) {
+                    destinationReplaced = true;
+                    await rename(filename, displacedCanonical);
+                    await writeFile(concurrentTemp, canonicalBytes, { mode: 0o644 });
+                    await rename(concurrentTemp, filename);
+                  }
+                  throw Object.assign(new Error("injected directory sync EIO"), { code: "EIO" });
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Awaited<ReturnType<typeof open>>;
+        }) as typeof open,
+        rename,
+        unlink,
+      };
+
+      const operation = await policy
+        .writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => "f".repeat(32),
+          platform: "linux",
+        })
+        .then(
+          () => ({ status: "resolved" as const }),
+          (error: unknown) => ({
+            error: error instanceof Error ? error.message : String(error),
+            status: "rejected" as const,
+          }),
+        );
+
+      expect(operation).toMatchObject({
+        error: expect.stringMatching(
+          /directory sync EIO.*owned inode.*unaccounted|owned inode.*unaccounted.*directory sync EIO|residual.*uncertain/iu,
+        ),
+        status: "rejected",
+      });
+      expect(ownedHandleOpenDuringSync).toBe(true);
+      expect(await readFile(filename)).toEqual(canonicalBytes);
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+      expect((await lstat(displacedCanonical)).isFile()).toBe(true);
     });
   });
 

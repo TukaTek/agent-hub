@@ -1,7 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, opendir, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  open,
+  opendir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  unlink,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
@@ -473,7 +483,14 @@ const SOURCE_TREE_MANIFEST_TEMP_ATTEMPTS = 16;
 const SOURCE_TREE_MANIFEST_CLEANUP_SCAN_LIMIT = 4096;
 const SOURCE_TREE_MANIFEST_PATH_SNAPSHOT_ATTEMPTS = 2;
 const SOURCE_TREE_MANIFEST_TEMP_NONCE = /^[0-9a-f]{32}$/u;
-const SOURCE_TREE_MANIFEST_FILE_SYSTEM = Object.freeze({ lstat, open, opendir, rename, unlink });
+const SOURCE_TREE_MANIFEST_FILE_SYSTEM = Object.freeze({
+  link,
+  lstat,
+  open,
+  opendir,
+  rename,
+  unlink,
+});
 const REGULAR_GIT_MODES = new Set(["100644", "100755"]);
 const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
 const GIT_INDEX_RECORD = /^([0-9]{6}) ([0-9a-f]{40}|[0-9a-f]{64}) ([0-3])$/u;
@@ -967,8 +984,54 @@ async function lstatIfPresent(fileSystem, filename) {
   }
 }
 
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+function sanitizedErrorText(value) {
+  return String(value)
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]+\b/gu, "<redacted>")
+    .replace(/\b((?:api[ _-]?key|password|secret|token)\s*[:=]\s*)\S+/giu, "$1<redacted>")
+    .replace(/(?:file:\/\/)?\/(?:[^\s'"/]+\/)+[^\s'",;)]*/gu, "<path>")
+    .replace(/[A-Za-z]:\\(?:[^\s'"\\]+\\)+[^\s'",;)]*/gu, "<path>")
+    .trim()
+    .slice(0, 320);
+}
+
+function ownErrorMessage(error) {
+  const message = sanitizedErrorText(error instanceof Error ? error.message : String(error));
+  const code =
+    error &&
+    typeof error === "object" &&
+    typeof error.code === "string" &&
+    /^[A-Z][A-Z0-9_]+$/u.test(error.code)
+      ? error.code
+      : undefined;
+  if (!code || message.toUpperCase().includes(code)) return message;
+  return message ? `${code}: ${message}` : code;
+}
+
+export function errorMessage(error) {
+  const messages = [];
+  const seenMessages = new Set();
+  const seenErrors = new Set();
+  const visit = (current) => {
+    if (current && typeof current === "object") {
+      if (seenErrors.has(current)) return;
+      seenErrors.add(current);
+    }
+    const message = ownErrorMessage(current);
+    if (message && !seenMessages.has(message)) {
+      seenMessages.add(message);
+      messages.push(message);
+    }
+    if (current instanceof AggregateError) {
+      for (const nested of current.errors) visit(nested);
+    }
+    if (current && typeof current === "object" && "cause" in current && current.cause) {
+      visit(current.cause);
+    }
+  };
+  visit(error);
+  return messages.join("; caused by: ");
 }
 
 function fileIdentity(info) {
@@ -1344,7 +1407,7 @@ function cleanupIntegrityError(detail, causes = []) {
   return causes.length === 0 ? new Error(message) : new AggregateError(causes, message);
 }
 
-async function unlinkOwnedManifestEntry(fileSystem, candidate, identity, quarantine) {
+async function quarantineOwnedManifestEntry(fileSystem, candidate, identity, quarantine) {
   const info = await lstatIfPresent(fileSystem, candidate);
   if (!info?.isFile()) {
     throw new Error("Invocation-owned source-tree manifest temp entry changed before cleanup");
@@ -1357,45 +1420,34 @@ async function unlinkOwnedManifestEntry(fileSystem, candidate, identity, quarant
     throw cleanupIntegrityError("the invocation-owned cleanup quarantine path already exists");
   }
   try {
-    const cleanupRename = fileSystem.cleanupRename ?? rename;
-    await cleanupRename(candidate, quarantine);
+    const cleanupLink = fileSystem.link ?? link;
+    await cleanupLink(candidate, quarantine);
     const stagedInfo = await lstatIfPresent(fileSystem, quarantine);
     if (!stagedInfo?.isFile()) {
       throw new Error("the staged invocation-owned cleanup entry is missing or non-regular");
     }
     assertRegularFileMetadata(stagedInfo, {
+      allowedLinks: [2n],
       expectedIdentity: identity,
       label: "staged invocation-owned source-tree manifest temp entry",
+    });
+    const candidateAfterLink = await lstatIfPresent(fileSystem, candidate);
+    if (!candidateAfterLink?.isFile()) {
+      throw new Error("the invocation-owned cleanup source changed while staging");
+    }
+    assertRegularFileMetadata(candidateAfterLink, {
+      allowedLinks: [2n],
+      expectedIdentity: identity,
+      label: "invocation-owned source-tree manifest temp entry after staging",
     });
   } catch (error) {
     throw cleanupIntegrityError("the invocation-owned inode could not be staged for cleanup", [
       error,
     ]);
   }
-  if (await lstatIfPresent(fileSystem, candidate)) {
-    throw cleanupIntegrityError("the checked cleanup pathname was replaced while staging unlink");
-  }
-
-  let unlinkFailure;
-  try {
-    await fileSystem.unlink(quarantine);
-  } catch (error) {
-    unlinkFailure = error;
-  }
-  const candidateAfterUnlink = await lstatIfPresent(fileSystem, candidate);
-  const quarantineAfterUnlink = await lstatIfPresent(fileSystem, quarantine);
-  if (candidateAfterUnlink) {
-    throw cleanupIntegrityError(
-      "the checked cleanup pathname was replaced during unlink and was preserved",
-      unlinkFailure ? [unlinkFailure] : [],
-    );
-  }
-  if (unlinkFailure || quarantineAfterUnlink) {
-    throw cleanupIntegrityError(
-      "the staged invocation-owned inode could not be proven deleted",
-      unlinkFailure ? [unlinkFailure] : [],
-    );
-  }
+  throw cleanupIntegrityError(
+    "portable identity-bound unlink is unavailable; the staged inode was preserved rather than risk deleting substituted content",
+  );
 }
 
 async function cleanupOwnedManifestInode(
@@ -1429,7 +1481,7 @@ async function cleanupOwnedManifestInode(
   }
   const matches = await scanManifestDirectoryForIdentity(fileSystem, directory, identity);
   if (matches.length === 1) {
-    await unlinkOwnedManifestEntry(
+    await quarantineOwnedManifestEntry(
       fileSystem,
       matches[0],
       identity,
@@ -1554,16 +1606,25 @@ async function attemptAtomicManifestInstall({
       mode,
     );
     if (!installed.sameInode) {
-      await cleanupOwnedManifestInode(fileSystem, {
-        destination: filename,
-        directory: path.dirname(filename),
-        handle: state.handle,
-        identity: state.identity,
-        temporaryFilename: state.temporaryFilename,
-      });
+      try {
+        await cleanupOwnedManifestInode(fileSystem, {
+          destination: filename,
+          directory: path.dirname(filename),
+          handle: state.handle,
+          identity: state.identity,
+          temporaryFilename: state.temporaryFilename,
+        });
+      } catch (error) {
+        return {
+          error: cleanupIntegrityError(
+            "the invocation-owned inode could not be accounted for after destination replacement",
+            [error],
+          ),
+          kind: "residual-integrity-failure",
+          state,
+        };
+      }
     }
-    await state.handle.close();
-    state.handle = undefined;
     await readStableRegularPath(fileSystem, filename, {
       expectedBytes: bytes,
       expectedManifest: manifest,
@@ -1571,43 +1632,70 @@ async function attemptAtomicManifestInstall({
       label: "final installed source-tree manifest",
     });
     state.installedVerified = true;
+    let directorySyncError;
     try {
       await syncManifestDirectory(fileSystem, path.dirname(filename), platform);
     } catch (error) {
+      directorySyncError = error;
+    }
+    let durableDestination;
+    try {
+      durableDestination = await readStableRegularPath(fileSystem, filename, {
+        expectedBytes: bytes,
+        expectedManifest: manifest,
+        expectedMode: mode,
+        label: directorySyncError
+          ? "source-tree manifest after directory sync failure"
+          : "source-tree manifest after successful directory sync",
+      });
+    } catch (verificationError) {
+      state.installedVerified = false;
+      return {
+        error: directorySyncError
+          ? new AggregateError(
+              [directorySyncError, verificationError],
+              "Source-tree manifest changed while directory sync was failing",
+            )
+          : verificationError,
+        kind: "failure",
+        state,
+      };
+    }
+    if (!sameFileIdentity(state.identity, durableDestination.identity)) {
       try {
-        await readStableRegularPath(fileSystem, filename, {
-          expectedBytes: bytes,
-          expectedManifest: manifest,
-          expectedMode: mode,
-          label: "source-tree manifest after directory sync failure",
+        await cleanupOwnedManifestInode(fileSystem, {
+          destination: filename,
+          directory: path.dirname(filename),
+          handle: state.handle,
+          identity: state.identity,
+          temporaryFilename: state.temporaryFilename,
         });
-      } catch (verificationError) {
-        state.installedVerified = false;
+      } catch (error) {
         return {
-          error: new AggregateError(
-            [error, verificationError],
-            "Source-tree manifest changed while directory sync was failing",
+          error: cleanupIntegrityError(
+            "the invocation-owned inode could not be accounted for after parent directory sync",
+            directorySyncError ? [directorySyncError, error] : [error],
           ),
-          kind: "failure",
+          kind: "residual-integrity-failure",
           state,
         };
       }
-      return { error, kind: "durability-failure", state };
     }
-    const durableDestination = await readStableRegularPath(fileSystem, filename, {
-      expectedBytes: bytes,
-      expectedManifest: manifest,
-      expectedMode: mode,
-      label: "source-tree manifest after successful directory sync",
-    });
-    if (!sameFileIdentity(state.identity, durableDestination.identity)) {
-      await cleanupOwnedManifestInode(fileSystem, {
-        destination: filename,
-        directory: path.dirname(filename),
-        handle: state.handle,
-        identity: state.identity,
-        temporaryFilename: state.temporaryFilename,
-      });
+    try {
+      await state.handle.close();
+      state.handle = undefined;
+    } catch (error) {
+      return {
+        error: cleanupIntegrityError(
+          "the invocation-owned install handle could not be proven closed after final validation",
+          directorySyncError ? [directorySyncError, error] : [error],
+        ),
+        kind: "residual-integrity-failure",
+        state,
+      };
+    }
+    if (directorySyncError) {
+      return { error: directorySyncError, kind: "durability-failure", state };
     }
     return { kind: "success", state };
   } catch (error) {
@@ -1663,6 +1751,16 @@ export async function writeSourceTreeManifest(root, options = {}) {
     purpose: "install",
   });
   if (primary.kind === "success") return manifest;
+  if (primary.kind === "residual-integrity-failure") {
+    const cleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
+    const failures = [primary.error, ...cleanupFailures];
+    throw new AggregateError(
+      failures,
+      "FAIL-CLOSED RESIDUAL INTEGRITY ERROR: the canonical manifest is valid, but " +
+        "the invocation-owned inode is not fully accounted for; no success was reported: " +
+        errorMessage(new AggregateError(failures)),
+    );
+  }
   if (primary.kind === "durability-failure") {
     throw new Error(
       "Source-tree manifest replacement completed and was verified, but parent directory sync failed; " +
@@ -2209,7 +2307,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       );
     })
     .catch((error) => {
-      console.error(error instanceof Error ? error.message : String(error));
+      console.error(errorMessage(error));
       process.exitCode = 1;
     });
 }
