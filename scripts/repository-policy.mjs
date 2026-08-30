@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
+import { lstat, open, opendir, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
@@ -470,8 +470,10 @@ function assertReusableWorkflowInventory(workflows) {
 const SOURCE_TREE_MANIFEST_SCHEMA_VERSION = 2;
 const SOURCE_TREE_MANIFEST_EXCLUSIONS = Object.freeze([SOURCE_TREE_MANIFEST_PATH]);
 const SOURCE_TREE_MANIFEST_TEMP_ATTEMPTS = 16;
+const SOURCE_TREE_MANIFEST_CLEANUP_SCAN_LIMIT = 4096;
+const SOURCE_TREE_MANIFEST_PATH_SNAPSHOT_ATTEMPTS = 2;
 const SOURCE_TREE_MANIFEST_TEMP_NONCE = /^[0-9a-f]{32}$/u;
-const SOURCE_TREE_MANIFEST_FILE_SYSTEM = Object.freeze({ lstat, open, rename, unlink });
+const SOURCE_TREE_MANIFEST_FILE_SYSTEM = Object.freeze({ lstat, open, opendir, rename, unlink });
 const REGULAR_GIT_MODES = new Set(["100644", "100755"]);
 const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
 const GIT_INDEX_RECORD = /^([0-9]{6}) ([0-9a-f]{40}|[0-9a-f]{64}) ([0-3])$/u;
@@ -958,15 +960,176 @@ function isFileSystemError(error, code) {
 
 async function lstatIfPresent(fileSystem, filename) {
   try {
-    return await fileSystem.lstat(filename);
+    return await fileSystem.lstat(filename, { bigint: true });
   } catch (error) {
     if (isFileSystemError(error, "ENOENT")) return undefined;
     throw error;
   }
 }
 
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function fileIdentity(info) {
+  if (typeof info?.dev !== "bigint" || typeof info?.ino !== "bigint" || info.ino <= 0n) {
+    return undefined;
+  }
+  return { dev: info.dev, ino: info.ino };
+}
+
 function sameFileIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
+  return Boolean(left && right && left.dev === right.dev && left.ino === right.ino);
+}
+
+function filePermissions(info) {
+  return Number(info.mode & 0o777n);
+}
+
+function assertRegularFileMetadata(
+  info,
+  { allowedLinks = [1n], expectedIdentity, expectedMode, expectedSize, label },
+) {
+  if (!info.isFile()) throw new Error(`${label} is not a regular file`);
+  const identity = fileIdentity(info);
+  if (!identity) {
+    throw new Error(
+      `${label} inode identity is unavailable; refusing an unprovable pathname operation`,
+    );
+  }
+  if (expectedIdentity && !sameFileIdentity(identity, expectedIdentity)) {
+    throw new Error(`${label} inode metadata mismatch`);
+  }
+  if (!allowedLinks.includes(info.nlink)) {
+    throw new Error(`${label} link-count metadata mismatch`);
+  }
+  if (expectedSize !== undefined && info.size !== BigInt(expectedSize)) {
+    throw new Error(`${label} size metadata mismatch`);
+  }
+  if (expectedMode !== undefined && filePermissions(info) !== expectedMode) {
+    throw new Error(`${label} mode metadata mismatch`);
+  }
+  return identity;
+}
+
+function sha256Bytes(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function assertExpectedReadback(actual, expected, label) {
+  const actualHash = sha256Bytes(actual);
+  const expectedHash = sha256Bytes(expected);
+  if (actualHash !== expectedHash) {
+    throw new Error(`${label} read-back SHA-256 mismatch`);
+  }
+  if (!actual.equals(expected)) {
+    throw new Error(`${label} read-back byte mismatch despite matching SHA-256`);
+  }
+}
+
+async function readHandleBytes(handle, byteLength, label) {
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+    throw new Error(`${label} has an unsupported byte length`);
+  }
+  const bytes = Buffer.alloc(byteLength);
+  let offset = 0;
+  while (offset < byteLength) {
+    const { bytesRead } = await handle.read(bytes, offset, byteLength - offset, offset);
+    if (!Number.isSafeInteger(bytesRead) || bytesRead <= 0) {
+      throw new Error(`${label} read-back ended before the expected byte length`);
+    }
+    offset += bytesRead;
+  }
+  return bytes;
+}
+
+function assertManifestBytes(bytes, expectedManifest, label) {
+  const parsed = parseStrictJson(bytes.toString("utf8"), label);
+  assertSourceTreeManifestShape(parsed);
+  if (!isDeepStrictEqual(parsed, expectedManifest)) {
+    throw new Error(`${label} did not validate as the expected manifest`);
+  }
+}
+
+async function readStableRegularPath(
+  fileSystem,
+  filename,
+  { expectedBytes, expectedIdentity, expectedManifest, expectedMode, label },
+) {
+  let lastFailure;
+  for (let attempt = 0; attempt < SOURCE_TREE_MANIFEST_PATH_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    let handle;
+    let result;
+    let failure;
+    try {
+      const before = await lstatIfPresent(fileSystem, filename);
+      if (!before) throw new Error(`${label} is missing`);
+      const beforeIdentity = assertRegularFileMetadata(before, {
+        expectedIdentity,
+        expectedMode,
+        expectedSize: expectedBytes?.byteLength,
+        label,
+      });
+      handle = await fileSystem.open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      const opened = await handle.stat({ bigint: true });
+      const openedIdentity = assertRegularFileMetadata(opened, {
+        expectedIdentity,
+        expectedMode,
+        expectedSize: expectedBytes?.byteLength,
+        label,
+      });
+      if (!sameFileIdentity(beforeIdentity, openedIdentity)) {
+        throw new Error(`${label} changed while it was being opened`);
+      }
+      const size = Number(opened.size);
+      if (!Number.isSafeInteger(size)) throw new Error(`${label} is too large to verify safely`);
+      const bytes = await readHandleBytes(handle, size, label);
+      if (expectedBytes) assertExpectedReadback(bytes, expectedBytes, label);
+      if (expectedManifest) assertManifestBytes(bytes, expectedManifest, label);
+      const after = await lstatIfPresent(fileSystem, filename);
+      if (!after) throw new Error(`${label} disappeared during verification`);
+      const afterIdentity = assertRegularFileMetadata(after, {
+        expectedIdentity,
+        expectedMode,
+        expectedSize: expectedBytes?.byteLength,
+        label,
+      });
+      if (!sameFileIdentity(openedIdentity, afterIdentity)) {
+        throw new Error(`${label} changed during verification`);
+      }
+      result = { bytes, identity: openedIdentity, info: opened };
+    } catch (error) {
+      failure = error;
+    }
+    if (handle) {
+      try {
+        await handle.close();
+      } catch (error) {
+        failure = failure ? new AggregateError([failure, error]) : error;
+      }
+    }
+    if (!failure && result) return result;
+    lastFailure = failure;
+  }
+  throw lastFailure;
+}
+
+async function verifyOpenManifestHandle(
+  handle,
+  { allowedLinks, expectedBytes, expectedIdentity, expectedManifest, expectedMode, label },
+) {
+  const info = await handle.stat({ bigint: true });
+  const identity = assertRegularFileMetadata(info, {
+    allowedLinks,
+    expectedIdentity,
+    expectedMode,
+    expectedSize: expectedBytes.byteLength,
+    label,
+  });
+  const bytes = await readHandleBytes(handle, expectedBytes.byteLength, label);
+  assertExpectedReadback(bytes, expectedBytes, label);
+  assertManifestBytes(bytes, expectedManifest, label);
+  return { bytes, identity, info };
 }
 
 async function readExistingManifestForRegeneration(fileSystem, filename) {
@@ -978,30 +1141,27 @@ async function readExistingManifestForRegeneration(fileSystem, filename) {
         SOURCE_TREE_MANIFEST_PATH,
     );
   }
-  const readFlags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
-  let handle;
-  let manifest;
   try {
-    handle = await fileSystem.open(filename, readFlags);
-    const openedInfo = await handle.stat();
-    if (!openedInfo.isFile() || !sameFileIdentity(info, openedInfo)) {
-      throw new Error("source-tree manifest changed while it was being opened");
-    }
-    manifest = parseStrictJson(
-      await handle.readFile({ encoding: "utf8" }),
-      SOURCE_TREE_MANIFEST_PATH,
-    );
+    const snapshot = await readStableRegularPath(fileSystem, filename, {
+      label: "existing source-tree manifest",
+    });
+    const manifest = parseStrictJson(snapshot.bytes.toString("utf8"), SOURCE_TREE_MANIFEST_PATH);
+    assertSourceTreeManifestShape(manifest);
+    return {
+      bytes: snapshot.bytes,
+      identity: snapshot.identity,
+      info: snapshot.info,
+      manifest,
+      mode: filePermissions(snapshot.info),
+    };
   } catch (error) {
     throw new Error(
       "Refusing to regenerate over an invalid source-tree manifest at " +
         SOURCE_TREE_MANIFEST_PATH +
         ": " +
-        (error instanceof Error ? error.message : String(error)),
+        errorMessage(error),
     );
-  } finally {
-    await handle?.close();
   }
-  return { info, manifest };
 }
 
 export function serializeSourceTreeManifest(manifest) {
@@ -1026,21 +1186,22 @@ function defaultManifestNonce() {
   return randomBytes(16).toString("hex");
 }
 
-function manifestTempPath(filename, nonce) {
+function manifestTempPath(filename, nonce, purpose) {
   if (!SOURCE_TREE_MANIFEST_TEMP_NONCE.test(nonce)) {
     throw new Error("Source-tree manifest temp nonce must be 32 lowercase hexadecimal digits");
   }
+  const purposeSuffix = purpose === "restore" ? ".restore" : "";
   return path.join(
     path.dirname(filename),
-    `.${path.basename(filename)}.${process.pid}.${nonce}.tmp`,
+    `.${path.basename(filename)}.${process.pid}${purposeSuffix}.${nonce}.tmp`,
   );
 }
 
-async function openUniqueManifestTemp(fileSystem, filename, nonceFactory) {
+async function openUniqueManifestTemp(fileSystem, filename, nonceFactory, purpose) {
   const flags =
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+    constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
   for (let attempt = 0; attempt < SOURCE_TREE_MANIFEST_TEMP_ATTEMPTS; attempt += 1) {
-    const temporaryFilename = manifestTempPath(filename, nonceFactory());
+    const temporaryFilename = manifestTempPath(filename, nonceFactory(), purpose);
     try {
       const handle = await fileSystem.open(temporaryFilename, flags, 0o600);
       return { handle, temporaryFilename };
@@ -1074,16 +1235,37 @@ async function assertReplaceableManifestTarget(fileSystem, filename) {
   }
 }
 
-async function assertOwnedManifestTemp(fileSystem, temporaryFilename, temporaryInfo) {
-  const currentInfo = await lstatIfPresent(fileSystem, temporaryFilename);
-  if (
-    !currentInfo ||
-    currentInfo.isSymbolicLink() ||
-    !currentInfo.isFile() ||
-    !sameFileIdentity(currentInfo, temporaryInfo)
-  ) {
-    throw new Error("Source-tree manifest temp path changed after exclusive creation");
+async function assertRecoverableManifestTarget(fileSystem, filename) {
+  const info = await lstatIfPresent(fileSystem, filename);
+  if (info?.isDirectory()) {
+    throw new Error("Cannot atomically restore over a manifest path that became a directory");
   }
+}
+
+async function verifyOwnedManifestTemp(
+  fileSystem,
+  handle,
+  temporaryFilename,
+  identity,
+  bytes,
+  manifest,
+  mode,
+) {
+  await verifyOpenManifestHandle(handle, {
+    allowedLinks: [1n],
+    expectedBytes: bytes,
+    expectedIdentity: identity,
+    expectedManifest: manifest,
+    expectedMode: mode,
+    label: "source-tree manifest canonical temp handle",
+  });
+  await readStableRegularPath(fileSystem, temporaryFilename, {
+    expectedBytes: bytes,
+    expectedIdentity: identity,
+    expectedManifest: manifest,
+    expectedMode: mode,
+    label: "source-tree manifest canonical temp path",
+  });
 }
 
 async function syncManifestDirectory(fileSystem, directory, platform) {
@@ -1107,36 +1289,275 @@ async function syncManifestDirectory(fileSystem, directory, platform) {
   if (failure) throw failure;
 }
 
-async function cleanupManifestTemp(fileSystem, handle, temporaryFilename, temporaryInfo, renamed) {
-  const failures = [];
+async function scanManifestDirectoryForIdentity(fileSystem, directory, identity) {
+  const openDirectory = fileSystem.opendir ?? opendir;
+  const directoryHandle = await openDirectory(directory);
+  const matches = [];
+  let failure;
+  try {
+    for (let count = 0; ; count += 1) {
+      const entry = await directoryHandle.read();
+      if (!entry) break;
+      if (count >= SOURCE_TREE_MANIFEST_CLEANUP_SCAN_LIMIT) {
+        throw new Error(
+          `Source-tree manifest cleanup scan exceeded ${SOURCE_TREE_MANIFEST_CLEANUP_SCAN_LIMIT} directory entries`,
+        );
+      }
+      const candidate = path.join(directory, entry.name);
+      const info = await lstatIfPresent(fileSystem, candidate);
+      if (!info?.isFile()) continue;
+      const candidateIdentity = fileIdentity(info);
+      if (!sameFileIdentity(candidateIdentity, identity)) continue;
+      if (info.nlink !== 1n) {
+        throw new Error("Refusing to clean an invocation-owned inode with an unsafe link count");
+      }
+      matches.push(candidate);
+      if (matches.length > 1) {
+        throw new Error(
+          "Refusing to clean an invocation-owned inode with multiple directory entries",
+        );
+      }
+    }
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await directoryHandle.close();
+  } catch (error) {
+    failure = failure ? new AggregateError([failure, error]) : error;
+  }
+  if (failure) throw failure;
+  return matches;
+}
+
+async function unlinkOwnedManifestEntry(fileSystem, candidate, identity) {
+  const info = await lstatIfPresent(fileSystem, candidate);
+  if (!info?.isFile()) {
+    throw new Error("Invocation-owned source-tree manifest temp entry changed before cleanup");
+  }
+  assertRegularFileMetadata(info, {
+    expectedIdentity: identity,
+    label: "invocation-owned source-tree manifest temp entry",
+  });
+  await fileSystem.unlink(candidate);
+}
+
+async function cleanupOwnedManifestInode(fileSystem, { destination, directory, handle, identity }) {
+  if (!identity) {
+    throw new Error(
+      "Source-tree manifest temp inode identity is unavailable; residual cleanup is unprovable and was not attempted",
+    );
+  }
+  const destinationInfo = await lstatIfPresent(fileSystem, destination);
+  if (destinationInfo?.isFile() && sameFileIdentity(fileIdentity(destinationInfo), identity)) {
+    assertRegularFileMetadata(destinationInfo, {
+      expectedIdentity: identity,
+      label: "installed source-tree manifest during cleanup",
+    });
+    return;
+  }
   if (handle) {
     try {
-      await handle.close();
+      const handleInfo = await handle.stat({ bigint: true });
+      assertRegularFileMetadata(handleInfo, {
+        allowedLinks: [0n, 1n],
+        expectedIdentity: identity,
+        label: "source-tree manifest cleanup handle",
+      });
+    } catch (error) {
+      if (!isFileSystemError(error, "EBADF")) throw error;
+    }
+  }
+  const matches = await scanManifestDirectoryForIdentity(fileSystem, directory, identity);
+  if (matches.length === 1) {
+    await unlinkOwnedManifestEntry(fileSystem, matches[0], identity);
+  }
+  const remaining = await scanManifestDirectoryForIdentity(fileSystem, directory, identity);
+  if (remaining.length !== 0) {
+    throw new Error("Invocation-owned source-tree manifest temp inode remains after cleanup");
+  }
+  if (handle) {
+    try {
+      const handleInfo = await handle.stat({ bigint: true });
+      if (handleInfo.nlink !== 0n) {
+        throw new Error(
+          "Invocation-owned source-tree manifest temp inode has an unaccounted directory link",
+        );
+      }
+    } catch (error) {
+      if (!isFileSystemError(error, "EBADF")) throw error;
+    }
+  }
+}
+
+async function cleanupInstallAttempt(fileSystem, filename, state) {
+  const failures = [];
+  if (state.temporaryCreated) {
+    try {
+      await cleanupOwnedManifestInode(fileSystem, {
+        destination: filename,
+        directory: path.dirname(filename),
+        handle: state.handle,
+        identity: state.identity,
+      });
     } catch (error) {
       failures.push(error);
     }
   }
-  if (temporaryFilename && !renamed) {
+  if (state.handle) {
     try {
-      const currentInfo = await lstatIfPresent(fileSystem, temporaryFilename);
-      if (currentInfo) {
-        if (
-          !temporaryInfo ||
-          currentInfo.isSymbolicLink() ||
-          !currentInfo.isFile() ||
-          !sameFileIdentity(currentInfo, temporaryInfo)
-        ) {
-          throw new Error(
-            "Refusing to clean a source-tree manifest temp path whose identity changed",
-          );
-        }
-        await fileSystem.unlink(temporaryFilename);
-      }
+      await state.handle.close();
+      state.handle = undefined;
     } catch (error) {
       failures.push(error);
     }
   }
   return failures;
+}
+
+async function verifyInstalledManifest(fileSystem, filename, state, bytes, manifest, mode) {
+  const canonical = await verifyOpenManifestHandle(state.handle, {
+    allowedLinks: [0n, 1n],
+    expectedBytes: bytes,
+    expectedIdentity: state.identity,
+    expectedManifest: manifest,
+    expectedMode: mode,
+    label: "source-tree manifest canonical install handle",
+  });
+  const destination = await readStableRegularPath(fileSystem, filename, {
+    expectedBytes: bytes,
+    expectedManifest: manifest,
+    expectedMode: mode,
+    label: "installed source-tree manifest",
+  });
+  return {
+    sameInode: sameFileIdentity(canonical.identity, destination.identity),
+  };
+}
+
+async function attemptAtomicManifestInstall({
+  bytes,
+  fileSystem,
+  filename,
+  manifest,
+  mode,
+  nonceFactory,
+  platform,
+  purpose,
+}) {
+  const state = {
+    handle: undefined,
+    identity: undefined,
+    installedVerified: false,
+    renameAttempted: false,
+    temporaryCreated: false,
+    temporaryFilename: undefined,
+  };
+  try {
+    const opened = await openUniqueManifestTemp(fileSystem, filename, nonceFactory, purpose);
+    state.handle = opened.handle;
+    state.temporaryFilename = opened.temporaryFilename;
+    state.temporaryCreated = true;
+    const initialInfo = await state.handle.stat({ bigint: true });
+    state.identity = assertRegularFileMetadata(initialInfo, {
+      expectedMode: 0o600,
+      expectedSize: 0,
+      label: `source-tree manifest ${purpose} temp`,
+    });
+    await writeBufferFully(state.handle, bytes);
+    await state.handle.chmod(mode);
+    await state.handle.sync();
+    await verifyOwnedManifestTemp(
+      fileSystem,
+      state.handle,
+      state.temporaryFilename,
+      state.identity,
+      bytes,
+      manifest,
+      mode,
+    );
+    if (purpose === "restore") await assertRecoverableManifestTarget(fileSystem, filename);
+    else await assertReplaceableManifestTarget(fileSystem, filename);
+    state.renameAttempted = true;
+    await fileSystem.rename(state.temporaryFilename, filename);
+    const installed = await verifyInstalledManifest(
+      fileSystem,
+      filename,
+      state,
+      bytes,
+      manifest,
+      mode,
+    );
+    if (!installed.sameInode) {
+      await cleanupOwnedManifestInode(fileSystem, {
+        destination: filename,
+        directory: path.dirname(filename),
+        handle: state.handle,
+        identity: state.identity,
+      });
+    }
+    await state.handle.close();
+    state.handle = undefined;
+    await readStableRegularPath(fileSystem, filename, {
+      expectedBytes: bytes,
+      expectedManifest: manifest,
+      expectedMode: mode,
+      label: "final installed source-tree manifest",
+    });
+    state.installedVerified = true;
+    try {
+      await syncManifestDirectory(fileSystem, path.dirname(filename), platform);
+    } catch (error) {
+      try {
+        await readStableRegularPath(fileSystem, filename, {
+          expectedBytes: bytes,
+          expectedManifest: manifest,
+          expectedMode: mode,
+          label: "source-tree manifest after directory sync failure",
+        });
+      } catch (verificationError) {
+        state.installedVerified = false;
+        return {
+          error: new AggregateError(
+            [error, verificationError],
+            "Source-tree manifest changed while directory sync was failing",
+          ),
+          kind: "failure",
+          state,
+        };
+      }
+      return { error, kind: "durability-failure", state };
+    }
+    return { kind: "success", state };
+  } catch (error) {
+    return { error, kind: "failure", state };
+  }
+}
+
+async function destinationMatchesExpected(fileSystem, filename, expected) {
+  if (!expected) return (await lstatIfPresent(fileSystem, filename)) === undefined;
+  try {
+    await readStableRegularPath(fileSystem, filename, {
+      expectedBytes: expected.bytes,
+      expectedManifest: expected.manifest,
+      expectedMode: expected.mode,
+      label: "preserved source-tree manifest",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function throwOperationFailure(error, cleanupFailures, message) {
+  if (cleanupFailures.length === 0) {
+    if (message) throw new Error(`${message}: ${errorMessage(error)}`, { cause: error });
+    throw error;
+  }
+  throw new AggregateError(
+    [error, ...cleanupFailures],
+    `${message ? `${message}: ` : ""}${errorMessage(error)}; invocation-owned temp cleanup also failed: ${cleanupFailures.map(errorMessage).join("; ")}`,
+  );
 }
 
 export async function writeSourceTreeManifest(root, options = {}) {
@@ -1149,63 +1570,87 @@ export async function writeSourceTreeManifest(root, options = {}) {
   const existing = await readExistingManifestForRegeneration(fileSystem, filename);
   const manifest = await createSourceTreeManifest(root);
   const bytes = Buffer.from(serializeSourceTreeManifest(manifest), "utf8");
-  let handle;
-  let temporaryFilename;
-  let temporaryInfo;
-  let renamed = false;
-  let failure;
-  try {
-    ({ handle, temporaryFilename } = await openUniqueManifestTemp(
-      fileSystem,
-      filename,
-      nonceFactory,
-    ));
-    temporaryInfo = await handle.stat();
-    if (!temporaryInfo.isFile()) {
-      throw new Error("Source-tree manifest temp path is not a regular file");
-    }
-    await writeBufferFully(handle, bytes);
-    await handle.chmod(existing ? existing.info.mode & 0o777 : 0o644);
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await assertOwnedManifestTemp(fileSystem, temporaryFilename, temporaryInfo);
-    await assertReplaceableManifestTarget(fileSystem, filename);
-    await fileSystem.rename(temporaryFilename, filename);
-    renamed = true;
-    try {
-      await syncManifestDirectory(fileSystem, path.dirname(filename), platform);
-    } catch (error) {
-      throw new Error(
-        "Source-tree manifest replacement completed, but parent directory sync failed; " +
-          "the new manifest is installed and was not rolled back: " +
-          (error instanceof Error ? error.message : String(error)),
-        { cause: error },
-      );
-    }
-  } catch (error) {
-    failure = error;
-  }
-  const cleanupFailures = await cleanupManifestTemp(
+  const mode = existing?.mode ?? 0o644;
+  const primary = await attemptAtomicManifestInstall({
+    bytes,
     fileSystem,
-    handle,
-    temporaryFilename,
-    temporaryInfo,
-    renamed,
-  );
-  if (failure) {
-    if (cleanupFailures.length > 0) {
-      throw new AggregateError(
-        [failure, ...cleanupFailures],
-        `${failure instanceof Error ? failure.message : String(failure)}; temp cleanup also failed`,
+    filename,
+    manifest,
+    mode,
+    nonceFactory,
+    platform,
+    purpose: "install",
+  });
+  if (primary.kind === "success") return manifest;
+  if (primary.kind === "durability-failure") {
+    throw new Error(
+      "Source-tree manifest replacement completed and was verified, but parent directory sync failed; " +
+        `the canonical manifest remains installed and was not rolled back: ${errorMessage(primary.error)}`,
+      { cause: primary.error },
+    );
+  }
+
+  if (await destinationMatchesExpected(fileSystem, filename, existing)) {
+    const cleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
+    throwOperationFailure(primary.error, cleanupFailures);
+  }
+
+  if (!primary.state.renameAttempted) {
+    const cleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
+    throwOperationFailure(
+      primary.error,
+      cleanupFailures,
+      "Source-tree manifest changed before rename; no pathname restoration was attempted",
+    );
+  }
+
+  if (!existing) {
+    const cleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
+    throwOperationFailure(
+      primary.error,
+      cleanupFailures,
+      "FAIL-CLOSED RECOVERY ERROR: source-tree manifest integrity is uncertain because no previously validated manifest existed to restore",
+    );
+  }
+
+  const restoration = await attemptAtomicManifestInstall({
+    bytes: existing.bytes,
+    fileSystem,
+    filename,
+    manifest: existing.manifest,
+    mode: existing.mode,
+    nonceFactory,
+    platform,
+    purpose: "restore",
+  });
+  const restorationProven =
+    restoration.kind !== "failure" ||
+    (await destinationMatchesExpected(fileSystem, filename, existing));
+  const cleanupFailures = await cleanupInstallAttempt(fileSystem, filename, primary.state);
+
+  if (restorationProven) {
+    if (restoration.kind === "failure") {
+      cleanupFailures.push(
+        ...(await cleanupInstallAttempt(fileSystem, filename, restoration.state)),
       );
     }
-    throw failure;
+    const durabilityNote =
+      restoration.kind === "durability-failure"
+        ? `; restoration bytes were verified but parent directory sync failed: ${errorMessage(restoration.error)}`
+        : "";
+    throwOperationFailure(
+      primary.error,
+      cleanupFailures,
+      `Source-tree manifest install verification failed; the previous manifest bytes were restored and verified${durabilityNote}`,
+    );
   }
-  if (cleanupFailures.length > 0) {
-    throw new AggregateError(cleanupFailures, "Source-tree manifest temp cleanup failed");
-  }
-  return manifest;
+
+  cleanupFailures.push(...(await cleanupInstallAttempt(fileSystem, filename, restoration.state)));
+  throw new AggregateError(
+    [primary.error, restoration.error, ...cleanupFailures],
+    "FAIL-CLOSED RECOVERY ERROR: source-tree manifest integrity is uncertain; " +
+      `install verification failed (${errorMessage(primary.error)}) and the single bounded restoration could not be proven (${errorMessage(restoration.error)})`,
+  );
 }
 
 function assertManifestIsTracked(root) {
