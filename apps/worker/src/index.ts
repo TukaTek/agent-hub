@@ -35,8 +35,10 @@ import {
 import { resolveEncryptionKey, resolveSupervisorToken } from "@rakazo/core";
 import { createDb, createThreadEvents } from "@rakazo/db";
 import { MarkdownMemoryStore } from "@rakazo/memory";
+import { loadWorkerMetadata } from "./env.js";
 
 async function main() {
+  const deployment = loadWorkerMetadata(process.env);
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   const { prisma, pool } = createDb(databaseUrl);
@@ -159,7 +161,14 @@ async function main() {
   process.once("SIGTERM", () => void stop());
   process.once("SIGINT", () => void stop());
 
-  console.log("rakazo worker ready");
+  console.log(
+    JSON.stringify({
+      event: "worker.ready",
+      service: "worker",
+      deploymentId: deployment.deploymentId,
+      revision: deployment.revision,
+    }),
+  );
 }
 
 main().catch((error) => {

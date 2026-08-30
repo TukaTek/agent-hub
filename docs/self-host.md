@@ -174,8 +174,9 @@ This dumps Postgres (`pg_dump`) and archives `data/` into `backups/<stamp>/`.
 ## Public single-VM deployment
 
 `infra/compose/docker-compose.prod.yml` runs the hosted product with Postgres, the API, worker, web app,
-and automatic HTTPS through Caddy. It uses E2B for bot computers, so the VM never exposes a Docker
-supervisor or browser containers. The root-equivalent updater sidecar is an explicit opt-in profile.
+and automatic HTTPS through Caddy. Production preflight accepts the remote E2B, Daytona, and Box
+computer providers; the VM does not expose a Docker supervisor or browser containers. The
+root-equivalent updater sidecar is an explicit opt-in profile.
 
 Before deploying to a new Ubuntu host, create and verify a key-only `deploy` account, then apply the
 idempotent host-hardening baseline. It disables SSH passwords and root login, rate-limits SSH, allows
@@ -196,11 +197,18 @@ container logs, default no-new-privileges, and the kernel NAT path instead of Do
    `CADDYFILE_PATH` to that absolute path. The example drops application requests that do not come
    from Cloudflare's [published IP ranges](https://www.cloudflare.com/ips/); reconcile those ranges
    whenever Cloudflare publishes a change. A Cloudflare Tunnel can replace the public web listeners.
-2. Clone the repository on the VM and create a root `.env` with production-only values. At minimum set
+2. Clone the repository on the VM and create a root `.env` with production-only values. Generate
+   `CORTEXAI_DEPLOYMENT_ID` once with `uuidgen | tr '[:upper:]' '[:lower:]'`; it is the immutable
+   tenant identity shared by the API, worker, health response, inventory, and backups. Preserve it
+   through same-tenant restores. A different tenant gets a new ID and must not receive restored
+   external connections from this one. At minimum set
    `POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, `SCREEN_PROXY_SECRET`,
-   `E2B_API_KEY`, `OPENROUTER_API_KEY`,
-   `RAKAZO_HOST`, and the three public origins. Set `RAKAZO_DEPLOY_DIR` when the checkout is not at
-   the supported Linux default, `/srv/rakazo`. Use URL-safe random values for database credentials.
+   the key for the selected remote sandbox provider, `CORTEXAI_BACKUP_TARGET`,
+   `CORTEXAI_BACKUP_ENCRYPTION_KEY`, `GIT_SHA`, `RAKAZO_IMAGE_TAG`, `RAKAZO_HOST`, and the three
+   public origins. `GIT_SHA` is the exact lowercase 40-character checkout revision and
+   `RAKAZO_IMAGE_TAG` is `sha-<GIT_SHA>`. Set `RAKAZO_DEPLOY_DIR` when the checkout is not at the
+   supported Linux default, `/srv/rakazo`. Use distinct random values of at least 32 characters for
+   every critical credential; `ENCRYPTION_KEY` is 64 lowercase hexadecimal characters.
    If you enable the `updater` profile, also set a dedicated `RAKAZO_UPDATER_TOKEN` (at least 32
    characters) that differs from `BETTER_AUTH_SECRET`, `SANDBOX_SUPERVISOR_TOKEN`, and
    `SCREEN_PROXY_SECRET`.
@@ -208,6 +216,7 @@ container logs, default no-new-privileges, and the kernel NAT path instead of Do
 
 ```env
 NODE_ENV=production
+CORTEXAI_DEPLOYMENT_ID=<canonical-lowercase-uuid>
 RAKAZO_HOST=app.example.com
 # Optional operator-owned override, for example the Cloudflare allowlist file:
 # CADDYFILE_PATH=/etc/rakazo/Caddyfile.prod
@@ -217,42 +226,55 @@ API_URL=https://app.example.com
 SIGNUPS_ENABLED=true
 SIGNUP_ALLOWLIST=owner@example.com,reviewer@example.com
 SANDBOX_PROVIDER=e2b
+E2B_API_KEY=<provider-credential>
 AGENT_RUNTIME=pi
 WAKEUP_DRIVER=graphile
 DATA_DIR=/data
 # Absolute path of this checkout as the Docker daemon sees it. /srv/rakazo is the Linux default;
 # set this explicitly for every other layout. See "The deploy directory must be one path" below.
 RAKAZO_DEPLOY_DIR=/srv/rakazo
-RAKAZO_IMAGE_TAG=local
+GIT_SHA=<exact-40-character-checkout-revision>
+RAKAZO_IMAGE_TAG=sha-<same-40-character-revision>
+CORTEXAI_BACKUP_TARGET=s3://operator-owned-bucket/tenant-prefix
+CORTEXAI_BACKUP_ENCRYPTION_KEY=<dedicated-backup-encryption-credential>
 # Optional: required only with `--profile updater`.
 # RAKAZO_UPDATER_TOKEN=replace-with-32-plus-character-updater-token
 ```
 
-4. Build the images from your checkout and start the stack, then verify its public health endpoint:
+4. Install with Node 24, run the read-only preflight before any build, migration, or container start,
+   and record the safe inventory output. Preflight parses the rendered Compose model, checks the
+   exact checkout/image pin, host capacity and architecture, DNS resolution, HTTPS same-origin
+   settings, remote provider inputs, backup inputs, secret names/status classes, and published
+   ports. It never emits secret values and does not call providers, start containers, run migrations,
+   create backups, or modify DNS/firewall state.
+
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm deployment:preflight
+corepack pnpm deployment:inventory \
+  > /var/lib/rakazo/deployment-inventory.json
+```
+
+5. Only after preflight succeeds, build the source-addressed images, start the stack, and verify its
+   public health endpoint:
 
 ```bash
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
-  build --build-arg GIT_SHA=$(git rev-parse HEAD)
+  build
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
   up -d --wait --pull never
 curl --fail https://app.example.com/health
 ```
 
-**Build, do not pull, for a first deployment.** `RAKAZO_IMAGE_TAG` ships as `local`, a tag no
-registry serves, so the commands above build `api`, `worker`, and `web` from the checkout you just
-cloned. The opt-in command under [Updater sidecar](#updater-sidecar) builds `updater` when needed.
-Running `docker compose … pull` first — as earlier versions of this page told you to — fails outright
-with `error from registry: denied` whenever the tag you are on has not been published, and there is
-nothing to fall back to.
+**Build, do not pull, for an unpublished first deployment.** Compose tags the local build with the
+exact `sha-<GIT_SHA>` value, so the running image, health response, checkout, and recorded inventory
+agree. For a published deployment, use the registry's full `sha-<commit>` tag and run `pull` before
+`up`; moving `edge`, `latest`, abbreviated SHA, and semver-only tags do not pass preflight. See
+[Published images and tags](#published-images-and-tags) for the tag contract.
 
-Passing `GIT_SHA` is what makes `GET /health` report a `"revision"`; a locally built image has no
-other way to know its commit. Prebuilt images from the registry bake it in at publish time, so when
-you switch to a release tag you should leave `GIT_SHA` unset — a value in `.env` would override what
-the image already knows.
-
-Once a release has been published you can switch this host to prebuilt images by setting
-`RAKAZO_IMAGE_TAG` to that release tag and running `pull` followed by `up -d --wait --pull never`.
-See [Published images and tags](#published-images-and-tags) for the tag contract.
+Preflight's DNS check proves only that the configured hostname resolves during that run. Clean-VM
+boot, authoritative DNS propagation, live TLS, provider API access, and an external 80/443 port scan
+remain separate acceptance gates.
 
 The root `.env` is excluded from both Git and the Docker build context. The database, application data,
 and Caddy certificates live in named Docker volumes.
@@ -265,8 +287,12 @@ content while a digest is present.
 For the single-VM production layout, install `infra/compose/backup-prod.sh` as
 `/usr/local/sbin/rakazo-backup` and enable the supplied `rakazo-backup.timer`. It creates a verified
 Postgres custom-format dump plus an application-data archive under `/var/backups/rakazo`, with mode
-`0600` and seven-day rotation. These local snapshots help with operator mistakes but are not a
-substitute for an encrypted off-host backup or provider snapshot.
+`0600` and seven-day rotation. Each snapshot includes `deployment.json` with only the deployment ID,
+revision/image tag, provider kind, and backup target class. The target URI and credentials are never
+written. These local snapshots help with operator mistakes but are not a substitute for the actual
+encrypted off-host transfer: preflight validates its declared target and dedicated encryption input,
+but does not create or upload backup objects. Verify that separate transfer before production
+acceptance.
 
 ## Restore
 
@@ -274,22 +300,32 @@ substitute for an encrypted off-host backup or provider snapshot.
 ./scripts/restore.sh backups/<stamp>
 ```
 
+Restore validates `deployment.json` before it starts Postgres or any other service. A missing,
+malformed, or different deployment ID fails closed. Preserve `CORTEXAI_DEPLOYMENT_ID` for a
+same-tenant recovery; do not bypass the check to clone credentials or external connections into a
+new tenant identity.
+
 ## Upgrade
 
-A Compose deployment on a published release tag upgrades by moving that tag:
+A Compose deployment using published images upgrades by selecting the next full source-addressed
+`sha-<commit>` tag and updating both `GIT_SHA` and `RAKAZO_IMAGE_TAG`. Run preflight again before the
+pull or recreate:
 
 ```bash
+corepack pnpm deployment:preflight
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml pull api worker web
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
   up -d --wait --pull never api worker web
 ```
 
-A deployment on the default `local` tag has no registry to pull from, so it upgrades by rebuilding
-the checkout instead:
+A source-built deployment upgrades by moving the checkout, setting both pins to the new exact
+revision, rerunning preflight, and rebuilding:
 
 ```bash
 git pull
-GIT_SHA=$(git rev-parse HEAD) docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
+# Update GIT_SHA and RAKAZO_IMAGE_TAG=sha-<GIT_SHA> in .env, then:
+corepack pnpm deployment:preflight
+docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
   up -d --wait --pull never --build api worker web
 ```
 

@@ -7,6 +7,11 @@ compose=(docker compose -f "$ROOT/infra/compose/docker-compose.yml")
 # repo root; point it at the root .env when one exists (vars may also come
 # from the environment, so its absence is not an error).
 if [[ -f "$ROOT/.env" ]]; then compose=(docker compose --env-file "$ROOT/.env" -f "$ROOT/infra/compose/docker-compose.yml"); fi
+if [[ -f "$ROOT/.env" ]]; then
+  node "$ROOT/infra/compose/backup-metadata.mjs" verify "$SRC/deployment.json" "$ROOT/.env"
+else
+  node "$ROOT/infra/compose/backup-metadata.mjs" verify "$SRC/deployment.json"
+fi
 "${compose[@]}" up -d postgres
 until "${compose[@]}" exec -T postgres pg_isready -U rakazo >/dev/null 2>&1; do
   sleep 1

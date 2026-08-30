@@ -5,6 +5,7 @@ const base = {
   DATABASE_URL: "postgres://rakazo:rakazo@127.0.0.1:5433/rakazo",
   NODE_ENV: "test",
 };
+const productionDeploymentId = "0198f2ce-7d11-7a41-8b5c-7d1dfd62c551";
 
 describe("loadEnv", () => {
   it("defaults the product path to Pi, Docker, and Graphile Worker", () => {
@@ -104,6 +105,7 @@ describe("loadEnv", () => {
     const env = loadEnv({
       DATABASE_URL: base.DATABASE_URL,
       NODE_ENV: "production",
+      CORTEXAI_DEPLOYMENT_ID: productionDeploymentId,
       BETTER_AUTH_SECRET: "prod-auth-secret-with-enough-length",
       ENCRYPTION_KEY: "prod-encryption-key-with-enough-length",
       SCREEN_PROXY_SECRET: "prod-screen-proxy-secret-with-enough-length",
@@ -121,6 +123,7 @@ describe("loadEnv", () => {
     const env = loadEnv({
       DATABASE_URL: base.DATABASE_URL,
       NODE_ENV: "production",
+      CORTEXAI_DEPLOYMENT_ID: productionDeploymentId,
       BETTER_AUTH_SECRET: "prod-auth-secret-with-enough-length",
       ENCRYPTION_KEY: "prod-encryption-key-with-enough-length",
       SCREEN_PROXY_SECRET: "prod-screen-proxy-secret-with-enough-length",
@@ -135,6 +138,7 @@ describe("loadEnv", () => {
       loadEnv({
         DATABASE_URL: base.DATABASE_URL,
         NODE_ENV: "production",
+        CORTEXAI_DEPLOYMENT_ID: productionDeploymentId,
         BETTER_AUTH_SECRET: "prod-auth-secret-with-enough-length",
         ENCRYPTION_KEY: "prod-encryption-key-with-enough-length",
         SCREEN_PROXY_SECRET: "prod-screen-proxy-secret-with-enough-length",

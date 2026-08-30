@@ -67,6 +67,7 @@ services:
       - pnpm --filter @rakazo/db exec prisma migrate deploy && pnpm --filter @rakazo/api start
     environment: &app-environment
       NODE_ENV: production
+      CORTEXAI_DEPLOYMENT_ID: 0198f2ce-7d11-7a41-8b5c-7d1dfd62c551
       DATABASE_URL: postgres://rakazo:topology-only-password@postgres:5432/rakazo
       DATA_DIR: /data
       BETTER_AUTH_SECRET: topology-only-auth-secret-at-least-32-characters

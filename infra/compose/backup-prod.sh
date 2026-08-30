@@ -12,6 +12,8 @@ install -d -m 700 "${BACKUP_ROOT}" "${SNAPSHOT_DIR}"
 
 compose=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 
+node "${PROJECT_DIR}/infra/compose/backup-metadata.mjs" write "${SNAPSHOT_DIR}/deployment.json" "${ENV_FILE}"
+
 "${compose[@]}" exec -T postgres sh -c \
   'pg_dump --format=custom --no-owner --no-privileges -U "$POSTGRES_USER" "$POSTGRES_DB"' \
   > "${SNAPSHOT_DIR}/rakazo.dump"
@@ -24,6 +26,7 @@ compose=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 tar -tzf "${SNAPSHOT_DIR}/appdata.tgz" >/dev/null
 
 sha256sum "${SNAPSHOT_DIR}/rakazo.dump" "${SNAPSHOT_DIR}/appdata.tgz" \
+  "${SNAPSHOT_DIR}/deployment.json" \
   > "${SNAPSHOT_DIR}/SHA256SUMS"
 chmod 600 "${SNAPSHOT_DIR}"/*
 

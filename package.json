@@ -16,6 +16,8 @@
     "format": "biome check --write .",
     "db:generate": "pnpm --filter @rakazo/db generate",
     "db:migrate": "pnpm --filter @rakazo/db migrate",
+    "deployment:preflight": "tsx infra/compose/preflight.ts",
+    "deployment:inventory": "tsx infra/compose/preflight.ts --inventory",
     "sandbox:build": "docker build -t rakazo/computer:local infra/sandboxes/computer",
     "test": "vitest run",
     "test:integration": "tsx packages/testkit/src/cli/harness.ts --integration",

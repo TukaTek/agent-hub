@@ -47,6 +47,7 @@ import { MarkdownMemoryStore } from "@rakazo/memory";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
+import { mountHealthRoute } from "./health.js";
 import { createRouter } from "./router.js";
 import { mountVoiceHttpRoutes } from "./voice.js";
 import { mountWebhookHttpRoutes } from "./webhook.js";
@@ -320,18 +321,16 @@ export async function createApp(
   });
   mountWebhookHttpRoutes(app, { prisma, secrets, events, jobs });
 
-  app.get("/health", (c) =>
-    c.json({
-      ok: true,
-      runtime: env.agentRuntime,
-      sandbox: env.sandboxProvider,
-      composio: Boolean(stack.composio),
-      pipedream: Boolean(pipedream),
-      jobs: jobKind,
-      realtime: realtime.describe().id,
-      revision: env.gitSha ?? null,
-    }),
-  );
+  mountHealthRoute(app, {
+    deploymentId: env.deploymentId,
+    revision: env.gitSha ?? null,
+    runtime: env.agentRuntime,
+    sandbox: env.sandboxProvider,
+    composio: Boolean(stack.composio),
+    pipedream: Boolean(pipedream),
+    jobs: jobKind,
+    realtime: realtime.describe().id,
+  });
 
   return {
     app,

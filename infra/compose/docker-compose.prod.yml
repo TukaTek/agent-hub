@@ -51,10 +51,14 @@ services:
       - ../../.env
     environment:
       NODE_ENV: production
+      CORTEXAI_DEPLOYMENT_ID: ${CORTEXAI_DEPLOYMENT_ID:?Set CORTEXAI_DEPLOYMENT_ID in .env}
+      CORTEXAI_BACKUP_TARGET: ""
+      CORTEXAI_BACKUP_ENCRYPTION_KEY: ""
+      GIT_SHA: ${GIT_SHA:?Set the exact 40-character GIT_SHA in .env}
       API_HOST: "0.0.0.0"
       DATABASE_URL: postgres://${POSTGRES_USER:-rakazo}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-rakazo}
       DATA_DIR: /data
-      SANDBOX_PROVIDER: e2b
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:?Set a supported remote SANDBOX_PROVIDER in .env}
       WAKEUP_DRIVER: graphile
       AGENT_RUNTIME: pi
       RAKAZO_UPDATER_URL: http://updater:7092
@@ -100,9 +104,13 @@ services:
     environment:
       BETTER_AUTH_SECRET: ""
       NODE_ENV: production
+      CORTEXAI_DEPLOYMENT_ID: ${CORTEXAI_DEPLOYMENT_ID:?Set CORTEXAI_DEPLOYMENT_ID in .env}
+      CORTEXAI_BACKUP_TARGET: ""
+      CORTEXAI_BACKUP_ENCRYPTION_KEY: ""
+      GIT_SHA: ${GIT_SHA:?Set the exact 40-character GIT_SHA in .env}
       DATABASE_URL: postgres://${POSTGRES_USER:-rakazo}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-rakazo}
       DATA_DIR: /data
-      SANDBOX_PROVIDER: e2b
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:?Set a supported remote SANDBOX_PROVIDER in .env}
       SCREEN_PROXY_SECRET: ""
       WAKEUP_DRIVER: graphile
       AGENT_RUNTIME: pi

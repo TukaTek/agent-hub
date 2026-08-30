@@ -10,7 +10,15 @@ import { loadEnv } from "./env.js";
 const env = loadEnv();
 const { app, stop } = await createApp(env);
 const server = serve({ fetch: app.fetch, port: env.port, hostname: env.apiHost }, () => {
-  console.log(`rakazo api on http://${env.apiHost}:${env.port}`);
+  console.log(
+    JSON.stringify({
+      event: "api.ready",
+      service: "api",
+      deploymentId: env.deploymentId,
+      revision: env.gitSha ?? null,
+      listen: `${env.apiHost}:${env.port}`,
+    }),
+  );
 });
 
 // Long-lived connections (threads.subscribe SSE streams) never end on their

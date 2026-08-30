@@ -1,6 +1,7 @@
 import { resolveDeploymentModel, resolveSandboxProvider } from "@rakazo/adapters";
 import {
   resolveAuthSecret,
+  resolveDeploymentIdentity,
   resolveEncryptionKey,
   resolveScreenProxySecret,
   resolveSupervisorToken,
@@ -9,6 +10,7 @@ import {
 export { resolveSandboxProvider } from "@rakazo/adapters";
 
 export interface AppEnv {
+  deploymentId: string;
   databaseUrl: string;
   realtimeDatabaseUrl: string;
   authSecret: string;
@@ -59,6 +61,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const updaterUrl = optional(source.RAKAZO_UPDATER_URL);
   const updaterToken = optional(source.RAKAZO_UPDATER_TOKEN);
   return {
+    deploymentId: resolveDeploymentIdentity(source),
     databaseUrl: required(source, "DATABASE_URL"),
     realtimeDatabaseUrl: source.REALTIME_DATABASE_URL ?? required(source, "DATABASE_URL"),
     authSecret,
