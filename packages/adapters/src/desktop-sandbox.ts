@@ -339,11 +339,21 @@ async function localWorkspaceTarget(home: string, relative: string, mustExist: b
               }
             }
           } else {
-            const viaDirFd = childPathViaDirFd(parentHandle.fd, segment);
+            const viaDirFd = await availableChildPathViaDirFd(parentHandle.fd, segment);
             const next = viaDirFd ?? path.join(current, segment);
-            await mkdir(next);
-            const createdStat = await stat(next);
-            created = { path: next, dev: createdStat.dev, ino: createdStat.ino };
+            if (!viaDirFd && process.platform === "linux") {
+              const existing = await lstat(next).catch((error: unknown) => {
+                if (hasErrorCode(error, "ENOENT")) return undefined;
+                throw error;
+              });
+              if (!existing?.isDirectory() || existing.isSymbolicLink()) {
+                throw new Error("Path escapes the computer workspace");
+              }
+            } else {
+              await mkdir(next);
+              const createdStat = await stat(next);
+              created = { path: next, dev: createdStat.dev, ino: createdStat.ino };
+            }
           }
         } catch (error) {
           if (!hasErrorCode(error, "EEXIST")) throw error;
@@ -366,7 +376,7 @@ async function localWorkspaceTarget(home: string, relative: string, mustExist: b
               before,
             );
           } else {
-            const viaDirFd = childPathViaDirFd(parentHandle.fd, segment);
+            const viaDirFd = await availableChildPathViaDirFd(parentHandle.fd, segment);
             const next = viaDirFd ?? path.join(current, segment);
             resolved = await realpath(next);
             before = await stat(resolved);
@@ -470,12 +480,30 @@ async function openContainedWorkspaceFile(home: string, target: string, mode: nu
         handle = await open(openedPath, constants.O_WRONLY | O_NOFOLLOW);
       } catch (error) {
         if (!hasErrorCode(error, "ENOENT")) throw error;
-        handle = await open(
-          openedPath,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW,
-          mode,
-        );
-        created = true;
+        // ENOENT is ambiguous: the child can be absent, or procfs itself can be
+        // unavailable. Only an independent lookup of the held parent fd may
+        // select the verified pathname fallback. A missing ordinary child while
+        // procfs works must still be created exclusively through the fd path.
+        if (viaDirFd && (await realpathFromFd(parentHandle.fd)) === undefined) {
+          openedPath = path.join(containedParent, name);
+          try {
+            handle = await open(openedPath, constants.O_WRONLY | O_NOFOLLOW);
+          } catch (pathnameError) {
+            if (!hasErrorCode(pathnameError, "ENOENT")) throw pathnameError;
+            // Without a directory-relative primitive, a create followed by a
+            // parent swap-and-restore cannot be cleaned up by pathname safely.
+            // Existing contained files remain usable; missing children fail closed.
+            throw new Error("Path escapes the computer workspace");
+          }
+        }
+        if (!handle) {
+          handle = await open(
+            openedPath,
+            constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW,
+            mode,
+          );
+          created = true;
+        }
       }
     }
 
@@ -732,6 +760,12 @@ async function findRetainedFilePath(
 function childPathViaDirFd(fd: number, name: string) {
   if (process.platform === "linux") return `/proc/self/fd/${fd}/${name}`;
   return undefined;
+}
+
+async function availableChildPathViaDirFd(fd: number, name: string) {
+  const childPath = childPathViaDirFd(fd, name);
+  if (!childPath) return undefined;
+  return (await realpathFromFd(fd)) === undefined ? undefined : childPath;
 }
 
 async function realpathFromFd(fd: number) {
