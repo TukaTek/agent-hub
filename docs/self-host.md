@@ -244,6 +244,8 @@ RAKAZO_IMAGE_TAG=sha-<same-40-character-revision>
 CORTEXAI_BACKUP_TARGET=s3://operator-owned-bucket/tenant-prefix
 CORTEXAI_BACKUP_ENCRYPTION_KEY=<dedicated-backup-encryption-credential>
 # Optional: required only with `--profile updater`.
+# RAKAZO_UPDATER_IMAGE=ghcr.io/elie222/rakazo/updater
+# RAKAZO_UPDATER_IMAGE_TAG=sha-<same-40-character-revision>
 # RAKAZO_UPDATER_TOKEN=replace-with-32-plus-character-updater-token
 ```
 
@@ -252,7 +254,10 @@ CORTEXAI_BACKUP_ENCRYPTION_KEY=<dedicated-backup-encryption-credential>
    exact checkout/image pin (including forbidden Git `assume-unchanged` and `skip-worktree` flags),
    host capacity and architecture, globally routable DNS answers, standard-port HTTPS same-origin
    settings, an exact `RAKAZO_HOST` match in rendered web/Caddy configuration, remote provider
-   inputs, backup inputs, secret names/status classes, and publicly bound Caddy ports 80/443. It
+   inputs, backup inputs, secret names/status classes, and publicly bound Caddy ports 80/443. When
+   the updater token enables the opt-in sidecar, preflight also requires its image to use the app
+   image's registry/repository namespace, the exact sibling name ending in `/updater`, and the same
+   full `sha-<GIT_SHA>` tag in both `.env` and the rendered service. It
    never emits secret values and does not call providers, start containers, run migrations, create
    backups, or modify DNS/firewall state.
 
@@ -321,6 +326,15 @@ following symlinks and its size/digest is verified again from the same file desc
 before it is piped to `pg_restore` or the application-data volume. Preserve
 `CORTEXAI_DEPLOYMENT_ID` and `CORTEXAI_BACKUP_ENCRYPTION_KEY` for a same-tenant recovery; do not
 bypass these checks to clone credentials or external connections into a new tenant identity.
+
+After verification, the restore starts PostgreSQL and waits for readiness before it stops Caddy,
+web, the worker, or the API. The wait defaults to 60 one-second attempts; set
+`RAKAZO_RESTORE_DB_READY_ATTEMPTS` to an integer from 1 through 300 when the host needs a different
+bounded deadline. If PostgreSQL never becomes ready, the restore exits with recovery guidance and
+does not stop the application services or consume either payload. Retry only after PostgreSQL is
+healthy. Once payload restoration begins, the existing rollback limitations still apply: database
+migrations are not automatically reversed, and a failed final recreate can require an operator to
+redeploy the previous image against the restored volumes.
 
 The development Compose scripts remain a separate layout: `./scripts/backup.sh` writes
 `backups/<stamp>/{rakazo.sql,homes.tgz,deployment.json}`, and `./scripts/restore.sh backups/<stamp>`
