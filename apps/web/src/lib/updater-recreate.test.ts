@@ -12,6 +12,7 @@ function run(
   return {
     finishedAt: "2026-08-27T21:00:00.000Z",
     error: null,
+    restart: "recreated",
     restartAdvice: "",
     ...partial,
   };
@@ -84,6 +85,23 @@ describe("confirmUpdaterRecreate", () => {
         lastRun: run({ ok: true, fromTag: "sha-bbb", toTag: "sha-aaa" }),
       }),
     ).toEqual({ confirmed: true, reason: "changed" });
+  });
+
+  it("does not claim completion while the newly pinned updater still needs its self-restart", () => {
+    const lastRun = {
+      ...run({ ok: true, fromTag: "sha-aaa", toTag: "sha-bbb" }),
+      restart: "manual",
+    } satisfies RecreateLastRun;
+    expect(
+      confirmUpdaterRecreate({
+        beforeImageTag: "sha-aaa",
+        afterImageTag: "sha-bbb",
+        running: false,
+        supported: true,
+        installKind: "sidecar",
+        lastRun,
+      }),
+    ).toEqual({ confirmed: false, reason: "restart-required" });
   });
 
   it("rejects a stale env pin when recreate failed even if the tag appears to change", () => {

@@ -11,6 +11,7 @@ import {
   composeUpdatePlan,
   DEFAULT_COMPOSE_PROJECT_NAME,
   DEFAULT_IMAGE_TAG,
+  expectedUpdaterImage,
   forkImageTag,
   gitIndexContentDiffArgv,
   gitStatusArgv,
@@ -71,6 +72,13 @@ describe("image references", () => {
     expect(isValidImageName("owner/app:tag")).toBe(false);
     expect(isValidImageName("owner/../app")).toBe(false);
     expect(isValidImageName("")).toBe(false);
+  });
+
+  it("derives only the exact updater sibling of an application image", () => {
+    expect(expectedUpdaterImage("ghcr.io/example/rakazo/app")).toBe(
+      "ghcr.io/example/rakazo/updater",
+    );
+    expect(expectedUpdaterImage("ghcr.io/example/rakazo/server")).toBeUndefined();
   });
 
   it("refuses to assemble a reference it could not validate", () => {
@@ -406,6 +414,31 @@ describe("update plans", () => {
     for (const step of steps) {
       expect(step.args.slice(0, 3)).toEqual(["compose", "-p", DEFAULT_COMPOSE_PROJECT_NAME]);
     }
+  });
+
+  it("prepares an enabled updater image without recreating the executing updater", () => {
+    const pullSteps = composeUpdatePlan({ strategy: "pull", target, prepareUpdater: true });
+    expect(pullSteps.find((step) => step.id === "pull")?.args).toContain("updater");
+    expect(pullSteps.find((step) => step.id === "recreate")?.args).not.toContain("updater");
+
+    const buildSteps = composeUpdatePlan({
+      strategy: "build",
+      target,
+      branch: "main",
+      prepareUpdater: true,
+    });
+    expect(buildSteps.map((step) => step.id)).toEqual([
+      "fetch",
+      "checkout",
+      "merge",
+      "prepare-updater",
+      "recreate",
+    ]);
+    expect(buildSteps.find((step) => step.id === "prepare-updater")?.args.slice(-2)).toEqual([
+      "build",
+      "updater",
+    ]);
+    expect(buildSteps.find((step) => step.id === "recreate")?.args).not.toContain("updater");
   });
 
   it("fetches, fast-forwards, then builds on the fork path", () => {

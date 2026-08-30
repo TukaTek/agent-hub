@@ -23,8 +23,9 @@ services:
       retries: 20
 
   api:
-    # The tag is what the updater moves. `docker compose pull` fetches it, `up -d` recreates onto
-    # it, and the previous tag stays in .env so a rollback is one redeploy rather than a rebuild.
+    # The updater moves this tag atomically with GIT_SHA and every enabled updater pin.
+    # `docker compose pull` fetches it, `up -d` recreates onto it, and the coherent previous
+    # identity stays in .env so a rollback is one redeploy rather than a rebuild.
     #
     # The default tag is `local`, which no registry serves, so a fresh install builds from the
     # checkout via `up -d --build` instead of failing on a `pull` of an image that does not exist
@@ -159,12 +160,13 @@ services:
   # deliberately the narrowest service here: no `ports` (nothing on the host), only the dedicated
   # `control` network shared with the API, and no `env_file` — secrets stay in the bind-mounted
   # `.env` that Compose reads for interpolation, not in this process. Caddy has no route to it. The
-  # API reaches it as http://updater:7092 with the shared token. It is also the one service the
-  # update never recreates, because it is the process performing the update.
+  # API reaches it as http://updater:7092 with the shared token. An update prepares and durably
+  # pins its next exact image, but leaves the updater's own restart to the operator because it
+  # cannot replace itself and still report or recover the run truthfully.
   updater:
     profiles: [updater]
-    # Pinned separately from the application image: the updater does not recreate itself, so moving
-    # its own version is an operator action, not something an update can do underneath itself.
+    # Pinned separately but transactionally with the application identity. The executing updater
+    # reports a manual restart until the operator moves this container onto the newly pinned image.
     image: ${RAKAZO_UPDATER_IMAGE:-ghcr.io/elie222/rakazo/updater}:${RAKAZO_UPDATER_IMAGE_TAG:-local}
     build:
       context: ../..

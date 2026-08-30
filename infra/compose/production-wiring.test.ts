@@ -31,6 +31,9 @@ it("documents every required production input without real values", () => {
     "CORTEXAI_DEPLOYMENT_ID",
     "CORTEXAI_BACKUP_TARGET",
     "CORTEXAI_BACKUP_ENCRYPTION_KEY",
+    "GIT_SHA_PREVIOUS",
+    "RAKAZO_UPDATER_IMAGE_PREVIOUS",
+    "RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS",
   ]) {
     expect(example).toMatch(new RegExp(`^${name}=$`, "m"));
   }

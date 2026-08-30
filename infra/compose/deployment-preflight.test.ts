@@ -246,6 +246,30 @@ describe("validateProductionPreflight", () => {
     expect(validateProductionPreflight(input).ok).toBe(true);
   });
 
+  it("rejects a partial previous deployment identity and accepts one coherent rollback point", () => {
+    const previousRevision = "a".repeat(40);
+    const input = validInput();
+    input.env.RAKAZO_IMAGE_TAG_PREVIOUS = `sha-${previousRevision}`;
+    expect(failureSubjects(input)).toContain("previous-deployment-identity");
+
+    input.env.GIT_SHA_PREVIOUS = previousRevision;
+    input.env.RAKAZO_UPDATER_IMAGE_PREVIOUS = "ghcr.io/example/updater";
+    input.env.RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS = `sha-${previousRevision}`;
+    expect(validateProductionPreflight(input).ok).toBe(true);
+  });
+
+  it("does not require previous updater pins when the updater is disabled", () => {
+    const previousRevision = "a".repeat(40);
+    const input = validInput();
+    delete input.env.RAKAZO_UPDATER_TOKEN;
+    delete input.env.RAKAZO_UPDATER_IMAGE;
+    delete input.env.RAKAZO_UPDATER_IMAGE_TAG;
+    input.env.GIT_SHA_PREVIOUS = previousRevision;
+    input.env.RAKAZO_IMAGE_TAG_PREVIOUS = `sha-${previousRevision}`;
+    input.compose.services.updater!.image = "unused.invalid/updater:local";
+    expect(validateProductionPreflight(input).ok).toBe(true);
+  });
+
   it.each([
     ["memory", { totalMemoryBytes: 2 * gib }],
     ["disk", { freeDiskBytes: 8 * gib }],

@@ -15,7 +15,7 @@ const RECREATE_POLL_ATTEMPTS = 90;
 async function waitForUpdaterStatus(options: { beforeImageTag: string | null }): Promise<{
   status: ServerUpdateStatus;
   confirmed: boolean;
-  reason: "waiting" | "running" | "unchanged" | "changed" | "failed";
+  reason: "waiting" | "running" | "unchanged" | "changed" | "failed" | "restart-required";
 }> {
   let lastError: unknown;
   let sawApi = false;
@@ -155,7 +155,12 @@ export function SoftwareUpdateSection({ isDeploymentOwner }: { isDeploymentOwner
   }
 
   async function finishAfterPossibleRecreate(
-    action: () => Promise<{ ok: boolean; error: string | null }>,
+    action: () => Promise<{
+      ok: boolean;
+      error: string | null;
+      restart: "recreated" | "supervised" | "manual" | "not-required";
+      restartAdvice: string;
+    }>,
   ) {
     // Snapshot the live tag right before apply. Panel state can be stale if another tab or
     // host update moved the image after this section last loaded.
@@ -167,9 +172,12 @@ export function SoftwareUpdateSection({ isDeploymentOwner }: { isDeploymentOwner
       const run = await action();
       setStatus(await rpc.updater.status());
       setCheck(null);
-      if (run.ok) {
+      if (run.ok && run.restart !== "manual") {
         setError(null);
         setDone(t`Updated`);
+      } else if (run.ok) {
+        setDone(null);
+        setError(run.restartAdvice);
       } else {
         setDone(null);
         setError(run.error ?? t`Update finished with errors`);
@@ -187,7 +195,7 @@ export function SoftwareUpdateSection({ isDeploymentOwner }: { isDeploymentOwner
         if (recovered.confirmed) {
           setError(null);
           setDone(t`Updated`);
-        } else if (recovered.reason === "failed") {
+        } else if (recovered.reason === "failed" || recovered.reason === "restart-required") {
           setDone(null);
           setError(
             recovered.status.lastRun?.error ??

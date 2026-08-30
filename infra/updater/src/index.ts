@@ -12,7 +12,7 @@ import {
   composeUpArgv,
   composeUpdatePlan,
   DEFAULT_UPDATE_REMOTE,
-  forkImageTag,
+  GIT_SHA_ENV,
   gitIndexContentDiffArgv,
   gitStatusArgv,
   gitUntrackedFilesArgv,
@@ -22,20 +22,24 @@ import {
   imageRef,
   isGitCommit,
   normalizeUpdateBranch,
-  PREVIOUS_IMAGE_TAG_ENV,
   parseGitNameOnly,
   parseGitStatusPorcelain,
   parseLsRemoteReleases,
   repoIdentity,
   resolveTrackedDirtyPaths,
-  rollbackTarget,
   selectLatestRelease,
+  UPDATER_IMAGE_ENV,
+  UPDATER_IMAGE_TAG_ENV,
   upsertEnvAssignments,
   validateUpdateRequest,
 } from "@rakazo/core";
 import { type Context, Hono } from "hono";
 import {
-  readTagState,
+  type DeploymentIdentity,
+  type DeploymentIdentityState,
+  deploymentIdentityAssignments,
+  nextDeploymentIdentity,
+  readDeploymentIdentityState,
   resolveUpdaterConfig,
   truncateOutput,
   UpdateRefused,
@@ -172,16 +176,17 @@ export function createUpdaterApp(
 
   app.get("/state", async (c) => {
     try {
-      const tags = readTagState(await readEnvFile());
+      const identity = readDeploymentIdentityState(await readEnvFile(), config.image);
       const checkout = await readCheckout();
       return c.json({
         deployDir: config.deployDir,
         composeFile: config.composeFile,
         image: config.image,
-        imageRef: imageRef(config.image, tags.currentTag),
+        imageRef: imageRef(config.image, identity.current.applicationImageTag),
         running,
         lastRun,
-        ...tags,
+        currentTag: identity.current.applicationImageTag,
+        previousTag: identity.previous?.applicationImageTag ?? null,
         checkout,
       });
     } catch (error) {
@@ -194,7 +199,7 @@ export function createUpdaterApp(
       if (planInFlight !== null) throw new UpdateRefused("A plan is already running.");
       const request = parseRequest(await body(c.req.raw));
       const work = (async () => {
-        const tags = readTagState(await readEnvFile());
+        const identity = readDeploymentIdentityState(await readEnvFile(), config.image);
         const decision = chooseUpdateStrategy(request);
         const checkout = await readCheckout();
         if (decision.strategy === "build") {
@@ -202,11 +207,16 @@ export function createUpdaterApp(
           return {
             strategy: decision.strategy,
             reason: decision.reason,
-            currentTag: tags.currentTag,
-            previousTag: tags.previousTag,
+            currentTag: identity.current.applicationImageTag,
+            previousTag: identity.previous?.applicationImageTag ?? null,
             targetTag: null as string | null,
             targetCommit,
-            upToDate: upToDateForBuild(tags.currentTag, checkout.commit, targetCommit),
+            upToDate: upToDateForBuild(
+              identity.current.applicationImageTag,
+              checkout.commit,
+              targetCommit,
+              identity.production,
+            ),
             checkout,
           };
         }
@@ -214,11 +224,11 @@ export function createUpdaterApp(
         return {
           strategy: decision.strategy,
           reason: `${decision.reason} Latest stable release: ${target.releaseTag}.`,
-          currentTag: tags.currentTag,
-          previousTag: tags.previousTag,
+          currentTag: identity.current.applicationImageTag,
+          previousTag: identity.previous?.applicationImageTag ?? null,
           targetTag: target.imageTag,
           targetCommit: target.commit,
-          upToDate: target.imageTag === tags.currentTag,
+          upToDate: target.imageTag === identity.current.applicationImageTag,
           checkout,
         };
       })();
@@ -291,31 +301,76 @@ export function createUpdaterApp(
     }
   }
 
-  async function writeEnvAssignments(assignments: Record<string, string>) {
-    const [current, metadata] = await Promise.all([readEnvFile(), lstat(config.envFile)]);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new UpdateRefused("The deployment environment must be a regular, non-symlink file.");
-    }
-    const contents = upsertEnvAssignments(current, assignments);
+  async function replaceEnvFile(contents: string, metadata: Awaited<ReturnType<typeof lstat>>) {
     const temporary = `${config.envFile}.rakazo-update-${randomUUID()}`;
     let temporaryFile: Awaited<ReturnType<typeof open>> | null = null;
+    let directory: Awaited<ReturnType<typeof open>> | null = null;
     try {
       temporaryFile = await open(temporary, "wx", 0o600);
       await temporaryFile.writeFile(contents, { encoding: "utf8" });
       const currentUid = process.getuid?.();
       const currentGid = process.getgid?.();
       if (metadata.uid !== currentUid || metadata.gid !== currentGid) {
-        await temporaryFile.chown(metadata.uid, metadata.gid);
+        await temporaryFile.chown(Number(metadata.uid), Number(metadata.gid));
       }
       await temporaryFile.sync();
       await temporaryFile.close();
       temporaryFile = null;
       await rename(temporary, config.envFile);
-    } catch (error) {
+      if (process.platform !== "win32") {
+        directory = await open(path.dirname(config.envFile), "r");
+        await directory.sync();
+        await directory.close();
+        directory = null;
+      }
+    } finally {
       await temporaryFile?.close().catch(() => undefined);
+      await directory?.close().catch(() => undefined);
       await unlink(temporary).catch(() => undefined);
+    }
+  }
+
+  async function writeEnvAssignments(
+    assignments: Record<string, string>,
+    expectedContents?: string,
+  ) {
+    const [current, metadata] = await Promise.all([readEnvFile(), lstat(config.envFile)]);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new UpdateRefused("The deployment environment must be a regular, non-symlink file.");
+    }
+    if (expectedContents !== undefined && current !== expectedContents) {
+      throw new UpdateRefused("The deployment environment changed while the update was running.");
+    }
+    const contents = upsertEnvAssignments(current, assignments);
+    try {
+      await replaceEnvFile(contents, metadata);
+    } catch (error) {
+      const installed = await readFile(config.envFile, "utf8").catch(() => null);
+      if (installed !== null && installed !== current) {
+        await replaceEnvFile(current, metadata).catch(() => undefined);
+      }
       throw error;
     }
+    return { before: current, after: contents };
+  }
+
+  async function restoreEnvContents(contents: string, expectedContents: string): Promise<boolean> {
+    const [current, metadata] = await Promise.all([
+      readFile(config.envFile, "utf8").catch(() => null),
+      lstat(config.envFile).catch(() => null),
+    ]);
+    if (
+      current !== expectedContents ||
+      metadata === null ||
+      !metadata.isFile() ||
+      metadata.isSymbolicLink()
+    ) {
+      return false;
+    }
+    return replaceEnvFile(contents, metadata).then(
+      () => true,
+      () => false,
+    );
   }
 
   function git(args: string[], stepId = "read") {
@@ -429,15 +484,44 @@ export function createUpdaterApp(
     currentTag: string,
     commit: string | null,
     targetCommit: string | null,
+    production: boolean,
   ) {
     if (commit === null || targetCommit === null || commit !== targetCommit) return false;
-    return currentTag === forkImageTag(commit);
+    return currentTag === (production ? commitImageTag(commit) : `local-${commit}`);
   }
 
   async function apply(request: { repoUrl: string; branch: string; official: boolean }) {
     const decision = chooseUpdateStrategy(request);
-    const tags = readTagState(await readEnvFile());
+    const originalEnvContents = await readEnvFile();
+    const identity = readDeploymentIdentityState(originalEnvContents, config.image);
     const checkout = await readCheckout();
+
+    if (identity.production) {
+      if (!checkout.present || checkout.commit === null) {
+        throw new UpdateRefused(
+          "A production update requires the deployment source checkout so its revision can transition with the images.",
+        );
+      }
+      if (checkout.commit !== identity.current.revision) {
+        throw new UpdateRefused(
+          "The production checkout revision does not match the durable deployment identity.",
+        );
+      }
+      if (checkout.dirty) {
+        throw new UpdateRefused(
+          "The production checkout has changed or untracked source files, or its state could not be verified. Commit, stash, clean, or fix it before updating.",
+        );
+      }
+      if (
+        decision.strategy === "pull" &&
+        (checkout.remoteUrl === null ||
+          repoIdentity(checkout.remoteUrl) !== repoIdentity(request.repoUrl))
+      ) {
+        throw new UpdateRefused(
+          `The production checkout must use the selected repository as its ${DEFAULT_UPDATE_REMOTE} remote before a published-image update.`,
+        );
+      }
+    }
 
     if (decision.strategy === "build") {
       if (!checkout.present) {
@@ -465,19 +549,44 @@ export function createUpdaterApp(
       targetTag = target.imageTag;
       targetCommit = target.commit;
       releaseTag = target.releaseTag;
-      if (targetTag === tags.currentTag) {
+      if (targetTag === identity.current.applicationImageTag) {
         return rememberRun(upToDateRecord(request, targetTag, "pull", targetCommit));
       }
     } else {
       const remoteHead = await resolveRemoteHead(request);
-      if (upToDateForBuild(tags.currentTag, checkout.commit, remoteHead)) {
-        return rememberRun(upToDateRecord(request, tags.currentTag, "build", checkout.commit));
+      if (
+        upToDateForBuild(
+          identity.current.applicationImageTag,
+          checkout.commit,
+          remoteHead,
+          identity.production,
+        )
+      ) {
+        return rememberRun(
+          upToDateRecord(
+            request,
+            identity.current.applicationImageTag,
+            "build",
+            identity.current.revision ?? checkout.commit,
+          ),
+        );
       }
     }
+    if (
+      identity.production &&
+      decision.strategy === "pull" &&
+      (releaseTag === null || targetCommit === null)
+    ) {
+      throw new UpdateRefused("The published update did not resolve an exact release source.");
+    }
 
-    const steps =
+    const composeSteps =
       decision.strategy === "pull"
-        ? composeUpdatePlan({ strategy: "pull", target: composeTarget })
+        ? composeUpdatePlan({
+            strategy: "pull",
+            target: composeTarget,
+            prepareUpdater: identity.updaterEnabled,
+          })
         : composeUpdatePlan({
             strategy: "build",
             target: composeTarget,
@@ -486,16 +595,35 @@ export function createUpdaterApp(
             repointRemote:
               checkout.remoteUrl === null ||
               repoIdentity(checkout.remoteUrl) !== repoIdentity(request.repoUrl),
+            prepareUpdater: identity.updaterEnabled,
           });
+    const steps: ComposeUpdateStep[] =
+      identity.production && decision.strategy === "pull"
+        ? [
+            {
+              id: "fetch",
+              label: `Fetch the source for ${releaseTag}`,
+              command: "git",
+              args: ["fetch", "--no-tags", DEFAULT_UPDATE_REMOTE, `refs/tags/${releaseTag}`],
+            },
+            {
+              id: "checkout",
+              label: `Check out the exact source revision ${targetCommit}`,
+              command: "git",
+              args: ["checkout", "--detach", targetCommit!],
+            },
+            ...composeSteps,
+          ]
+        : composeSteps;
 
     return rememberRun(
       await execute({
         request,
         strategy: decision.strategy,
-        fromTag: tags.currentTag,
-        originalPreviousTag: tags.previousTag,
+        identity,
+        originalEnvContents,
         toTag: targetTag,
-        fromCommit: checkout.commit,
+        fromCheckoutCommit: checkout.commit,
         fromBranch: checkout.branch,
         toCommit: targetCommit,
         restoreRemoteUrl:
@@ -514,27 +642,58 @@ export function createUpdaterApp(
   }
 
   async function rollback(): Promise<ServerUpdateRun> {
-    const tags = readTagState(await readEnvFile());
-    const decision = rollbackTarget(tags);
-    if ("error" in decision) throw new UpdateRefused(decision.error);
+    const originalEnvContents = await readEnvFile();
+    const identity = readDeploymentIdentityState(originalEnvContents, config.image);
+    if (identity.previous === null) {
+      throw new UpdateRefused(
+        "No previous deployment identity was recorded, so there is nothing to roll back to.",
+      );
+    }
+    if (identity.previous.applicationImageTag === identity.current.applicationImageTag) {
+      throw new UpdateRefused("The previous deployment identity is the one already running.");
+    }
     const checkout = await readCheckout();
+    if (
+      identity.production &&
+      (!checkout.present ||
+        checkout.commit !== identity.current.revision ||
+        checkout.dirty ||
+        identity.previous.revision === null)
+    ) {
+      throw new UpdateRefused(
+        "The production checkout is not a clean match for the current durable deployment identity.",
+      );
+    }
     // Never re-pull a rollback tag: registry tags can move. Reuse the exact image cached when it ran.
-    const steps = composeUpdatePlan({ strategy: "pull", target: composeTarget }).filter(
+    const composeSteps = composeUpdatePlan({ strategy: "pull", target: composeTarget }).filter(
       (step) => step.id !== "pull",
     );
+    const steps: ComposeUpdateStep[] =
+      identity.production && identity.previous.revision !== null
+        ? [
+            {
+              id: "checkout",
+              label: `Restore the exact source revision ${identity.previous.revision}`,
+              command: "git",
+              args: ["checkout", "--detach", identity.previous.revision],
+            },
+            ...composeSteps,
+          ]
+        : composeSteps;
     return rememberRun(
       await execute({
         request: { repoUrl: "", branch: "" },
         strategy: "pull",
-        fromTag: tags.currentTag,
-        originalPreviousTag: tags.previousTag,
-        toTag: decision.tag,
-        fromCommit: checkout.commit,
+        identity,
+        originalEnvContents,
+        toTag: identity.previous.applicationImageTag,
+        targetIdentity: identity.previous,
+        fromCheckoutCommit: checkout.commit,
         fromBranch: checkout.branch,
-        toCommit: null,
+        toCommit: identity.previous.revision,
         restoreRemoteUrl: null,
         steps,
-        restartAdvice: `Rolled back to ${decision.tag}. Database migrations are not reversed: if the newer version added a migration, roll forward again or restore a database backup.`,
+        restartAdvice: `Rolled back to ${identity.previous.applicationImageTag}. Database migrations are not reversed: if the newer version added a migration, roll forward again or restore a database backup.`,
       }),
     );
   }
@@ -544,30 +703,50 @@ export function createUpdaterApp(
     return record;
   }
 
+  function composeIdentityEnvironment(
+    identity: DeploymentIdentity,
+    updaterEnabled: boolean,
+  ): Record<string, string> {
+    const env: Record<string, string> = {
+      [IMAGE_TAG_ENV]: identity.applicationImageTag,
+    };
+    if (identity.revision !== null) env[GIT_SHA_ENV] = identity.revision;
+    if (updaterEnabled) {
+      if (identity.updaterImage === null || identity.updaterImageTag === null) {
+        throw new UpdateRefused("The enabled updater deployment identity is incomplete.");
+      }
+      env[UPDATER_IMAGE_ENV] = identity.updaterImage;
+      env[UPDATER_IMAGE_TAG_ENV] = identity.updaterImageTag;
+    }
+    return env;
+  }
+
   /**
-   * Pins the tag, runs the plan, and un-pins it again if the run failed, so a failed update never
-   * leaves the deployment's `.env` pointing at an image the host does not have.
+   * Commits the full current/previous identity in one durable file replacement, runs the plan, and
+   * restores the exact pre-run file plus checkout when a detected failure needs recovery.
    */
   async function execute(input: {
     request: { repoUrl: string; branch: string };
     strategy: "pull" | "build";
-    fromTag: string;
-    originalPreviousTag: string | null;
+    identity: DeploymentIdentityState;
+    originalEnvContents: string;
     toTag: string | null;
-    fromCommit: string | null;
+    targetIdentity?: DeploymentIdentity;
+    fromCheckoutCommit: string | null;
     fromBranch: string | null;
     toCommit: string | null;
     restoreRemoteUrl: string | null;
     steps: ComposeUpdateStep[];
     restartAdvice: string;
   }): Promise<ServerUpdateRun> {
+    const fromIdentity = input.identity.current;
     const record: ServerUpdateRun = {
       startedAt: new Date().toISOString(),
       finishedAt: null,
       ok: false,
-      fromCommit: input.fromCommit,
+      fromCommit: fromIdentity.revision ?? input.fromCheckoutCommit,
       toCommit: input.toCommit,
-      fromTag: input.fromTag,
+      fromTag: fromIdentity.applicationImageTag,
       toTag: input.toTag,
       strategy: input.strategy,
       repoUrl: input.request.repoUrl,
@@ -577,10 +756,6 @@ export function createUpdaterApp(
       error: null,
       steps: [],
     };
-    const revertAssignments = {
-      [IMAGE_TAG_ENV]: input.fromTag,
-      [PREVIOUS_IMAGE_TAG_ENV]: input.originalPreviousTag ?? input.fromTag,
-    };
     // Build updates may switch branches and/or fast-forward before recreate. Mark the checkout
     // touched as soon as either mutates so a mid-plan failure still restores branch + commit.
     let checkoutTouched = false;
@@ -589,8 +764,8 @@ export function createUpdaterApp(
       const composeSteps = input.steps.filter((step) => step.command !== "git");
 
       for (const step of gitSteps) {
-        if (!(await runStep(record, step))) return record;
         if (step.id === "checkout" || step.id === "merge") checkoutTouched = true;
+        if (!(await runStep(record, step))) return record;
       }
 
       // The build path only knows its tag after the fast-forward, because the tag is the commit.
@@ -603,7 +778,7 @@ export function createUpdaterApp(
           return record;
         }
         record.toCommit = commit;
-        toTag = forkImageTag(commit);
+        toTag = input.identity.production ? commitImageTag(commit) : `local-${commit}`;
         record.toTag = toTag;
       }
       if (toTag === null) {
@@ -611,59 +786,80 @@ export function createUpdaterApp(
         return record;
       }
 
+      let targetIdentity = input.targetIdentity;
+      if (targetIdentity === undefined) {
+        if (record.toCommit === null || !isGitCommit(record.toCommit)) {
+          record.error = "Could not resolve an exact target source revision.";
+          return record;
+        }
+        targetIdentity = nextDeploymentIdentity(input.identity, record.toCommit, toTag);
+      }
+      if (
+        input.identity.production &&
+        (targetIdentity.revision === null || !isGitCommit(targetIdentity.revision))
+      ) {
+        record.error = "Could not resolve an exact target source revision.";
+        return record;
+      }
+      record.toCommit = targetIdentity.revision ?? record.toCommit;
+
+      let envWrite: { before: string; after: string };
       try {
-        await writeEnvAssignments({
-          [IMAGE_TAG_ENV]: toTag,
-          [PREVIOUS_IMAGE_TAG_ENV]: input.fromTag,
-        });
+        envWrite = await writeEnvAssignments(
+          deploymentIdentityAssignments(
+            targetIdentity,
+            fromIdentity,
+            input.identity.updaterEnabled,
+          ),
+          input.originalEnvContents,
+        );
       } catch {
-        record.error = "Could not persist the target image tag in the deployment environment.";
+        record.error = "Could not persist the target deployment identity atomically.";
         record.restartAdvice = `${record.error} Nothing was recreated.`;
         return record;
       }
-      const composeEnv: Record<string, string> = { [IMAGE_TAG_ENV]: toTag };
-      if (record.toCommit !== null) composeEnv.GIT_SHA = record.toCommit;
+      const composeEnv = composeIdentityEnvironment(targetIdentity, input.identity.updaterEnabled);
 
       for (const step of composeSteps) {
         if (!(await runStep(record, step, composeEnv))) {
           const primaryError = record.error ?? `${step.label} failed.`;
-          const envRestored = await writeEnvAssignments(revertAssignments).then(
-            () => true,
-            () => false,
-          );
+          const envRestored = await restoreEnvContents(envWrite.before, envWrite.after);
           if (step.id === "recreate") {
             const previous = composeUpArgv(composeTarget);
             const recovered = await runStep(
               record,
               {
                 id: "recover",
-                label: `Restore the previously running ${input.fromTag} image`,
+                label: `Restore the previously running ${fromIdentity.applicationImageTag} image`,
                 command: previous.command,
                 args: previous.args,
               },
-              { [IMAGE_TAG_ENV]: input.fromTag },
+              composeIdentityEnvironment(fromIdentity, input.identity.updaterEnabled),
               false,
             );
             record.restart = recovered ? "not-required" : "manual";
             record.restartAdvice = recovered
-              ? `${primaryError} The updater restored the previously running ${input.fromTag} image${envRestored ? " and its environment pin" : ", but could not restore the environment pin"}. Read the failed step output before retrying.`
-              : `${primaryError} Automatic recovery to ${input.fromTag} also failed${envRestored ? "" : ", and the environment pin could not be restored"}. The runtime may contain a mix of versions; use the recorded commands to recover it manually.`;
+              ? `${primaryError} The updater restored the previously running ${fromIdentity.applicationImageTag} image${envRestored ? " and its durable deployment identity" : ", but could not restore the durable deployment identity"}. Read the failed step output before retrying.`
+              : `${primaryError} Automatic recovery to ${fromIdentity.applicationImageTag} also failed${envRestored ? "" : ", and the durable deployment identity could not be restored"}. The runtime may contain a mix of versions; use the recorded commands and the previous full source SHA to recover it manually.`;
           } else {
-            record.restartAdvice = `${primaryError} No service was recreated${envRestored ? ", and the prior environment pin was restored" : ", but the prior environment pin could not be restored"}. Read the failed step output before retrying.`;
+            record.restartAdvice = `${primaryError} No service was recreated${envRestored ? ", and the prior durable deployment identity was restored" : ", but the prior durable deployment identity could not be restored"}. Read the failed step output before retrying.`;
           }
           record.error = primaryError;
           return record;
         }
       }
       record.ok = true;
-      record.restart = "recreated";
+      record.restart = input.identity.updaterEnabled ? "manual" : "recreated";
+      if (input.identity.updaterEnabled) {
+        record.restartAdvice = `${record.restartAdvice} The exact updater image ${targetIdentity.updaterImage}:${targetIdentity.updaterImageTag} is downloaded and durably pinned, but the updater cannot replace itself while reporting this run. Restart the updater service, then rerun production preflight and verify health revision ${targetIdentity.revision}.`;
+      }
       return record;
     } finally {
       if (
         !record.ok &&
         checkoutTouched &&
-        input.fromCommit !== null &&
-        isGitCommit(input.fromCommit)
+        input.fromCheckoutCommit !== null &&
+        isGitCommit(input.fromCheckoutCommit)
       ) {
         const restored = await runStep(
           record,
@@ -671,7 +867,7 @@ export function createUpdaterApp(
             id: "restore-checkout",
             label: "Restore the previous checkout",
             command: "git",
-            args: restoreCheckoutArgv(input.fromBranch, input.fromCommit),
+            args: restoreCheckoutArgv(input.fromBranch, input.fromCheckoutCommit),
           },
           undefined,
           false,

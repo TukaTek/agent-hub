@@ -27,8 +27,14 @@ export const OFFICIAL_UPDATER_IMAGE = `ghcr.io/${PUBLISHED_IMAGE_REPO}/updater`;
  */
 export const LOCAL_IMAGE_TAG = "local";
 export const DEFAULT_IMAGE_TAG = LOCAL_IMAGE_TAG;
+export const GIT_SHA_ENV = "GIT_SHA";
+export const PREVIOUS_GIT_SHA_ENV = "GIT_SHA_PREVIOUS";
 export const IMAGE_TAG_ENV = "RAKAZO_IMAGE_TAG";
 export const PREVIOUS_IMAGE_TAG_ENV = "RAKAZO_IMAGE_TAG_PREVIOUS";
+export const UPDATER_IMAGE_ENV = "RAKAZO_UPDATER_IMAGE";
+export const UPDATER_IMAGE_TAG_ENV = "RAKAZO_UPDATER_IMAGE_TAG";
+export const PREVIOUS_UPDATER_IMAGE_ENV = "RAKAZO_UPDATER_IMAGE_PREVIOUS";
+export const PREVIOUS_UPDATER_IMAGE_TAG_ENV = "RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS";
 
 /**
  * Matches the `name:` pinned in `infra/compose/docker-compose.prod.yml`. Used when Compose has not
@@ -67,6 +73,12 @@ export function isValidImageName(name: string): boolean {
   const hasHost = segments.length > 1 && (first.includes(".") || first.includes(":"));
   if (hasHost && !IMAGE_HOST.test(first)) return false;
   return segments.slice(hasHost ? 1 : 0).every((segment) => IMAGE_NAME_SEGMENT.test(segment));
+}
+
+/** Exact updater image published or built beside an application image. */
+export function expectedUpdaterImage(applicationImage: string | undefined): string | undefined {
+  if (!applicationImage?.endsWith("/app")) return undefined;
+  return `${applicationImage.slice(0, -"/app".length)}/updater`;
 }
 
 export function isValidComposeProjectName(name: string): boolean {
@@ -437,6 +449,13 @@ export function composeUpArgv(
   return { command: "docker", args };
 }
 
+export function composeBuildArgv(
+  target: ComposeTarget,
+  services: readonly string[],
+): ComposeInvocation {
+  return { command: "docker", args: [...composeBase(target), "build", ...services] };
+}
+
 export function composePsArgv(target: ComposeTarget): ComposeInvocation {
   return { command: "docker", args: [...composeBase(target), "ps", "--format", "json"] };
 }
@@ -549,6 +568,8 @@ export interface ComposeUpdatePlanInput {
   branch?: string;
   repointRemote?: boolean;
   remote?: string;
+  /** Prepare the profiled updater image but never recreate the updater executing this plan. */
+  prepareUpdater?: boolean;
 }
 
 /**
@@ -593,6 +614,15 @@ export function composeUpdatePlan(input: ComposeUpdatePlanInput): ComposeUpdateS
         args: ["merge", "--ff-only", `${remote}/${branch}`],
       },
     );
+    if (input.prepareUpdater === true) {
+      const buildUpdater = composeBuildArgv(input.target, ["updater"]);
+      steps.push({
+        id: "prepare-updater",
+        label: "Build the next updater image",
+        command: buildUpdater.command,
+        args: buildUpdater.args,
+      });
+    }
     const up = composeUpArgv(input.target, { build: true });
     steps.push({
       id: "recreate",
@@ -603,7 +633,10 @@ export function composeUpdatePlan(input: ComposeUpdatePlanInput): ComposeUpdateS
     return steps;
   }
 
-  const pull = composePullArgv(input.target);
+  const pull = composePullArgv(
+    input.target,
+    input.prepareUpdater === true ? [...RECREATED_SERVICES, "updater"] : RECREATED_SERVICES,
+  );
   const up = composeUpArgv(input.target);
   steps.push(
     { id: "pull", label: "Download the new images", command: pull.command, args: pull.args },

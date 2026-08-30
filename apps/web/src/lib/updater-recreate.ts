@@ -25,6 +25,7 @@ export type RecreateLastRun = {
   toTag: string | null;
   finishedAt: string | null;
   error: string | null;
+  restart: "recreated" | "supervised" | "manual" | "not-required";
   restartAdvice: string;
 };
 
@@ -42,7 +43,7 @@ export function confirmUpdaterRecreate(input: {
   lastRun: RecreateLastRun | null;
 }): {
   confirmed: boolean;
-  reason: "waiting" | "running" | "unchanged" | "changed" | "failed";
+  reason: "waiting" | "running" | "unchanged" | "changed" | "failed" | "restart-required";
 } {
   if (input.supported !== true || input.installKind !== "sidecar") {
     return { confirmed: false, reason: "waiting" };
@@ -58,6 +59,9 @@ export function confirmUpdaterRecreate(input: {
   }
   if (!run.ok) {
     return { confirmed: false, reason: "failed" };
+  }
+  if (run.restart === "manual") {
+    return { confirmed: false, reason: "restart-required" };
   }
   if (run.toTag && input.afterImageTag === run.toTag && run.toTag !== input.beforeImageTag) {
     return { confirmed: true, reason: "changed" };

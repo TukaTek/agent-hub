@@ -131,6 +131,7 @@ export function validateProductionPreflight(input: PreflightInput): PreflightRes
   checks.push(validateBackup(input.env));
   checks.push(validateRevision(input));
   checks.push(validateUpdaterRevision(input));
+  checks.push(validatePreviousDeploymentIdentity(input));
   checks.push(
     input.host.totalMemoryBytes >= MIN_MEMORY_BYTES
       ? ok("host-memory", "at-least-4-gib")
@@ -345,6 +346,40 @@ function validateUpdaterRevision(input: PreflightInput): PreflightCheck {
     return invalid("updater-source-revision", "image-not-source-addressed-sibling");
   }
   return ok("updater-source-revision", "exact-source-addressed-sibling-image");
+}
+
+function validatePreviousDeploymentIdentity(input: PreflightInput): PreflightCheck {
+  const updaterIsEnabled = updaterEnabled(input.env);
+  const values = [
+    input.env.GIT_SHA_PREVIOUS,
+    input.env.RAKAZO_IMAGE_TAG_PREVIOUS,
+    ...(updaterIsEnabled
+      ? [input.env.RAKAZO_UPDATER_IMAGE_PREVIOUS, input.env.RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS]
+      : []),
+  ].map((value) => (value === undefined || value === "" ? undefined : value));
+  if (values.every((value) => value === undefined)) {
+    return ok("previous-deployment-identity", "not-recorded");
+  }
+  if (values.some((value) => value === undefined)) {
+    return invalid("previous-deployment-identity", "incomplete");
+  }
+
+  const revision = input.env.GIT_SHA_PREVIOUS!;
+  if (
+    !FULL_GIT_REVISION.test(revision) ||
+    input.env.RAKAZO_IMAGE_TAG_PREVIOUS !== `sha-${revision}` ||
+    revision === input.env.GIT_SHA
+  ) {
+    return invalid("previous-deployment-identity", "revision-or-application-image-mismatch");
+  }
+  if (
+    updaterIsEnabled &&
+    (input.env.RAKAZO_UPDATER_IMAGE_PREVIOUS !== expectedUpdaterImage(input.env.RAKAZO_IMAGE) ||
+      input.env.RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS !== `sha-${revision}`)
+  ) {
+    return invalid("previous-deployment-identity", "updater-image-mismatch");
+  }
+  return ok("previous-deployment-identity", "coherent-single-level-rollback");
 }
 
 function expectedUpdaterImage(applicationImage: string | undefined): string | undefined {

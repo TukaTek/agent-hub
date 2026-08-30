@@ -783,6 +783,8 @@ export const ServerUpdateRunSchema = z.object({
   /**
    * `recreated` means the updater sidecar replaced the containers and no restart is owed.
    * `supervised` means the process exited and its supervisor is bringing it back.
+   * `manual` includes an enabled updater image that is durably pinned but cannot replace the
+   * sidecar executing and reporting the current transition.
    */
   restart: z.enum(["recreated", "supervised", "manual", "not-required"]),
   restartAdvice: z.string(),
