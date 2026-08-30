@@ -23,7 +23,9 @@ required process control.
 canonical JSON bytes directly, then the command validates them without a formatter rewrite. The
 lower-level `--write-source-tree-manifest` command emits the same bytes. Regeneration may replace a
 valid stale manifest or create a missing bootstrap manifest, but refuses malformed or duplicate-key
-JSON and rejects manifest symlinks or other non-regular targets.
+JSON and rejects manifest symlinks or other non-regular targets. A read-only snapshot-handle close
+failure is terminal because closure is unproven; a later snapshot cannot turn that failure into
+success.
 
 Replacement is crash-safe up to the guarantees of the host filesystem. The writer exclusively
 creates a uniquely named same-directory regular temp file with mode `0600`, writes the canonical
@@ -50,18 +52,25 @@ claim that prior bytes were preserved. Missing-manifest bootstrap has no prior b
 therefore fails with the same integrity warning if a post-rename race is detected.
 
 Failed attempts clean only the inode they created. With its recorded device/inode identity and,
-where possible, the still-open handle, the writer scans at most 4,096 entries in `.github/`, unlinks
-only one regular entry with that exact identity and a safe single-link count, then scans again and
-checks link count zero. This also finds a canonical temp displaced under another filename. If inode
-identity is unavailable, the scan is too large, or identity/link-count checks are inconclusive, the
-writer fails closed, reports that residual cleanup is unproved, and does not delete an uncertain
-pathname.
+where possible, the still-open handle, the writer scans at most 4,096 entries in `.github/` and
+selects only one regular entry with that exact identity and a safe single-link count. Exactly 4,096
+observed entries is allowed; observing a 4,097th entry fails closed. This also finds a canonical temp
+displaced under another filename. Before unlink, the writer moves the identity match to an
+invocation-specific cleanup quarantine and validates it there. After unlink it requires both the
+quarantine and the checked pathname to remain absent and checks link count zero. If the checked
+pathname is replaced during unlink, the replacement is preserved and the writer reports an explicit
+fail-closed residual/uncertain cleanup error. If inode identity is unavailable, the scan is too
+large, or identity/link-count checks are inconclusive, the writer likewise fails closed and does not
+claim cleanup succeeded.
 
-On non-Windows hosts the writer syncs `.github/` after verified replacement and re-verifies the
-destination before reporting a directory-sync failure. Parent-directory sync is skipped on Windows
-because Node does not provide one portable durability contract across Windows filesystems. File and
-directory durability still depends on the operating system, filesystem, mount, and storage hardware
-honoring their sync guarantees.
+On non-Windows hosts the writer syncs `.github/` after verified replacement and then re-reads and
+fully validates the destination whether sync succeeds or fails. A noncanonical change after a
+successful sync enters the same single bounded recovery. A byte-identical canonical concurrent
+replacement may win, but the writer must clean or explicitly report any displaced inode that the
+invocation created. Parent-directory sync is skipped on Windows because Node does not provide one
+portable durability contract across Windows filesystems. File and directory durability still
+depends on the operating system, filesystem, mount, and storage hardware honoring their sync
+guarantees.
 
 These checks defend against accidental or concurrent same-account replacement that is observable
 through Node's pathname, handle, metadata, and read-back APIs. Node has no portable rename- or

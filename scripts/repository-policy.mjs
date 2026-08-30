@@ -1105,7 +1105,14 @@ async function readStableRegularPath(
       try {
         await handle.close();
       } catch (error) {
-        failure = failure ? new AggregateError([failure, error]) : error;
+        const closureFailure = new Error(
+          `${label} snapshot close failure left handle closure unproven: ${errorMessage(error)}`,
+          { cause: error },
+        );
+        if (failure) {
+          throw new AggregateError([failure, closureFailure], closureFailure.message);
+        }
+        throw closureFailure;
       }
     }
     if (!failure && result) return result;
@@ -1330,7 +1337,14 @@ async function scanManifestDirectoryForIdentity(fileSystem, directory, identity)
   return matches;
 }
 
-async function unlinkOwnedManifestEntry(fileSystem, candidate, identity) {
+function cleanupIntegrityError(detail, causes = []) {
+  const message =
+    `FAIL-CLOSED CLEANUP INTEGRITY ERROR: ${detail}; ` +
+    "invocation-owned residual cleanup is uncertain";
+  return causes.length === 0 ? new Error(message) : new AggregateError(causes, message);
+}
+
+async function unlinkOwnedManifestEntry(fileSystem, candidate, identity, quarantine) {
   const info = await lstatIfPresent(fileSystem, candidate);
   if (!info?.isFile()) {
     throw new Error("Invocation-owned source-tree manifest temp entry changed before cleanup");
@@ -1339,10 +1353,55 @@ async function unlinkOwnedManifestEntry(fileSystem, candidate, identity) {
     expectedIdentity: identity,
     label: "invocation-owned source-tree manifest temp entry",
   });
-  await fileSystem.unlink(candidate);
+  if (await lstatIfPresent(fileSystem, quarantine)) {
+    throw cleanupIntegrityError("the invocation-owned cleanup quarantine path already exists");
+  }
+  try {
+    const cleanupRename = fileSystem.cleanupRename ?? rename;
+    await cleanupRename(candidate, quarantine);
+    const stagedInfo = await lstatIfPresent(fileSystem, quarantine);
+    if (!stagedInfo?.isFile()) {
+      throw new Error("the staged invocation-owned cleanup entry is missing or non-regular");
+    }
+    assertRegularFileMetadata(stagedInfo, {
+      expectedIdentity: identity,
+      label: "staged invocation-owned source-tree manifest temp entry",
+    });
+  } catch (error) {
+    throw cleanupIntegrityError("the invocation-owned inode could not be staged for cleanup", [
+      error,
+    ]);
+  }
+  if (await lstatIfPresent(fileSystem, candidate)) {
+    throw cleanupIntegrityError("the checked cleanup pathname was replaced while staging unlink");
+  }
+
+  let unlinkFailure;
+  try {
+    await fileSystem.unlink(quarantine);
+  } catch (error) {
+    unlinkFailure = error;
+  }
+  const candidateAfterUnlink = await lstatIfPresent(fileSystem, candidate);
+  const quarantineAfterUnlink = await lstatIfPresent(fileSystem, quarantine);
+  if (candidateAfterUnlink) {
+    throw cleanupIntegrityError(
+      "the checked cleanup pathname was replaced during unlink and was preserved",
+      unlinkFailure ? [unlinkFailure] : [],
+    );
+  }
+  if (unlinkFailure || quarantineAfterUnlink) {
+    throw cleanupIntegrityError(
+      "the staged invocation-owned inode could not be proven deleted",
+      unlinkFailure ? [unlinkFailure] : [],
+    );
+  }
 }
 
-async function cleanupOwnedManifestInode(fileSystem, { destination, directory, handle, identity }) {
+async function cleanupOwnedManifestInode(
+  fileSystem,
+  { destination, directory, handle, identity, temporaryFilename },
+) {
   if (!identity) {
     throw new Error(
       "Source-tree manifest temp inode identity is unavailable; residual cleanup is unprovable and was not attempted",
@@ -1370,7 +1429,12 @@ async function cleanupOwnedManifestInode(fileSystem, { destination, directory, h
   }
   const matches = await scanManifestDirectoryForIdentity(fileSystem, directory, identity);
   if (matches.length === 1) {
-    await unlinkOwnedManifestEntry(fileSystem, matches[0], identity);
+    await unlinkOwnedManifestEntry(
+      fileSystem,
+      matches[0],
+      identity,
+      `${temporaryFilename}.cleanup`,
+    );
   }
   const remaining = await scanManifestDirectoryForIdentity(fileSystem, directory, identity);
   if (remaining.length !== 0) {
@@ -1399,6 +1463,7 @@ async function cleanupInstallAttempt(fileSystem, filename, state) {
         directory: path.dirname(filename),
         handle: state.handle,
         identity: state.identity,
+        temporaryFilename: state.temporaryFilename,
       });
     } catch (error) {
       failures.push(error);
@@ -1494,6 +1559,7 @@ async function attemptAtomicManifestInstall({
         directory: path.dirname(filename),
         handle: state.handle,
         identity: state.identity,
+        temporaryFilename: state.temporaryFilename,
       });
     }
     await state.handle.close();
@@ -1527,6 +1593,21 @@ async function attemptAtomicManifestInstall({
         };
       }
       return { error, kind: "durability-failure", state };
+    }
+    const durableDestination = await readStableRegularPath(fileSystem, filename, {
+      expectedBytes: bytes,
+      expectedManifest: manifest,
+      expectedMode: mode,
+      label: "source-tree manifest after successful directory sync",
+    });
+    if (!sameFileIdentity(state.identity, durableDestination.identity)) {
+      await cleanupOwnedManifestInode(fileSystem, {
+        destination: filename,
+        directory: path.dirname(filename),
+        handle: state.handle,
+        identity: state.identity,
+        temporaryFilename: state.temporaryFilename,
+      });
     }
     return { kind: "success", state };
   } catch (error) {

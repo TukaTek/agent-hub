@@ -1136,6 +1136,78 @@ PAYLOAD
     });
   });
 
+  it("treats an unproved snapshot-handle close failure as terminal", async () => {
+    await withGitRepository({ "tracked.txt": "tracked\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      let leakedHandle: Awaited<ReturnType<typeof open>> | undefined;
+      let snapshotOpenCount = 0;
+      let failedCloseAttempts = 0;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open: (async (...arguments_: Parameters<typeof open>) => {
+          const handle = await open(...arguments_);
+          const isReadOnlyManifestSnapshot =
+            path.resolve(String(arguments_[0])) === filename &&
+            (Number(arguments_[1]) & constants.O_CREAT) === 0;
+          if (!isReadOnlyManifestSnapshot || snapshotOpenCount++ !== 0) return handle;
+          leakedHandle = handle;
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === "close") {
+                return async () => {
+                  failedCloseAttempts += 1;
+                  throw new Error("injected snapshot close failure before close");
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Awaited<ReturnType<typeof open>>;
+        }) as typeof open,
+        rename,
+        unlink,
+      };
+
+      try {
+        const operation = await policy
+          .writeSourceTreeManifest(repository, {
+            fileSystem,
+            nonceFactory: () => "0".repeat(32),
+            platform: "linux",
+          })
+          .then(
+            () => ({ status: "resolved" as const }),
+            (error: unknown) => ({
+              error: error instanceof Error ? error.message : String(error),
+              status: "rejected" as const,
+            }),
+          );
+        const leakedHandleStillOpen = await leakedHandle?.stat().then(
+          () => true,
+          () => false,
+        );
+
+        expect({
+          ...operation,
+          failedCloseAttempts,
+          installed: await readFile(filename),
+          leakedHandleStillOpen,
+        }).toMatchObject({
+          error: expect.stringMatching(/snapshot close failure.*closure.*unproven/iu),
+          failedCloseAttempts: 1,
+          installed: before,
+          leakedHandleStillOpen: true,
+          status: "rejected",
+        });
+      } finally {
+        await leakedHandle?.close().catch(() => undefined);
+      }
+    });
+  });
+
   it.each(["create", "write", "sync", "close", "rename"] as const)(
     "preserves the previous manifest and cleans its temp file after an injected %s failure",
     async (stage) => {
@@ -1560,6 +1632,179 @@ PAYLOAD
     });
   });
 
+  it("preserves an unrelated inode substituted inside cleanup unlink and fails closed", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const nonce = "7".repeat(32);
+      const temporaryFilename = manifestTempPath(repository, nonce);
+      const cleanupCandidate = path.join(repository, ".github", "cleanup-race-candidate");
+      const ownedResidual = path.join(repository, "owned-cleanup-residual");
+      const unrelatedBytes = Buffer.from("unrelated replacement must survive\n");
+      let installDisplaced = false;
+      let unlinkSubstitutionInjected = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open,
+        rename: async (oldPath, newPath) => {
+          if (!installDisplaced && path.resolve(String(oldPath)) === temporaryFilename) {
+            installDisplaced = true;
+            await rename(temporaryFilename, cleanupCandidate);
+          }
+          await rename(oldPath, newPath);
+        },
+        unlink: async (candidate) => {
+          if (!unlinkSubstitutionInjected) {
+            unlinkSubstitutionInjected = true;
+            if (path.resolve(String(candidate)) === cleanupCandidate) {
+              await rename(cleanupCandidate, ownedResidual);
+            }
+            await writeFile(cleanupCandidate, unrelatedBytes, { mode: 0o600 });
+          }
+          await unlink(candidate);
+        },
+      };
+
+      const operation = await policy
+        .writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => nonce,
+          platform: "linux",
+        })
+        .then(
+          () => ({ status: "resolved" as const }),
+          (error: unknown) => ({
+            error: error instanceof Error ? error.message : String(error),
+            status: "rejected" as const,
+          }),
+        );
+
+      expect({
+        ...operation,
+        installed: await readFile(filename),
+        unlinkSubstitutionInjected,
+        unrelatedReplacement: await readFile(cleanupCandidate).catch(() => undefined),
+      }).toMatchObject({
+        error: expect.stringMatching(/FAIL-CLOSED CLEANUP INTEGRITY ERROR.*residual.*uncertain/iu),
+        installed: before,
+        status: "rejected",
+        unlinkSubstitutionInjected: true,
+        unrelatedReplacement: unrelatedBytes,
+      });
+    });
+  });
+
+  it("cleans an owned temp when the directory scan has exactly 4,096 entries", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const nonce = "8".repeat(32);
+      const temporaryFilename = manifestTempPath(repository, nonce);
+      const entries = [
+        path.basename(temporaryFilename),
+        ...Array.from({ length: 4_095 }, (_, index) => `absent-${index}`),
+      ];
+      let directoryOpenCount = 0;
+      let installRenameFailed = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open,
+        opendir: (async () => {
+          directoryOpenCount += 1;
+          let index = 0;
+          return {
+            close: async () => undefined,
+            read: async () => {
+              const name = entries[index++];
+              return name === undefined ? null : { name };
+            },
+          };
+        }) as unknown as typeof opendir,
+        rename: async (oldPath, newPath) => {
+          if (!installRenameFailed && path.resolve(String(newPath)) === filename) {
+            installRenameFailed = true;
+            throw new Error("injected install rename failure at exact scan bound");
+          }
+          await rename(oldPath, newPath);
+        },
+        unlink,
+      };
+
+      await expect(
+        policy.writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => nonce,
+          platform: "linux",
+        }),
+      ).rejects.toThrow(/injected install rename failure at exact scan bound/iu);
+
+      expect(directoryOpenCount).toBe(2);
+      expect(await readFile(filename)).toEqual(before);
+      await expect(lstat(temporaryFilename)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("fails closed when the cleanup scan observes 4,097 entries", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const nonce = "9".repeat(32);
+      const temporaryFilename = manifestTempPath(repository, nonce);
+      const entries = [
+        path.basename(temporaryFilename),
+        ...Array.from({ length: 4_096 }, (_, index) => `absent-${index}`),
+      ];
+      let directoryOpenCount = 0;
+      let installRenameFailed = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open,
+        opendir: (async () => {
+          directoryOpenCount += 1;
+          let index = 0;
+          return {
+            close: async () => undefined,
+            read: async () => {
+              const name = entries[index++];
+              return name === undefined ? null : { name };
+            },
+          };
+        }) as unknown as typeof opendir,
+        rename: async (oldPath, newPath) => {
+          if (!installRenameFailed && path.resolve(String(newPath)) === filename) {
+            installRenameFailed = true;
+            throw new Error("injected install rename failure above scan bound");
+          }
+          await rename(oldPath, newPath);
+        },
+        unlink,
+      };
+
+      await expect(
+        policy.writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => nonce,
+          platform: "linux",
+        }),
+      ).rejects.toThrow(
+        /injected install rename failure above scan bound.*cleanup also failed.*cleanup scan exceeded 4096/iu,
+      );
+
+      expect(directoryOpenCount).toBe(1);
+      expect(await readFile(filename)).toEqual(before);
+      expect((await lstat(temporaryFilename)).isFile()).toBe(true);
+    });
+  });
+
   it("reports manifest integrity as uncertain when the single restoration fails", async () => {
     await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
       const policy = await sourceTreePolicy();
@@ -1928,6 +2173,127 @@ PAYLOAD
       expect(await readFile(filename)).not.toEqual(before);
       await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
       expect(await manifestTempEntries(repository)).toEqual([]);
+    });
+  });
+
+  it("restores prior bytes when the destination changes during a successful directory sync", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      const filename = path.join(repository, manifestRelativePath);
+      const before = await readFile(filename);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const githubDirectory = path.join(repository, ".github");
+      const displacedCanonical = path.join(repository, ".github", "sync-displaced-canonical");
+      const attackerBytes = Buffer.from("attacker bytes installed during successful sync\n");
+      let destinationReplaced = false;
+      let directorySyncCount = 0;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open: (async (...arguments_: Parameters<typeof open>) => {
+          const handle = await open(...arguments_);
+          if (path.resolve(String(arguments_[0])) !== githubDirectory) return handle;
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === "sync") {
+                return async () => {
+                  await target.sync();
+                  directorySyncCount += 1;
+                  if (!destinationReplaced) {
+                    destinationReplaced = true;
+                    await rename(filename, displacedCanonical);
+                    await writeFile(filename, attackerBytes, { mode: 0o644 });
+                  }
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Awaited<ReturnType<typeof open>>;
+        }) as typeof open,
+        rename,
+        unlink,
+      };
+
+      const operation = await policy
+        .writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => "a".repeat(32),
+          platform: "linux",
+        })
+        .then(
+          () => ({ status: "resolved" as const }),
+          (error: unknown) => ({
+            error: error instanceof Error ? error.message : String(error),
+            status: "rejected" as const,
+          }),
+        );
+
+      expect({
+        ...operation,
+        directorySyncCount,
+        installed: await readFile(filename),
+      }).toMatchObject({
+        directorySyncCount: 2,
+        error: expect.stringMatching(/previous manifest bytes.*restored/iu),
+        installed: before,
+        status: "rejected",
+      });
+      await expect(lstat(displacedCanonical)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("accepts canonical bytes installed during a successful directory sync", async () => {
+    await withGitRepository({ "tracked.txt": "before\n" }, async (repository) => {
+      const policy = await sourceTreePolicy();
+      await writeAndTrackSourceTreeManifest(repository);
+      await writeFile(path.join(repository, "tracked.txt"), "after\n");
+      const filename = path.join(repository, manifestRelativePath);
+      const githubDirectory = path.join(repository, ".github");
+      const displacedCanonical = path.join(repository, ".github", "sync-canonical-loser");
+      const concurrentTemp = path.join(repository, ".github", "sync-canonical-winner");
+      const canonicalBytes = Buffer.from(
+        policy.serializeSourceTreeManifest(await policy.createSourceTreeManifest(repository)),
+      );
+      let destinationReplaced = false;
+      const fileSystem: ManifestWriterFileSystem = {
+        lstat,
+        open: (async (...arguments_: Parameters<typeof open>) => {
+          const handle = await open(...arguments_);
+          if (path.resolve(String(arguments_[0])) !== githubDirectory) return handle;
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === "sync") {
+                return async () => {
+                  await target.sync();
+                  if (!destinationReplaced) {
+                    destinationReplaced = true;
+                    await rename(filename, displacedCanonical);
+                    await writeFile(concurrentTemp, canonicalBytes, { mode: 0o644 });
+                    await rename(concurrentTemp, filename);
+                  }
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Awaited<ReturnType<typeof open>>;
+        }) as typeof open,
+        rename,
+        unlink,
+      };
+
+      await expect(
+        policy.writeSourceTreeManifest(repository, {
+          fileSystem,
+          nonceFactory: () => "b".repeat(32),
+          platform: "linux",
+        }),
+      ).resolves.toBeDefined();
+
+      expect(await readFile(filename)).toEqual(canonicalBytes);
+      await expect(policy.assertSourceTreeManifest(repository)).resolves.toBeDefined();
+      await expect(lstat(displacedCanonical)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 
