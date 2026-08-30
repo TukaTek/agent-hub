@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "exclusions": [".github/ci-executable-surface.json"],
   "entryCount": 885,
-  "treeSha256": "719de85c1f15daf892205a62bcb60c394487974903a1714a9fc3a362e2154b89",
+  "treeSha256": "b0a73558c72800573f79b1eac0d3021359a8e28f43f324979c41d993cd16f4d8",
   "entries": [
     {
       "path": ".agents/skills/composio/SKILL.md",
@@ -43,8 +43,8 @@
       "path": ".env.example",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 4751,
-      "sha256": "f61cfdc665f88867cb9ec7e44df15df585b8c365c3a20df9d7fe23a4672594c4"
+      "byteLength": 5041,
+      "sha256": "b78f0c5ad178916c98d8d323ce392cc8b18cde6c54f702e5dde4a5d5f3ac8303"
     },
     {
       "path": ".gitattributes",
@@ -2773,8 +2773,8 @@
       "path": "docs/self-host.md",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 34055,
-      "sha256": "86b599a9cfaa8fd51fcbab0bb19fa0dbdf9d785084c567d755a7205fd562feea"
+      "byteLength": 35166,
+      "sha256": "5f7447bb2137118d84f9f046f32b9ded03309e3126daf1e8534ed04c30576dda"
     },
     {
       "path": "infra/compose/.env.images.example",
@@ -2836,15 +2836,15 @@
       "path": "infra/compose/deployment-preflight.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 11907,
-      "sha256": "3d81026fb8904d9ff7282886055dc4e04d6a09029dadef2347f6b0e66b8b7f6f"
+      "byteLength": 13453,
+      "sha256": "7098db5f8ff7fce44bab5ef26f7c5f3cfdb8c1002d836bdfa9e31f3af759da93"
     },
     {
       "path": "infra/compose/deployment-preflight.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 14360,
-      "sha256": "e18b0087d43bcc959a46ddc4dc87d918570e5dab873a7156441ead4b41aefe1a"
+      "byteLength": 15801,
+      "sha256": "ad9b3082efc81fd3a18322aee3b5e10ab04445613ac22ca7b53a5ab60936c3ba"
     },
     {
       "path": "infra/compose/docker-compose.images.yml",
@@ -2906,8 +2906,8 @@
       "path": "infra/compose/production-restore.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 4151,
-      "sha256": "dc73c42f3a54fae5dcf2e097893b65cf125abf3bc9ebcf6a5ace99ef8b82f3f1"
+      "byteLength": 5918,
+      "sha256": "887da5c4a774c43d51d958ef4d54448d7f7c50264b353f8804b108fa59c9c8f0"
     },
     {
       "path": "infra/compose/production-wiring.test.ts",
@@ -2920,8 +2920,8 @@
       "path": "infra/compose/restore-prod.sh",
       "gitMode": "100755",
       "gitType": "blob",
-      "byteLength": 1345,
-      "sha256": "2aabf0d7a9378dc680ed78209600d7599206f7e6591b0e52c5b8e70d0482e7dd"
+      "byteLength": 2124,
+      "sha256": "f597f0c2a93b121ff0ca0bee48e4ae543c7f16292912330ba1535fb6dc8d093a"
     },
     {
       "path": "infra/compose/secret-fixtures.test.ts",
@@ -5860,8 +5860,8 @@
       "path": "packages/testkit/src/gitleaks-history.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 8305,
-      "sha256": "578c777e31b168efb63ee4f6c3f035ea5c3eb9e248e839516ec4040c48455ba9"
+      "byteLength": 10742,
+      "sha256": "76573a975f0e3ca25c1b7e4ffaeef192e2bf200aadbd6b3dba445c688912ab34"
     },
     {
       "path": "packages/testkit/src/index.ts",
@@ -6140,8 +6140,8 @@
       "path": "scripts/gitleaks-history.mjs",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 8629,
-      "sha256": "98351b4dd233faa47d647805665a8d255a5719fee251debbb50f647794b23bf9"
+      "byteLength": 9916,
+      "sha256": "74441b54bfc6724a0999581d2ac9045a883ecc78cc51e608820307325c56a6ee"
     },
     {
       "path": "scripts/gitleaks-scan.mjs",
