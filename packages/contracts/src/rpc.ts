@@ -135,9 +135,9 @@ export const appContract = {
       .output(DeploymentSettingsSchema),
   },
   /**
-   * Deployment-owner product updates. When the Compose updater sidecar is reachable, these proxy
-   * to its `/state` `/plan` `/apply` contract. Rollback stays on the sidecar for ops only and is
-   * not exposed here. Never git-fetch from the API process.
+   * Deployment-owner product updates. Pilot production disables these mutations and reports the
+   * manual host runbook; non-pilot development may proxy to an updater sidecar. Rollback stays on
+   * the development sidecar and is not exposed here. Never git-fetch from the API process.
    */
   updater: {
     status: oc.output(ServerUpdateStatusSchema),

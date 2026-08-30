@@ -23,9 +23,8 @@ services:
       retries: 20
 
   api:
-    # The updater moves this tag atomically with GIT_SHA and every enabled updater pin.
-    # `docker compose pull` fetches it, `up -d` recreates onto it, and the coherent previous
-    # identity stays in .env so a rollback is one redeploy rather than a rebuild.
+    # Pilot updates are operator-driven. `docker compose pull` fetches the exact source-addressed
+    # tag and `up -d` recreates onto it only after the operator records the prior identity.
     #
     # The default tag is `local`, which no registry serves, so a fresh install builds from the
     # checkout via `up -d --build` instead of failing on a `pull` of an image that does not exist
@@ -62,7 +61,6 @@ services:
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:?Set a supported remote SANDBOX_PROVIDER in .env}
       WAKEUP_DRIVER: graphile
       AGENT_RUNTIME: pi
-      RAKAZO_UPDATER_URL: http://updater:7092
     expose:
       - "3100"
     volumes:
@@ -70,7 +68,6 @@ services:
     networks:
       - app
       - data
-      - control
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,60 +153,6 @@ services:
       api:
         condition: service_healthy
 
-  # The updater holds the Docker socket, which is root-equivalent on the host, so it is opt-in and
-  # deliberately the narrowest service here: no `ports` (nothing on the host), only the dedicated
-  # `control` network shared with the API, and no `env_file` — secrets stay in the bind-mounted
-  # `.env` that Compose reads for interpolation, not in this process. Caddy has no route to it. The
-  # API reaches it as http://updater:7092 with the shared token. An update prepares and durably
-  # pins its next exact image, but leaves the updater's own restart to the operator because it
-  # cannot replace itself and still report or recover the run truthfully.
-  updater:
-    profiles: [updater]
-    # Pinned separately but transactionally with the application identity. The executing updater
-    # reports a manual restart until the operator moves this container onto the newly pinned image.
-    image: ${RAKAZO_UPDATER_IMAGE:-ghcr.io/elie222/rakazo/updater}:${RAKAZO_UPDATER_IMAGE_TAG:-local}
-    build:
-      context: ../..
-      dockerfile: infra/updater/Dockerfile
-      args:
-        GIT_SHA: ${GIT_SHA:-}
-    restart: unless-stopped
-    init: true
-    user: root
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 256
-    mem_limit: 1g
-    environment:
-      NODE_ENV: production
-      # Keep interpolation optional so deployments that do not enable this profile need no token.
-      # resolveUpdaterConfig still refuses to start the sidecar without a dedicated secure value.
-      RAKAZO_UPDATER_TOKEN: ${RAKAZO_UPDATER_TOKEN:-}
-      RAKAZO_UPDATER_HOST: "0.0.0.0"
-      RAKAZO_UPDATER_PORT: "7092"
-      RAKAZO_IMAGE: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}
-      # `-p` is available to Compose interpolation but is not injected into containers unless it is
-      # declared here. The sidecar must target the project the operator actually started.
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-rakazo-prod}
-      # Must equal the host path it is mounted from, or every relative bind mount in this file would
-      # resolve somewhere else. /srv/rakazo is the supported Linux production layout.
-      RAKAZO_DEPLOY_DIR: ${RAKAZO_DEPLOY_DIR:-/srv/rakazo}
-      RAKAZO_COMPOSE_FILE: infra/compose/docker-compose.prod.yml
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${RAKAZO_DEPLOY_DIR:-/srv/rakazo}:${RAKAZO_DEPLOY_DIR:-/srv/rakazo}
-    networks:
-      - control
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - fetch('http://127.0.0.1:7092/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
-      interval: 15s
-      timeout: 5s
-      retries: 10
-
   caddy:
     image: caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d
     restart: unless-stopped
@@ -250,6 +193,5 @@ volumes:
 networks:
   edge:
   app:
-  control:
   data:
     internal: true

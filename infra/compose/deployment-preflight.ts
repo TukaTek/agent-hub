@@ -84,6 +84,14 @@ const PLACEHOLDER_SECRET =
 const MIN_MEMORY_BYTES = 4 * 1024 ** 3;
 const MIN_DISK_BYTES = 20 * 1024 ** 3;
 const SUPPORTED_ARCHITECTURES = new Set(["x64", "arm64"]);
+const MANUAL_UPDATE_ONLY_MESSAGE = "Manual updates only for pilot.";
+const LEGACY_UPDATER_SETTINGS = new Set([
+  "GIT_SHA_PREVIOUS",
+  "RAKAZO_COMPOSE_FILE",
+  "RAKAZO_COMPOSE_PROJECT_NAME",
+  "RAKAZO_DEPLOY_DIR",
+  "RAKAZO_IMAGE_TAG_PREVIOUS",
+]);
 const BACKUP_TARGET_CLASSES: Record<string, string> = {
   "s3:": "s3",
   "gs:": "gcs",
@@ -97,6 +105,7 @@ export function validateProductionPreflight(input: PreflightInput): PreflightRes
       ? ok("NODE_ENV", "production")
       : invalid("NODE_ENV", "production-required"),
   );
+  checks.push(validateManualUpdatePilot(input.env));
   const deploymentId = input.env.CORTEXAI_DEPLOYMENT_ID;
   const deploymentIdOk =
     deploymentId !== undefined &&
@@ -117,11 +126,7 @@ export function validateProductionPreflight(input: PreflightInput): PreflightRes
       : invalid("SANDBOX_PROVIDER", provider ? "unsafe-provider" : "missing"),
   );
 
-  const secretNames = [
-    ...REQUIRED_SECRETS,
-    ...(providerSecretName ? [providerSecretName] : []),
-    ...(input.env.RAKAZO_UPDATER_TOKEN ? ["RAKAZO_UPDATER_TOKEN"] : []),
-  ];
+  const secretNames = [...REQUIRED_SECRETS, ...(providerSecretName ? [providerSecretName] : [])];
   const duplicateValues = duplicatedSecretValues(input.env, secretNames);
   for (const name of secretNames) {
     checks.push(validateSecret(name, input.env[name], duplicateValues));
@@ -130,8 +135,6 @@ export function validateProductionPreflight(input: PreflightInput): PreflightRes
   checks.push(validateOrigins(input.env));
   checks.push(validateBackup(input.env));
   checks.push(validateRevision(input));
-  checks.push(validateUpdaterRevision(input));
-  checks.push(validatePreviousDeploymentIdentity(input));
   checks.push(
     input.host.totalMemoryBytes >= MIN_MEMORY_BYTES
       ? ok("host-memory", "at-least-4-gib")
@@ -192,8 +195,6 @@ export function renderComposeConfig(
     options.envFile,
     "-f",
     options.composeFile,
-    "--profile",
-    "updater",
     "config",
     "--format",
     "json",
@@ -214,6 +215,19 @@ export function renderComposeConfig(
   } catch {
     throw new Error("Compose configuration returned an invalid model.");
   }
+}
+
+function validateManualUpdatePilot(env: NodeJS.ProcessEnv): PreflightCheck {
+  const updaterSettings = Object.keys(env).filter(
+    (name) => name.startsWith("RAKAZO_UPDATER_") || LEGACY_UPDATER_SETTINGS.has(name),
+  );
+  const updaterProfile = (env.COMPOSE_PROFILES ?? "")
+    .split(",")
+    .map((profile) => profile.trim())
+    .includes("updater");
+  return updaterSettings.length === 0 && !updaterProfile
+    ? ok("automated-updater", MANUAL_UPDATE_ONLY_MESSAGE)
+    : unsafe("automated-updater", MANUAL_UPDATE_ONLY_MESSAGE);
 }
 
 function validateSecret(
@@ -328,69 +342,6 @@ function validateRevision(input: PreflightInput): PreflightCheck {
   return ok("source-revision", "exact-source-addressed-image");
 }
 
-function validateUpdaterRevision(input: PreflightInput): PreflightCheck {
-  if (!updaterEnabled(input.env)) return ok("updater-source-revision", "disabled");
-  const revision = input.env.GIT_SHA;
-  const image = input.env.RAKAZO_UPDATER_IMAGE;
-  const tag = input.env.RAKAZO_UPDATER_IMAGE_TAG;
-  const expectedImage = expectedUpdaterImage(input.env.RAKAZO_IMAGE);
-  if (
-    !revision ||
-    !FULL_GIT_REVISION.test(revision) ||
-    !expectedImage ||
-    image !== expectedImage ||
-    image !== image?.trim() ||
-    image?.includes("@") === true ||
-    tag !== `sha-${revision}`
-  ) {
-    return invalid("updater-source-revision", "image-not-source-addressed-sibling");
-  }
-  return ok("updater-source-revision", "exact-source-addressed-sibling-image");
-}
-
-function validatePreviousDeploymentIdentity(input: PreflightInput): PreflightCheck {
-  const updaterIsEnabled = updaterEnabled(input.env);
-  const values = [
-    input.env.GIT_SHA_PREVIOUS,
-    input.env.RAKAZO_IMAGE_TAG_PREVIOUS,
-    ...(updaterIsEnabled
-      ? [input.env.RAKAZO_UPDATER_IMAGE_PREVIOUS, input.env.RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS]
-      : []),
-  ].map((value) => (value === undefined || value === "" ? undefined : value));
-  if (values.every((value) => value === undefined)) {
-    return ok("previous-deployment-identity", "not-recorded");
-  }
-  if (values.some((value) => value === undefined)) {
-    return invalid("previous-deployment-identity", "incomplete");
-  }
-
-  const revision = input.env.GIT_SHA_PREVIOUS!;
-  if (
-    !FULL_GIT_REVISION.test(revision) ||
-    input.env.RAKAZO_IMAGE_TAG_PREVIOUS !== `sha-${revision}` ||
-    revision === input.env.GIT_SHA
-  ) {
-    return invalid("previous-deployment-identity", "revision-or-application-image-mismatch");
-  }
-  if (
-    updaterIsEnabled &&
-    (input.env.RAKAZO_UPDATER_IMAGE_PREVIOUS !== expectedUpdaterImage(input.env.RAKAZO_IMAGE) ||
-      input.env.RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS !== `sha-${revision}`)
-  ) {
-    return invalid("previous-deployment-identity", "updater-image-mismatch");
-  }
-  return ok("previous-deployment-identity", "coherent-single-level-rollback");
-}
-
-function expectedUpdaterImage(applicationImage: string | undefined): string | undefined {
-  if (!applicationImage?.endsWith("/app")) return undefined;
-  return `${applicationImage.slice(0, -"/app".length)}/updater`;
-}
-
-function updaterEnabled(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env.RAKAZO_UPDATER_TOKEN);
-}
-
 function validateComposePorts(model: ComposeModel): PreflightCheck {
   const services = model.services;
   const required = ["postgres", "api", "worker", "web", "caddy"];
@@ -433,10 +384,9 @@ function validateComposeNetworks(model: ComposeModel): PreflightCheck {
   if (!data?.internal) return invalid("compose-private-networks", "data-network-not-internal");
   const expectedNetworks: Record<string, string[]> = {
     postgres: ["data"],
-    api: ["app", "data", "control"],
+    api: ["app", "data"],
     worker: ["app", "data"],
     web: ["edge", "app"],
-    updater: ["control"],
     caddy: ["edge", "app"],
   };
   for (const [name, expected] of Object.entries(expectedNetworks)) {
@@ -474,12 +424,6 @@ function validateComposeRuntime(input: PreflightInput): PreflightCheck {
   }
   if (input.compose.services.web?.image !== expectedImage) {
     return invalid("compose-runtime-identity", "web-image-drift");
-  }
-  if (updaterEnabled(input.env)) {
-    const expectedUpdater = `${input.env.RAKAZO_UPDATER_IMAGE}:${input.env.RAKAZO_UPDATER_IMAGE_TAG}`;
-    if (input.compose.services.updater?.image !== expectedUpdater) {
-      return invalid("compose-runtime-identity", "enabled-updater-image-drift");
-    }
   }
   const expectedHost = input.env.RAKAZO_HOST;
   if (

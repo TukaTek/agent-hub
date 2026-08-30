@@ -177,8 +177,9 @@ This dumps Postgres (`pg_dump`) and archives `data/` into `backups/<stamp>/`.
 
 `infra/compose/docker-compose.prod.yml` runs the hosted product with Postgres, the API, worker, web app,
 and automatic HTTPS through Caddy. Production preflight accepts the remote E2B, Daytona, and Box
-computer providers; the VM does not expose a Docker supervisor or browser containers. The
-root-equivalent updater sidecar is an explicit opt-in profile.
+computer providers; the VM does not expose a Docker supervisor or browser containers. Pilot updates
+and rollbacks are immutable, manual operator procedures. Production Compose has no automated updater
+or Docker-socket mount.
 
 Before deploying to a new Ubuntu host, create and verify a key-only `deploy` account, then apply the
 idempotent host-hardening baseline. It disables SSH passwords and root login, rate-limits SSH, allows
@@ -208,16 +209,14 @@ container logs, default no-new-privileges, and the kernel NAT path instead of Do
    the key for the selected remote sandbox provider, `CORTEXAI_BACKUP_TARGET`,
    `CORTEXAI_BACKUP_ENCRYPTION_KEY`, `GIT_SHA`, `RAKAZO_IMAGE_TAG`, `RAKAZO_HOST`, and the three
    public origins. `GIT_SHA` is the exact lowercase 40-character checkout revision and
-   `RAKAZO_IMAGE_TAG` is `sha-<GIT_SHA>`. Set `RAKAZO_DEPLOY_DIR` when the checkout is not at the
-   supported Linux default, `/srv/rakazo`. Use distinct random values of at least 32 characters for
+   `RAKAZO_IMAGE_TAG` is `sha-<GIT_SHA>`. Use distinct random values of at least 32 characters for
    every critical credential; `ENCRYPTION_KEY` is 64 lowercase hexadecimal characters.
    Because Compose places `POSTGRES_PASSWORD` into a PostgreSQL URI, production preflight accepts
    only unreserved URI characters (`A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, `-`) and rejects URI
    delimiters or percent escapes. `openssl rand -hex 32` produces a compatible value without
    reducing the 32-character minimum.
-   If you enable the `updater` profile, also set a dedicated `RAKAZO_UPDATER_TOKEN` (at least 32
-   characters) that differs from `BETTER_AUTH_SECRET`, `SANDBOX_SUPERVISOR_TOKEN`, and
-   `SCREEN_PROXY_SECRET`.
+   Do not set updater activation or configuration variables. Production preflight rejects them with
+   `Manual updates only for pilot.`
 3. Keep registration allowlisted while the service is private:
 
 ```env
@@ -236,21 +235,10 @@ E2B_API_KEY=<provider-credential>
 AGENT_RUNTIME=pi
 WAKEUP_DRIVER=graphile
 DATA_DIR=/data
-# Absolute path of this checkout as the Docker daemon sees it. /srv/rakazo is the Linux default;
-# set this explicitly for every other layout. See "The deploy directory must be one path" below.
-RAKAZO_DEPLOY_DIR=/srv/rakazo
 GIT_SHA=<exact-40-character-checkout-revision>
-GIT_SHA_PREVIOUS=
 RAKAZO_IMAGE_TAG=sha-<same-40-character-revision>
-RAKAZO_IMAGE_TAG_PREVIOUS=
 CORTEXAI_BACKUP_TARGET=s3://operator-owned-bucket/tenant-prefix
 CORTEXAI_BACKUP_ENCRYPTION_KEY=<dedicated-backup-encryption-credential>
-# Optional: required only with `--profile updater`.
-# RAKAZO_UPDATER_IMAGE=ghcr.io/elie222/rakazo/updater
-# RAKAZO_UPDATER_IMAGE_TAG=sha-<same-40-character-revision>
-# RAKAZO_UPDATER_IMAGE_PREVIOUS=
-# RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS=
-# RAKAZO_UPDATER_TOKEN=replace-with-32-plus-character-updater-token
 ```
 
 4. Install with Node 24, run the read-only preflight before any build, migration, or container start,
@@ -258,13 +246,9 @@ CORTEXAI_BACKUP_ENCRYPTION_KEY=<dedicated-backup-encryption-credential>
    exact checkout/image pin (including forbidden Git `assume-unchanged` and `skip-worktree` flags),
    host capacity and architecture, globally routable DNS answers, standard-port HTTPS same-origin
    settings, an exact `RAKAZO_HOST` match in rendered web/Caddy configuration, remote provider
-   inputs, backup inputs, secret names/status classes, and publicly bound Caddy ports 80/443. When
-   the updater token enables the opt-in sidecar, preflight also requires its image to use the app
-   image's registry/repository namespace, the exact sibling name ending in `/updater`, and the same
-   full `sha-<GIT_SHA>` tag in both `.env` and the rendered service. If a rollback point is present,
-   preflight also requires its complete full-SHA application identity and, when enabled, updater
-   identity. It never emits secret values and does not call providers, start containers, run
-   migrations, create backups, or modify DNS/firewall state.
+   inputs, backup inputs, secret names/status classes, publicly bound Caddy ports 80/443, and the
+   absence of updater activation/configuration variables. It never emits secret values and does not
+   call providers, start containers, run migrations, create backups, or modify DNS/firewall state.
 
 ```bash
 corepack pnpm install --frozen-lockfile
@@ -298,7 +282,7 @@ The root `.env` is excluded from both Git and the Docker build context. The data
 and Caddy certificates live in named Docker volumes.
 
 The production Compose file pins Postgres and Caddy to multi-architecture manifest digests, and the
-published application/updater builds pin their base-image digests. Refresh those pins deliberately
+published application build pins its base-image digests. Refresh those pins deliberately
 when taking upstream security updates; changing only the visible major tag does not change the
 content while a digest is present.
 
@@ -349,236 +333,150 @@ Local snapshots help with operator mistakes but are not the encrypted off-host t
 validates its declared target and dedicated encryption input, but these scripts do not encrypt or
 upload backup objects. Verify that separate transport before production acceptance.
 
-## Upgrade
+## Manual immutable update and rollback (pilot)
 
-A Compose deployment using published images upgrades by selecting the next full source-addressed
-`sha-<commit>` tag. Its durable identity is one transaction: move the outgoing `GIT_SHA` and
-`RAKAZO_IMAGE_TAG` to `GIT_SHA_PREVIOUS` and `RAKAZO_IMAGE_TAG_PREVIOUS`, then set both current
-values to the incoming commit. When the updater profile is enabled, move its image and tag to
-`RAKAZO_UPDATER_IMAGE_PREVIOUS` and `RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS` and pin the current updater
-to the app image's exact `/updater` sibling at the same `sha-<commit>`. Write the complete `.env`
-through a mode-`0600` temporary file, sync it, rename it over `.env`, and sync the parent directory;
-do not edit these keys one at a time in place. Run preflight again before the pull or recreate:
+Manual updates only for pilot. The operator selects and records exact `sha-<40-character commit>`
+application images; production has no automated update, apply, or rollback path. Run this procedure
+from the production checkout as the deployment operator, with Node 24 and the existing `.env`.
+
+First choose the reviewed target and prove that the running checkout and `.env` describe the exact
+previous rollback point. Keep the previous image in the local Docker cache until the new release is
+accepted, and write the recorded values to the operator change record outside the public checkout.
 
 ```bash
-git fetch --no-tags origin refs/tags/vX.Y.Z
-git checkout --detach <full-commit>
-# Atomically swap the complete current/previous identity in .env.
+cd /srv/rakazo
+RAKAZO_IMAGE="$(sed -n 's/^RAKAZO_IMAGE=//p' .env)"
+: "${RAKAZO_IMAGE:=ghcr.io/elie222/rakazo/app}"
+export RAKAZO_IMAGE
+RAKAZO_HOST="$(sed -n 's/^RAKAZO_HOST=//p' .env)"
+test -n "$RAKAZO_HOST"
+export RAKAZO_HOST
+export TARGET_SHA=<reviewed-lowercase-40-character-commit>
+[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid target revision" >&2; exit 1; }
+TARGET_TAG="sha-${TARGET_SHA}"
+PREVIOUS_SHA="$(git rev-parse HEAD)"
+PREVIOUS_TAG="sha-${PREVIOUS_SHA}"
+test "$(sed -n 's/^GIT_SHA=//p' .env)" = "$PREVIOUS_SHA"
+test "$(sed -n 's/^RAKAZO_IMAGE_TAG=//p' .env)" = "$PREVIOUS_TAG"
+test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+  "${RAKAZO_IMAGE}:${PREVIOUS_TAG}")" = "$PREVIOUS_SHA"
+printf 'previous_revision=%s\nprevious_image=%s:%s\ntarget_revision=%s\ntarget_image=%s:%s\n' \
+  "$PREVIOUS_SHA" "$RAKAZO_IMAGE" "$PREVIOUS_TAG" \
+  "$TARGET_SHA" "$RAKAZO_IMAGE" "$TARGET_TAG"
+```
+
+Before changing the checkout or `.env`, run the current release's fail-closed preflight and take a
+production backup. Copy the resulting snapshot through the operator-owned off-host backup transport
+and verify it there before continuing.
+
+```bash
 corepack pnpm deployment:preflight
-# If the updater is enabled, append `updater` to this pull command.
-docker compose --env-file .env -f infra/compose/docker-compose.prod.yml pull api worker web
+sudo /usr/local/sbin/rakazo-backup
+```
+
+Pull the exact target image directly, then verify its OCI revision label. A moving tag, abbreviated
+SHA, missing label, or mismatched label stops the update.
+
+```bash
+docker pull "${RAKAZO_IMAGE}:${TARGET_TAG}"
+test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+  "${RAKAZO_IMAGE}:${TARGET_TAG}")" = "$TARGET_SHA"
+```
+
+Fetch and detach the exact reviewed source revision. Replace both current identity values together
+through a mode-`0600` temporary file, install its locked Node dependencies, and run that revision's
+preflight before recreating any service.
+
+```bash
+git fetch --no-tags origin "$TARGET_SHA"
+git checkout --detach "$TARGET_SHA"
+update_identity() {
+  local revision="$1" tag="sha-${1}" temporary
+  temporary="$(mktemp .env.XXXXXX)"
+  chmod 0600 "$temporary"
+  awk -v revision="$revision" -v tag="$tag" '
+    BEGIN { sha = 0; image = 0 }
+    /^GIT_SHA=/ { print "GIT_SHA=" revision; sha = 1; next }
+    /^RAKAZO_IMAGE_TAG=/ { print "RAKAZO_IMAGE_TAG=" tag; image = 1; next }
+    { print }
+    END { if (!sha || !image) exit 42 }
+  ' .env > "$temporary" || { rm -f "$temporary"; return 1; }
+  mv "$temporary" .env
+}
+update_identity "$TARGET_SHA"
+corepack pnpm install --frozen-lockfile
+corepack pnpm deployment:preflight
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
   up -d --wait --pull never api worker web
-# If enabled, finish with the updater self-restart documented below.
 ```
 
-A source-built deployment uses the same current/previous transaction and `sha-<commit>` tags,
-then reruns preflight and rebuilds:
+`up --wait` verifies container health and startup. The API runs `prisma migrate deploy` before it
+serves, so a migration failure keeps readiness red. Complete the operator gate by checking service
+state and requiring the public health response to report the exact target revision.
 
 ```bash
-git pull
-# Atomically swap the complete current/previous identity in .env, then:
-corepack pnpm deployment:preflight
-docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
-  up -d --wait --pull never --build api worker web
+docker compose --env-file .env -f infra/compose/docker-compose.prod.yml ps
+HEALTH_REVISION="$(curl --fail --silent "https://${RAKAZO_HOST}/health" | \
+  node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value).revision ?? ""));')"
+test "$HEALTH_REVISION" = "$TARGET_SHA"
 ```
 
-`up --wait` does not report success until the new API is healthy and the worker and web containers
-are running. The API's start command runs `prisma migrate deploy` before it serves, so migration
-failure keeps health red. A failed CLI recreate does not auto-roll back; atomically swap the
-complete previous identity back to current, check out its exact `GIT_SHA`, and run preflight before
-`up -d --wait --pull never`. Never recover by changing only the app tag.
+### Rollback
 
-The updater sidecar prepares its exact sibling image during `/apply`, commits all current and
-previous identity keys atomically, and recreates only API, worker, and web. A successful response
-uses `restart: manual`: the executing sidecar cannot replace itself and still truthfully report or
-recover that run. Finish the transition with
-`docker compose … up -d --wait --pull never updater`, then rerun preflight and verify `/health`
-reports the new full revision. Until that restart, application services are on the new revision but
-the running updater process is intentionally still the old one; the Settings UI reports the owed
-restart instead of claiming the update is complete.
+Rollback is the same manual immutable procedure in reverse. It must use the recorded
+`PREVIOUS_SHA` and already-cached `PREVIOUS_TAG`; do not pull during rollback. Verify the cached OCI
+label, detach the recorded source revision, replace both `.env` identity keys together, reinstall
+the locked dependencies, run preflight, recreate the application services, and verify readiness and
+the exact previous revision.
 
-Sidecar `/apply` and `/rollback` recover a failed recreate by restoring the exact pre-run `.env`
-and redeploying the cached previous application image when possible. Recovery Compose commands use
-the same prior revision, app tag, and enabled updater image identity. If either durable restoration
-or runtime recovery fails, the run reports the possible mixed state and requires operator repair.
+```bash
+[[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous revision" >&2; exit 1; }
+test "$PREVIOUS_TAG" = "sha-${PREVIOUS_SHA}"
+test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+  "${RAKAZO_IMAGE}:${PREVIOUS_TAG}")" = "$PREVIOUS_SHA"
+git checkout --detach "$PREVIOUS_SHA"
+update_identity "$PREVIOUS_SHA"
+corepack pnpm install --frozen-lockfile
+corepack pnpm deployment:preflight
+docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
+  up -d --wait --pull never api worker web
+docker compose --env-file .env -f infra/compose/docker-compose.prod.yml ps
+HEALTH_REVISION="$(curl --fail --silent "https://${RAKAZO_HOST}/health" | \
+  node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value).revision ?? ""));')"
+test "$HEALTH_REVISION" = "$PREVIOUS_SHA"
+```
 
-Source checkouts (not Compose) still upgrade the old way: pull, rebuild with
-`GIT_SHA=$(git rev-parse HEAD)`, run `pnpm --filter @rakazo/db migrate`, then restart API and worker.
-Product contracts stay compatible across cloud and self-hosted.
+Plan for an outage while application containers are recreated and readiness is established. The API
+startup migration is forward-only: an application rollback does not reverse a database migration.
+If the previous application is incompatible with the migrated schema, use the separately documented
+production restore procedure and accept its additional outage and possible loss of data written
+after the snapshot. `rakazo-backup` creates a verified local snapshot; although preflight validates
+the declared target and encryption input, the repository scripts do not encrypt or upload it. A
+verified operator-managed off-host backup remains a live acceptance gate.
 
 ### Published images and tags
 
-`.github/workflows/publish-server-image.yml` publishes to `ghcr.io/<owner>/<repo>/…`, derived from
-`${{ github.repository }}` rather than hardcoded, so a fork's CI fills the fork's own namespace. For
-this repository that is:
+`.github/workflows/publish-server-image.yml` derives `ghcr.io/<owner>/<repo>/app` from
+`${{ github.repository }}` so a fork can publish only to its own namespace. The pilot publication
+matrix contains only the application image. Pull-request validation may still build the development
+updater image, without push authority, but no pilot workflow path can publish it.
 
-| Image | Contents |
-| --- | --- |
-| `ghcr.io/elie222/rakazo/app` | api, worker, web, and sandbox supervisor — one image, multiple commands |
-| `ghcr.io/elie222/rakazo/computer` | Linux desktop used as each bot computer |
-| `ghcr.io/elie222/rakazo/updater` | the updater sidecar, plus the Docker CLI |
+The production application image contains the API, worker, and web commands. Production Compose pins
+it through `RAKAZO_IMAGE_TAG=sha-<full-commit>`. The exact-head workflow sets the OCI
+`org.opencontainers.image.revision` label and the `GIT_SHA` build argument to the same commit.
+Moving `edge`, `latest`, abbreviated SHA, and semver-only tags are not accepted by production
+preflight or this runbook.
 
-`infra/compose/docker-compose.images.yml` is the no-checkout path for those app and computer tags
-plus Postgres. The supervisor runs from the app image on the internal network only (not a separate
-published supervisor image, and no host port). Production Compose (`docker-compose.prod.yml`) can
-also pull the same app tags once `RAKAZO_IMAGE_TAG` is set to a published value.
-
-If you deploy from your own fork, set `RAKAZO_IMAGE` and `RAKAZO_UPDATER_IMAGE` to your namespace —
-your CI cannot publish into someone else's.
-
-| Tag | Published on | Moves? |
+| Tag | Published on | Pilot use |
 | --- | --- | --- |
-| `local` | nothing — built locally by `up --build` | rebuilt in place |
-| `local-<full-commit>` | non-production compatibility builds only | never |
-| `vX.Y.Z`, `vX.Y` | release tags | conventionally no / on patch releases |
-| `latest` | stable `vX.Y.Z` tags only (not prereleases) | yes, to the newest stable release |
-| `sha-<full-commit>` | every push and manual run | source-addressed; used by the updater sidecar |
-| `edge` | pushes to main | yes, to the newest main build |
+| `sha-<full-commit>` | every push and manual run | required immutable application identity |
+| `edge` | pushes to main | not accepted for pilot production |
+| `vX.Y.Z`, `vX.Y` | release tags | discovery only; resolve to the full commit first |
+| `latest` | stable release tags | not accepted for pilot production |
 
-`edge` from everyday main merges is `linux/amd64` only. Release tags (`v*`) and manual
-`workflow_dispatch` publishes are multi-arch (`amd64` + `arm64`). On arm64 hosts, set both
-`RAKAZO_IMAGE_TAG` and `RAKAZO_COMPUTER_IMAGE_TAG` to the same published release tag rather than
-`edge`. Changing only `RAKAZO_IMAGE_TAG` leaves the computer service on amd64-only `edge`. Until a
-stable `vX.Y.Z` has been published, GHCR may only have `edge` and `sha-*` tags; do not pin
-`latest` unless that tag exists in the registry.
-
-The updater resolves the newest stable `vX.Y.Z` source tag but deploys its `sha-<full-commit>` image,
-not `latest` or a moving minor tag. A registry tag is not an OCI digest and GHCR package writers can
-replace it, so the trust boundary remains this repository's publishing credentials. The workflow
-reduces that boundary by using SHA-pinned actions, read-only pull-request jobs, digest-pinned base
-images, SBOM/provenance output, and a GitHub build attestation. Operators who require registry-level
-content addressing can pin `RAKAZO_IMAGE` outside the automatic updater to a verified digest.
-
-Rollback never contacts the registry: it redeploys the previous tag from the local Docker cache,
-so a later tag move cannot change rollback content. Do not prune the previous application image
-until the next update has been accepted. If it is missing, rollback fails closed instead of pulling
-new content under an old tag.
-
-To populate the registry the first time, run the workflow manually (`workflow_dispatch`) or push a
-`v*` tag. A manual run produces `sha-<full-commit>`; only a stable `vX.Y.Z` tag (no prerelease
-suffix) produces `latest`, and any `v*` tag produces semver tags. The updater ignores prereleases
-and refuses the official path until a stable `vX.Y.Z` exists.
-
-### Updater sidecar
-
-Compose production deployments offer an opt-in `updater` profile on a private `control` network.
-Normal deployments do not start it or require its credential. To enable it, set a dedicated
-`RAKAZO_UPDATER_TOKEN` and explicitly start the profile:
-
-```bash
-docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
-  --profile updater up -d --build updater
-```
-
-It exposes `/health`, `/state`, `/plan`, `/apply`, and `/rollback` at `http://updater:7092` with
-`RAKAZO_UPDATER_TOKEN`. Operator CLI upgrades above do not need it; the sidecar is for automated
-apply/rollback over that private HTTP API.
-
-The API cannot update itself — its image has no `.git`, and nothing inside the container would
-restart it — so the work happens in a separate `updater` container that outlives the recreate:
-
-- *Official repository:* resolves the newest stable release and its source commit with
-  `git ls-remote --tags`, fetches and detaches the clean deployment checkout at that exact commit,
-  atomically advances the complete current/previous deployment identity, explicitly pulls the new
-  application images and the enabled updater's exact sibling image, then runs
-  `up -d --wait --pull never` for API, worker, and web. No build runs on the server.
-- *Fork (Advanced):* a fork has no published images, so the sidecar fast-forwards the checkout in
-  `RAKAZO_DEPLOY_DIR`, uses the full `sha-<commit>` identity, prepares the updater image when
-  enabled, and runs `up -d --build`. This builds on the server and takes minutes rather than
-  seconds. Point it only at a fork you control and have reviewed — the sidecar runs that Compose
-  file through a root-equivalent Docker socket.
-
-The durable schema is a single-level rollback journal. Current state is the checkout at `GIT_SHA`
-plus `RAKAZO_IMAGE_TAG`; previous state is the cached source revision in `GIT_SHA_PREVIOUS` plus
-`RAKAZO_IMAGE_TAG_PREVIOUS`. An enabled updater adds its current image/tag pair and corresponding
-`_PREVIOUS` pair. The updater
-accepts an entirely absent previous state for the first transition, but production preflight and
-the sidecar reject partial, abbreviated, cross-revision, or non-sibling state. With the updater
-disabled, no updater pin is required or introduced. Every successful update replaces the one
-previous entry, so A→B→C leaves current C and previous B; rollback swaps them, leaving current B
-and previous C.
-
-Existing tag-only rollback state is not accepted silently. If its previous application tag is
-already `sha-<40 lowercase hex>`, copy that exact suffix to `GIT_SHA_PREVIOUS`; when the updater is
-enabled, also set the previous updater image to the current app image's `/updater` sibling and its
-tag to the same `sha-<commit>`. If the old previous tag is moving, abbreviated, or unknown, clear
-all `_PREVIOUS` identity values together and deliberately discard that rollback point; the next
-successful transition records a complete one. Repair any mismatch in the current checkout,
-`GIT_SHA`, app tag, or enabled updater pin before starting the sidecar or running preflight.
-
-Updates and rollbacks run one at a time. The `.env` replacement is written to a private temporary
-file, file-synced, atomically renamed, and parent-directory-synced. A failed pull leaves running
-services alone; a failed recreate restores the exact previous environment and attempts to redeploy
-the cached previous image. A failed fork build also restores the
-pre-update branch and commit (including when checkout succeeded but merge did not) so a later
-manual `--build` cannot deploy the rejected or unintended revision. Database migrations are not
-reversed. An abrupt stop after source checkout but before the atomic `.env` commit can leave the
-checkout ahead of the still-coherent old identity; no application service has changed, the next
-apply and preflight fail closed, and the operator must check out the current `GIT_SHA` before
-retrying. A crash after the identity commit but before application recreate converges to the new
-identity on ordinary Compose restart. A crash between application recreate and the updater's manual
-self-restart leaves that bounded mixed runtime until the updater is restarted. The sidecar never
-touches Postgres or Caddy and never runs migrations — that ordering belongs to the API start command.
-
-Only `https://` and `ssh://` git remotes are accepted. Merges are fast-forward only. A dirty or
-untracked source tree fails closed before anything runs (the application Dockerfile uses `COPY . .`).
-
-### The deploy directory must be one path
-
-`RAKAZO_DEPLOY_DIR` is bind-mounted into the updater at the same path it is read from
-(`${RAKAZO_DEPLOY_DIR}:${RAKAZO_DEPLOY_DIR}`), and that is load-bearing rather than tidy. Production
-Compose defaults both sides to `/srv/rakazo`; set the variable for any other layout. When the
-updater runs `docker compose -p <project> --file $RAKAZO_DEPLOY_DIR/infra/compose/docker-compose.prod.yml up -d`,
-the Compose CLI *inside* the container expands this file's relative bind mounts — `../../.env`,
-`./Caddyfile.prod` — against that path and hands the results to the daemon. The daemon has to be
-able to resolve the same strings, or it silently creates empty directories where your `.env` and
-Caddyfile should be. Compose makes the effective `-p` value available for interpolation but does
-not automatically put it in a container's environment, so the production file explicitly assigns
-`COMPOSE_PROJECT_NAME` to the updater. A standalone sidecar can instead set
-`RAKAZO_COMPOSE_PROJECT_NAME`; the final fallback is `rakazo-prod`. Without that propagation, a
-stack started with `-p something-else` would be left alone while a second project with a new empty
-Postgres volume came up beside it.
-
-The value therefore has to be the path **the daemon** sees, which is not always the path your shell
-sees:
-
-- **Linux.** The daemon shares the host filesystem, so the checkout path is the answer:
-  `/srv/rakazo` is the default and supported production layout. Set `RAKAZO_DEPLOY_DIR` explicitly
-  when the checkout is elsewhere.
-- **Docker Desktop (Windows/macOS).** The daemon runs in a VM that mounts your drive somewhere else.
-  On Windows, `C:` appears at `/run/desktop/mnt/host/c`, so a checkout at `C:\Users\you\rakazo` is
-  `RAKAZO_DEPLOY_DIR=/run/desktop/mnt/host/c/Users/you/rakazo`. Host Git may use `core.autocrlf=true`; the updater ignores CR-only diffs so that does not block `/apply`. Verify the mount before deploying:
-
-```bash
-docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
-  --profile updater run --rm updater git -C "$RAKAZO_DEPLOY_DIR" log --oneline -1
-```
-
-  That must print your checkout's HEAD. The two tempting wrong answers both fail: a native Windows
-  path is rejected by the daemon (`mount denied: … too many colons`, because the drive letter's
-  colon collides with the bind-mount separator), and `/mnt/c/...` fails *silently* — the container
-  starts, the mount is an empty directory, and the updater simply reports no checkout.
-
-### The updater's privileges
-
-The updater holds the Docker socket, which is root-equivalent on the host. It is scoped as narrowly
-as that allows:
-
-- No `ports`, so nothing is published on the host.
-- Only on the dedicated `control` network shared with the API. Caddy is not attached, so the
-  reverse proxy has no route to the updater.
-- Every route except `/health` requires the shared bearer token, compared in constant time.
-- The process environment carries only updater settings (`RAKAZO_UPDATER_TOKEN`, deploy path,
-  image name, project name). Application secrets stay in the bind-mounted `.env` that Compose
-  reads for interpolation; they are not loaded into this container.
-- The Docker CLI lives only in the updater image. The api, worker, and web containers keep
-  `cap_drop: ALL` and no socket.
-
-Enabling the `updater` profile requires `RAKAZO_UPDATER_TOKEN` to be a dedicated random value (at
-least 32 characters in production). It must differ from `BETTER_AUTH_SECRET`,
-`SANDBOX_SUPERVISOR_TOKEN`, and `SCREEN_PROXY_SECRET`. Leave the profile disabled if you would
-rather not grant the capability.
+A registry tag can be replaced by a package writer, so operators with a stronger registry trust
+requirement should additionally record and verify the pulled OCI digest. That does not replace the
+required exact commit tag, revision label, checkout identity, preflight, or health revision gates.
 
 ## What “Rakazo Cloud” still needs
 

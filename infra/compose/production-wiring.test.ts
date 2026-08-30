@@ -25,17 +25,23 @@ it("exposes daemon-free preflight and inventory commands", () => {
   );
 });
 
-it("documents every required production input without real values", () => {
+it("documents required production inputs without legacy updater state", () => {
   const example = trackedFile(".env.example");
   for (const name of [
     "CORTEXAI_DEPLOYMENT_ID",
     "CORTEXAI_BACKUP_TARGET",
     "CORTEXAI_BACKUP_ENCRYPTION_KEY",
-    "GIT_SHA_PREVIOUS",
-    "RAKAZO_UPDATER_IMAGE_PREVIOUS",
-    "RAKAZO_UPDATER_IMAGE_TAG_PREVIOUS",
   ]) {
     expect(example).toMatch(new RegExp(`^${name}=$`, "m"));
+  }
+  for (const name of [
+    "GIT_SHA_PREVIOUS",
+    "RAKAZO_IMAGE_TAG_PREVIOUS",
+    "RAKAZO_DEPLOY_DIR",
+    "RAKAZO_COMPOSE_FILE",
+    "RAKAZO_UPDATER_",
+  ]) {
+    expect(example).not.toContain(name);
   }
 });
 

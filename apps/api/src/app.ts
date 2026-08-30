@@ -279,6 +279,7 @@ export async function createApp(
       updaterUrl: env.updaterUrl,
       updaterToken: env.updaterToken,
       imageTag: env.imageTag,
+      manualUpdatesOnly: env.manualUpdatesOnly,
     },
   });
   const rpc = new RPCHandler(router, {

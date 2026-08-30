@@ -46,12 +46,14 @@ export interface AppEnv {
   mcpStdioAllowedCommands: string[];
   port: number;
   gitSha: string | undefined;
-  /** Private Compose control-network URL for the opt-in updater sidecar. */
+  /** Development-only updater sidecar URL; pilot production preflight rejects this setting. */
   updaterUrl: string | undefined;
-  /** Bearer shared with the updater; never sent to the browser. */
+  /** Development-only updater bearer; never sent to the browser. */
   updaterToken: string | undefined;
   /** Current application image tag; used for compose manual-upgrade command selection. */
   imageTag: string | undefined;
+  /** Production pilot invariant: host operators perform every update and rollback. */
+  manualUpdatesOnly: boolean;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
@@ -106,6 +108,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     updaterUrl,
     updaterToken,
     imageTag: optional(source.RAKAZO_IMAGE_TAG),
+    manualUpdatesOnly: source.NODE_ENV === "production",
   };
 }
 

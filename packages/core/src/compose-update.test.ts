@@ -174,7 +174,7 @@ describe("strategy and mode selection", () => {
   it("reports unavailable when self-update is switched off, whatever else is present", () => {
     const off = resolveExecutionMode({ hasUpdater: true, disabled: true });
     expect(off.mode).toBe("unavailable");
-    expect(off.reason).toMatch(/switched off/);
+    expect(off.reason).toBe("Manual updates only for pilot.");
   });
 
   it("detects sidecar, compose-without-sidecar, and source install kinds", () => {

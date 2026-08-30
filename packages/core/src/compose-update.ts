@@ -17,7 +17,7 @@ export const PUBLISHED_IMAGE_REPO = "elie222/rakazo";
 
 /** The published server image. One image runs api, worker, and web. */
 export const OFFICIAL_SERVER_IMAGE = `ghcr.io/${PUBLISHED_IMAGE_REPO}/app`;
-/** The updater sidecar's image, published alongside the server image but tagged independently. */
+/** Development-only updater image reference; the manual-only pilot workflow does not publish it. */
 export const OFFICIAL_UPDATER_IMAGE = `ghcr.io/${PUBLISHED_IMAGE_REPO}/updater`;
 
 /**
@@ -281,7 +281,7 @@ export function resolveExecutionMode(input: {
   disabled?: boolean;
 }): ExecutionModeDecision {
   if (input.disabled === true) {
-    return { mode: "unavailable", reason: "Self-update is switched off for this deployment." };
+    return { mode: "unavailable", reason: "Manual updates only for pilot." };
   }
   if (input.hasUpdater === true) return { mode: "sidecar", reason: null };
   if (input.hasCheckout === true) return { mode: "checkout", reason: null };
@@ -308,9 +308,9 @@ export interface InstallKindDecision {
 }
 
 /**
- * `updaterUrlConfigured` means the API was given `RAKAZO_UPDATER_URL` (Compose prod always sets
- * this). Reachability requires both URL and token and a live sidecar. A source checkout is only
- * claimed when there is no Compose updater wiring and `.git` is present on disk.
+ * `updaterUrlConfigured` means a non-pilot environment gave the API `RAKAZO_UPDATER_URL`.
+ * Reachability requires both URL and token and a live sidecar. A source checkout is only claimed
+ * when there is no Compose updater wiring and `.git` is present on disk.
  */
 export function resolveInstallKind(input: {
   updaterUrlConfigured?: boolean;
@@ -327,7 +327,7 @@ export function resolveInstallKind(input: {
             ? "source"
             : "compose",
       mode: "unavailable",
-      reason: "Self-update is switched off for this deployment.",
+      reason: "Manual updates only for pilot.",
     };
   }
   if (input.updaterReachable === true) {

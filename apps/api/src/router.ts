@@ -321,6 +321,7 @@ export interface RouterDeps {
     updaterUrl?: string;
     updaterToken?: string;
     imageTag?: string;
+    manualUpdatesOnly?: boolean;
   };
 }
 
@@ -3121,6 +3122,7 @@ function updaterConfig(deps: RouterDeps): UpdaterProxyConfig {
     token: deps.env.updaterToken ?? null,
     gitSha: deps.env.gitSha,
     imageTag: deps.env.imageTag ?? null,
+    disabled: deps.env.manualUpdatesOnly === true,
   };
 }
 

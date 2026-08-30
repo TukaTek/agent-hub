@@ -53,8 +53,6 @@ it("collects deterministic read-only host, DNS, Git, and Compose facts", async (
         "/srv/rakazo/.env",
         "-f",
         "/srv/rakazo/infra/compose/docker-compose.prod.yml",
-        "--profile",
-        "updater",
         "config",
         "--format",
         "json",

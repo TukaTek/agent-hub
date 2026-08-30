@@ -117,6 +117,7 @@ describe("loadEnv", () => {
     expect(env.sandboxSupervisorToken).toBeUndefined();
     expect(env.screenProxySecret).toBe("prod-screen-proxy-secret-with-enough-length");
     expect(env.apiHost).toBe("0.0.0.0");
+    expect(env.manualUpdatesOnly).toBe(true);
   });
 
   it("falls back to none in production when Docker has no supervisor token", () => {
@@ -164,5 +165,6 @@ describe("loadEnv", () => {
     });
     expect(env.updaterUrl).toBe("http://updater:7092");
     expect(env.updaterToken).toBe("fake-review-updater-token-000000000000");
+    expect(env.manualUpdatesOnly).toBe(false);
   });
 });

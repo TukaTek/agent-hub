@@ -22,6 +22,9 @@ const PRODUCT_VERSION = "0.1.0";
 const STATE_TIMEOUT_MS = 15_000;
 const PLAN_TIMEOUT_MS = 180_000;
 const APPLY_TIMEOUT_MS = 2_100_000;
+const MANUAL_UPDATE_ONLY_MESSAGE = "Manual updates only for pilot.";
+const PILOT_MANUAL_UPDATE_INSTRUCTION =
+  "Follow docs/self-host.md#manual-immutable-update-and-rollback-pilot from the production host.";
 
 export interface UpdaterProxyConfig {
   url: string | null;
@@ -90,7 +93,7 @@ export async function readServerUpdateStatus(
   const checkoutRoot = config.checkoutRoot ?? process.cwd();
   const hasCheckout = await hasGitCheckout(checkoutRoot);
   const urlConfigured = Boolean(config.url?.trim());
-  const reachable = await probeSidecar(config, fetchImpl);
+  const reachable = config.disabled === true ? false : await probeSidecar(config, fetchImpl);
   const install = resolveInstallKind({
     updaterUrlConfigured: urlConfigured,
     updaterReachable: reachable,
@@ -103,7 +106,10 @@ export async function readServerUpdateStatus(
     supported: install.kind === "sidecar",
     unsupportedReason: install.kind === "sidecar" ? null : install.reason,
     installKind: install.kind,
-    manualCommands: [...manualUpgradeCommands(install.kind, { imageTag: imageTagHint })],
+    manualCommands:
+      config.disabled === true
+        ? [PILOT_MANUAL_UPDATE_INSTRUCTION]
+        : [...manualUpgradeCommands(install.kind, { imageTag: imageTagHint })],
     mode: install.mode,
     strategy: null,
     strategyNote: null,
@@ -278,7 +284,7 @@ export async function applyServerUpdate(
  */
 async function requireSidecar(config: UpdaterProxyConfig): Promise<void> {
   if (config.disabled === true) {
-    throw new UpdaterProxyError("Self-update is switched off for this deployment.");
+    throw new UpdaterProxyError(MANUAL_UPDATE_ONLY_MESSAGE);
   }
   if (!isUpdaterConfigured(config)) {
     throw new UpdaterProxyError(
