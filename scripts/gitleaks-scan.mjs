@@ -19,8 +19,14 @@ export async function runGitleaksDirectory(target, options = {}) {
 
   const args = ["dir", `--config=${configPath}`, "--no-banner", "--redact"];
   if (options.exitCode !== undefined) args.push(`--exit-code=${options.exitCode}`);
-  args.push(target);
-  const result = spawnSync("gitleaks", args, { encoding: "utf8" });
+  if (options.reportPath !== undefined) {
+    if (typeof options.reportPath !== "string" || options.reportPath.length === 0) {
+      throw new Error("Gitleaks JSON report path must be a non-empty string");
+    }
+    args.push("--report-format=json", `--report-path=${path.resolve(options.reportPath)}`);
+  }
+  args.push(".");
+  const result = spawnSync("gitleaks", args, { cwd: resolvedTarget, encoding: "utf8" });
   if (result.error) throw result.error;
   return result;
 }

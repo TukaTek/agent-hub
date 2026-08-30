@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { minimatch } from "minimatch";
 import { parse as parseToml } from "smol-toml";
 import { parseDocument } from "yaml";
@@ -11,6 +12,25 @@ export const GITLEAKS_CANARY_PATH = "scripts/fixtures/gitleaks-canary.txt";
 
 const CANARY_REGEX = "CAAH30_GITLEAKS_CANARY_[A-Z0-9]{32}";
 const CANARY_ALLOWLIST_PATH = "^scripts/fixtures/gitleaks-canary\\.txt$";
+const GITLEAKS_POLICY = {
+  title: "Rakazo secret scanning policy",
+  extend: { useDefault: true },
+  rules: [
+    {
+      id: CANARY_RULE_ID,
+      description: "Repository-owned canary proving the Gitleaks gate executes",
+      regex: CANARY_REGEX,
+      keywords: ["CAAH30_GITLEAKS_CANARY_"],
+    },
+  ],
+  allowlists: [
+    {
+      description: "Ignore only the inert committed canary at its canonical path",
+      condition: "OR",
+      paths: [CANARY_ALLOWLIST_PATH],
+    },
+  ],
+};
 const REMOTE_ACTION = /^[^/@\s]+\/[^/@\s]+(?:\/[^@\s]+)*@[0-9a-fA-F]{40}$/;
 const CODEOWNER_IDENTITY = /^@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\/[A-Za-z0-9_.-]+)?$/;
 
@@ -234,51 +254,12 @@ export function assertGitleaksPolicy(source) {
       `Invalid .gitleaks.toml: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (config.extend?.useDefault !== true) {
-    throw new Error("Gitleaks policy must extend the default rules");
-  }
-  assertNoNestedGitleaksAllowlists(config);
-  if (!Array.isArray(config.rules)) throw new Error("Gitleaks policy must define rules");
-  const canaryRules = config.rules.filter((rule) => rule?.id === CANARY_RULE_ID);
-  if (canaryRules.length !== 1 || canaryRules[0]?.regex !== CANARY_REGEX) {
-    throw new Error(`Gitleaks policy must define exactly one ${CANARY_RULE_ID} rule`);
-  }
-
-  if (!Array.isArray(config.allowlists) || config.allowlists.length !== 1) {
-    throw new Error("Gitleaks policy must contain exactly one narrow canary allowlist");
-  }
-  const [allowlist] = config.allowlists;
-  const allowedKeys = new Set(["condition", "description", "paths"]);
-  if (Object.keys(allowlist).some((key) => !allowedKeys.has(key))) {
-    throw new Error("Gitleaks canary allowlist contains a broad or unsupported selector");
-  }
-  if (
-    allowlist.condition !== "OR" ||
-    !Array.isArray(allowlist.paths) ||
-    allowlist.paths.length !== 1 ||
-    allowlist.paths[0] !== CANARY_ALLOWLIST_PATH
-  ) {
-    throw new Error("Gitleaks canary allowlist must contain only the exact canary path");
+  if (!isDeepStrictEqual(config, GITLEAKS_POLICY)) {
+    throw new Error(
+      "Gitleaks policy must match the exact approved configuration: default extension, one canary rule, and one narrow allowlist",
+    );
   }
   return config;
-}
-
-function assertNoNestedGitleaksAllowlists(config) {
-  function visit(value, location) {
-    if (!value || typeof value !== "object") return;
-    if (Array.isArray(value)) {
-      for (const [index, child] of value.entries()) visit(child, `${location}[${index}]`);
-      return;
-    }
-    for (const [key, child] of Object.entries(value)) {
-      if ((key === "allowlist" || key === "allowlists") && location !== "$") {
-        throw new Error(`Gitleaks policy contains an unsupported nested allowlist at ${location}`);
-      }
-      if (location === "$" && key === "allowlists") continue;
-      visit(child, `${location}.${key}`);
-    }
-  }
-  visit(config, "$");
 }
 
 export async function assertRepositoryPolicy(root) {

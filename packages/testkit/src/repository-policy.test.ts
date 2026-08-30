@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { assertGitleaksCanaryReport } from "../../../scripts/gitleaks-canary.mjs";
 import {
   assertDependabotPolicy,
   assertGitleaksPolicy,
@@ -151,6 +152,26 @@ updates:
 });
 
 describe("Gitleaks policy", () => {
+  it("accepts the exact policy through semantic TOML formatting variants", () => {
+    expect(() =>
+      assertGitleaksPolicy(`
+title='Rakazo secret scanning policy'
+extend = { useDefault=true }
+
+[[ rules ]]
+keywords=["CAAH30_GITLEAKS_CANARY_"]
+regex='CAAH30_GITLEAKS_CANARY_[A-Z0-9]{32}'
+description='Repository-owned canary proving the Gitleaks gate executes'
+id='${CANARY_RULE_ID}'
+
+[[ allowlists ]]
+paths=['''^scripts/fixtures/gitleaks-canary\\.txt$''']
+condition='OR'
+description='Ignore only the inert committed canary at its canonical path'
+`),
+    ).not.toThrow();
+  });
+
   it("keeps one exact canary allowlist and a canary rule that matches the fixture", async () => {
     const configSource = await readFile(path.join(root, ".gitleaks.toml"), "utf8");
     const canary = (await readFile(path.join(root, GITLEAKS_CANARY_PATH), "utf8")).trim();
@@ -187,6 +208,113 @@ condition = "OR"
 paths = ['''^scripts/fixtures/gitleaks-canary\\.txt$''']
 `),
     ).toThrow(/allowlist/i);
+  });
+
+  it.each([
+    [
+      "an external extension path",
+      (source: string) =>
+        source.replace("useDefault = true", 'useDefault = true\npath = "/tmp/attacker.toml"'),
+    ],
+    [
+      "dotted external extension syntax",
+      (source: string) =>
+        source.replace(
+          "[extend]\nuseDefault = true",
+          'extend.useDefault=true\nextend.path="/tmp/attacker.toml"',
+        ),
+    ],
+    [
+      "disabled default rules",
+      (source: string) =>
+        source.replace(
+          "useDefault = true",
+          'useDefault=true\ndisabledRules = [\n  "generic-api-key",\n]',
+        ),
+    ],
+    [
+      "disabled default rules without spaces",
+      (source: string) =>
+        source.replace("useDefault = true", 'useDefault=true\ndisabledRules=["generic-api-key"]'),
+    ],
+    [
+      "useDefault=false",
+      (source: string) => source.replace("useDefault = true", "useDefault=false"),
+    ],
+    [
+      "an extra rule",
+      (source: string) => `${source}\n[[rules]]\nid = "attacker"\nregex = '''NEVER_MATCH'''\n`,
+    ],
+    [
+      "an extra rule using spaced table syntax",
+      (source: string) => `${source}\n[[ rules ]]\nid="attacker"\nregex='NEVER_MATCH'\n`,
+    ],
+    [
+      "an unexpected top-level section",
+      (source: string) => `${source}\n[attacker]\nenabled = true\n`,
+    ],
+    [
+      "an unexpected rule key",
+      (source: string) =>
+        source.replace(
+          'keywords = ["CAAH30_GITLEAKS_CANARY_"]',
+          'keywords = ["CAAH30_GITLEAKS_CANARY_"]\nentropy = 0',
+        ),
+    ],
+    [
+      "a singular global allowlist",
+      (source: string) => `${source}\n[allowlist]\npaths = ['''.*''']\n`,
+    ],
+    [
+      "a nested plural rule allowlist",
+      (source: string) =>
+        source.replace(
+          "[[allowlists]]",
+          "[[rules.allowlists]]\nregexes = ['''.*''']\n\n[[allowlists]]",
+        ),
+    ],
+  ])("rejects unsupported customization: %s", async (_name, mutate) => {
+    const configSource = await readFile(path.join(root, ".gitleaks.toml"), "utf8");
+
+    expect(() => assertGitleaksPolicy(mutate(configSource))).toThrow(/Gitleaks policy/i);
+  });
+});
+
+describe("Gitleaks canary report", () => {
+  const expectedPath = path.join(root, "copied-canary", "leak.txt");
+  const finding = (ruleId = CANARY_RULE_ID, file = expectedPath) => ({
+    RuleID: ruleId,
+    File: file,
+  });
+
+  it("requires exactly the expected canary rule and copied path", () => {
+    expect(assertGitleaksCanaryReport(JSON.stringify([finding()]), [expectedPath])).toMatchObject([
+      finding(),
+    ]);
+  });
+
+  it("rejects a different rule at the copied canary path", () => {
+    expect(() =>
+      assertGitleaksCanaryReport(JSON.stringify([finding("generic-api-key")]), [expectedPath]),
+    ).toThrow(/rule/i);
+  });
+
+  it("rejects the canary rule at a different path", () => {
+    expect(() =>
+      assertGitleaksCanaryReport(
+        JSON.stringify([finding(CANARY_RULE_ID, path.join(root, "other", "leak.txt"))]),
+        [expectedPath],
+      ),
+    ).toThrow(/path/i);
+  });
+
+  it("rejects unexpected additional findings", () => {
+    expect(() =>
+      assertGitleaksCanaryReport(
+        JSON.stringify([finding(), finding("generic-api-key", path.join(root, "other.txt"))]),
+        [expectedPath],
+      ),
+    ).toThrow(/finding/i);
   });
 });
 
