@@ -21,7 +21,7 @@ concurrency:
 jobs:
   visual-web:
     name: Daily web screenshots
-    uses: TukaTek/agent-hub/.github/workflows/playwright.yml@75241eb5af13984baf3ff68835d1bae220d7c2f5 # exact prior CAAH-30 head
+    uses: ./.github/workflows/playwright.yml
     with:
       publish_report: true
     secrets:

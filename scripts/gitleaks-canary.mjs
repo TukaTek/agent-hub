@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +68,26 @@ async function assertReportedCanaries(scanRoot, reportPath, expectedPaths) {
   return assertGitleaksCanaryReport(await readFile(reportPath, "utf8"), expectedPaths);
 }
 
+async function assertDefaultRuleAtCanonicalPath(scanRoot, reportPath) {
+  const detected = await runGitleaksDirectory(scanRoot, { exitCode: 73, reportPath });
+  if (detected.status !== 73) {
+    throw new Error(
+      `Gitleaks did not detect the runtime default-rule probe: ${detected.stdout}${detected.stderr}`,
+    );
+  }
+  const findings = JSON.parse(await readFile(reportPath, "utf8"));
+  if (
+    !Array.isArray(findings) ||
+    findings.length !== 1 ||
+    findings[0]?.RuleID !== "github-pat" ||
+    path.normalize(findings[0]?.File) !== path.normalize(GITLEAKS_CANARY_PATH)
+  ) {
+    throw new Error(
+      `Gitleaks must report only the exact github-pat rule at ${GITLEAKS_CANARY_PATH}`,
+    );
+  }
+}
+
 export async function runGitleaksCanary() {
   const version = runGitleaks(["version"]);
   if (version.status !== 0) {
@@ -103,6 +124,17 @@ export async function runGitleaksCanary() {
       nearMisses,
     );
 
+    const defaultRuleRoot = path.join(fixtureDirectory, "default-rule-root");
+    const canonicalProbe = path.join(defaultRuleRoot, GITLEAKS_CANARY_PATH);
+    await mkdir(path.dirname(canonicalProbe), { recursive: true });
+    const inertCanary = await readFile(path.join(root, GITLEAKS_CANARY_PATH), "utf8");
+    const runtimeOnlyFakePat = `ghp_${randomBytes(18).toString("hex")}`;
+    await writeFile(canonicalProbe, `${inertCanary}${runtimeOnlyFakePat}\n`);
+    await assertDefaultRuleAtCanonicalPath(
+      defaultRuleRoot,
+      path.join(fixtureDirectory, "default-rule.json"),
+    );
+
     let missingRejected = false;
     try {
       await runGitleaksDirectory(path.join(fixtureDirectory, "missing"));
@@ -117,7 +149,7 @@ export async function runGitleaksCanary() {
   }
 
   console.log(
-    `Gitleaks canary found exact rule ${CANARY_RULE_ID} at leak.txt; 4 repository-root near misses detected; nonexistent targets fail closed`,
+    `Gitleaks canary found exact rule ${CANARY_RULE_ID} at leak.txt; 4 repository-root near misses detected; exact github-pat default rule detected at the canonical path; nonexistent targets fail closed`,
   );
 }
 

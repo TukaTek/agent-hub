@@ -11,5 +11,8 @@ keywords = ["CAAH30_GITLEAKS_CANARY_"]
 
 [[allowlists]]
 description = "Ignore only the inert committed canary at its canonical path"
-condition = "OR"
+targetRules = ["rakazo-gitleaks-canary"]
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^CAAH30_GITLEAKS_CANARY_0123456789ABCDEF0123456789ABCDE[F]$''']
 paths = ['''^scripts/fixtures/gitleaks-canary\.txt$''']

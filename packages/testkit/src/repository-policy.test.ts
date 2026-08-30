@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { assertGitleaksCanaryReport } from "../../../scripts/gitleaks-canary.mjs";
 import {
+  assertCandidateCheckoutPolicy,
   assertDependabotPolicy,
   assertGitleaksPolicy,
   assertPinnedWorkflowSource,
@@ -17,6 +19,7 @@ import {
 const root = path.resolve(import.meta.dirname, "../../..");
 const sha = "0123456789abcdef0123456789abcdef01234567";
 const githubExpression = (expression: string) => ["$", `{{ ${expression} }}`].join("");
+const exactCandidateRef = githubExpression("github.event.pull_request.head.sha || github.sha");
 
 describe("GitHub Actions pin policy", () => {
   it("accepts quoted and inline exact-SHA actions and reusable workflows", () => {
@@ -36,8 +39,70 @@ jobs:
   });
 
   it.each([
+    ["plain syntax", `jobs:\n  reusable:\n    uses: ./.github/workflows/playwright.yml\n`],
+    [
+      "an escaped uses key",
+      `jobs:\n  reusable:\n    "us\\u0065s": ./.github/workflows/playwright.yml\n`,
+    ],
+    [
+      "an explicit uses key",
+      `jobs:\n  reusable:\n    ? uses\n    : ./.github/workflows/playwright.yml\n`,
+    ],
+    [
+      "an aliased uses value",
+      `jobs:\n  first:\n    uses: &workflow ./.github/workflows/playwright.yml\n  second:\n    uses: *workflow\n`,
+    ],
+  ])("accepts a canonical job-level local reusable workflow with %s", (_name, workflow) => {
+    expect(() => assertPinnedWorkflowSource(workflow, "local-reusable.yml")).not.toThrow();
+  });
+
+  it.each([
+    ["plain syntax", `uses: ./.github/workflows/playwright.yml`],
+    ["an escaped uses key", `"us\\u0065s": ./.github/workflows/playwright.yml`],
+    ["an explicit uses key", `? uses\n        : ./.github/workflows/playwright.yml`],
+    [
+      "an aliased uses value",
+      `uses: &workflow ./.github/workflows/playwright.yml\n      - uses: *workflow`,
+    ],
+  ])("rejects a workflow-looking step-level local action with %s", (_name, usesEntry) => {
+    const workflow = `jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - ${usesEntry}\n`;
+
+    expect(() => assertPinnedWorkflowSource(workflow, "local-step.yml")).toThrow(/local|step/i);
+  });
+
+  it.each([
     ["a local action", "./.github/actions/bridge"],
-    ["a local reusable workflow", "./.github/workflows/playwright.yml"],
+    ["an absolute path", "/.github/workflows/playwright.yml"],
+    ["traversal", "./.github/workflows/../playwright.yml"],
+    ["an expression", githubExpression("inputs.action")],
+    ["a SHA-looking local action", `./.github/actions/${sha}`],
+  ])("rejects step-level %s", (_name, action) => {
+    const workflow = `jobs: { test: { runs-on: ubuntu-latest, steps: [{ uses: ${JSON.stringify(action)} }] } }`;
+
+    expect(() => assertPinnedWorkflowSource(workflow, "untrusted-step.yml")).toThrow();
+  });
+
+  it("enforces a bounded canonical local reusable workflow filename", () => {
+    const bounded = `./.github/workflows/${"a".repeat(64)}.yml`;
+    const tooLong = `./.github/workflows/${"a".repeat(65)}.yml`;
+    const workflow = (uses: string) => `jobs: { call: { uses: ${JSON.stringify(uses)} } }`;
+
+    expect(() => assertPinnedWorkflowSource(workflow(bounded), "bounded.yml")).not.toThrow();
+    for (const invalid of [
+      tooLong,
+      "./.github/workflows/playwright.yaml",
+      "./.github/workflows/playwright..backup.yml",
+      "./.github/workflows/playwright.yml?ref=main",
+      "./.github/workflows/playwright.yml#fragment",
+    ]) {
+      expect(() => assertPinnedWorkflowSource(workflow(invalid), "unbounded.yml")).toThrow(
+        /bounded-name/i,
+      );
+    }
+  });
+
+  it.each([
+    ["a local action", "./.github/actions/bridge"],
     ["a local action with a SHA-looking name", `./.github/actions/${sha}`],
     [
       "a local reusable workflow with a SHA-looking suffix",
@@ -47,10 +112,16 @@ jobs:
     ["a bare relative path", ".github/actions/bridge"],
     ["parent traversal", "../outside/action"],
     ["nested traversal", "./.github/actions/../bridge"],
+    ["workflow traversal", "./.github/workflows/../playwright.yml"],
+    ["a percent-encoded separator", "./.github%2Fworkflows/playwright.yml"],
+    ["a backslash separator", ".\\.github\\workflows\\playwright.yml"],
+    ["an extra suffix", "./.github/workflows/playwright.yml.backup"],
+    ["an extra ref suffix", `./.github/workflows/playwright.yml@${sha}`],
+    ["a nested workflow path", "./.github/workflows/nested/playwright.yml"],
     ["an expression", githubExpression("inputs.action")],
     ["an expression-like ref", `owner/action@${githubExpression("inputs.ref")}`],
   ])("rejects %s", (_name, action) => {
-    const workflow = `jobs: { test: { uses: "${action}" } }`;
+    const workflow = `jobs: { test: { uses: ${JSON.stringify(action)} } }`;
 
     expect(() => assertPinnedWorkflowSource(workflow, "untrusted.yml")).toThrow(
       /exact 40-hex commit SHA/i,
@@ -118,6 +189,85 @@ jobs:
     expect(() =>
       assertPinnedWorkflowSource(`jobs: { test: { uses: "./../outside/action" } }`, "local.yml"),
     ).toThrow(/exact 40-hex commit SHA/i);
+  });
+
+  it("uses the candidate commit's local Playwright workflow from every repository caller", async () => {
+    const ci = parseYaml(await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8"));
+    const nightly = parseYaml(
+      await readFile(path.join(root, ".github/workflows/nightly-verification.yml"), "utf8"),
+    );
+
+    expect(ci.jobs["test-e2e"].uses).toBe("./.github/workflows/playwright.yml");
+    expect(nightly.jobs["visual-web"].uses).toBe("./.github/workflows/playwright.yml");
+  });
+});
+
+describe("exact candidate checkout policy", () => {
+  it("checks out the exact candidate head in every functional validation job", async () => {
+    const matrix = {
+      "ci.yml": ["security", "lint", "check", "build", "test", "test-integration"],
+      "playwright.yml": ["playwright"],
+    };
+
+    for (const [filename, jobNames] of Object.entries(matrix)) {
+      const workflow = parseYaml(
+        await readFile(path.join(root, ".github/workflows", filename), "utf8"),
+      );
+      for (const jobName of jobNames) {
+        const checkout = workflow.jobs[jobName].steps.find((step: Record<string, unknown>) =>
+          String(step.uses ?? "").startsWith("actions/checkout@"),
+        );
+        expect(checkout?.with?.ref, `${filename}:${jobName}`).toBe(exactCandidateRef);
+      }
+    }
+  });
+
+  it("keeps full history on the exact-head security checkout", async () => {
+    const workflow = parseYaml(await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8"));
+    const checkout = workflow.jobs.security.steps.find((step: Record<string, unknown>) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+
+    expect(checkout?.with).toMatchObject({
+      "fetch-depth": 0,
+      ref: exactCandidateRef,
+    });
+  });
+
+  it("keeps the workflow_run publisher on the trusted default branch", async () => {
+    const workflow = parseYaml(
+      await readFile(path.join(root, ".github/workflows/publish-playwright-report.yml"), "utf8"),
+    );
+    const checkout = workflow.jobs.publish.steps.find((step: Record<string, unknown>) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+
+    expect(checkout?.with?.ref).toBe(githubExpression("github.event.repository.default_branch"));
+  });
+
+  it.each([
+    [
+      "a missing ref",
+      `jobs:\n  candidate:\n    steps:\n      - uses: actions/checkout@${sha}\n        with:\n          fetch-depth: 0\n`,
+      /exact candidate head/i,
+    ],
+    [
+      "a synthetic merge ref",
+      `jobs:\n  candidate:\n    steps:\n      - uses: actions/checkout@${sha}\n        with:\n          fetch-depth: 0\n          ref: refs/pull/123/merge\n`,
+      /synthetic merge/i,
+    ],
+    [
+      "shallow history",
+      `jobs:\n  candidate:\n    steps:\n      - uses: actions/checkout@${sha}\n        with:\n          fetch-depth: 1\n          ref: ${exactCandidateRef}\n`,
+      /full history/i,
+    ],
+  ])("rejects candidate validation with %s", (_name, workflow, expectedError) => {
+    expect(() =>
+      assertCandidateCheckoutPolicy(workflow, "candidate.yml", {
+        candidateJobs: ["candidate"],
+        historyJobs: ["candidate"],
+      }),
+    ).toThrow(expectedError);
   });
 });
 
@@ -195,8 +345,11 @@ description='Repository-owned canary proving the Gitleaks gate executes'
 id='${CANARY_RULE_ID}'
 
 [[ allowlists ]]
+targetRules=['${CANARY_RULE_ID}']
 paths=['''^scripts/fixtures/gitleaks-canary\\.txt$''']
-condition='OR'
+regexTarget='secret'
+regexes=['''^CAAH30_GITLEAKS_CANARY_0123456789ABCDEF0123456789ABCDE[F]$''']
+condition='AND'
 description='Ignore only the inert committed canary at its canonical path'
 `),
     ).not.toThrow();
@@ -210,6 +363,16 @@ description='Ignore only the inert committed canary at its canonical path'
 
     expect(rule).toBeDefined();
     expect(new RegExp(rule!.regex).test(canary)).toBe(true);
+    expect(config.allowlists).toEqual([
+      {
+        condition: "AND",
+        description: "Ignore only the inert committed canary at its canonical path",
+        paths: ["^scripts/fixtures/gitleaks-canary\\.txt$"],
+        regexes: ["^CAAH30_GITLEAKS_CANARY_0123456789ABCDEF0123456789ABCDE[F]$"],
+        regexTarget: "secret",
+        targetRules: [CANARY_RULE_ID],
+      },
+    ]);
   });
 
   it("rejects broad or extra allowlists", () => {

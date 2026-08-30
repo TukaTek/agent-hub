@@ -11,6 +11,7 @@ export const CANARY_RULE_ID = "rakazo-gitleaks-canary";
 export const GITLEAKS_CANARY_PATH = "scripts/fixtures/gitleaks-canary.txt";
 
 const CANARY_REGEX = "CAAH30_GITLEAKS_CANARY_[A-Z0-9]{32}";
+const CANARY_VALUE_REGEX = "^CAAH30_GITLEAKS_CANARY_0123456789ABCDEF0123456789ABCDE[F]$";
 const CANARY_ALLOWLIST_PATH = "^scripts/fixtures/gitleaks-canary\\.txt$";
 const GITLEAKS_POLICY = {
   title: "Rakazo secret scanning policy",
@@ -26,16 +27,34 @@ const GITLEAKS_POLICY = {
   allowlists: [
     {
       description: "Ignore only the inert committed canary at its canonical path",
-      condition: "OR",
+      condition: "AND",
+      targetRules: [CANARY_RULE_ID],
+      regexTarget: "secret",
+      regexes: [CANARY_VALUE_REGEX],
       paths: [CANARY_ALLOWLIST_PATH],
     },
   ],
 };
 const COMMIT_SHA = /^[0-9a-f]{40}$/iu;
+const LOCAL_REUSABLE_WORKFLOW =
+  /^\.\/\.github\/workflows\/([A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?)\.yml$/u;
 const REMOTE_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/u;
 const REMOTE_REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$/u;
 const REMOTE_PATH_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 const CODEOWNER_IDENTITY = /^@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\/[A-Za-z0-9_.-]+)?$/;
+const EXACT_CANDIDATE_REF = ["$", "{{ github.event.pull_request.head.sha || github.sha }}"].join(
+  "",
+);
+const CANDIDATE_CHECKOUT_REQUIREMENTS = new Map([
+  [
+    ".github/workflows/ci.yml",
+    {
+      candidateJobs: ["security", "lint", "check", "build", "test", "test-integration"],
+      historyJobs: ["security"],
+    },
+  ],
+  [".github/workflows/playwright.yml", { candidateJobs: ["playwright"], historyJobs: [] }],
+]);
 
 const PROTECTED_FILE_GLOBS = [
   ".github/CODEOWNERS",
@@ -96,6 +115,11 @@ const REQUIRED_PROTECTED_PATHS = [
 const REQUIRED_OWNERSHIP_PROBES = [".github/actions/example/action.yml"];
 
 export function assertPinnedWorkflowSource(source, filename) {
+  const workflow = parseWorkflowSource(source, filename);
+  visitWorkflowValue(workflow, filename, [], new Set());
+}
+
+function parseWorkflowSource(source, filename) {
   const document = parseDocument(source, {
     prettyErrors: true,
     strict: true,
@@ -112,30 +136,67 @@ export function assertPinnedWorkflowSource(source, filename) {
   } catch (error) {
     throw new Error(`${filename}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  visitWorkflowValue(workflow, filename, "$", new Set());
+  return workflow;
 }
 
 function visitWorkflowValue(value, filename, location, seen) {
   if (!value || typeof value !== "object") return;
-  if (seen.has(value)) throw new Error(`${filename}: cyclic YAML value at ${location}`);
+  if (seen.has(value)) {
+    throw new Error(`${filename}: cyclic YAML value at ${formatWorkflowLocation(location)}`);
+  }
   seen.add(value);
   if (Array.isArray(value)) {
     for (const [index, child] of value.entries()) {
-      visitWorkflowValue(child, filename, `${location}[${index}]`, seen);
+      visitWorkflowValue(child, filename, [...location, index], seen);
     }
   } else {
     for (const [key, child] of Object.entries(value)) {
-      const childLocation = `${location}.${key}`;
-      if (key === "uses") assertPinnedUse(child, filename, childLocation);
+      const childLocation = [...location, key];
+      if (key === "uses") {
+        assertPinnedUse(
+          child,
+          filename,
+          formatWorkflowLocation(childLocation),
+          isJobLevelUse(childLocation),
+        );
+      }
       visitWorkflowValue(child, filename, childLocation, seen);
     }
   }
   seen.delete(value);
 }
 
-function assertPinnedUse(value, filename, location) {
+function formatWorkflowLocation(location) {
+  return location.reduce(
+    (formatted, segment) =>
+      typeof segment === "number" ? `${formatted}[${segment}]` : `${formatted}.${segment}`,
+    "$",
+  );
+}
+
+function isJobLevelUse(location) {
+  return (
+    location.length === 3 &&
+    location[0] === "jobs" &&
+    typeof location[1] === "string" &&
+    location[2] === "uses"
+  );
+}
+
+function isCanonicalLocalReusableWorkflow(value) {
+  const match = LOCAL_REUSABLE_WORKFLOW.exec(value);
+  return Boolean(match && !match[1].includes(".."));
+}
+
+function assertPinnedUse(value, filename, location, jobLevel) {
   if (typeof value !== "string") {
     throw new Error(`${filename}: ${location} uses must be a string`);
+  }
+  if (jobLevel && isCanonicalLocalReusableWorkflow(value)) return;
+  if (value.startsWith("./") && !jobLevel) {
+    throw new Error(
+      `${filename}: ${location} local actions are forbidden in steps; local reusable workflows are allowed only at jobs.<job>.uses`,
+    );
   }
   const at = value.lastIndexOf("@");
   const source = value.slice(0, at);
@@ -152,9 +213,60 @@ function assertPinnedUse(value, filename, location) {
       .slice(2)
       .every((segment) => segment !== "." && segment !== ".." && REMOTE_PATH_SEGMENT.test(segment));
   if (!pinnedRemote) {
+    const localRequirement = jobLevel
+      ? "; job-level local reusable workflows must match ./.github/workflows/<bounded-name>.yml exactly"
+      : "";
     throw new Error(
-      `${filename}: ${location} action or reusable workflow ${value} must use a remote owner/repository path and an exact 40-hex commit SHA`,
+      `${filename}: ${location} action or reusable workflow ${value} must use a remote owner/repository path and an exact 40-hex commit SHA${localRequirement}`,
     );
+  }
+}
+
+export function assertCandidateCheckoutPolicy(source, filename, requirements) {
+  const workflow = parseWorkflowSource(source, filename);
+  const jobs = workflow?.jobs;
+  if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) {
+    throw new Error(`${filename}: candidate workflow must define jobs`);
+  }
+  const historyJobs = new Set(requirements.historyJobs ?? []);
+  for (const jobName of requirements.candidateJobs) {
+    const job = jobs[jobName];
+    if (!job || !Array.isArray(job.steps)) {
+      throw new Error(`${filename}: candidate validation job ${jobName} must define steps`);
+    }
+    const checkouts = job.steps.filter(
+      (step) =>
+        step &&
+        typeof step === "object" &&
+        typeof step.uses === "string" &&
+        step.uses.startsWith("actions/checkout@"),
+    );
+    if (checkouts.length !== 1) {
+      throw new Error(
+        `${filename}: candidate validation job ${jobName} must have exactly one actions/checkout step`,
+      );
+    }
+    const checkout = checkouts[0];
+    const ref = checkout.with?.ref;
+    if (ref !== EXACT_CANDIDATE_REF) {
+      const reason =
+        typeof ref === "string" && /refs\/pull\/|github\.ref/u.test(ref)
+          ? "synthetic merge refs are forbidden"
+          : `expected ${EXACT_CANDIDATE_REF}`;
+      throw new Error(
+        `${filename}: candidate validation job ${jobName} must checkout the exact candidate head; ${reason}`,
+      );
+    }
+    if (historyJobs.has(jobName) && checkout.with?.["fetch-depth"] !== 0) {
+      throw new Error(
+        `${filename}: candidate validation job ${jobName} requires full history with fetch-depth: 0`,
+      );
+    }
+  }
+  for (const historyJob of historyJobs) {
+    if (!requirements.candidateJobs.includes(historyJob)) {
+      throw new Error(`${filename}: history job ${historyJob} is not a candidate validation job`);
+    }
   }
 }
 
@@ -281,10 +393,13 @@ export async function assertRepositoryPolicy(root) {
     .sort();
   if (workflowFiles.length === 0) throw new Error("No GitHub Actions workflows found");
   for (const filename of workflowFiles) {
-    assertPinnedWorkflowSource(
-      await readFile(path.join(workflowsRoot, filename), "utf8"),
-      `.github/workflows/${filename}`,
-    );
+    const repositoryFilename = `.github/workflows/${filename}`;
+    const source = await readFile(path.join(workflowsRoot, filename), "utf8");
+    assertPinnedWorkflowSource(source, repositoryFilename);
+    const checkoutRequirements = CANDIDATE_CHECKOUT_REQUIREMENTS.get(repositoryFilename);
+    if (checkoutRequirements) {
+      assertCandidateCheckoutPolicy(source, repositoryFilename, checkoutRequirements);
+    }
   }
   assertDependabotPolicy(await readFile(path.join(root, ".github/dependabot.yml"), "utf8"));
 
