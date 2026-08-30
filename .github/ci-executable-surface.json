@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "exclusions": [".github/ci-executable-surface.json"],
   "entryCount": 885,
-  "treeSha256": "e44f643cb100b371cb1b9261d90ef53a01d4f6a285e05ac779eceb9a053b8a2d",
+  "treeSha256": "87b331367ef2374f79b52bd444c2dad5d0716495c68e27a1f8e974f4d8ef2500",
   "entries": [
     {
       "path": ".agents/skills/composio/SKILL.md",
@@ -2892,8 +2892,8 @@
       "path": "infra/compose/manual-update-pilot.test.ts",
       "gitMode": "100644",
       "gitType": "blob",
-      "byteLength": 12113,
-      "sha256": "4a071706a86c47430c2ef58263afc6453fade34b907a09b64d264847a9acb7fc"
+      "byteLength": 12132,
+      "sha256": "9d65ef35ee21a64944ea0b5e2ed8caa861bbe1697c572b9abe78497685fb167f"
     },
     {
       "path": "infra/compose/preflight-cli.test.ts",
