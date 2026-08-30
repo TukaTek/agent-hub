@@ -31,11 +31,15 @@ const GITLEAKS_POLICY = {
     },
   ],
 };
-const REMOTE_ACTION = /^[^/@\s]+\/[^/@\s]+(?:\/[^@\s]+)*@[0-9a-fA-F]{40}$/;
+const COMMIT_SHA = /^[0-9a-f]{40}$/iu;
+const REMOTE_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/u;
+const REMOTE_REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$/u;
+const REMOTE_PATH_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 const CODEOWNER_IDENTITY = /^@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\/[A-Za-z0-9_.-]+)?$/;
 
 const PROTECTED_FILE_GLOBS = [
   ".github/CODEOWNERS",
+  ".github/actions/**",
   ".github/dependabot.yml",
   ".github/workflows/**",
   ".gitleaks.toml",
@@ -46,10 +50,12 @@ const PROTECTED_FILE_GLOBS = [
   "**/package.json",
   "scripts/repository-policy.mjs",
   "scripts/gitleaks-canary.mjs",
+  "scripts/gitleaks-history.mjs",
   "scripts/gitleaks-scan.mjs",
   "scripts/{backup,restore}.sh",
   "scripts/publish-playwright-report.sh",
   GITLEAKS_CANARY_PATH,
+  "packages/testkit/src/gitleaks-history.test.ts",
   "packages/testkit/src/repository-policy.test.ts",
   "infra/compose/**",
   "infra/updater/**",
@@ -81,9 +87,13 @@ const REQUIRED_PROTECTED_PATHS = [
   "infra/compose/docker-compose.prod.yml",
   "infra/updater/Dockerfile",
   "scripts/repository-policy.mjs",
+  "scripts/gitleaks-history.mjs",
   "scripts/gitleaks-scan.mjs",
+  "packages/testkit/src/gitleaks-history.test.ts",
   "packages/testkit/src/repository-policy.test.ts",
 ];
+
+const REQUIRED_OWNERSHIP_PROBES = [".github/actions/example/action.yml"];
 
 export function assertPinnedWorkflowSource(source, filename) {
   const document = parseDocument(source, {
@@ -127,21 +137,23 @@ function assertPinnedUse(value, filename, location) {
   if (typeof value !== "string") {
     throw new Error(`${filename}: ${location} uses must be a string`);
   }
-  if (value.startsWith("./")) {
-    if (
-      value === "./" ||
-      value.includes("\\") ||
-      value.includes("//") ||
-      value.split("/").includes("..") ||
-      value.includes("${{")
-    ) {
-      throw new Error(`${filename}: invalid local action or workflow ${value}`);
-    }
-    return;
-  }
-  if (!REMOTE_ACTION.test(value)) {
+  const at = value.lastIndexOf("@");
+  const source = value.slice(0, at);
+  const ref = value.slice(at + 1);
+  const segments = source.split("/");
+  const pinnedRemote =
+    at > 0 &&
+    value.indexOf("@") === at &&
+    COMMIT_SHA.test(ref) &&
+    segments.length >= 2 &&
+    REMOTE_OWNER.test(segments[0] ?? "") &&
+    REMOTE_REPOSITORY.test(segments[1] ?? "") &&
+    segments
+      .slice(2)
+      .every((segment) => segment !== "." && segment !== ".." && REMOTE_PATH_SEGMENT.test(segment));
+  if (!pinnedRemote) {
     throw new Error(
-      `${filename}: ${location} remote action ${value} must use an exact 40-hex commit SHA`,
+      `${filename}: ${location} action or reusable workflow ${value} must use a remote owner/repository path and an exact 40-hex commit SHA`,
     );
   }
 }
@@ -277,7 +289,7 @@ export async function assertRepositoryPolicy(root) {
   assertDependabotPolicy(await readFile(path.join(root, ".github/dependabot.yml"), "utf8"));
 
   const allFiles = await listFiles(root, new Set([".git", ".turbo", "node_modules"]));
-  const protectedPaths = new Set(REQUIRED_PROTECTED_PATHS);
+  const protectedPaths = new Set([...REQUIRED_PROTECTED_PATHS, ...REQUIRED_OWNERSHIP_PROBES]);
   for (const filename of allFiles) {
     if (PROTECTED_FILE_GLOBS.some((glob) => minimatch(filename, glob, { dot: true }))) {
       protectedPaths.add(filename);

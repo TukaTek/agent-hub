@@ -1,4 +1,5 @@
 # CI, dependency automation, ownership, and security policy
+/.github/actions/ @acepgh
 /.github/workflows/ @acepgh
 /.github/dependabot.yml @acepgh
 /.github/CODEOWNERS @acepgh
@@ -6,8 +7,10 @@
 /.env.example @acepgh
 /scripts/repository-policy.mjs @acepgh
 /scripts/gitleaks-canary.mjs @acepgh
+/scripts/gitleaks-history.mjs @acepgh
 /scripts/gitleaks-scan.mjs @acepgh
 /scripts/fixtures/gitleaks-canary.txt @acepgh
+/packages/testkit/src/gitleaks-history.test.ts @acepgh
 /packages/testkit/src/repository-policy.test.ts @acepgh
 
 # Manifests and the shared lockfile

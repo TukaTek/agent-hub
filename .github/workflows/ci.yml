@@ -18,7 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -44,7 +46,13 @@ jobs:
           echo "$destination" >> "$GITHUB_PATH"
       - run: pnpm test:policy
       - run: pnpm security:audit
-      - run: pnpm security:secrets
+      - name: Scan the current working tree for secrets
+        run: pnpm security:secrets
+      - name: Scan the candidate Git history for secrets
+        env:
+          GITLEAKS_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          GITLEAKS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: pnpm security:secrets:history -- . "$GITLEAKS_BASE_SHA" "$GITLEAKS_HEAD_SHA"
 
   lint:
     name: Lint
@@ -127,7 +135,7 @@ jobs:
 
   test-e2e:
     name: Web E2E
-    uses: ./.github/workflows/playwright.yml
+    uses: TukaTek/agent-hub/.github/workflows/playwright.yml@75241eb5af13984baf3ff68835d1bae220d7c2f5 # exact prior CAAH-30 head
     with:
       upload_artifacts: true
 

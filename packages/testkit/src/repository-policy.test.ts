@@ -16,23 +16,45 @@ import {
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const sha = "0123456789abcdef0123456789abcdef01234567";
+const githubExpression = (expression: string) => ["$", `{{ ${expression} }}`].join("");
 
 describe("GitHub Actions pin policy", () => {
-  it("accepts quoted and inline exact-SHA actions plus local workflows", () => {
+  it("accepts quoted and inline exact-SHA actions and reusable workflows", () => {
     const workflow = `
 name: pinned
 on: push
 jobs:
-  local:
-    "uses": "./.github/workflows/local.yml"
+  reusable:
+    "uses": "TukaTek/agent-hub/.github/workflows/playwright.yml@${sha}"
   test:
     runs-on: ubuntu-latest
     steps:
       - { "uses": "actions/checkout@${sha}" }
-      - uses: ./.github/actions/local
 `;
 
     expect(() => assertPinnedWorkflowSource(workflow, "pinned.yml")).not.toThrow();
+  });
+
+  it.each([
+    ["a local action", "./.github/actions/bridge"],
+    ["a local reusable workflow", "./.github/workflows/playwright.yml"],
+    ["a local action with a SHA-looking name", `./.github/actions/${sha}`],
+    [
+      "a local reusable workflow with a SHA-looking suffix",
+      `./.github/workflows/playwright.yml@${sha}`,
+    ],
+    ["an absolute path", "/.github/actions/bridge"],
+    ["a bare relative path", ".github/actions/bridge"],
+    ["parent traversal", "../outside/action"],
+    ["nested traversal", "./.github/actions/../bridge"],
+    ["an expression", githubExpression("inputs.action")],
+    ["an expression-like ref", `owner/action@${githubExpression("inputs.ref")}`],
+  ])("rejects %s", (_name, action) => {
+    const workflow = `jobs: { test: { uses: "${action}" } }`;
+
+    expect(() => assertPinnedWorkflowSource(workflow, "untrusted.yml")).toThrow(
+      /exact 40-hex commit SHA/i,
+    );
   });
 
   it("rejects mutable remote action tags hidden in folded scalars", () => {
@@ -95,7 +117,7 @@ jobs:
     ).toThrow(/docker:/);
     expect(() =>
       assertPinnedWorkflowSource(`jobs: { test: { uses: "./../outside/action" } }`, "local.yml"),
-    ).toThrow(/local action/i);
+    ).toThrow(/exact 40-hex commit SHA/i);
   });
 });
 
@@ -124,6 +146,14 @@ describe("CODEOWNERS policy", () => {
     expect(() =>
       assertProtectedCodeowners(source, [".github/workflows/ci.yml"], "@acepgh"),
     ).toThrow(/\.github\/workflows\/ci\.yml/);
+  });
+
+  it("protects future local action manifests", async () => {
+    const source = await readFile(path.join(root, ".github/CODEOWNERS"), "utf8");
+    const probe = ".github/actions/bridge/action.yml";
+
+    expect(effectiveCodeowners(parseCodeowners(source), probe)).toEqual(["@acepgh"]);
+    expect(() => assertProtectedCodeowners(source, [probe], "@acepgh")).not.toThrow();
   });
 });
 
