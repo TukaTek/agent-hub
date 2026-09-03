@@ -1,6 +1,6 @@
 {
-  "name": "Rakazo",
-  "short_name": "Rakazo",
+  "name": "CortexAI Agent Hub",
+  "short_name": "CortexAI Agent Hub",
   "description": "Your team of always-on agents.",
   "start_url": "/",
   "display": "standalone",
