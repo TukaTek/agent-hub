@@ -96,8 +96,8 @@ test("Korean messaging settings show linked chat apps, channels, and connections
   await expect(page.getByText("Dana's Assistant")).toBeVisible();
   await expect(page.getByRole("button", { name: "승인" })).toHaveCount(2);
 
-  // Linking flow: pick a bot, request a code, read it back.
-  await page.getByLabel("연결할 Bot").selectOption({ index: 1 });
+  // Linking flow: pick an Assistant, request a code, read it back.
+  await page.getByLabel("Assistant to link").selectOption({ index: 1 });
   await page.getByRole("button", { name: "채팅 앱 연결" }).click();
   await expect(page.getByTestId("messaging-link-code")).toContainText(
     "채팅 앱에서 연결할 회선으로 ABCD-2345를 보내세요.",
