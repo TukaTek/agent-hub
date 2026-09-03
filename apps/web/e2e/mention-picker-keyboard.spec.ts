@@ -4,7 +4,7 @@ import { activeBotId, captureScreenshot, completeOnboarding, openNewBot, signup 
 async function createBot(page: import("@playwright/test").Page, name: string) {
   const botList = page.locator("aside").first();
   await openNewBot(page);
-  await expect(page.getByText("New bot", { exact: true })).toBeVisible();
+  await expect(page.getByText("New Assistant", { exact: true })).toBeVisible();
   await page.locator("label:has-text('Name') input").fill(name);
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(botList.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
