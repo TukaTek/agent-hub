@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { DesktopLocalStackState } from "@rakazo/contracts";
+import type { DesktopLocalStackState } from "@cortexai-agent-hub/contracts";
 import {
   classifyDockerFailure,
   composeSupportsWaitTimeout,
@@ -67,7 +67,7 @@ const GENERATED_SECRETS: Record<string, number> = {
   SCREEN_PROXY_SECRET: 32,
   SANDBOX_SUPERVISOR_TOKEN: 32,
 };
-const LAUNCH_SUPPLIED = ["RAKAZO_IMAGE_TAG", "RAKAZO_COMPUTER_IMAGE_TAG"];
+const LAUNCH_SUPPLIED = ["CORTEXAI_AGENT_HUB_IMAGE_TAG", "CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG"];
 
 /**
  * Port of install-images.sh `create_env`: fills the empty secret lines with random
@@ -186,8 +186,8 @@ export function stackFailureMessage(
       return "Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin, then retry.";
     case "other":
       return phase === "pulling"
-        ? "Downloading Rakazo images failed. Check the output below, then retry."
-        : "Rakazo services did not start. Check the output below, then retry.";
+        ? "Downloading CortexAI Agent Hub images failed. Check the output below, then retry."
+        : "CortexAI Agent Hub services did not start. Check the output below, then retry.";
   }
 }
 
@@ -420,8 +420,8 @@ export class LocalStackController {
     return this.deps.run(binary, args, {
       cwd: this.deps.stackDir,
       env: dockerSpawnEnv(this.deps.platform, this.deps.env, binary, {
-        RAKAZO_IMAGE_TAG: this.deps.imageTag,
-        RAKAZO_COMPUTER_IMAGE_TAG: this.deps.imageTag,
+        CORTEXAI_AGENT_HUB_IMAGE_TAG: this.deps.imageTag,
+        CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG: this.deps.imageTag,
         COMPOSE_PROGRESS: "plain",
       }),
       timeoutMs,

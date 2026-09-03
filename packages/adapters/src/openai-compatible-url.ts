@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@rakazo/contracts";
+import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@cortexai-agent-hub/contracts";
 import { isLinkLocalAddress, isPrivateAddress } from "./network-address.js";
 
 export { OPENAI_COMPATIBLE_PROVIDER_ID };
@@ -7,7 +7,7 @@ export { OPENAI_COMPATIBLE_PROVIDER_ID };
 const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata.goog", "169.254.169.254"]);
 
 export function openAiCompatAllowPublicHosts(): boolean {
-  return process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC === "1";
+  return process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC === "1";
 }
 
 export function normalizeOpenAiCompatibleBaseUrl(raw: string): string {
@@ -93,7 +93,7 @@ export function assertAllowedOpenAiCompatibleRequestUrl(
   if (isPrivateOpenAiCompatibleHostname(hostname)) return url;
   if (!allowPublic) {
     throw new Error(
-      "Public model endpoints are blocked. Set RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC=1 to allow them.",
+      "Public model endpoints are blocked. Set CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC=1 to allow them.",
     );
   }
   return url;

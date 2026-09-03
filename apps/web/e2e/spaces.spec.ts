@@ -5,7 +5,7 @@ test("spaces stay invisible by default and chat creation requires approval", asy
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `spaces-${stamp}@rakazo.test`, "password12", "Space Owner");
+  await signup(page, `spaces-${stamp}@cortexai-agent-hub.test`, "password12", "Space Owner");
   await completeOnboarding(page);
 
   const sidebar = page.locator("aside").first();
@@ -48,7 +48,7 @@ test("spaces stay invisible by default and chat creation requires approval", asy
   await supportSpace.getByRole("button", { name: "Open Customer support" }).click();
   await page.waitForURL(/\/onboarding/);
   await expect
-    .poll(() => page.evaluate(() => window.localStorage.getItem("rakazo:space-id")))
+    .poll(() => page.evaluate(() => window.localStorage.getItem("cortexai-agent-hub:space-id")))
     .toBe(supportSpaceId);
   await completeOnboarding(page);
 
@@ -66,7 +66,7 @@ test("spaces stay invisible by default and chat creation requires approval", asy
   await personalSpace.getByRole("button", { name: /^Chief/ }).click();
   await page.waitForURL(/\/app\/[^/]+$/);
   await expect
-    .poll(() => page.evaluate(() => window.localStorage.getItem("rakazo:space-id")))
+    .poll(() => page.evaluate(() => window.localStorage.getItem("cortexai-agent-hub:space-id")))
     .toBe(personalSpaceId);
   await expect(sidebar.getByText("Customer support", { exact: true })).toBeVisible();
 });

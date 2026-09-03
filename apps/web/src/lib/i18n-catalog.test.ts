@@ -19,10 +19,10 @@ describe("lingui catalogs", () => {
     expect(i18n._({ id: "Settings", message: "Settings" })).toBe("Settings");
     expect(
       i18n._({
-        id: "Cancel new bot",
-        message: "Cancel new bot",
+        id: "Cancel new Assistant",
+        message: "Cancel new Assistant",
       }),
-    ).toBe("Cancel new bot");
+    ).toBe("Cancel new Assistant");
   });
 
   it("formats ICU cron-style messages with reordered placeholders", () => {
@@ -109,7 +109,7 @@ describe("lingui catalogs", () => {
       "at {timeSelect}": "{timeSelect}",
       "{0, plural, one {# model} other {# models}}": "{0, plural, one {# 个模型} other {# 个模型}}",
       "{botName} · {0, plural, one {# peer} other {# peers}}":
-        "{botName} · {0, plural, one {# 个同事 Bot} other {# 个同事 Bot}}",
+        "{botName} · {0, plural, one {# 个同事助手} other {# 个同事助手}}",
     });
     i18n.activate("zh-CN");
     expect(
@@ -146,7 +146,7 @@ describe("lingui catalogs", () => {
         message: "{botName} · {0, plural, one {# peer} other {# peers}}",
         values: { botName: "Scout", 0: 2 },
       }),
-    ).toBe("Scout · 2 个同事 Bot");
+    ).toBe("Scout · 2 个同事助手");
   });
 
   it("uses seeded catalog strings for German, Korean, Turkish, Hindi, Brazilian Portuguese, and Simplified Chinese chrome", () => {

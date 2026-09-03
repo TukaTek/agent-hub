@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
-RAKAZO_HOME="${HOME:-/home/rakazo}"
+CORTEXAI_AGENT_HUB_HOME="${HOME:-/home/cortexai-agent-hub}"
 case "${DISPLAY:-:1}" in
-  :[2-9]|:[1-9][0-9]*) PROFILE="$RAKAZO_HOME/.browser-profiles/chromium-screen-${DISPLAY#:}" ;;
-  *) PROFILE="$RAKAZO_HOME/.browser-profiles/chromium" ;;
+  :[2-9]|:[1-9][0-9]*) PROFILE="$CORTEXAI_AGENT_HUB_HOME/.browser-profiles/chromium-screen-${DISPLAY#:}" ;;
+  *) PROFILE="$CORTEXAI_AGENT_HUB_HOME/.browser-profiles/chromium" ;;
 esac
 mkdir -p "$PROFILE"
 BIN="$(command -v chromium || command -v chromium-browser || true)"

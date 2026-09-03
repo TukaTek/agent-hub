@@ -1,4 +1,4 @@
-import type { AdapterContext } from "@rakazo/adapter-kit";
+import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it } from "vitest";
 import { FakeWebProvider } from "./fake-web.js";
 import {

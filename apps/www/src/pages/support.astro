@@ -3,27 +3,29 @@ import Footer from "../components/Footer.astro";
 import Header from "../components/Header.astro";
 import { fetchGithubStars, formatStarCount } from "../github";
 import BaseLayout from "../layouts/BaseLayout.astro";
-import { DOCS_URL, GITHUB_URL } from "../site";
+import { CORTEXAI_CONTACT_URL, DOCS_URL, GITHUB_URL, SECURITY_URL } from "../site";
 
 const stars = await fetchGithubStars();
 const starsLabel = stars === null ? "Star" : formatStarCount(stars);
 ---
 
-<BaseLayout title="Support · Rakazo" description="Get help with the Rakazo app and self-hosted Rakazo.">
+<BaseLayout title="Support · CortexAI Agent Hub" description="Get help with the CortexAI Agent Hub app and self-hosted CortexAI Agent Hub.">
   <div class="container">
     <Header starsLabel={starsLabel} />
     <main id="main" class="privacy-copy">
-      <h1>Rakazo support</h1>
+      <h1>CortexAI Agent Hub support</h1>
       <p>
-        For help with the Rakazo mobile app or a hosted Rakazo account, email{" "}
-        <a href="mailto:hello@rakazo.com">hello@rakazo.com</a>. Include the email address on your
-        account, what you expected to happen, and any error message you saw. Do not send passwords, API keys,
-        access tokens, or other secrets.
+        For CortexAI product or account help, <a href={CORTEXAI_CONTACT_URL}>contact CortexAI</a>.
+        Do not send passwords, API keys, access tokens, or other secrets.
       </p>
-      <h2>Self-hosted Rakazo</h2>
+      <h2>Security</h2>
+      <p>
+        Report vulnerabilities through <a href={SECURITY_URL}>private vulnerability reporting</a>, never a public issue.
+      </p>
+      <h2>Self-hosted CortexAI Agent Hub</h2>
       <p>
         Start with the <a href={DOCS_URL}>self-hosting guide</a>. For reproducible bugs or feature requests,
-        open an issue in the <a href={`${GITHUB_URL}/issues`}>Rakazo GitHub repository</a>.
+        open an issue in the <a href={`${GITHUB_URL}/issues`}>CortexAI Agent Hub GitHub repository</a>.
       </p>
       <h2>Account deletion</h2>
       <p>

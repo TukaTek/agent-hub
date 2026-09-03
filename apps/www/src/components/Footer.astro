@@ -8,7 +8,7 @@ import {
   localeHomePath,
   type Locale,
 } from "../i18n/locales";
-import { CHANGELOG_URL, DOCS_URL, GITHUB_URL, INBOX_ZERO_URL } from "../site";
+import { CHANGELOG_URL, CORTEXAI_URL, DOCS_URL, GITHUB_URL } from "../site";
 import Logo from "./Logo.astro";
 
 type Props = {
@@ -34,7 +34,7 @@ const {
   languagesLabel = "Language",
   navLabel = "Footer",
   homeHref = localeHomePath(currentLocale),
-  homeLabel = "Rakazo home",
+  homeLabel = "CortexAI Agent Hub home",
   linkLabels = {
     docs: "Docs",
     changelog: "Changelog",
@@ -50,7 +50,7 @@ const {
     <Logo href={homeHref} label={homeLabel} />
     <span class="site-footer__legal">
       © 2026 ·
-      <a href={INBOX_ZERO_URL} target="_blank" rel="noreferrer">Inbox Zero Inc.</a>
+      <a href={CORTEXAI_URL} target="_blank" rel="noreferrer">CortexAI</a>
       · Apache-2.0
     </span>
   </div>

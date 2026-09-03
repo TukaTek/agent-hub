@@ -2,7 +2,7 @@ import { execSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { ComputerRef, ProcessEvent, SandboxProvider } from "@rakazo/adapter-kit";
+import type { ComputerRef, ProcessEvent, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
 import { afterAll, describe, expect, it } from "vitest";
 import { BoxSandboxEmulator } from "./box-emulator.js";
 import { DaytonaSandboxEmulator } from "./daytona-emulator.js";
@@ -132,7 +132,7 @@ describe("sandbox conformance", () => {
   });
 
   it("desktop executor times out and kills descendants that inherited its pipes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "rakazo-desktop-timeout-"));
+    const root = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-desktop-timeout-"));
     const desktop = new DesktopSandboxProvider({ root });
     const computer = await desktop.provision({ botId: "timeout", homePath: "/unused" }, ctx);
     const marker = path.join(computer.providerRef, "descendant-survived");
@@ -164,7 +164,7 @@ describe("sandbox conformance", () => {
   });
 
   it("desktop executor aborts and kills a running command", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "rakazo-desktop-abort-"));
+    const root = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-desktop-abort-"));
     const desktop = new DesktopSandboxProvider({ root });
     const computer = await desktop.provision({ botId: "abort", homePath: "/unused" }, ctx);
     const controller = new AbortController();
@@ -187,7 +187,7 @@ describe("sandbox conformance", () => {
   });
 
   it("reuses one desktop machine per bot", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "rakazo-desktop-reuse-"));
+    const root = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-desktop-reuse-"));
     const desktop = new DesktopSandboxProvider({ root });
     const first = await desktop.provision({ botId: "stable", homePath: "/unused" }, ctx);
     const second = await desktop.provision({ botId: "stable", homePath: "/unused" }, ctx);
@@ -201,7 +201,7 @@ describe("sandbox conformance", () => {
   });
 
   it("desktop file writes do not follow a final symlink outside the workspace", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "rakazo-desktop-symlink-"));
+    const root = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-desktop-symlink-"));
     const desktop = new DesktopSandboxProvider({ root });
     const computer = await desktop.provision({ botId: "symlink", homePath: "/unused" }, ctx);
     const outside = path.join(root, "outside.txt");
@@ -223,7 +223,7 @@ describe("sandbox conformance", () => {
 
 describe("docker sandbox", () => {
   let spawned: ReturnType<typeof spawn> | undefined;
-  const dataDir = mkdtempSync(path.join(tmpdir(), "rakazo-docker-conformance-"));
+  const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-docker-conformance-"));
 
   afterAll(async () => {
     spawned?.kill("SIGTERM");
@@ -239,7 +239,7 @@ describe("docker sandbox", () => {
     const token = "sandbox-conformance-token";
     const url = `http://127.0.0.1:${port}`;
     const root = path.resolve(import.meta.dirname, "../../..");
-    spawned = spawn("pnpm", ["--filter", "@rakazo/sandbox-supervisor", "start"], {
+    spawned = spawn("pnpm", ["--filter", "@cortexai-agent-hub/sandbox-supervisor", "start"], {
       cwd: root,
       env: {
         ...process.env,
@@ -279,7 +279,10 @@ function dockerAvailable() {
 
 function hasAnySandboxImage() {
   try {
-    execSync("docker image inspect rakazo/computer:local", { stdio: "ignore", timeout: 8_000 });
+    execSync("docker image inspect cortexai-agent-hub/computer:local", {
+      stdio: "ignore",
+      timeout: 8_000,
+    });
     return true;
   } catch {
     return false;

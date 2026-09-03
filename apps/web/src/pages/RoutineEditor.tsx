@@ -1,6 +1,4 @@
-import { t } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { Routine } from "@rakazo/contracts";
+import type { Routine } from "@cortexai-agent-hub/contracts";
 import {
   type CronFreq,
   type CronPreset,
@@ -9,7 +7,7 @@ import {
   formatCron,
   isOneShotRoutineCrons,
   presetFromCron,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   Button,
   DropdownMenu,
@@ -21,7 +19,9 @@ import {
   DropdownMenuTrigger,
   Input,
   Textarea,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { t } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { ChevronLeft, Clock, Globe, Pause, Plus, X } from "lucide-react";
 import { useId } from "react";
 import { RoutineSchedule } from "./RoutineSchedule";

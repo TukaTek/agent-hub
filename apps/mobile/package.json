@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/mobile",
+  "name": "@cortexai-agent-hub/mobile",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "main": "expo-router/entry",
@@ -18,10 +18,10 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.15",
-    "@rakazo/chat-ui": "workspace:*",
-    "@rakazo/contracts": "workspace:*",
-    "@rakazo/core": "workspace:*",
-    "@rakazo/ui-tokens": "workspace:*",
+    "@cortexai-agent-hub/chat-ui": "workspace:*",
+    "@cortexai-agent-hub/contracts": "workspace:*",
+    "@cortexai-agent-hub/core": "workspace:*",
+    "@cortexai-agent-hub/ui-tokens": "workspace:*",
     "@react-native-vector-icons/ionicons": "13.1.2",
     "@react-native-vector-icons/material-design-icons": "13.1.2",
     "expo": "~57.0.19",

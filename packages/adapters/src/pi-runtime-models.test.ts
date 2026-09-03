@@ -1,4 +1,4 @@
-import type { AgentRunRequest } from "@rakazo/adapter-kit";
+import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it } from "vitest";
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from "./pi-openai-compatible-provider.js";
 import { modelsForRequest } from "./pi-runtime.js";

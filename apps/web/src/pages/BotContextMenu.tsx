@@ -1,12 +1,12 @@
-import { useLingui } from "@lingui/react/macro";
-import type { Bot, BotSection } from "@rakazo/contracts";
+import type { Bot, BotSection } from "@cortexai-agent-hub/contracts";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { useLingui } from "@lingui/react/macro";
 import {
   Archive,
   ArrowLeft,

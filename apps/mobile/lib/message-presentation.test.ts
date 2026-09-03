@@ -1,4 +1,4 @@
-import type { MessageBlock } from "@rakazo/contracts";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
 import {
   hasVisibleMessagePresentation,

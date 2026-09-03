@@ -1,6 +1,10 @@
-import type { Actor, MessageBlock, SearchHit } from "@rakazo/contracts";
-import { extractLinksFromText, matchesSearchQuery, snippetAroundMatch } from "@rakazo/core";
-import type { Prisma, PrismaClient } from "@rakazo/db";
+import type { Actor, MessageBlock, SearchHit } from "@cortexai-agent-hub/contracts";
+import {
+  extractLinksFromText,
+  matchesSearchQuery,
+  snippetAroundMatch,
+} from "@cortexai-agent-hub/core";
+import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 
 const SEARCH_LIMIT = 25;
 /** Cap name matches so content hits (messages/files/links/routines) keep most of the budget. */

@@ -1,5 +1,5 @@
-import type { DurableMemoryScope, SemanticMemoryProvider } from "@rakazo/adapter-kit";
-import type { PrismaClient } from "@rakazo/db";
+import type { DurableMemoryScope, SemanticMemoryProvider } from "@cortexai-agent-hub/adapter-kit";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import type { EncryptedSecretStore } from "./secrets.js";
 import {
   createSupermemoryProvider,

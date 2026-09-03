@@ -1,7 +1,18 @@
+import type { ThreadMessage, ThreadSnapshot } from "@cortexai-agent-hub/contracts";
+import {
+  isSecretAskBlock,
+  narrateTool,
+  speechFromBlocks,
+  spokenDecision,
+} from "@cortexai-agent-hub/core";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { ThreadMessage, ThreadSnapshot } from "@rakazo/contracts";
-import { isSecretAskBlock, narrateTool, speechFromBlocks, spokenDecision } from "@rakazo/core";
-import { Button, Dialog, DialogContent, DialogHeader, DialogTitle } from "@rakazo/ui-web";
 import { useEffect, useRef, useState } from "react";
 import { dictation } from "../lib/dictation";
 import { speaker } from "../lib/tts";

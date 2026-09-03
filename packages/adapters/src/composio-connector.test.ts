@@ -1,5 +1,9 @@
 import console from "node:console";
-import type { AdapterContext, ConnectorEvent, ConnectorTool } from "@rakazo/adapter-kit";
+import type {
+  AdapterContext,
+  ConnectorEvent,
+  ConnectorTool,
+} from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
 import { composioToolkitDirectory } from "./composio-catalog-cache.js";
 import {
@@ -274,7 +278,7 @@ describe("composio tool mapping", () => {
         sessionPreset: config.sessionPreset,
       })),
     ).toEqual([
-      { userId: "__rakazo_catalog__", toolkits: undefined, sessionPreset: undefined },
+      { userId: "__cortexAiAgentHub_catalog__", toolkits: undefined, sessionPreset: undefined },
       { userId: "user-1", toolkits: ["GITHUB"], sessionPreset: undefined },
     ]);
 
@@ -361,7 +365,7 @@ describe("composio tool mapping", () => {
     ).toEqual({ connectIds: ["row-gh"], revokeIds: [] });
   });
 
-  it("only fetches live Composio slugs when a Rakazo row is still pending or errored", () => {
+  it("only fetches live Composio slugs when a CortexAI Agent Hub row is still pending or errored", () => {
     expect(needsLivePluginSync([{ status: "connected" }, { status: "revoked" }])).toBe(false);
     expect(needsLivePluginSync([{ status: "pending" }])).toBe(true);
     expect(needsLivePluginSync([{ status: "error" }])).toBe(true);
@@ -376,7 +380,7 @@ describe("composio tool mapping", () => {
     ).toEqual([{ provider: "github", displayName: "GitHub" }]);
   });
 
-  it("plans DB sync when Composio is connected but Rakazo is still pending", () => {
+  it("plans DB sync when Composio is connected but CortexAI Agent Hub is still pending", () => {
     expect(
       planLiveConnectionSync(
         [

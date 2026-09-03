@@ -1,4 +1,4 @@
-import type { ProcessEvent } from "@rakazo/adapter-kit";
+import type { ProcessEvent } from "@cortexai-agent-hub/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DockerSandboxProvider } from "./docker-sandbox.js";
 
@@ -37,7 +37,7 @@ describe("Docker sandbox", () => {
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       argv: ["sleep", "10"],
-      cwd: "/home/rakazo",
+      cwd: "/home/cortexai-agent-hub",
       timeoutMs: 75,
     });
     expect(events).toEqual([
@@ -45,7 +45,9 @@ describe("Docker sandbox", () => {
       { type: "stderr", data: "command timed out after 75 ms\n" },
       { type: "exit", code: 124 },
     ]);
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty("x-rakazo-screen-id");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty(
+      "x-cortexai-agent-hub-screen-id",
+    );
   });
 
   it("releases this bot's screen assignment through the supervisor", async () => {
@@ -64,9 +66,9 @@ describe("Docker sandbox", () => {
         method: "DELETE",
         headers: expect.objectContaining({
           authorization: "Bearer test-token",
-          "x-rakazo-bot-id": "home-bot",
-          "x-rakazo-screen-lease-id": "run-1:1",
-          "x-rakazo-space-id": "workspace",
+          "x-cortexai-agent-hub-bot-id": "home-bot",
+          "x-cortexai-agent-hub-screen-lease-id": "run-1:1",
+          "x-cortexai-agent-hub-space-id": "workspace",
         }),
       }),
     );
@@ -147,7 +149,7 @@ describe("Docker sandbox", () => {
       "http://supervisor.test/computers/computer-1/screen",
       expect.objectContaining({
         method: "DELETE",
-        headers: expect.objectContaining({ "x-rakazo-cancel-run-work": "1" }),
+        headers: expect.objectContaining({ "x-cortexai-agent-hub-cancel-run-work": "1" }),
       }),
     );
   });

@@ -1,4 +1,4 @@
-import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@rakazo/contracts";
+import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@cortexai-agent-hub/contracts";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput } from "react-native";
@@ -64,7 +64,7 @@ export default function GroupSettingsScreen() {
 
   function remove() {
     if (!groupId || !group) return;
-    Alert.alert(group.name, t("Delete this group? Bots and their solo threads are kept."), [
+    Alert.alert(group.name, t("Delete this group? Assistants and their solo threads are kept."), [
       { text: t("Cancel"), style: "cancel" },
       {
         text: t("Delete"),

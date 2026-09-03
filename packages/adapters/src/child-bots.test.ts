@@ -4,8 +4,8 @@ import type {
   ArtifactStore,
   JobPublisher,
   SandboxProvider,
-} from "@rakazo/adapter-kit";
-import type { PrismaClient } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   archiveBot,
@@ -418,7 +418,7 @@ describe("destroyBot", () => {
           sandbox: {} as SandboxProvider,
           home: {} as AgentHomeStore,
           jobs: { cancel: vi.fn() } as unknown as JobPublisher,
-          dataDir: "/tmp/rakazo-destroy-bot-test",
+          dataDir: "/tmp/cortexai-agent-hub-destroy-bot-test",
         },
         { id: "bot-1", spaceId: "workspace-1", name: "Researcher", archivedAt: null },
         context,

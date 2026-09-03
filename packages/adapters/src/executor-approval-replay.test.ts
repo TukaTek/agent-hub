@@ -1,5 +1,5 @@
-import type { ConnectorTool } from "@rakazo/adapter-kit";
-import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
+import type { ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import { describe, expect, it } from "vitest";
 import {
   approvedCatalogReplay,
@@ -35,7 +35,7 @@ describe("executor approval replay", () => {
     const request = catalogApprovalRequest(
       "installed_execute_tool",
       { id: `${resourceId}:${toolName}`, arguments: {} },
-      "__rakazoCatalogTool",
+      "__cortexAiAgentHubCatalogTool",
     );
     const queue = createApprovedEffectReplayQueue([{ kind: toolName, request }]);
 
@@ -78,7 +78,7 @@ describe("executor approval replay", () => {
           request: catalogApprovalRequest(
             "mcp_execute_tool",
             { id: "server-1:send_message", arguments: { text: "approved exactly" } },
-            "__rakazoCatalogTool",
+            "__cortexAiAgentHubCatalogTool",
           ),
         },
       ],
@@ -88,14 +88,14 @@ describe("executor approval replay", () => {
     expect(continuation).toContain(
       'mcp_execute_tool: {"id":"server-1:send_message","arguments":{"text":"approved exactly"}}',
     );
-    expect(continuation).not.toContain("__rakazoCatalogTool");
+    expect(continuation).not.toContain("__cortexAiAgentHubCatalogTool");
   });
 
   it("renders a direct tool continuation when a catalog approval's wrapper is no longer exposed", () => {
     const request = catalogApprovalRequest(
       "installed_execute_tool",
       { id: "install-A:notes.write", arguments: { text: "approved exactly" } },
-      "__rakazoCatalogTool",
+      "__cortexAiAgentHubCatalogTool",
     );
     const stillCatalog = buildApprovalContinuation(
       [{ kind: "notes.write", request }],
@@ -132,7 +132,7 @@ describe("executor approval replay", () => {
             id: "row-1",
             arguments: { mode: "strict" },
             text: "approved exactly",
-            __rakazoCatalogTool: "installed_execute_tool",
+            __cortexAiAgentHubCatalogTool: "installed_execute_tool",
           },
         },
       ],
@@ -140,7 +140,7 @@ describe("executor approval replay", () => {
     );
 
     expect(continuation).toContain(
-      'notes.write: {"id":"row-1","arguments":{"mode":"strict"},"text":"approved exactly","__rakazoCatalogTool":"installed_execute_tool"}',
+      'notes.write: {"id":"row-1","arguments":{"mode":"strict"},"text":"approved exactly","__cortexAiAgentHubCatalogTool":"installed_execute_tool"}',
     );
   });
 
@@ -148,7 +148,7 @@ describe("executor approval replay", () => {
     const request = boundDirectApprovalRequest(
       { connectorId: "installed", resourceId: "install-A", toolName: "notes.write" },
       { text: "approved exactly" },
-      "__rakazoCatalogTool",
+      "__cortexAiAgentHubCatalogTool",
     );
     const stillDirect = buildApprovalContinuation(
       [{ kind: "notes.write", request }],
@@ -172,7 +172,7 @@ describe("executor approval replay", () => {
     const request = boundDirectApprovalRequest(
       { connectorId: "installed", resourceId: "install-A", toolName: "delete_item" },
       { target: "approved" },
-      "__rakazoCatalogTool",
+      "__cortexAiAgentHubCatalogTool",
     );
     const continuation = buildApprovalContinuation(
       [{ kind: "delete_item", request }],
@@ -210,7 +210,7 @@ describe("executor approval replay", () => {
         request: catalogApprovalRequest(
           "installed_execute_tool",
           { id: "install-A:delete_item", arguments: { target: "approved" } },
-          "__rakazoCatalogTool",
+          "__cortexAiAgentHubCatalogTool",
         ),
       },
     ];
@@ -218,7 +218,7 @@ describe("executor approval replay", () => {
     const replay = approvedCatalogReplay(
       queue,
       "installed_execute_tool",
-      "__rakazoCatalogTool",
+      "__cortexAiAgentHubCatalogTool",
       true,
     );
     const modelRuntimeArgs = {
@@ -251,7 +251,7 @@ describe("executor approval replay", () => {
   });
 
   it("keeps resolveCall parsed args when draining an approved catalog replay", () => {
-    const marker = "__rakazoCatalogTool";
+    const marker = "__cortexAiAgentHubCatalogTool";
     const approvedRequest = catalogApprovalRequest(
       "installed_execute_tool",
       { id: "install-A:create_item", arguments: {} },
@@ -293,15 +293,15 @@ describe("executor approval replay", () => {
 
   it("preserves direct approved args that use the catalog marker as data", () => {
     const approvedRequest = {
-      __rakazoCatalogTool: "user-provided-value",
+      __cortexAiAgentHubCatalogTool: "user-provided-value",
       target: "approved",
     };
 
     expect(
       approvedReplayArgs(
         approvedRequest,
-        { __rakazoCatalogTool: "user-provided-value", target: "reconstructed" },
-        "__rakazoCatalogTool",
+        { __cortexAiAgentHubCatalogTool: "user-provided-value", target: "reconstructed" },
+        "__cortexAiAgentHubCatalogTool",
       ),
     ).toEqual(approvedRequest);
   });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import type { DesktopSetup } from "@rakazo/contracts";
+import type { DesktopSetup } from "@cortexai-agent-hub/contracts";
 import { parseStoredSetup, SETUP_FILE_NAME, serializeSetup } from "./setup-config.js";
 
 export function setupFilePath(userDataDir: string): string {

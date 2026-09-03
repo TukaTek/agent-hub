@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -10,7 +11,6 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import type { PrismaClient } from "@rakazo/db";
 import { secureFetch, validateUrl, withEndpointOriginFallback } from "./mcp-transport.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import type { EncryptedSecretStore } from "./secrets.js";
@@ -76,7 +76,7 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
     const applicationType = hostname === "localhost" || hostname === "127.0.0.1" ? "native" : "web";
     return {
       redirect_uris: [redirectUri],
-      client_name: "Rakazo",
+      client_name: "CortexAI Agent Hub",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
@@ -292,7 +292,7 @@ export class McpOAuthBroker {
       authProvider: provider,
       fetch: networkFetch.fetch,
     });
-    const client = new Client({ name: "rakazo-oauth", version: "0.1.0" });
+    const client = new Client({ name: "cortexai-agent-hub-oauth", version: "0.1.0" });
     const signal = AbortSignal.timeout(15_000);
     try {
       await client.connect(transport, { signal, timeout: 15_000 });

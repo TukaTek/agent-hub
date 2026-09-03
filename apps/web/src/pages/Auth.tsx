@@ -1,5 +1,5 @@
+import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { Button, Input, Label } from "@rakazo/ui-web";
 import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -26,9 +26,9 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
   const title =
     mode === "in" ? (
-      <Trans>Sign in to Rakazo</Trans>
+      <Trans>Sign in to CortexAI Agent Hub</Trans>
     ) : mode === "up" ? (
-      <Trans>Create your Rakazo</Trans>
+      <Trans>Create your CortexAI Agent Hub</Trans>
     ) : sent ? (
       <Trans>Check your email</Trans>
     ) : (

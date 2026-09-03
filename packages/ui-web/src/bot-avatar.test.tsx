@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { avatarIdentitySeed } from "@rakazo/core";
+import { avatarIdentitySeed } from "@cortexai-agent-hub/core";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AvatarStyleProvider } from "./avatar-style.js";
@@ -29,14 +29,14 @@ describe("BotAvatar", () => {
     (status) => {
       const html = renderToString(<BotAvatar color="#3B82F6" status={status} />);
       expect(html).toContain("<svg");
-      expect(html).toContain("rakazo-bot-avatar-ring");
+      expect(html).toContain("cortexai-agent-hub-bot-avatar-ring");
     },
   );
 
   it("keeps the working ring mounted when idle so its timeline does not reset", () => {
     const html = renderToString(<BotAvatar color="#F59E0B" status="idle" />);
     expect(html).toContain('data-working="false"');
-    expect(html).toContain("rakazo-bot-avatar-ring");
+    expect(html).toContain("cortexai-agent-hub-bot-avatar-ring");
   });
 
   it("generates an organic avatar from the bot color", () => {
@@ -44,12 +44,12 @@ describe("BotAvatar", () => {
       <BotAvatar color="#D9508A" identity="maya" size={28} status="running" variant="organic" />,
     );
 
-    expect(html).toContain("rakazo-organic-avatar");
+    expect(html).toContain("cortexai-agent-hub-organic-avatar");
     expect(html).toContain('data-working="true"');
     expect(html).toMatch(/data-shape-family="\d"/);
     expect(html).toMatch(/data-eye-pattern="[0-3]"/);
     expect(html).toContain("<animate");
-    expect(html).not.toContain("rakazo-bot-avatar-visor");
+    expect(html).not.toContain("cortexai-agent-hub-bot-avatar-visor");
   });
 
   it("generates distinct organic silhouettes for distinct bot identities", () => {
@@ -86,7 +86,7 @@ describe("BotAvatar", () => {
       </AvatarStyleProvider>,
     );
 
-    expect(html).toContain("rakazo-organic-avatar");
+    expect(html).toContain("cortexai-agent-hub-organic-avatar");
   });
 
   it("keeps the organic morph timeline stable across status updates", () => {
@@ -100,10 +100,10 @@ describe("BotAvatar", () => {
     expect(working.match(/<animate[^>]+dur="([^"]+)"/)?.[1]).toBe(
       idle.match(/<animate[^>]+dur="([^"]+)"/)?.[1],
     );
-    expect(idle).toContain("rakazo-organic-avatar-eyes-idle");
-    expect(idle).toContain("rakazo-organic-avatar-eyes-working");
-    expect(idle).toContain("rakazo-organic-avatar-body-idle");
-    expect(idle).toContain("rakazo-organic-avatar-body-working");
+    expect(idle).toContain("cortexai-agent-hub-organic-avatar-eyes-idle");
+    expect(idle).toContain("cortexai-agent-hub-organic-avatar-eyes-working");
+    expect(idle).toContain("cortexai-agent-hub-organic-avatar-body-idle");
+    expect(idle).toContain("cortexai-agent-hub-organic-avatar-body-working");
     expect(readFileSync(new URL("./styles.css", import.meta.url), "utf8")).not.toMatch(
       /data-working[^}]+animation:/s,
     );

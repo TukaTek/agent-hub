@@ -1,4 +1,4 @@
-import type { Routine } from "@rakazo/contracts";
+import type { Routine } from "@cortexai-agent-hub/contracts";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
@@ -97,7 +97,7 @@ export default function RoutineDetail() {
             onPress={() =>
               router.push({
                 pathname: "/thread",
-                params: { botId: botId ?? "", name: botName ?? t("Bot") },
+                params: { botId: botId ?? "", name: botName ?? t("Assistant") },
               })
             }
             style={{

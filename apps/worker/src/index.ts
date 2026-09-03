@@ -1,5 +1,5 @@
-import type { JobPublisher, JobWorkerHost } from "@rakazo/adapter-kit";
-import { loadRootEnv } from "@rakazo/core/node/load-root-env";
+import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
+import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
 
@@ -37,10 +37,10 @@ import {
   resolveSandboxProvider,
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
-} from "@rakazo/adapters";
-import { resolveEncryptionKey, resolveSupervisorToken } from "@rakazo/core";
-import { createDb, createThreadEvents } from "@rakazo/db";
-import { MarkdownMemoryStore } from "@rakazo/memory";
+} from "@cortexai-agent-hub/adapters";
+import { resolveEncryptionKey, resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import { createDb, createThreadEvents } from "@cortexai-agent-hub/db";
+import { MarkdownMemoryStore } from "@cortexai-agent-hub/memory";
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -176,7 +176,7 @@ async function main() {
   process.once("SIGTERM", () => void stop());
   process.once("SIGINT", () => void stop());
 
-  console.log("rakazo worker ready");
+  console.log("cortexai-agent-hub worker ready");
 }
 
 main().catch((error) => {

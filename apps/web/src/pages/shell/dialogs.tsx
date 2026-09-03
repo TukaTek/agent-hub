@@ -1,5 +1,4 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { Bot } from "@rakazo/contracts";
+import type { Bot } from "@cortexai-agent-hub/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { Lock } from "lucide-react";
 import { useId, useState } from "react";
 
@@ -236,8 +236,8 @@ export function DeleteBotDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             <Trans>
-              Its conversation, files, and routines will be permanently deleted. Bots it created
-              stay in your list.
+              Its conversation, files, and routines will be permanently deleted. Assistants it
+              created stay in your list.
             </Trans>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -290,7 +290,7 @@ export function DeleteBotDialog({
               setDeleting(true);
               setError(null);
               void onConfirm(deleteMemories).catch((err: unknown) => {
-                setError(err instanceof Error ? err.message : t`Could not delete bot`);
+                setError(err instanceof Error ? err.message : t`Could not delete Assistant`);
                 setDeleting(false);
               });
             }}

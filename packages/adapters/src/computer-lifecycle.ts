@@ -5,9 +5,9 @@ import type {
   ComputerRef,
   JobPublisher,
   SandboxProvider,
-} from "@rakazo/adapter-kit";
-import { ACTIVE_RUN_STATUSES, screenLeaseId } from "@rakazo/core";
-import { type PrismaClient, parseComputerMode, type ThreadEvents } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import { ACTIVE_RUN_STATUSES, screenLeaseId } from "@cortexai-agent-hub/core";
+import { type PrismaClient, parseComputerMode, type ThreadEvents } from "@cortexai-agent-hub/db";
 import {
   clearInactiveUserComputerControl,
   expireComputerControl,

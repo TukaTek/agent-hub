@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/testkit",
+  "name": "@cortexai-agent-hub/testkit",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -12,11 +12,11 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.1",
-    "@rakazo/adapter-kit": "workspace:*",
-    "@rakazo/adapters": "workspace:*",
-    "@rakazo/contracts": "workspace:*",
-    "@rakazo/core": "workspace:*",
-    "@rakazo/db": "workspace:*",
+    "@cortexai-agent-hub/adapter-kit": "workspace:*",
+    "@cortexai-agent-hub/adapters": "workspace:*",
+    "@cortexai-agent-hub/contracts": "workspace:*",
+    "@cortexai-agent-hub/core": "workspace:*",
+    "@cortexai-agent-hub/db": "workspace:*",
     "@testcontainers/postgresql": "^11.5.1",
     "pngjs": "7.0.0"
   },

@@ -1,6 +1,9 @@
-import type { TransactionalEmail, TransactionalEmailProvider } from "@rakazo/adapter-kit";
-import { emailAllowed, parseAllowlist, signupPolicyFromEnv } from "@rakazo/core";
-import { bootstrapUserSpace, type PrismaClient } from "@rakazo/db";
+import type {
+  TransactionalEmail,
+  TransactionalEmailProvider,
+} from "@cortexai-agent-hub/adapter-kit";
+import { emailAllowed, parseAllowlist, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
+import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError } from "better-auth/api";
@@ -37,7 +40,7 @@ export async function resolveSignupPolicy(
 
 export function createAuth(prisma: PrismaClient, env: AuthEnv) {
   return betterAuth({
-    appName: "Rakazo",
+    appName: "CortexAI Agent Hub",
     secret: env.secret,
     baseURL: env.baseURL,
     trustedOrigins: [env.webOrigin, env.baseURL, ...(env.extraOrigins ?? [])],
@@ -139,16 +142,16 @@ export function passwordResetEmail(
   const safeUrl = escapeHtml(resetUrl);
   return {
     to: user.email,
-    subject: "Reset your Rakazo password",
+    subject: "Reset your CortexAI Agent Hub password",
     text: [
       `Hi ${name},`,
       "",
-      "Reset your Rakazo password using this link:",
+      "Reset your CortexAI Agent Hub password using this link:",
       resetUrl,
       "",
       "This link expires in one hour. If you did not request this, you can ignore this email.",
     ].join("\n"),
-    html: `<p>Hi ${safeName},</p><p>Reset your Rakazo password:</p><p><a href="${safeUrl}">Reset password</a></p><p>This link expires in one hour. If you did not request this, you can ignore this email.</p>`,
+    html: `<p>Hi ${safeName},</p><p>Reset your CortexAI Agent Hub password:</p><p><a href="${safeUrl}">Reset password</a></p><p>This link expires in one hour. If you did not request this, you can ignore this email.</p>`,
   };
 }
 

@@ -4,7 +4,7 @@ import { completeOnboarding, rpc, signup } from "./helpers";
 test("voice settings connect a key, speak a reply, and open a call", async ({ page }) => {
   const stamp = Date.now();
   const userName = `Voice ${stamp}`;
-  await signup(page, `voice-${stamp}@rakazo.test`, "password12", userName);
+  await signup(page, `voice-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
 
   await page.getByRole("button", { name: "Call" }).click();

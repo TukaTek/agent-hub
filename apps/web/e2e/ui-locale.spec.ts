@@ -5,7 +5,7 @@ test("account settings language picker includes Simplified Chinese and applies i
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-zh-cn-${stamp}@rakazo.test`, "password12", "Locale QA");
+  await signup(page, `ui-locale-zh-cn-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
   await completeOnboarding(page, testInfo);
 
   await page.getByTestId("user-menu-trigger").click();
@@ -31,7 +31,7 @@ test("account settings language picker includes Korean and applies it", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-ko-${stamp}@rakazo.test`, "password12", "Locale QA");
+  await signup(page, `ui-locale-ko-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
   await completeOnboarding(page, testInfo);
 
   await page.getByTestId("user-menu-trigger").click();

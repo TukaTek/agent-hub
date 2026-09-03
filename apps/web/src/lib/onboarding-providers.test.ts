@@ -1,4 +1,4 @@
-import type { ModelCatalogEntry } from "@rakazo/contracts";
+import type { ModelCatalogEntry } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
 import {
   featuredModelProviders,

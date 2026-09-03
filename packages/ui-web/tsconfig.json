@@ -9,7 +9,7 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "@rakazo/ui-web/*": ["./src/*"]
+      "@cortexai-agent-hub/ui-web/*": ["./src/*"]
     }
   },
   "include": ["src"]

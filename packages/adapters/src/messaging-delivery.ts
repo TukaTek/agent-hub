@@ -3,12 +3,12 @@ import type {
   JobPublisher,
   MessagingOutboundStatus,
   MessagingSurface,
-} from "@rakazo/adapter-kit";
-import { messagingDeliverJob, runContinueJob } from "@rakazo/adapter-kit";
-import type { MessageBlock } from "@rakazo/contracts";
-import { botMessageHopExhausted, nextBotMessageHop } from "@rakazo/core";
-import type { PrismaClient, ThreadEvents } from "@rakazo/db";
-import { appendEventInTransaction, createThreadMessageInTransaction } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import { messagingDeliverJob, runContinueJob } from "@cortexai-agent-hub/adapter-kit";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { botMessageHopExhausted, nextBotMessageHop } from "@cortexai-agent-hub/core";
+import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import { appendEventInTransaction, createThreadMessageInTransaction } from "@cortexai-agent-hub/db";
 
 /**
  * Margin under vendor consecutive-outbound caps (sendblue enforces one hard):

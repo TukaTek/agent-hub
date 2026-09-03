@@ -7,7 +7,7 @@ import {
   InstalledConnectorProvider,
   PipedreamConnector,
   ThirdPartyConnectorEmulator,
-} from "@rakazo/adapters";
+} from "@cortexai-agent-hub/adapters";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sessionCookieHeader } from "./index.js";
 
@@ -30,7 +30,7 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   let thirdParties: ThirdPartyConnectorEmulator;
   let connectionOrdinal = 0;
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const dataDir = mkdtempSync(path.join(tmpdir(), "rakazo-connections-"));
+  const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-connections-"));
 
   beforeAll(async () => {
     const { createApp } = await import("../../../apps/api/src/app.ts");
@@ -73,8 +73,16 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("reconciles one scoped row per provider under concurrent catalog fetches", async () => {
-    const ownerCookie = await signup(app, `owner-connections-${stamp}@rakazo.test`, "Owner");
-    const otherCookie = await signup(app, `other-connections-${stamp}@rakazo.test`, "Other");
+    const ownerCookie = await signup(
+      app,
+      `owner-connections-${stamp}@cortexai-agent-hub.test`,
+      "Owner",
+    );
+    const otherCookie = await signup(
+      app,
+      `other-connections-${stamp}@cortexai-agent-hub.test`,
+      "Other",
+    );
     const owner = await rpc<Actor>(app, ownerCookie, "me");
     const other = await rpc<Actor>(app, otherCookie, "me");
     await connectRemote(composio, owner, "GMAIL");
@@ -118,7 +126,11 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("returns the remote catalog when local reconciliation fails", async () => {
-    const cookie = await signup(app, `db-failure-connections-${stamp}@rakazo.test`, "DB Failure");
+    const cookie = await signup(
+      app,
+      `db-failure-connections-${stamp}@cortexai-agent-hub.test`,
+      "DB Failure",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     await connectRemote(composio, actor, "SLACK");
     const pending = await createConnection(actor, "SLACK");
@@ -146,7 +158,7 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   it("does not mutate local state when the provider catalog fails", async () => {
     const cookie = await signup(
       app,
-      `provider-failure-connections-${stamp}@rakazo.test`,
+      `provider-failure-connections-${stamp}@cortexai-agent-hub.test`,
       "Provider Failure",
     );
     const actor = await rpc<Actor>(app, cookie, "me");
@@ -163,7 +175,11 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("routes an emulated Composio app tool with user-scoped connection context", async () => {
-    const cookie = await signup(app, `composio-tool-${stamp}@rakazo.test`, "Composio Tool");
+    const cookie = await signup(
+      app,
+      `composio-tool-${stamp}@cortexai-agent-hub.test`,
+      "Composio Tool",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const started = await rpc<{ connectionId: string; authorizationUrl: null }>(
       app,
@@ -215,7 +231,11 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("runs Pipedream connection and MCP tool execution through the product registry", async () => {
-    const cookie = await signup(app, `pipedream-${stamp}@rakazo.test`, "Pipedream Connector");
+    const cookie = await signup(
+      app,
+      `pipedream-${stamp}@cortexai-agent-hub.test`,
+      "Pipedream Connector",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const catalog = await rpc<Array<{ connectorId: string; slug: string; connected: boolean }>>(
       app,
@@ -282,7 +302,11 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("installs Treg and custom MCP sources, discovers tools, and routes both calls", async () => {
-    const cookie = await signup(app, `mcp-connectors-${stamp}@rakazo.test`, "MCP Connectors");
+    const cookie = await signup(
+      app,
+      `mcp-connectors-${stamp}@cortexai-agent-hub.test`,
+      "MCP Connectors",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const tregCredential = "fake-treg-credential-value";
     const treg = await rpc<{ id: string; secretConfigured: boolean }>(
@@ -358,7 +382,11 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("imports an OpenAPI connector, keeps its credential encrypted, and routes calls", async () => {
-    const cookie = await signup(app, `api-connector-${stamp}@rakazo.test`, "API Connector");
+    const cookie = await signup(
+      app,
+      `api-connector-${stamp}@cortexai-agent-hub.test`,
+      "API Connector",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const credential = "test-connector-secret-value";
     const install = await rpc<{

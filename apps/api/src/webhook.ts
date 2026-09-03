@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import type { JobPublisher } from "@rakazo/adapter-kit";
-import { runContinueJob } from "@rakazo/adapter-kit";
-import type { EncryptedSecretStore } from "@rakazo/adapters";
-import { hasValidBearerToken } from "@rakazo/core";
-import type { PrismaClient } from "@rakazo/db";
+import type { JobPublisher } from "@cortexai-agent-hub/adapter-kit";
+import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
+import type { EncryptedSecretStore } from "@cortexai-agent-hub/adapters";
+import { hasValidBearerToken } from "@cortexai-agent-hub/core";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import type { Hono } from "hono";
 
 export const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;

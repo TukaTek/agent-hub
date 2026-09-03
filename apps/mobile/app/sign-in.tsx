@@ -143,9 +143,9 @@ export default function SignIn() {
                 }}
               >
                 {mode === "in"
-                  ? t("Sign in to Rakazo")
+                  ? t("Sign in to CortexAI Agent Hub")
                   : mode === "up"
-                    ? t("Sign up for Rakazo")
+                    ? t("Sign up for CortexAI Agent Hub")
                     : resetSent
                       ? t("Check your email")
                       : t("Reset your password")}
@@ -426,7 +426,7 @@ function ServerSheet({
           </View>
           <Text style={{ color: "#6E6E68", marginTop: 28, fontSize: 15, lineHeight: 22 }}>
             {t(
-              "Point this app at your self-hosted Rakazo origin — the same HTTPS URL you open in a browser.",
+              "Point this app at your self-hosted CortexAI Agent Hub origin — the same HTTPS URL you open in a browser.",
             )}
           </Text>
           <TextInput

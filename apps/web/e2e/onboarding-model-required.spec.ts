@@ -14,7 +14,7 @@ test("onboarding requires a model when the deployment has none", async ({ page }
   const stamp = Date.now();
   await signup(
     page,
-    `model-required-${stamp}@rakazo.test`,
+    `model-required-${stamp}@cortexai-agent-hub.test`,
     "password12",
     `Model required ${stamp}`,
   );

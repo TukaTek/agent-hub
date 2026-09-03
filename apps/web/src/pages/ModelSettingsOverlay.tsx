@@ -1,10 +1,9 @@
-import { Plural, Trans, useLingui } from "@lingui/react/macro";
-import type { Me } from "@rakazo/contracts";
+import type { Me } from "@cortexai-agent-hub/contracts";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   openAiCompatibleConnectReady,
   openAiCompatibleProbeSuccessMessage,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,
@@ -16,7 +15,8 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Plural, Trans, useLingui } from "@lingui/react/macro";
 import { ChevronDown, X } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -326,7 +326,7 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
               {loading ? (
                 <Trans>Loading model catalog…</Trans>
               ) : (
-                <Trans>Choose which connected model Rakazo uses.</Trans>
+                <Trans>Choose which connected model CortexAI Agent Hub uses.</Trans>
               )}
             </DialogDescription>
           </div>
@@ -366,7 +366,7 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
               placeholder={t`Search providers`}
               className="h-10 rounded-xl px-3.5"
             />
-            <div className="rk-scroll mt-3 max-h-[240px] overflow-y-auto rounded-xl border border-border md:min-h-0 md:max-h-none md:flex-1">
+            <div className="cortexai-agent-hub-scroll mt-3 max-h-[240px] overflow-y-auto rounded-xl border border-border md:min-h-0 md:max-h-none md:flex-1">
               {filteredGroups.length ? (
                 filteredGroups.map((group) => {
                   const connected = credentials.some((entry) => entry.provider === group.id);
@@ -405,7 +405,10 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          <div ref={detailScrollRef} className="rk-scroll min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <div
+            ref={detailScrollRef}
+            className="cortexai-agent-hub-scroll min-h-0 min-w-0 flex-1 overflow-y-auto"
+          >
             {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
             {notice ? <p className="mb-4 text-sm text-success">{notice}</p> : null}
             {selected ? (
@@ -430,7 +433,7 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
                           <Trans>Setup help</Trans>
                         </summary>
                         <p className="mt-1">
-                          {t`Paste the OpenAI-compatible address from your server. Rakazo adds /v1 if needed.`}
+                          {t`Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed.`}
                         </p>
                       </details>
                       <div className="mt-3 flex items-center gap-2">
@@ -699,8 +702,8 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
                 {selected.auth === "oauth" && !subscriptionSignIn ? (
                   <p className="mt-5 text-sm leading-[1.5] text-muted-foreground">
                     <Trans>
-                      This subscription sign-in is not available in Rakazo yet. Use a deployment
-                      credential or choose another provider.
+                      This subscription sign-in is not available in CortexAI Agent Hub yet. Use a
+                      deployment credential or choose another provider.
                     </Trans>
                   </p>
                 ) : null}
@@ -966,7 +969,7 @@ function ModelPicker({
             id={listboxId}
             role="listbox"
             aria-label={t`Model options`}
-            className="rk-scroll max-h-64 overflow-y-auto py-1"
+            className="cortexai-agent-hub-scroll max-h-64 overflow-y-auto py-1"
           >
             {groupRanges.map((group) => (
               <div key={group.name}>

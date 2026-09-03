@@ -1,7 +1,7 @@
+import type { ActionApprovalRule, ActionAutoReviewSettings } from "@cortexai-agent-hub/contracts";
+import { Button, Label, Switch } from "@cortexai-agent-hub/ui-web";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { ActionApprovalRule, ActionAutoReviewSettings } from "@rakazo/contracts";
-import { Button, Label, Switch } from "@rakazo/ui-web";
 import { useEffect, useId, useState } from "react";
 import { rpc } from "../lib/rpc";
 
@@ -113,8 +113,8 @@ export function ApprovalRulesSettings() {
       </h3>
       <p className="mt-2 text-[13.5px] leading-[1.5] text-muted-foreground">
         <Trans>
-          Bots act without asking by default. Add an exception only when you want to review a type
-          of action first. These preferences apply across all your bots.
+          Assistants act without asking by default. Add an exception only when you want to review a
+          type of action first. These preferences apply across all your Assistants.
         </Trans>
       </p>
       <div className="mt-4 flex flex-col items-start gap-2">

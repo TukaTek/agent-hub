@@ -50,8 +50,8 @@ describe("mobile i18n", () => {
     const { resetI18nForTests, t } = await import("./i18n");
     resetI18nForTests("zh-CN");
     expect(t("Account")).toBe("账户");
-    expect(t("Sign in to Rakazo")).toBe("登录 Rakazo");
-    expect(t("New bot")).toBe("新建 Bot");
+    expect(t("Sign in to CortexAI Agent Hub")).toBe("登录 CortexAI Agent Hub");
+    expect(t("New Assistant")).toBe("新建助手");
     expect(t("{runs} runs · {tokens} tokens", { runs: 3, tokens: 12 })).toBe(
       "3 次运行 · 12 个 token",
     );
@@ -72,8 +72,10 @@ describe("mobile i18n", () => {
 
   it("translates every mobile chrome t() id", async () => {
     const { ZH_MESSAGES } = await import("./locales/zh");
-    const { EMPTY_PLUGIN_CATALOG_MESSAGE, SLASH_ACTIONS } = await import("@rakazo/core");
-    const { OPENAI_COMPATIBLE_BASE_URL_HINT } = await import("@rakazo/contracts");
+    const { EMPTY_PLUGIN_CATALOG_MESSAGE, SLASH_ACTIONS } = await import(
+      "@cortexai-agent-hub/core"
+    );
+    const { OPENAI_COMPATIBLE_BASE_URL_HINT } = await import("@cortexai-agent-hub/contracts");
     const mobileRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     const ids = new Set<string>([
       EMPTY_PLUGIN_CATALOG_MESSAGE,
@@ -108,7 +110,7 @@ describe("mobile i18n", () => {
     await setUiLocale("en");
     expect(getActiveUiLocale()).toBe("en");
     expect(t("Language")).toBe("Language");
-    expect(setItemAsync).toHaveBeenCalledWith("rakazo.uiLocale", "en");
+    expect(setItemAsync).toHaveBeenCalledWith("cortexai-agent-hub.uiLocale", "en");
     expect(applyMobileUiDirection).toHaveBeenCalledWith("en");
   });
 
@@ -138,7 +140,7 @@ describe("mobile i18n", () => {
     await Promise.all([first, second]);
 
     expect(getActiveUiLocale()).toBe("zh-CN");
-    expect(setItemAsync).toHaveBeenLastCalledWith("rakazo.uiLocale", "zh-CN");
+    expect(setItemAsync).toHaveBeenLastCalledWith("cortexai-agent-hub.uiLocale", "zh-CN");
     expect(applyMobileUiDirection).toHaveBeenLastCalledWith("zh-CN");
   });
 });

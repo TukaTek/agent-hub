@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/core",
+  "name": "@cortexai-agent-hub/core",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -30,7 +30,7 @@
     "test": "vitest run --root ../.. packages/core/src"
   },
   "dependencies": {
-    "@rakazo/contracts": "workspace:*",
+    "@cortexai-agent-hub/contracts": "workspace:*",
     "dotenv": "^17.2.1",
     "@observablehq/plot": "^0.6.17",
     "d3-dsv": "^3.0.1",

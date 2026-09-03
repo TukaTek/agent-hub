@@ -24,7 +24,11 @@ describe("searchSupermemory", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await searchSupermemory("spelling preference", "rakazo:bot-123", config);
+    const result = await searchSupermemory(
+      "spelling preference",
+      "cortexai-agent-hub:bot-123",
+      config,
+    );
 
     expect(result).toEqual({
       ok: true,
@@ -36,7 +40,7 @@ describe("searchSupermemory", () => {
     expect(init.redirect).toBe("error");
     expect(JSON.parse(init.body)).toStrictEqual({
       q: "spelling preference",
-      containerTag: "rakazo:bot-123",
+      containerTag: "cortexai-agent-hub:bot-123",
       searchMode: "memories",
       limit: MAX_RECALLED_MEMORIES,
     });
@@ -45,14 +49,14 @@ describe("searchSupermemory", () => {
 
   it("reports a non-OK response instead of throwing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 500 })));
-    const result = await searchSupermemory("anything", "rakazo:bot-123", config);
+    const result = await searchSupermemory("anything", "cortexai-agent-hub:bot-123", config);
     expect(result).toEqual({ ok: false, error: expect.stringContaining("500") });
     vi.unstubAllGlobals();
   });
 
   it("reports an unreachable server instead of throwing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED")));
-    const result = await searchSupermemory("anything", "rakazo:bot-123", config);
+    const result = await searchSupermemory("anything", "cortexai-agent-hub:bot-123", config);
     expect(result).toEqual({ ok: false, error: expect.stringContaining("unreachable") });
     vi.unstubAllGlobals();
   });
@@ -67,7 +71,7 @@ describe("searchSupermemory", () => {
       ),
     );
 
-    const result = await searchSupermemory("database", "rakazo:bot-123", config);
+    const result = await searchSupermemory("database", "cortexai-agent-hub:bot-123", config);
 
     expect(result).toEqual({
       ok: true,
@@ -89,7 +93,7 @@ describe("searchSupermemory", () => {
       ),
     );
 
-    const result = await searchSupermemory("anything", "rakazo:bot-123", config);
+    const result = await searchSupermemory("anything", "cortexai-agent-hub:bot-123", config);
 
     expect(result).toEqual({ ok: true, results: [{ memory: "kept", similarity: 0 }] });
     vi.unstubAllGlobals();
@@ -121,7 +125,11 @@ describe("searchSupermemoryContainers", () => {
     );
 
     await expect(
-      searchSupermemoryContainers("query", ["rakazo:workspace:ws-1", "rakazo:bot-1"], config),
+      searchSupermemoryContainers(
+        "query",
+        ["cortexai-agent-hub:workspace:ws-1", "cortexai-agent-hub:bot-1"],
+        config,
+      ),
     ).resolves.toEqual({
       ok: true,
       results: [
@@ -140,7 +148,7 @@ describe("saveSupermemoryMemory", () => {
 
     const result = await saveSupermemoryMemory(
       "User prefers British English",
-      "rakazo:bot-123",
+      "cortexai-agent-hub:bot-123",
       config,
     );
 
@@ -149,7 +157,7 @@ describe("saveSupermemoryMemory", () => {
     expect(url).toBe("http://localhost:6767/v4/memories");
     expect(init.redirect).toBe("error");
     expect(JSON.parse(init.body)).toEqual({
-      containerTag: "rakazo:bot-123",
+      containerTag: "cortexai-agent-hub:bot-123",
       memories: [{ content: "User prefers British English", isStatic: false }],
     });
     vi.unstubAllGlobals();
@@ -161,7 +169,7 @@ describe("saveSupermemoryMemory", () => {
 
     await saveSupermemoryMemory(
       `prefix ${"x".repeat(MAX_MEMORY_CONTENT_CHARS)}`,
-      "rakazo:bot-123",
+      "cortexai-agent-hub:bot-123",
       config,
     );
 
@@ -172,7 +180,7 @@ describe("saveSupermemoryMemory", () => {
 
   it("reports a non-OK response instead of throwing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 401 })));
-    const result = await saveSupermemoryMemory("fact", "rakazo:bot-123", config);
+    const result = await saveSupermemoryMemory("fact", "cortexai-agent-hub:bot-123", config);
     expect(result).toEqual({ ok: false, error: expect.stringContaining("401") });
     vi.unstubAllGlobals();
   });
@@ -184,7 +192,11 @@ describe("saveSupermemoryMemoryToContainers", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      saveSupermemoryMemoryToContainers("fact", ["rakazo:workspace:ws-1", "rakazo:bot-1"], config),
+      saveSupermemoryMemoryToContainers(
+        "fact",
+        ["cortexai-agent-hub:workspace:ws-1", "cortexai-agent-hub:bot-1"],
+        config,
+      ),
     ).resolves.toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
@@ -196,11 +208,11 @@ describe("deleteSupermemoryContainer", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await deleteSupermemoryContainer("rakazo:bot-123", config);
+    const result = await deleteSupermemoryContainer("cortexai-agent-hub:bot-123", config);
 
     expect(result).toEqual({ ok: true });
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe("http://localhost:6767/v3/container-tags/rakazo%3Abot-123");
+    expect(url).toBe("http://localhost:6767/v3/container-tags/cortexai-agent-hub%3Abot-123");
     expect(init.method).toBe("DELETE");
     expect(init.redirect).toBe("error");
     vi.unstubAllGlobals();
@@ -208,7 +220,7 @@ describe("deleteSupermemoryContainer", () => {
 
   it("reports a non-OK response instead of throwing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 404 })));
-    const result = await deleteSupermemoryContainer("rakazo:bot-123", config);
+    const result = await deleteSupermemoryContainer("cortexai-agent-hub:bot-123", config);
     expect(result).toEqual({ ok: false, error: expect.stringContaining("404") });
     vi.unstubAllGlobals();
   });

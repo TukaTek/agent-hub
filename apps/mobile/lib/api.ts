@@ -9,7 +9,7 @@ import type {
   ModelCredential,
   Space,
   SpaceNavigation,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   isRunTerminalEvent,
   mergeThreadHistory,
@@ -19,7 +19,7 @@ import {
   runFailureError,
   type ThreadHistory,
   upsertMessageById,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import * as SecureStore from "expo-secure-store";
 import { defaultApiBase, type EndpointResult, normalizeApiBase } from "./endpoint";
 import { t } from "./i18n";
@@ -33,9 +33,9 @@ import {
   tokenFromAuthResponse,
 } from "./session";
 
-const ENDPOINT_KEY = "rakazo.api_base";
-const SPACE_KEY = "rakazo.space_id";
-const SPACE_ROLLBACK_KEY = "rakazo.space_rollback";
+const ENDPOINT_KEY = "cortexai-agent-hub.api_base";
+const SPACE_KEY = "cortexai-agent-hub.space_id";
+const SPACE_ROLLBACK_KEY = "cortexai-agent-hub.space_rollback";
 const RPC_TIMEOUT_MS = 8_000;
 
 let cachedApiBase: string | undefined;
@@ -274,7 +274,7 @@ export async function authHeaders(
   const token = await loadSessionToken();
   return {
     ...(token ? { authorization: `Bearer ${token}` } : {}),
-    ...(spaceId ? { "x-rakazo-space-id": spaceId } : {}),
+    ...(spaceId ? { "x-cortexai-agent-hub-space-id": spaceId } : {}),
   };
 }
 
@@ -298,7 +298,7 @@ async function authenticateWithEmail(
 ) {
   const res = await fetch(`${currentApiBase()}/api/auth/${action}/email`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "rakazo://" },
+    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
     body: JSON.stringify(input),
   });
   const body = await res.json().catch(() => ({}));
@@ -330,7 +330,7 @@ export type PasswordResetCapabilities = { passwordReset: boolean; resetUrl: stri
 
 export async function passwordResetCapabilities(): Promise<PasswordResetCapabilities> {
   const response = await fetch(`${currentApiBase()}/api/auth/capabilities`, {
-    headers: { origin: "rakazo://" },
+    headers: { origin: "cortexai-agent-hub://" },
   });
   if (!response.ok) throw new Error("Could not load password recovery settings");
   return (await response.json()) as PasswordResetCapabilities;
@@ -339,7 +339,7 @@ export async function passwordResetCapabilities(): Promise<PasswordResetCapabili
 export async function requestPasswordReset(email: string, redirectTo: string): Promise<void> {
   const response = await fetch(`${currentApiBase()}/api/auth/request-password-reset`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "rakazo://" },
+    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
     body: JSON.stringify({ email, redirectTo }),
   });
   const body = await response.json().catch(() => ({}));
@@ -349,7 +349,11 @@ export async function requestPasswordReset(email: string, redirectTo: string): P
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   const response = await fetch(`${currentApiBase()}/api/auth/change-password`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "rakazo://", ...(await authHeaders()) },
+    headers: {
+      "content-type": "application/json",
+      origin: "cortexai-agent-hub://",
+      ...(await authHeaders()),
+    },
     body: JSON.stringify({ currentPassword, newPassword, revokeOtherSessions: true }),
   });
   const body = await response.json().catch(() => ({}));
@@ -361,7 +365,7 @@ export async function signOut() {
   const headers = await authHeaders();
   await fetch(`${currentApiBase()}/api/auth/sign-out`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "rakazo://", ...headers },
+    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://", ...headers },
   }).catch(() => undefined);
   const sessionCleared = await clearSessionToken();
   const spaceCleared = await clearSpace();
@@ -372,7 +376,11 @@ export async function deleteAccount(password: string) {
   await rpc("notifications/unregisterPush").catch(() => undefined);
   const res = await fetch(`${currentApiBase()}/api/auth/delete-user`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "rakazo://", ...(await authHeaders()) },
+    headers: {
+      "content-type": "application/json",
+      origin: "cortexai-agent-hub://",
+      ...(await authHeaders()),
+    },
     body: JSON.stringify({ password }),
   });
   const body = await res.json().catch(() => ({}));
@@ -403,7 +411,7 @@ export async function rpc<T>(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        origin: "rakazo://",
+        origin: "cortexai-agent-hub://",
         ...(options.requestContext?.headers ?? (await authHeaders())),
       },
       body: JSON.stringify({ json: body }),
@@ -550,7 +558,7 @@ export function blockText(message: MobileMessage) {
         return `${block.name ?? "subagent"}: ${block.result || block.progress || block.task || ""}`;
       }
       if (block.kind === "child_bot") {
-        return `${block.status === "archived" ? "Archived" : block.status === "deleted" ? "Deleted" : "Bot"} ${block.name ?? ""}`;
+        return `${block.status === "archived" ? "Archived" : block.status === "deleted" ? "Deleted" : "Assistant"} ${block.name ?? ""}`;
       }
       if (block.kind === "chart") return `[chart: ${block.name ?? "chart"}]`;
       if (block.kind === "image") return `[image: ${block.name ?? "attachment"}]`;
@@ -604,7 +612,7 @@ export async function subscribeThread(
     headers: {
       "content-type": "application/json",
       accept: "text/event-stream",
-      origin: "rakazo://",
+      origin: "cortexai-agent-hub://",
       ...(await authHeaders()),
     },
     body: JSON.stringify({ json: { ...target, cursor } }),

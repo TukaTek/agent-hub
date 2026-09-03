@@ -1,4 +1,4 @@
-{$RAKAZO_HOST:app.example.com} {
+{$CORTEXAI_AGENT_HUB_HOST:app.example.com} {
 	encode zstd gzip
 
 	handle /health {

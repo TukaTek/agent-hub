@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/sandbox-supervisor",
+  "name": "@cortexai-agent-hub/sandbox-supervisor",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.1",
-    "@rakazo/core": "workspace:*",
+    "@cortexai-agent-hub/core": "workspace:*",
     "dockerode": "^4.0.7",
     "hono": "^4.9.6",
     "tsx": "^4.20.5",

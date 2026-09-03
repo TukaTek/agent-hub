@@ -1,11 +1,15 @@
-import type { CapabilityInstall, Connection, ConnectionCatalogItem } from "@rakazo/contracts";
+import type {
+  CapabilityInstall,
+  Connection,
+  ConnectionCatalogItem,
+} from "@cortexai-agent-hub/contracts";
 import {
   abortableDelay,
   buildFeaturedConnectorTiles,
   CONNECTION_CATALOG_PAGE_SIZE,
   EMPTY_PLUGIN_CATALOG_MESSAGE,
   filterConnectionCatalogItems,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,

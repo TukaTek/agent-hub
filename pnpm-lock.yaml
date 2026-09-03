@@ -26,6 +26,9 @@ importers:
       cross-env:
         specifier: ^10.1.0
         version: 10.1.0
+      sharp:
+        specifier: 0.35.3
+        version: 0.35.3(@types/node@24.13.3)
       tsx:
         specifier: ^4.20.5
         version: 4.23.12
@@ -41,33 +44,33 @@ importers:
 
   apps/api:
     dependencies:
+      '@cortexai-agent-hub/adapter-kit':
+        specifier: workspace:*
+        version: link:../../packages/adapter-kit
+      '@cortexai-agent-hub/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@cortexai-agent-hub/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@cortexai-agent-hub/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cortexai-agent-hub/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
       '@hono/node-server':
         specifier: ^1.19.1
         version: 1.19.17(hono@4.13.1)
       '@orpc/server':
         specifier: ^1.15.0
         version: 1.15.0(@opentelemetry/api@1.9.1)(crossws@0.3.5)(ws@8.21.3)
-      '@rakazo/adapter-kit':
-        specifier: workspace:*
-        version: link:../../packages/adapter-kit
-      '@rakazo/adapters':
-        specifier: workspace:*
-        version: link:../../packages/adapters
-      '@rakazo/auth':
-        specifier: workspace:*
-        version: link:../../packages/auth
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@rakazo/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@rakazo/memory':
-        specifier: workspace:*
-        version: link:../../packages/memory
       hono:
         specifier: ^4.9.6
         version: 4.13.1
@@ -81,19 +84,19 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@rakazo/contracts':
+      '@cortexai-agent-hub/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
     devDependencies:
+      '@cortexai-agent-hub/ui-tokens':
+        specifier: workspace:*
+        version: link:../../packages/ui-tokens
       '@playwright/test':
         specifier: ^1.55.0
         version: 1.62.1
-      '@rakazo/ui-tokens':
-        specifier: workspace:*
-        version: link:../../packages/ui-tokens
       electron:
         specifier: ^43.4.0
         version: 43.4.0
@@ -109,21 +112,21 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@cortexai-agent-hub/chat-ui':
+        specifier: workspace:*
+        version: link:../../packages/chat-ui
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@cortexai-agent-hub/ui-tokens':
+        specifier: workspace:*
+        version: link:../../packages/ui-tokens
       '@expo/metro-runtime':
         specifier: ~57.0.15
         version: 57.0.15(@expo/log-box@57.0.4)(expo@57.0.19)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
-      '@rakazo/chat-ui':
-        specifier: workspace:*
-        version: link:../../packages/chat-ui
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@rakazo/ui-tokens':
-        specifier: workspace:*
-        version: link:../../packages/ui-tokens
       '@react-native-vector-icons/ionicons':
         specifier: 13.1.2
         version: 13.1.2(@expo/config-plugins@57.0.9(typescript@6.0.3))(@react-native/assets-registry@0.86.3)(expo-font@57.0.3)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
@@ -239,6 +242,21 @@ importers:
 
   apps/web:
     dependencies:
+      '@cortexai-agent-hub/chat-ui':
+        specifier: workspace:*
+        version: link:../../packages/chat-ui
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@cortexai-agent-hub/ui-tokens':
+        specifier: workspace:*
+        version: link:../../packages/ui-tokens
+      '@cortexai-agent-hub/ui-web':
+        specifier: workspace:*
+        version: link:../../packages/ui-web
       '@lingui/core':
         specifier: 5.9.5
         version: 5.9.5(@lingui/babel-plugin-lingui-macro@5.9.5(typescript@5.9.3))
@@ -251,21 +269,6 @@ importers:
       '@orpc/contract':
         specifier: ^1.15.0
         version: 1.15.0(@opentelemetry/api@1.9.1)
-      '@rakazo/chat-ui':
-        specifier: workspace:*
-        version: link:../../packages/chat-ui
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@rakazo/ui-tokens':
-        specifier: workspace:*
-        version: link:../../packages/ui-tokens
-      '@rakazo/ui-web':
-        specifier: workspace:*
-        version: link:../../packages/ui-web
       better-auth:
         specifier: ^1.6.27
         version: 1.6.27(@opentelemetry/api@1.9.1)(@prisma/client@7.9.1(prisma@7.9.1(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(magicast@0.5.4)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3))(typescript@5.9.3))(mysql2@3.15.3)(pg@8.23.0)(prisma@7.9.1(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(magicast@0.5.4)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(jsdom@30.0.1(@noble/hashes@2.3.0))(vite@7.3.6(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0)))
@@ -333,19 +336,19 @@ importers:
 
   apps/worker:
     dependencies:
-      '@rakazo/adapter-kit':
+      '@cortexai-agent-hub/adapter-kit':
         specifier: workspace:*
         version: link:../../packages/adapter-kit
-      '@rakazo/adapters':
+      '@cortexai-agent-hub/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
-      '@rakazo/core':
+      '@cortexai-agent-hub/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@rakazo/db':
+      '@cortexai-agent-hub/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@rakazo/memory':
+      '@cortexai-agent-hub/memory':
         specifier: workspace:*
         version: link:../../packages/memory
     devDependencies:
@@ -364,7 +367,7 @@ importers:
       '@astrojs/sitemap':
         specifier: 3.7.3
         version: 3.7.3
-      '@rakazo/ui-web':
+      '@cortexai-agent-hub/ui-web':
         specifier: workspace:*
         version: link:../../packages/ui-web
       '@vercel/functions':
@@ -410,12 +413,12 @@ importers:
 
   infra/sandboxes/supervisor:
     dependencies:
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../../../packages/core
       '@hono/node-server':
         specifier: ^1.19.1
         version: 1.19.17(hono@4.13.1)
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../../../packages/core
       dockerode:
         specifier: ^4.0.7
         version: 4.0.12
@@ -441,15 +444,15 @@ importers:
 
   infra/updater:
     dependencies:
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@hono/node-server':
         specifier: ^1.19.1
         version: 1.19.17(hono@4.13.1)
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       hono:
         specifier: ^4.9.6
         version: 4.13.1
@@ -469,7 +472,7 @@ importers:
 
   packages/adapter-kit:
     dependencies:
-      '@rakazo/contracts':
+      '@cortexai-agent-hub/contracts':
         specifier: workspace:*
         version: link:../contracts
       zod:
@@ -503,6 +506,18 @@ importers:
       '@composio/core':
         specifier: 0.16.0
         version: 0.16.0(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+      '@cortexai-agent-hub/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cortexai-agent-hub/db':
+        specifier: workspace:*
+        version: link:../db
       '@daytona/sdk':
         specifier: ^0.204.1
         version: 0.204.1
@@ -524,18 +539,6 @@ importers:
       '@observablehq/plot':
         specifier: ^0.6.17
         version: 0.6.17
-      '@rakazo/adapter-kit':
-        specifier: workspace:*
-        version: link:../adapter-kit
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../core
-      '@rakazo/db':
-        specifier: workspace:*
-        version: link:../db
       chat:
         specifier: 4.39.0
         version: 4.39.0(zod@4.4.3)
@@ -600,13 +603,13 @@ importers:
 
   packages/auth:
     dependencies:
-      '@rakazo/adapter-kit':
+      '@cortexai-agent-hub/adapter-kit':
         specifier: workspace:*
         version: link:../adapter-kit
-      '@rakazo/core':
+      '@cortexai-agent-hub/core':
         specifier: workspace:*
         version: link:../core
-      '@rakazo/db':
+      '@cortexai-agent-hub/db':
         specifier: workspace:*
         version: link:../db
       better-auth:
@@ -666,12 +669,12 @@ importers:
 
   packages/core:
     dependencies:
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@observablehq/plot':
         specifier: ^0.6.17
         version: 0.6.17
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../contracts
       croner:
         specifier: ^10.0.1
         version: 10.0.1
@@ -697,21 +700,21 @@ importers:
 
   packages/db:
     dependencies:
+      '@cortexai-agent-hub/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
       '@prisma/adapter-pg':
         specifier: ^7.9.1
         version: 7.9.1
       '@prisma/client':
         specifier: ^7.9.1
         version: 7.9.1(prisma@7.9.1(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(magicast@0.5.4)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3)
-      '@rakazo/adapter-kit':
-        specifier: workspace:*
-        version: link:../adapter-kit
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../core
       dotenv:
         specifier: ^17.2.1
         version: 17.4.2
@@ -734,10 +737,10 @@ importers:
 
   packages/memory:
     dependencies:
-      '@rakazo/adapter-kit':
+      '@cortexai-agent-hub/adapter-kit':
         specifier: workspace:*
         version: link:../adapter-kit
-      '@rakazo/db':
+      '@cortexai-agent-hub/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -750,24 +753,24 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@cortexai-agent-hub/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@cortexai-agent-hub/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@cortexai-agent-hub/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cortexai-agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cortexai-agent-hub/db':
+        specifier: workspace:*
+        version: link:../db
       '@hono/node-server':
         specifier: ^1.19.1
         version: 1.19.17(hono@4.13.1)
-      '@rakazo/adapter-kit':
-        specifier: workspace:*
-        version: link:../adapter-kit
-      '@rakazo/adapters':
-        specifier: workspace:*
-        version: link:../adapters
-      '@rakazo/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@rakazo/core':
-        specifier: workspace:*
-        version: link:../core
-      '@rakazo/db':
-        specifier: workspace:*
-        version: link:../db
       '@testcontainers/postgresql':
         specifier: ^11.5.1
         version: 11.14.0
@@ -802,10 +805,10 @@ importers:
       '@base-ui/react':
         specifier: ^1.7.0
         version: 1.7.0(@types/react@19.2.18)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@rakazo/core':
+      '@cortexai-agent-hub/core':
         specifier: workspace:*
         version: link:../core
-      '@rakazo/ui-tokens':
+      '@cortexai-agent-hub/ui-tokens':
         specifier: workspace:*
         version: link:../ui-tokens
       class-variance-authority:
@@ -13423,7 +13426,9 @@ snapshots:
       metro-runtime: 0.84.5
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
     optional: true
 
   '@react-native/metro-config@0.86.3(@babel/core@7.29.7)':

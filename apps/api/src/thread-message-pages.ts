@@ -1,6 +1,6 @@
-import type { MessageBlock, ThreadMessage, ThreadMessagePage } from "@rakazo/contracts";
-import { isPeerReceiptBlocks } from "@rakazo/core";
-import type { Prisma, PrismaClient } from "@rakazo/db";
+import type { MessageBlock, ThreadMessage, ThreadMessagePage } from "@cortexai-agent-hub/contracts";
+import { isPeerReceiptBlocks } from "@cortexai-agent-hub/core";
+import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
 

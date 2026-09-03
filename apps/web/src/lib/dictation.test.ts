@@ -106,7 +106,7 @@ describe("Dictation recorder fallback", () => {
   });
 
   it("keeps transcription in the space where recording started", async () => {
-    const store = new Map<string, string>([["rakazo:space-id", "space-support"]]);
+    const store = new Map<string, string>([["cortexai-agent-hub:space-id", "space-support"]]);
     const localStorage = {
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => {
@@ -150,7 +150,7 @@ describe("Dictation recorder fallback", () => {
     const onFinal = vi.fn();
     const dictation = new Dictation();
     await dictation.listen({ mode: "hold", transcribe: true, onFinal });
-    store.set("rakazo:space-id", "space-other");
+    store.set("cortexai-agent-hub:space-id", "space-other");
     dictation.submitHold();
     await vi.waitFor(() => expect(onFinal).toHaveBeenCalledWith("hello"));
 
@@ -159,7 +159,7 @@ describe("Dictation recorder fallback", () => {
       expect.objectContaining({ credentials: "include" }),
     );
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
-    expect(headers.get("x-rakazo-space-id")).toBe("space-support");
+    expect(headers.get("x-cortexai-agent-hub-space-id")).toBe("space-support");
     expect(headers.get("content-type")).toBe("application/json");
   });
 

@@ -1,9 +1,9 @@
+import type { AppContract } from "@cortexai-agent-hub/contracts";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import type { AppContract } from "@rakazo/contracts";
 
-const SPACE_STORAGE_KEY = "rakazo:space-id";
+const SPACE_STORAGE_KEY = "cortexai-agent-hub:space-id";
 
 type RpcClientContext = { spaceId?: string | null };
 
@@ -38,14 +38,14 @@ export function clearSpaceSelection(): void {
   }
 }
 
-/** Adds `x-rakazo-space-id` when a space is selected. */
+/** Adds `x-cortexai-agent-hub-space-id` when a space is selected. */
 export function withSpaceHeaders(
   init?: HeadersInit,
   spaceId: string | null = selectedSpaceId(),
 ): Headers {
   const headers = new Headers(init);
-  if (spaceId) headers.set("x-rakazo-space-id", spaceId);
-  else headers.delete("x-rakazo-space-id");
+  if (spaceId) headers.set("x-cortexai-agent-hub-space-id", spaceId);
+  else headers.delete("x-cortexai-agent-hub-space-id");
   return headers;
 }
 

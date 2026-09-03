@@ -1,11 +1,11 @@
 [Unit]
-Description=Create and verify a Rakazo production backup
+Description=Create and verify a CortexAI Agent Hub production backup
 Requires=docker.service
 After=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/rakazo-backup
+ExecStart=/usr/local/sbin/cortexai-agent-hub-backup
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

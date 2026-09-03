@@ -6,8 +6,8 @@ import type {
   AgentHomeStore,
   JobPublisher,
   SandboxProvider,
-} from "@rakazo/adapter-kit";
-import type { PrismaClient, ThreadEvents } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   acquireComputerExecutionLease,
@@ -34,7 +34,7 @@ const context = {
 
 describe("computer provisioning", () => {
   it("stops a provider when archive invalidates its boot claim", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-provision-race-"));
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-provision-race-"));
     const stop = vi.fn().mockResolvedValue(undefined);
     const releaseScreen = vi.fn().mockResolvedValue(undefined);
     const updateMany = vi
@@ -108,7 +108,7 @@ describe("computer provisioning", () => {
   ])(
     "preserves the original computer when reconnect $stage fails (rollbackFails=$rollbackFails)",
     async ({ stage, rollbackFails }) => {
-      const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-reconnect-rollback-"));
+      const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-reconnect-rollback-"));
       const failure = new Error(`${stage} failed`);
       const rollbackError = new Error("replacement deletion failed");
       const original = {
@@ -185,7 +185,9 @@ describe("computer provisioning", () => {
   ])(
     "restores saved files before reconnecting to $kind/$providerRef (fresh=$fresh)",
     async (next) => {
-      const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-provision-reconnect-update-"));
+      const dataDir = await mkdtemp(
+        path.join(tmpdir(), "cortexai-agent-hub-provision-reconnect-update-"),
+      );
       const home = new LocalAgentHomeStore(dataDir);
       const sandbox = new FakeSandboxProvider();
       const ref = {
@@ -253,7 +255,7 @@ describe("computer provisioning", () => {
     { fresh: true, cleanup: "destroy" as const },
     { fresh: false, cleanup: "stop" as const },
   ])("rolls back $cleanup when shared preparation fails", async ({ fresh, cleanup }) => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-prepare-rollback-"));
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-prepare-rollback-"));
     const ref = {
       id: "provider-1",
       botId: "bot-1",
@@ -312,7 +314,9 @@ describe("computer provisioning", () => {
   });
 
   it("releases the screen when activation fails on a resumed Team computer", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-team-activation-rollback-"));
+    const dataDir = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-team-activation-rollback-"),
+    );
     const ref = {
       id: "provider-1",
       botId: "team-home",
@@ -375,7 +379,9 @@ describe("computer provisioning", () => {
   });
 
   it("retains a fresh provider reference when rollback also fails", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-prepare-rollback-failure-"));
+    const dataDir = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-prepare-rollback-failure-"),
+    );
     const prepareError = new Error("provider preparation failed");
     const rollbackError = new Error("provider deletion failed");
     const ref = {
@@ -438,7 +444,7 @@ describe("computer provisioning", () => {
   it.each([false, true])(
     "preserves a running computer's files on ordinary reconnect (prepare fails=%s)",
     async (prepareFails) => {
-      const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-provision-reconnect-"));
+      const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-provision-reconnect-"));
       const ref = {
         id: "provider-1",
         botId: "bot-1",
@@ -716,8 +722,8 @@ describe("computer replacement", () => {
   });
 
   it("replaces a wedged computer and restores the durable home", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-replace-"));
-    const homeRoot = await mkdtemp(path.join(tmpdir(), "rakazo-replace-home-"));
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-replace-"));
+    const homeRoot = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-replace-home-"));
     const home = new LocalAgentHomeStore(homeRoot);
     const sandbox = new FakeSandboxProvider();
     const first = await sandbox.provision({ botId: "bot-1", homePath: dataDir }, context);
@@ -1184,7 +1190,7 @@ describe("computer replacement", () => {
   });
 
   it("claims a stopped computer before teardown so concurrent replacements serialize", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-replace-stopped-claim-"));
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-replace-stopped-claim-"));
     const updateMany = vi
       .fn()
       .mockResolvedValueOnce({ count: 1 })
@@ -1277,8 +1283,10 @@ describe("computer replacement", () => {
   });
 
   it("continues recover when checkpoint fails with an ordinary provider error", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-recover-checkpoint-"));
-    const homeRoot = await mkdtemp(path.join(tmpdir(), "rakazo-recover-checkpoint-home-"));
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-recover-checkpoint-"));
+    const homeRoot = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-recover-checkpoint-home-"),
+    );
     const home = new LocalAgentHomeStore(homeRoot);
     const sandbox = new FakeSandboxProvider();
     const first = await sandbox.provision({ botId: "bot-1", homePath: dataDir }, context);
@@ -1335,8 +1343,10 @@ describe("computer replacement", () => {
   });
 
   it("aborts update when checkpoint fails with an ordinary provider error", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-update-checkpoint-"));
-    const homeRoot = await mkdtemp(path.join(tmpdir(), "rakazo-update-checkpoint-home-"));
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-update-checkpoint-"));
+    const homeRoot = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-update-checkpoint-home-"),
+    );
     const home = new LocalAgentHomeStore(homeRoot);
     const sandbox = new FakeSandboxProvider();
     const first = await sandbox.provision({ botId: "bot-1", homePath: dataDir }, context);

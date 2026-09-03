@@ -1,7 +1,14 @@
+import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
+import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
+import {
+  BotAvatar,
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { ChatMarkdown } from "@rakazo/chat-ui/web";
-import type { ThreadMessage } from "@rakazo/contracts";
-import { BotAvatar, Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@rakazo/ui-web";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { peerConversations } from "../lib/peer-messages";
 import { rpc } from "../lib/rpc";
@@ -109,7 +116,7 @@ export function PeerMessagesOverlay({
         ) : (
           <div
             data-testid="peer-conversation-transcript"
-            className="rk-scroll flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 py-5 md:px-7 md:py-6"
+            className="cortexai-agent-hub-scroll flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 py-5 md:px-7 md:py-6"
           >
             {conversation.messages.map((peerMessage, index) => {
               const sent = peerMessage.direction === "sent";

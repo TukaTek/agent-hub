@@ -29,8 +29,8 @@ async function main() {
       DATA_DIR: path.resolve("test-report/canary/data"),
     };
     if (postgres) {
-      execSync("pnpm --filter @rakazo/db generate", { stdio: "inherit", env });
-      execSync("pnpm --filter @rakazo/db exec prisma migrate deploy", {
+      execSync("pnpm --filter @cortexai-agent-hub/db generate", { stdio: "inherit", env });
+      execSync("pnpm --filter @cortexai-agent-hub/db exec prisma migrate deploy", {
         stdio: "inherit",
         env,
         cwd: path.resolve("packages/db"),

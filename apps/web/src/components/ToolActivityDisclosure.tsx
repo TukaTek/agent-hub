@@ -1,4 +1,4 @@
-import type { ThreadMessage } from "@rakazo/contracts";
+import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 

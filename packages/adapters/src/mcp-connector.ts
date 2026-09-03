@@ -4,9 +4,9 @@ import type {
   ConnectorEvent,
   ConnectorProvider,
   ConnectorTool,
-} from "@rakazo/adapter-kit";
-import { isLocalMcpHost } from "@rakazo/contracts";
-import type { McpServer, PrismaClient } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import { isLocalMcpHost } from "@cortexai-agent-hub/contracts";
+import type { McpServer, PrismaClient } from "@cortexai-agent-hub/db";
 import { sanitizeConnectorError } from "./connector-safety.js";
 import {
   CATALOG_EXECUTE,
@@ -254,7 +254,7 @@ export class McpConnector implements ConnectorProvider {
   }
 
   private async connectSession(server: McpServer, context: AdapterContext): Promise<McpSession> {
-    const session = new McpSession({ name: `rakazo-${server.slug}` });
+    const session = new McpSession({ name: `cortexai-agent-hub-${server.slug}` });
     try {
       const secret = server.secretId
         ? await this.prisma.secret.findFirst({

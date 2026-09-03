@@ -1,5 +1,5 @@
-import type { MessageBlock } from "@rakazo/contracts";
-import { abortableDelay } from "@rakazo/core";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { abortableDelay } from "@cortexai-agent-hub/core";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native";
 import { rpc } from "../lib/api";

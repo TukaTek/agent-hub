@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
 import { captureScreenshot, completeOnboarding, signup } from "./helpers";
 
-const LOCAL_MODEL_ID = "rakazo-e2e-local";
+const LOCAL_MODEL_ID = "cortexai-agent-hub-e2e-local";
 const LOCAL_MODEL_REPLY = "OpenAI-compatible endpoint verified end to end.";
 
 test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page }, testInfo) => {
@@ -22,7 +22,7 @@ test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page },
       const created = Math.floor(Date.now() / 1_000);
       response.write(
         `data: ${JSON.stringify({
-          id: "chatcmpl-rakazo-e2e",
+          id: "chatcmpl-cortexai-agent-hub-e2e",
           object: "chat.completion.chunk",
           created,
           model: LOCAL_MODEL_ID,
@@ -37,7 +37,7 @@ test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page },
       );
       response.write(
         `data: ${JSON.stringify({
-          id: "chatcmpl-rakazo-e2e",
+          id: "chatcmpl-cortexai-agent-hub-e2e",
           object: "chat.completion.chunk",
           created,
           model: LOCAL_MODEL_ID,
@@ -61,7 +61,7 @@ test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page },
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
     const stamp = Date.now();
     const userName = `Local model ${stamp}`;
-    await signup(page, `local-model-${stamp}@rakazo.test`, "password12", userName);
+    await signup(page, `local-model-${stamp}@cortexai-agent-hub.test`, "password12", userName);
     await completeOnboarding(page);
 
     await page.getByRole("button", { name: new RegExp(userName) }).click();
@@ -127,7 +127,7 @@ test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page },
 test("model settings connect, replace, and cancel provider authentication", async ({ page }) => {
   const stamp = Date.now();
   const userName = `Models ${stamp}`;
-  await signup(page, `models-${stamp}@rakazo.test`, "password12", userName);
+  await signup(page, `models-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await expect(page.getByLabel("API key")).toHaveAttribute("autocomplete", "new-password");
   await completeOnboarding(page);
 

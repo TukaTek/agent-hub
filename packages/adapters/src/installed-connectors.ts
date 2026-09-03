@@ -4,8 +4,8 @@ import type {
   ConnectorEvent,
   ConnectorProvider,
   ConnectorTool,
-} from "@rakazo/adapter-kit";
-import type { PrismaClient } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { z } from "zod";
 import {
   combineSignals,

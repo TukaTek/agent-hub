@@ -5,7 +5,7 @@ export async function fetchGithubStars(): Promise<number | null> {
     const response = await fetch(GITHUB_API_REPO, {
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": "rakazo-www",
+        "User-Agent": "cortexai-agent-hub-www",
       },
     });
     if (!response.ok) {

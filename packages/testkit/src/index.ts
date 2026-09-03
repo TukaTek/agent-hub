@@ -1,4 +1,4 @@
-export { DestinationEmulator, McpEmulator } from "@rakazo/adapters";
+export { DestinationEmulator, McpEmulator } from "@cortexai-agent-hub/adapters";
 
 export function sessionCookieHeader(response: Response) {
   const cookies = response.headers.getSetCookie?.() ?? [];

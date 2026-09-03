@@ -1,6 +1,4 @@
-import { t } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
-import { ChatMarkdown } from "@rakazo/chat-ui/web";
+import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import type {
   AgentSkillCatalogEntry,
   Bot,
@@ -21,14 +19,14 @@ import type {
   ThreadMessage,
   ThreadSnapshot,
   VoiceStatus,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
   canReactToThreadMessage,
   normalizeCreateBotProfile,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   abortableDelay,
   attachmentsForThread,
@@ -53,7 +51,7 @@ import {
   speechFromBlocks,
   truncateSlashDescription,
   userVisibleMessages,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   AvatarStyleProvider,
   BotAvatar,
@@ -67,7 +65,9 @@ import {
   PopoverContent,
   PopoverTrigger,
   Separator,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { t } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import {
   ArrowDown,
   ArrowUp,
@@ -265,7 +265,7 @@ function threadSnapshotSignal(parent: AbortSignal): AbortSignal {
 
 function collapsedSidebarSectionsStorageKey(userId: string | null | undefined): string | null {
   if (!userId) return null;
-  return `rakazo:collapsed-sidebar-sections:${userId}`;
+  return `cortexai-agent-hub:collapsed-sidebar-sections:${userId}`;
 }
 
 function readCollapsedSidebarSections(userId: string | null | undefined): Set<string> {
@@ -645,7 +645,7 @@ export function ShellPage() {
 
   const refreshBots = useCallback(
     async (includeArchived = false, replaceBotOrder = false) => {
-      markOnce("rk:renderer:bots-request-start");
+      markOnce("cortexai-agent-hub:renderer:bots-request-start");
       const request = ++botsRefreshEpoch.current;
       const botOrderEpoch = botOrderEpochRef.current;
       const preserveBotOrder = savingBotOrderRef.current || pendingBotOrderRef.current !== null;
@@ -658,7 +658,7 @@ export function ShellPage() {
           includeArchived ? rpc.groups.listArchived() : Promise.resolve(null),
         ]);
         const { bots: list, botSections: sections, groups: groupList } = navigation.current;
-        markOnce("rk:renderer:bots-response");
+        markOnce("cortexai-agent-hub:renderer:bots-response");
         const botsFresh = request === botsRefreshEpoch.current;
         const archivedFresh =
           archivedRequest != null && archivedRequest === archivedBotsRefreshEpoch.current;
@@ -723,10 +723,10 @@ export function ShellPage() {
   async function refreshGroupThread(id: string, signal?: AbortSignal) {
     const scrollElement = messageScroll.current;
     const stickToEnd = !scrollElement || transcriptIsNearEnd(scrollElement);
-    markOnce("rk:renderer:thread-request-start");
+    markOnce("cortexai-agent-hub:renderer:thread-request-start");
     const request = ++groupRefreshEpoch.current;
     const snap = await rpc.threads.get({ groupId: id }, signal ? { signal } : undefined);
-    markOnce("rk:renderer:thread-response");
+    markOnce("cortexai-agent-hub:renderer:thread-response");
     if (activeGroupId.current !== id || request !== groupRefreshEpoch.current) return snap;
     const reconciled = reconcileRefreshedThread(
       snapshotRef.current,
@@ -752,13 +752,13 @@ export function ShellPage() {
   async function refreshThread(id: string, signal?: AbortSignal) {
     const scrollElement = messageScroll.current;
     const stickToEnd = !scrollElement || transcriptIsNearEnd(scrollElement);
-    markOnce("rk:renderer:thread-request-start");
+    markOnce("cortexai-agent-hub:renderer:thread-request-start");
     const epoch = historyEpoch.current;
     const request = ++threadRefreshEpoch.current;
     // Apply threads.get as soon as it returns so stop/takeover status is not held behind
     // routines/skills/screen fetches (progress can advance the cursor meanwhile).
     const snap = await rpc.threads.get({ botId: id }, signal ? { signal } : undefined);
-    markOnce("rk:renderer:thread-response");
+    markOnce("cortexai-agent-hub:renderer:thread-response");
     if (
       activeBotId.current !== id ||
       epoch !== historyEpoch.current ||
@@ -902,8 +902,8 @@ export function ShellPage() {
           commitComputer(bootstrap.thread.computer ?? null);
           setRoutines(bootstrap.routines);
           setRoutinesBotId(bootstrap.thread.botId ?? null);
-          markOnce("rk:renderer:bots-response");
-          markOnce("rk:renderer:thread-response");
+          markOnce("cortexai-agent-hub:renderer:bots-response");
+          markOnce("cortexai-agent-hub:renderer:thread-response");
         }
         if (!applyBotLists) return;
         if (
@@ -1679,7 +1679,7 @@ export function ShellPage() {
   const replyTargetName = activeReplyTarget
     ? activeReplyTarget.role === "user"
       ? t`You`
-      : (resolveTranscriptMemberName(activeReplyTarget.botId) ?? active?.name ?? t`Bot`)
+      : (resolveTranscriptMemberName(activeReplyTarget.botId) ?? active?.name ?? t`Assistant`)
     : undefined;
   const composerMentionTargets = useMemo(
     () =>
@@ -1788,16 +1788,16 @@ export function ShellPage() {
 
   useLayoutEffect(() => {
     if (initialBotsLoaded) {
-      markOnce("rk:renderer:bots-committed");
-      markAfterPaint("rk:renderer:bots-painted");
+      markOnce("cortexai-agent-hub:renderer:bots-committed");
+      markAfterPaint("cortexai-agent-hub:renderer:bots-painted");
     }
     if (active && snapshot?.botId === active.id) {
-      markOnce("rk:renderer:thread-committed");
-      markAfterPaint("rk:renderer:thread-painted");
+      markOnce("cortexai-agent-hub:renderer:thread-committed");
+      markAfterPaint("cortexai-agent-hub:renderer:thread-painted");
     }
     if (shellReady) {
-      markOnce("rk:renderer:shell-ready");
-      markAfterPaint("rk:renderer:shell-painted");
+      markOnce("cortexai-agent-hub:renderer:shell-ready");
+      markAfterPaint("cortexai-agent-hub:renderer:shell-painted");
     }
   }, [active, initialBotsLoaded, shellReady, snapshot?.botId]);
 
@@ -2424,7 +2424,7 @@ export function ShellPage() {
                       setPanel("create");
                     }}
                   >
-                    <Trans>New bot</Trans>
+                    <Trans>New Assistant</Trans>
                   </Button>
                   <Button
                     variant="ghost"
@@ -2463,7 +2463,7 @@ export function ShellPage() {
             placeholder={t`Search`}
           />
         </InputGroup>
-        <div className="rk-scroll flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2.5">
+        <div className="cortexai-agent-hub-scroll flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2.5">
           {showSpaceSearch ? (
             <SpaceSearchResults
               hits={searchHits}
@@ -2928,7 +2928,7 @@ export function ShellPage() {
                 <span className="block truncate text-[16px] font-medium text-foreground" dir="auto">
                   {inGroup
                     ? (activeGroup?.name ?? activeSnapshot?.groupName ?? t`Group`)
-                    : (active?.name ?? t`Select a bot`)}
+                    : (active?.name ?? t`Select an Assistant`)}
                 </span>
               </span>
             </button>
@@ -3072,7 +3072,7 @@ export function ShellPage() {
         }`}
       >
         {panel && (active || activeGroup) ? (
-          <div className="rk-scroll h-full w-full overflow-y-auto px-5 py-[17px] md:w-[384px]">
+          <div className="cortexai-agent-hub-scroll h-full w-full overflow-y-auto px-5 py-[17px] md:w-[384px]">
             {panel !== "routine" &&
             panel !== "create" &&
             panel !== "create-group" &&
@@ -3135,13 +3135,13 @@ export function ShellPage() {
                   ) : computer?.kind === "desktop" ? (
                     <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80">
                       <Trans>
-                        This bot runs on this computer, not a Linux desktop. Shell and files use
-                        your home folder.
+                        This Assistant runs on this computer, not a Linux desktop. Shell and files
+                        use your home folder.
                       </Trans>
                     </div>
                   ) : computer?.state === "running" && embeddedScreenUrl ? (
                     <iframe
-                      title={t`Bot screen preview`}
+                      title={t`Assistant screen preview`}
                       src={embeddedScreenUrl}
                       sandbox={screenIframeSandbox(embeddedScreenUrl)}
                       className="h-full w-full border-0 bg-black"
@@ -3826,14 +3826,14 @@ export function ShellPage() {
             {computer?.kind === "desktop" ? (
               <div className="grid h-full place-items-center px-8 text-center text-sm text-muted-foreground/80">
                 <Trans>
-                  This bot runs on this computer. There is no separate Linux desktop. Ask it to use
-                  the shell; working directories under your home folder are allowed.
+                  This Assistant runs on this computer. There is no separate Linux desktop. Ask it
+                  to use the shell; working directories under your home folder are allowed.
                 </Trans>
               </div>
             ) : computer?.state === "running" && embeddedScreenUrl ? (
               <>
                 <iframe
-                  title={t`Bot screen`}
+                  title={t`Assistant screen`}
                   src={embeddedScreenUrl}
                   sandbox={screenIframeSandbox(embeddedScreenUrl)}
                   className="h-full w-full border-0 bg-black"
@@ -3935,7 +3935,7 @@ const Transcript = memo(function Transcript({
   const workingLabel =
     workingBotName != null && workingBotName !== ""
       ? t`${workingBotName} is working`
-      : t`Bots are working`;
+      : t`Assistants are working`;
   const snapToEnd = useCallback(() => {
     const element = scrollRef.current;
     if (!element) return;
@@ -4041,7 +4041,7 @@ const Transcript = memo(function Transcript({
             following.current = false;
           }
         }}
-        className="rk-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 py-5 md:px-7 md:py-6"
+        className="cortexai-agent-hub-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 py-5 md:px-7 md:py-6"
       >
         {olderCursor != null ? (
           <button
@@ -5095,8 +5095,8 @@ const MessageView = memo(function MessageView({
       {messageContext}
       {message.blocks.map((block, i) => {
         if (block.kind === "handoff") {
-          const from = memberName?.(block.fromBotId) ?? t`bot`;
-          const to = memberName?.(block.toBotId) ?? t`bot`;
+          const from = memberName?.(block.fromBotId) ?? t`Assistant`;
+          const to = memberName?.(block.toBotId) ?? t`Assistant`;
           return (
             <div
               key={i}
@@ -5239,7 +5239,7 @@ const MessageView = memo(function MessageView({
                   ) : block.status === "deleted" ? (
                     <Trans>deleted</Trans>
                   ) : (
-                    <Trans>bot</Trans>
+                    <Trans>Assistant</Trans>
                   )}
                 </span>
               </div>
