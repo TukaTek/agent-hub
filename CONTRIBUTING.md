@@ -1,6 +1,6 @@
-# Contributing to Rakazo
+# Contributing to CortexAI Agent Hub
 
-Thanks for helping improve Rakazo. Keep changes focused and testable.
+Thanks for helping improve CortexAI Agent Hub. Keep changes focused and testable.
 
 ## Run locally
 
@@ -54,8 +54,8 @@ capability config, fixtures, logs, or snapshots; use the encrypted secret store 
 
 ## Contact
 
-| Address | Use for |
+| Contact | Use for |
 | --- | --- |
-| [security@rakazo.com](mailto:security@rakazo.com) | Vulnerabilities only — see [SECURITY.md](SECURITY.md) |
-| [support@rakazo.com](mailto:support@rakazo.com) | User and support questions |
-| [elie@rakazo.com](mailto:elie@rakazo.com) | Maintainer |
+| [Private vulnerability report](https://github.com/TukaTek/agent-hub/security/advisories/new) | Vulnerabilities only — see [SECURITY.md](SECURITY.md) |
+| [GitHub issues](https://github.com/TukaTek/agent-hub/issues) | Reproducible bugs and self-hosting questions |
+| [CortexAI contact](https://www.tukasolutions.com/contact) | Product and account inquiries |

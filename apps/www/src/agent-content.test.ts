@@ -33,8 +33,8 @@ describe("agent content negotiation", () => {
   });
 
   it("maps canonical and trailing-slash page paths to Markdown documents", () => {
-    expect(getMarkdownDocument("/")).toContain("# Rakazo");
-    expect(getMarkdownDocument("/about/")).toContain("# About Rakazo");
+    expect(getMarkdownDocument("/")).toContain("# CortexAI Agent Hub");
+    expect(getMarkdownDocument("/about/")).toContain("# About CortexAI Agent Hub");
     expect(getMarkdownAlternate("/")).toBe("/index.md");
     expect(getMarkdownAlternate("/support/")).toBe("/support.md");
     expect(getMarkdownDocument("/missing")).toBeUndefined();
@@ -43,16 +43,16 @@ describe("agent content negotiation", () => {
   });
 
   it("publishes specific when-to-use instructions for agents", () => {
-    expect(HOME_MARKDOWN).toContain("open source Grok Bot alternative");
-    expect(ABOUT_MARKDOWN).toContain("open source Grok Bot alternative");
-    expect(AGENT_INSTRUCTIONS).toContain("open source Grok Bot alternative");
-    expect(AGENT_INSTRUCTIONS).toContain("## When to use Rakazo");
-    expect(AGENT_INSTRUCTIONS).toContain("## How an agent should use Rakazo");
+    expect(HOME_MARKDOWN).toContain("Persistent, always-on AI assistants");
+    expect(ABOUT_MARKDOWN).toContain("persistent AI assistants");
+    expect(AGENT_INSTRUCTIONS).toContain("Persistent AI assistants");
+    expect(AGENT_INSTRUCTIONS).toContain("## When to use CortexAI Agent Hub");
+    expect(AGENT_INSTRUCTIONS).toContain("## How an agent should use CortexAI Agent Hub");
     expect(AGENT_INSTRUCTIONS).toContain("Self-hosting is available now");
   });
 
   it("returns cache-safe Markdown responses and omits bodies for HEAD", async () => {
-    const response = markdownResponse("# Rakazo\n");
+    const response = markdownResponse("# CortexAI Agent Hub\n");
     expect(response.headers.get("content-type")).toBe(
       "text/markdown; charset=utf-8",
     );
@@ -60,9 +60,9 @@ describe("agent content negotiation", () => {
       '</llms.txt>; rel="describedby"; type="text/plain"',
     );
     expect(response.headers.get("vary")).toBe("Accept, Accept-Encoding");
-    await expect(response.text()).resolves.toBe("# Rakazo\n");
+    await expect(response.text()).resolves.toBe("# CortexAI Agent Hub\n");
 
-    const headResponse = markdownResponse("# Rakazo\n", "HEAD", 404);
+    const headResponse = markdownResponse("# CortexAI Agent Hub\n", "HEAD", 404);
     expect(headResponse.status).toBe(404);
     await expect(headResponse.text()).resolves.toBe("");
   });
