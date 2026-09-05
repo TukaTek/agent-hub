@@ -42,6 +42,10 @@ export type ColorTokens = {
   overlay: string;
   scrollbar: string;
   scrollbarHover: string;
+  brand: string;
+  brandForeground: string;
+  brandSurface: string;
+  brandSurfaceForeground: string;
 };
 
 export const darkTokens = {
@@ -75,6 +79,10 @@ export const darkTokens = {
   overlay: "rgba(4, 4, 5, 0.62)",
   scrollbar: "#2A2A2E",
   scrollbarHover: "#414147",
+  brand: "#F7933B",
+  brandForeground: "#231F20",
+  brandSurface: "#231F20",
+  brandSurfaceForeground: "#FFFFFF",
 } as const satisfies ColorTokens;
 
 export const lightTokens = {
@@ -108,6 +116,10 @@ export const lightTokens = {
   overlay: "rgba(20, 20, 22, 0.45)",
   scrollbar: "#C8C8C4",
   scrollbarHover: "#A8A8A4",
+  brand: "#F7933B",
+  brandForeground: "#231F20",
+  brandSurface: "#231F20",
+  brandSurfaceForeground: "#FFFFFF",
 } as const satisfies ColorTokens;
 
 /** Dark palette. Prefer `tokensForAppearance` when theme-aware. */

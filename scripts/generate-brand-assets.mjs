@@ -66,6 +66,9 @@ await Promise.all([
   writePng("apps/mobile/assets/favicon.png", appIcon, 48),
   copyFile(sourceIconPath, path.join(root, "apps/www/public/brand/cortexai-icon.png")),
   copyFile(sourceLogoPath, path.join(root, "apps/www/public/brand/cortexai-logo.png")),
+  mkdir(path.join(root, "apps/web/public/brand"), { recursive: true }).then(() =>
+    copyFile(sourceIconPath, path.join(root, "apps/web/public/brand/cortexai-icon.png")),
+  ),
 ]);
 
 for (const app of ["web", "www"]) {

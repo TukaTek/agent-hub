@@ -33,6 +33,10 @@
   --overlay: rgba(4, 4, 5, 0.62);
   --scrollbar: #2a2a2e;
   --scrollbar-hover: #414147;
+  --brand: #f7933b;
+  --brand-foreground: #231f20;
+  --brand-surface: #231f20;
+  --brand-surface-foreground: #ffffff;
   --radius: 0.75rem;
 }
 
@@ -68,5 +72,9 @@
   --overlay: rgba(20, 20, 22, 0.45);
   --scrollbar: #c8c8c4;
   --scrollbar-hover: #a8a8a4;
+  --brand: #f7933b;
+  --brand-foreground: #231f20;
+  --brand-surface: #231f20;
+  --brand-surface-foreground: #ffffff;
   --radius: 0.75rem;
 }
