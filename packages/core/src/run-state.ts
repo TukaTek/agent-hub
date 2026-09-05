@@ -1,4 +1,4 @@
-import type { RunStatus } from "@rakazo/contracts";
+import type { RunStatus } from "@cortexai-agent-hub/contracts";
 
 export const ACTIVE_RUN_STATUSES = [
   "queued",

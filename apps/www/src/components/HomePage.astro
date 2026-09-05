@@ -17,11 +17,13 @@ import {
 import { fetchGithubStars, formatStarCount } from "../github";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import {
+  CORTEXAI_CONTACT_URL,
+  CORTEXAI_URL,
   DOCS_URL,
   GITHUB_URL,
   SETUP_PROMPT_URL,
   SITE_NAME,
-  SITE_URL,
+  absoluteSiteUrl,
 } from "../site";
 
 const locale: Locale = isLocale(Astro.currentLocale)
@@ -36,45 +38,38 @@ const availableLanguages = LOCALES.map((supportedLocale) =>
 const homeHref = localeHomePath(locale);
 const stars = await fetchGithubStars();
 const starsLabel = stars === null ? copy.starFallback : formatStarCount(stars);
-const setupAgentPrompt = `Set up Rakazo for me. Follow the setup prompt at ${SETUP_PROMPT_URL}`;
-const pageUrl = `${SITE_URL}${homeHref === "/" ? "/" : homeHref}`;
+const setupAgentPrompt = `Set up CortexAI Agent Hub for me. Follow the setup prompt at ${SETUP_PROMPT_URL}`;
+const siteUrl = absoluteSiteUrl();
+const pageUrl = absoluteSiteUrl(homeHref);
+const organizationId = `${siteUrl}#organization`;
+const websiteId = `${siteUrl}#website`;
+const softwareId = `${siteUrl}#software`;
 
 const structuredData = {
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "Organization",
-      "@id": `${SITE_URL}/#organization`,
-      name: "Inbox Zero Inc.",
-      alternateName: "Rakazo",
-      url: `${SITE_URL}/`,
-      logo: `${SITE_URL}/brand/rakazo-mark.svg`,
-      email: "hello@rakazo.com",
+      "@id": organizationId,
+      name: "CortexAI",
+      url: CORTEXAI_URL,
+      logo: absoluteSiteUrl("/brand/cortexai-logo.png"),
       contactPoint: {
         "@type": "ContactPoint",
         contactType: "customer support",
-        email: "hello@rakazo.com",
-        url: `${SITE_URL}/support/`,
+        url: CORTEXAI_CONTACT_URL,
         availableLanguage: availableLanguages,
       },
-      address: {
-        "@type": "PostalAddress",
-        streetAddress: "131 Continental Dr, Suite 305",
-        addressLocality: "Newark",
-        addressRegion: "DE",
-        postalCode: "19713",
-        addressCountry: "US",
-      },
-      sameAs: [GITHUB_URL, "https://www.getinboxzero.com/"],
+      sameAs: [GITHUB_URL, CORTEXAI_URL],
     },
     {
       "@type": "WebSite",
-      "@id": `${SITE_URL}/#website`,
-      url: `${SITE_URL}/`,
+      "@id": websiteId,
+      url: siteUrl,
       name: SITE_NAME,
       description: enCopy.description,
       inLanguage: LOCALE_HTML_LANG[DEFAULT_LOCALE],
-      publisher: { "@id": `${SITE_URL}/#organization` },
+      publisher: { "@id": organizationId },
     },
     {
       "@type": "WebPage",
@@ -83,14 +78,14 @@ const structuredData = {
       name: copy.title,
       description: copy.description,
       inLanguage: LOCALE_HTML_LANG[locale],
-      isPartOf: { "@id": `${SITE_URL}/#website` },
-      about: { "@id": `${SITE_URL}/#software` },
+      isPartOf: { "@id": websiteId },
+      about: { "@id": softwareId },
     },
     {
       "@type": "SoftwareApplication",
-      "@id": `${SITE_URL}/#software`,
+      "@id": softwareId,
       name: SITE_NAME,
-      url: `${SITE_URL}/`,
+      url: siteUrl,
       description: enCopy.description,
       applicationCategory: "BusinessApplication",
       applicationSubCategory: "AI agent platform",
@@ -98,7 +93,7 @@ const structuredData = {
       isAccessibleForFree: true,
       codeRepository: GITHUB_URL,
       license: `${GITHUB_URL}/blob/main/LICENSE`,
-      provider: { "@id": `${SITE_URL}/#organization` },
+      provider: { "@id": organizationId },
       inLanguage: availableLanguages,
       offers: {
         "@type": "Offer",

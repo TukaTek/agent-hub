@@ -22,10 +22,10 @@ const context = {
 describe("E2B computer backend", () => {
   it("revokes an extra display's control without starting or waiting for its view", async () => {
     const command = vi.fn(async (value: string) => {
-      if (value.includes("RAKAZO_SCREEN_INDEX=")) {
-        return { stdout: "RAKAZO_SCREEN_INDEX=1\n", stderr: "", exitCode: 0 };
+      if (value.includes("CORTEXAI_AGENT_HUB_SCREEN_INDEX=")) {
+        return { stdout: "CORTEXAI_AGENT_HUB_SCREEN_INDEX=1\n", stderr: "", exitCode: 0 };
       }
-      if (value.includes("RAKAZO_SCREEN_PASSWORD=") || value.includes("flock 8")) {
+      if (value.includes("CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=") || value.includes("flock 8")) {
         throw new Error("extra view is unavailable");
       }
       return { stdout: "", stderr: "", exitCode: 0 };
@@ -55,9 +55,9 @@ describe("E2B computer backend", () => {
 
   it("reconnects concurrent primary viewers without using the SDK's global VNC lifecycle", async () => {
     const command = vi.fn(async (value: string) => ({
-      stdout: value.includes("RAKAZO_SCREEN_INDEX=")
-        ? "RAKAZO_SCREEN_INDEX=0\n"
-        : "RAKAZO_SCREEN_PASSWORD=savedkey\n",
+      stdout: value.includes("CORTEXAI_AGENT_HUB_SCREEN_INDEX=")
+        ? "CORTEXAI_AGENT_HUB_SCREEN_INDEX=0\n"
+        : "CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=savedkey\n",
       stderr: "",
       exitCode: 0,
     }));
@@ -349,8 +349,8 @@ describe("E2B computer backend", () => {
 
   it("opens http(s) URLs through the named browser launcher", async () => {
     const command = vi.fn(async (value: string) => {
-      if (value.includes("RAKAZO_SCREEN_INDEX=")) {
-        return { stdout: "RAKAZO_SCREEN_INDEX=0\n", stderr: "", exitCode: 0 };
+      if (value.includes("CORTEXAI_AGENT_HUB_SCREEN_INDEX=")) {
+        return { stdout: "CORTEXAI_AGENT_HUB_SCREEN_INDEX=0\n", stderr: "", exitCode: 0 };
       }
       if (value.startsWith("gtk-launch")) {
         if (value.includes("google-chrome")) return { stdout: "", stderr: "", exitCode: 0 };
@@ -392,7 +392,7 @@ describe("E2B computer backend", () => {
       { actions: [{ kind: "open", path: "notes/readme.md" }], observe: false },
       context,
     );
-    expect(open).toHaveBeenCalledWith("/home/user/rakazo-home/notes/readme.md");
+    expect(open).toHaveBeenCalledWith("/home/user/cortexai-agent-hub-home/notes/readme.md");
   });
 
   it("controls the desktop and exposes a portable workspace", async () => {
@@ -401,18 +401,22 @@ describe("E2B computer backend", () => {
     const typeText = vi.fn(async () => undefined);
     const command = vi.fn(async (value: string, _options?: Record<string, unknown>) => {
       if (value.startsWith('test "$(readlink')) throw new Error("profiles are not configured");
-      if (value.includes("RAKAZO_SCREEN_INDEX=")) {
-        return { stdout: "RAKAZO_SCREEN_INDEX=0\n", stderr: "", exitCode: 0 };
+      if (value.includes("CORTEXAI_AGENT_HUB_SCREEN_INDEX=")) {
+        return { stdout: "CORTEXAI_AGENT_HUB_SCREEN_INDEX=0\n", stderr: "", exitCode: 0 };
       }
-      if (value.includes("RAKAZO_SCREEN_RELEASE=")) {
+      if (value.includes("CORTEXAI_AGENT_HUB_SCREEN_RELEASE=")) {
         return {
-          stdout: "RAKAZO_SCREEN_RELEASE=0\n",
+          stdout: "CORTEXAI_AGENT_HUB_SCREEN_RELEASE=0\n",
           stderr: "",
           exitCode: 0,
         };
       }
       if (value.includes("primary-view.lock")) {
-        return { stdout: "RAKAZO_SCREEN_PASSWORD=screen-key\n", stderr: "", exitCode: 0 };
+        return {
+          stdout: "CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=screen-key\n",
+          stderr: "",
+          exitCode: 0,
+        };
       }
       if (value.includes("hang")) {
         throw new TimeoutError("command timed out");
@@ -654,7 +658,7 @@ describe("E2B computer backend", () => {
       return new Promise((resolve) => {
         finishStart = () =>
           resolve({
-            stdout: "RAKAZO_SCREEN_PASSWORD=screen-key\n",
+            stdout: "CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=screen-key\n",
             stderr: "",
             exitCode: 0,
           });
@@ -675,7 +679,7 @@ describe("E2B computer backend", () => {
     const screenSlots = new Map<string, number>();
     const command = vi.fn(async (value: string) => {
       const screenKey = value.match(/slot="\$dir\/([a-f0-9]+)\.slot"/)?.[1];
-      if (screenKey && value.includes("RAKAZO_SCREEN_INDEX=")) {
+      if (screenKey && value.includes("CORTEXAI_AGENT_HUB_SCREEN_INDEX=")) {
         let index = screenSlots.get(screenKey);
         if (index === undefined) {
           index = Array.from({ length: 8 }, (_, candidate) => candidate).find(
@@ -685,31 +689,31 @@ describe("E2B computer backend", () => {
           screenSlots.set(screenKey, index);
         }
         return {
-          stdout: `RAKAZO_SCREEN_INDEX=${index}\n`,
+          stdout: `CORTEXAI_AGENT_HUB_SCREEN_INDEX=${index}\n`,
           stderr: "",
           exitCode: 0,
         };
       }
-      if (screenKey && value.includes("RAKAZO_SCREEN_RELEASE=")) {
+      if (screenKey && value.includes("CORTEXAI_AGENT_HUB_SCREEN_RELEASE=")) {
         const index = screenSlots.get(screenKey);
         if (index === undefined) {
           return {
-            stdout: "RAKAZO_SCREEN_RELEASE=missing\n",
+            stdout: "CORTEXAI_AGENT_HUB_SCREEN_RELEASE=missing\n",
             stderr: "",
             exitCode: 0,
           };
         }
         screenSlots.delete(screenKey);
         return {
-          stdout: `RAKAZO_SCREEN_RELEASE=${index}\n`,
+          stdout: `CORTEXAI_AGENT_HUB_SCREEN_RELEASE=${index}\n`,
           stderr: "",
           exitCode: 0,
         };
       }
       if (value.includes("command -v Xvfb")) return { stdout: "", stderr: "", exitCode: 0 };
-      if (value.includes("RAKAZO_SCREEN_PASSWORD=")) {
+      if (value.includes("CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=")) {
         return {
-          stdout: "RAKAZO_SCREEN_PASSWORD=test-view-password\n",
+          stdout: "CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=test-view-password\n",
           stderr: "",
           exitCode: 0,
         };
@@ -722,7 +726,11 @@ describe("E2B computer backend", () => {
         };
       }
       if (value.includes("primary-view.lock")) {
-        return { stdout: "RAKAZO_SCREEN_PASSWORD=primary-key\n", stderr: "", exitCode: 0 };
+        return {
+          stdout: "CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=primary-key\n",
+          stderr: "",
+          exitCode: 0,
+        };
       }
       if (value.includes("xdotool")) return { stdout: "", stderr: "", exitCode: 0 };
       if (value.includes("pkill -x x11vnc")) {
@@ -878,7 +886,7 @@ describe("sandbox-gone detection", () => {
   ];
   const alive = [
     new Error("bash: x11vnc: command not found"),
-    new Error("Path /home/user/rakazo-home/notes.md not found"),
+    new Error("Path /home/user/cortexai-agent-hub-home/notes.md not found"),
     new Error("tar: /home/user/x: No such file or directory"),
     new TimeoutError(
       "canceled: This error is likely due to exceeding 'requestTimeoutMs'. You can pass the request timeout value as an option when making the request.",

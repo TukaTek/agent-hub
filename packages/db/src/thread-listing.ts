@@ -1,4 +1,4 @@
-import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
+import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 
 export const activeRunStatuses = [...ACTIVE_RUN_STATUSES];
 

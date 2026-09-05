@@ -1,4 +1,4 @@
-import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
+import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import { describe, expect, it, vi } from "vitest";
 import {
   approvalPausedToolResult,
@@ -58,7 +58,7 @@ describe("approved effect replay", () => {
   });
 
   it("does not treat a direct-tool arg named like the catalog marker as a catalog replay", () => {
-    const marker = "__rakazoCatalogTool";
+    const marker = "__cortexAiAgentHubCatalogTool";
     const approved = {
       id: "row-1",
       arguments: { mode: "strict" },
@@ -80,7 +80,7 @@ describe("approved effect replay", () => {
   });
 
   it("still recognizes the full catalog envelope as a catalog replay", () => {
-    const marker = "__rakazoCatalogTool";
+    const marker = "__cortexAiAgentHubCatalogTool";
     const approved = catalogApprovalRequest(
       "installed_execute_tool",
       { id: "install-A:notes.write", arguments: { text: "approved" } },
@@ -97,7 +97,7 @@ describe("approved effect replay", () => {
   });
 
   it("does not inject catalog envelope args onto a non-wrapper tool call", () => {
-    const marker = "__rakazoCatalogTool";
+    const marker = "__cortexAiAgentHubCatalogTool";
     const catalog = catalogApprovalRequest(
       "installed_execute_tool",
       { id: "install-A:installed_execute_tool", arguments: { text: "approved" } },
@@ -115,7 +115,7 @@ describe("approved effect replay", () => {
   });
 
   it("rejects cross-path replay when a catalog approval is invoked as a direct tool", () => {
-    const marker = "__rakazoCatalogTool";
+    const marker = "__cortexAiAgentHubCatalogTool";
     const direct = boundDirectApprovalRequest(
       { connectorId: "installed", resourceId: "install-A", toolName: "notes.write" },
       { text: "approved exactly" },
@@ -181,7 +181,7 @@ describe("approved effect replay", () => {
   });
 
   it("replays a bound direct approval through catalog only on the same resource", () => {
-    const marker = "__rakazoCatalogTool";
+    const marker = "__cortexAiAgentHubCatalogTool";
     const approved = boundDirectApprovalRequest(
       {
         connectorId: "installed",

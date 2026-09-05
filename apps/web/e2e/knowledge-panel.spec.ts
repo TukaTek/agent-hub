@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import type { MemoryDocument } from "@rakazo/contracts";
+import type { MemoryDocument } from "@cortexai-agent-hub/contracts";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
 test("memory and skills are readable and editable in the app", async ({ page }, testInfo) => {
   const stamp = Date.now();
   const userName = `Knowledge ${stamp}`;
-  await signup(page, `knowledge-${stamp}@rakazo.test`, "password12", userName);
+  await signup(page, `knowledge-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

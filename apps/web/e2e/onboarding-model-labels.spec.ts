@@ -5,7 +5,12 @@ test("onboarding model list never labels an older model the latest one", async (
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `model-labels-${stamp}@rakazo.test`, "password12", `Model labels ${stamp}`);
+  await signup(
+    page,
+    `model-labels-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    `Model labels ${stamp}`,
+  );
   await expect(page.getByRole("heading", { name: "Connect a model" })).toBeVisible({
     timeout: 20_000,
   });

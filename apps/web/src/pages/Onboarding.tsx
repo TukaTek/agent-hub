@@ -3,8 +3,8 @@ import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   openAiCompatibleConnectReady,
   openAiCompatibleProbeSuccessMessage,
-} from "@rakazo/contracts";
-import { featuredModelProviders, selectedProviderOutsideSearchResults } from "@rakazo/core";
+} from "@cortexai-agent-hub/contracts";
+import { featuredModelProviders, selectedProviderOutsideSearchResults } from "@cortexai-agent-hub/core";
 import {
   Button,
   Input,
@@ -12,7 +12,7 @@ import {
   NativeSelect,
   NativeSelectOption,
   Textarea,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
 import { Check } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -373,7 +373,7 @@ export function OnboardingPage() {
                       <Trans>Setup help</Trans>
                     </summary>
                     <p className="mt-1">
-                      {t`Paste the OpenAI-compatible address from your server. Rakazo adds /v1 if needed.`}
+                      {t`Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed.`}
                     </p>
                   </details>
                   <div className="mt-3">

@@ -1,5 +1,4 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { AvatarStyle } from "@rakazo/contracts";
+import type { AvatarStyle } from "@cortexai-agent-hub/contracts";
 import {
   BotAvatar,
   Button,
@@ -11,7 +10,8 @@ import {
   FieldLabel,
   Input,
   Toggle,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { ChevronDown, XIcon } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -107,7 +107,7 @@ export function AccountSettingsOverlay({
         data-testid="user-settings"
         showCloseButton={false}
         initialFocus={() => (focusUsage ? usageRef.current : panelRef.current)}
-        className="rk-scroll block max-h-[calc(100%-2rem)] w-[640px] overflow-y-auto overscroll-contain rounded-2xl p-6 sm:max-h-[calc(100%-5rem)] sm:max-w-[calc(100%-5rem)] sm:p-8"
+        className="cortexai-agent-hub-scroll block max-h-[calc(100%-2rem)] w-[640px] overflow-y-auto overscroll-contain rounded-2xl p-6 sm:max-h-[calc(100%-5rem)] sm:max-w-[calc(100%-5rem)] sm:p-8"
       >
         <div className="flex items-start justify-between gap-6">
           <DialogTitle className="text-2xl font-medium text-foreground">
@@ -517,7 +517,7 @@ function UiLocalePicker({
           id={listboxId}
           role="listbox"
           aria-label={t`Language`}
-          className="rk-scroll absolute left-0 right-0 top-full z-20 mt-1 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+          className="cortexai-agent-hub-scroll absolute left-0 right-0 top-full z-20 mt-1 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
         >
           {UI_LOCALES.map((code, index) => (
             <button

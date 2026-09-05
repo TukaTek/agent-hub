@@ -1,4 +1,4 @@
-package com.rakazo.notifications
+package com.tukatek.cortexai.agenthub.notifications
 
 import java.net.URI
 

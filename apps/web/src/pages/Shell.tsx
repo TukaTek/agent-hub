@@ -1,6 +1,6 @@
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { ChatMarkdown } from "@rakazo/chat-ui/web";
+import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import type {
   AgentSkillCatalogEntry,
   Bot,
@@ -21,14 +21,14 @@ import type {
   ThreadMessage,
   ThreadSnapshot,
   VoiceStatus,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
   canReactToThreadMessage,
   normalizeCreateBotProfile,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   abortableDelay,
   attachmentsForThread,
@@ -54,7 +54,7 @@ import {
   speechFromBlocks,
   truncateSlashDescription,
   userVisibleMessages,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   AvatarStyleProvider,
   BotAvatar,
@@ -67,7 +67,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
 import {
   ArrowDown,
   ArrowUp,
@@ -275,7 +275,7 @@ function threadSnapshotSignal(parent: AbortSignal): AbortSignal {
 
 function collapsedSidebarSectionsStorageKey(userId: string | null | undefined): string | null {
   if (!userId) return null;
-  return `rakazo:collapsed-sidebar-sections:${userId}`;
+  return `cortexai-agent-hub:collapsed-sidebar-sections:${userId}`;
 }
 
 function readCollapsedSidebarSections(userId: string | null | undefined): Set<string> {
@@ -2532,7 +2532,22 @@ export function ShellPage() {
         }`}
       >
         <div className="app-drag flex items-center justify-between px-[18px] pb-3 pt-4">
-          <WindowChrome />
+          <div className="flex min-w-0 items-center gap-3">
+            <WindowChrome />
+            <div
+              data-testid="sidebar-brand"
+              className="app-no-drag flex min-w-0 items-center gap-2"
+            >
+              <img
+                src="/brand/cortexai-icon.png"
+                alt="CortexAI logo"
+                className="h-7 w-7 shrink-0 object-contain"
+              />
+              <span className="truncate text-[13.5px] font-semibold tracking-tight text-foreground">
+                Agent Hub
+              </span>
+            </div>
+          </div>
           <div className="relative flex items-center gap-2.5">
             <button
               type="button"
@@ -2948,7 +2963,7 @@ export function ShellPage() {
             data-testid="user-menu-trigger"
             className="flex items-center gap-[11px] px-[18px] py-3.5"
           >
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[12px] text-foreground/75">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-brand text-[12px] font-semibold text-brand-foreground">
               {initials}
             </span>
             <span className="text-[14.5px] text-foreground/90">{userName}</span>
@@ -4980,7 +4995,7 @@ const Composer = memo(function Composer({
               aria-label={t`Send`}
               disabled={sending || !canSend || disabled}
               onClick={send}
-              className="size-10 rounded-full"
+              className="size-10 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
             >
               <ArrowUp size={18} strokeWidth={2} />
             </Button>
@@ -5001,7 +5016,7 @@ const Composer = memo(function Composer({
             aria-label={t`Send`}
             disabled={sending || !canSend || disabled}
             onClick={send}
-            className="size-9 rounded-full"
+            className="size-9 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
           >
             <ArrowUp size={18} strokeWidth={2} />
           </Button>

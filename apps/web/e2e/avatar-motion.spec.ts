@@ -4,11 +4,11 @@ test("organic avatar path stays still when reduced motion is enabled", async ({ 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/e2e/fixtures/avatar-motion.html");
 
-  const avatar = page.locator(".rakazo-organic-avatar");
+  const avatar = page.locator(".cortexai-agent-hub-organic-avatar");
   await expect(avatar).toBeVisible();
   await expect(avatar.locator("animate")).toHaveCount(0);
 
-  const body = avatar.locator(".rakazo-organic-avatar-body-working");
+  const body = avatar.locator(".cortexai-agent-hub-organic-avatar-body-working");
   const snapshot = () =>
     body.evaluate((path: SVGPathElement) => ({
       animationName: getComputedStyle(path).animationName,

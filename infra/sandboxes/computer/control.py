@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Token-auth desktop control for the Rakazo supervisor."""
+"""Token-auth desktop control for the CortexAI Agent Hub supervisor."""
 
 import base64
 import ctypes
@@ -12,13 +12,13 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-TOKEN = os.environ.get("RAKAZO_COMPUTER_CONTROL_TOKEN", "")
+TOKEN = os.environ.get("CORTEXAI_AGENT_HUB_COMPUTER_CONTROL_TOKEN", "")
 MAX_BODY_BYTES = 256 * 1024
 MAX_ARGV = 32
 MAX_ARG_LEN = 16_384
 KNOWN_LAUNCH = frozenset(
     {
-        "rakazo-browser",
+        "cortexai-agent-hub-browser",
         "xterm",
     }
 )
@@ -43,28 +43,28 @@ class NativeCapture:
     """Persistent MIT-SHM frame source with native lossless PNG encoding."""
 
     def __init__(self, display):
-        library = ctypes.CDLL("/usr/local/lib/librakazo-xcapture.so")
-        library.rakazo_xcapture_open.argtypes = [ctypes.c_char_p]
-        library.rakazo_xcapture_open.restype = ctypes.c_void_p
-        library.rakazo_xcapture_png.argtypes = [
+        library = ctypes.CDLL("/usr/local/lib/libcortexai_agent_hub-xcapture.so")
+        library.cortexai_agent_hub_xcapture_open.argtypes = [ctypes.c_char_p]
+        library.cortexai_agent_hub_xcapture_open.restype = ctypes.c_void_p
+        library.cortexai_agent_hub_xcapture_png.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte)),
             ctypes.POINTER(ctypes.c_size_t),
             ctypes.POINTER(ctypes.c_int),
             ctypes.POINTER(ctypes.c_int),
         ]
-        library.rakazo_xcapture_png.restype = ctypes.c_int
-        library.rakazo_xcapture_damage.argtypes = [
+        library.cortexai_agent_hub_xcapture_png.restype = ctypes.c_int
+        library.cortexai_agent_hub_xcapture_damage.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_int),
             ctypes.POINTER(ctypes.c_int),
             ctypes.POINTER(ctypes.c_int),
             ctypes.POINTER(ctypes.c_int),
         ]
-        library.rakazo_xcapture_damage.restype = ctypes.c_int
-        library.rakazo_xinput_argv.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
-        library.rakazo_xinput_argv.restype = ctypes.c_int
-        context = library.rakazo_xcapture_open(display.encode("utf-8"))
+        library.cortexai_agent_hub_xcapture_damage.restype = ctypes.c_int
+        library.cortexai_agent_hub_xinput_argv.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+        library.cortexai_agent_hub_xinput_argv.restype = ctypes.c_int
+        context = library.cortexai_agent_hub_xcapture_open(display.encode("utf-8"))
         if not context:
             raise RuntimeError("MIT-SHM capture is unavailable")
         self.library = library
@@ -74,12 +74,12 @@ class NativeCapture:
         png = ctypes.POINTER(ctypes.c_ubyte)()
         png_size = ctypes.c_size_t()
         width, height = ctypes.c_int(), ctypes.c_int()
-        if self.library.rakazo_xcapture_png(
+        if self.library.cortexai_agent_hub_xcapture_png(
             self.context, ctypes.byref(png), ctypes.byref(png_size), ctypes.byref(width), ctypes.byref(height)
         ):
             raise RuntimeError("MIT-SHM screen capture failed")
         damage = (ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_int())
-        changed = self.library.rakazo_xcapture_damage(
+        changed = self.library.cortexai_agent_hub_xcapture_damage(
             self.context, *(ctypes.byref(value) for value in damage)
         )
         return (
@@ -92,7 +92,7 @@ class NativeCapture:
 
     def act(self, argv):
         encoded = (ctypes.c_char_p * len(argv))(*(value.encode("utf-8") for value in argv))
-        return self.library.rakazo_xinput_argv(self.context, len(argv), encoded)
+        return self.library.cortexai_agent_hub_xinput_argv(self.context, len(argv), encoded)
 
 
 def native_capture(display):

@@ -1,4 +1,4 @@
-import type { AppBootstrap } from "@rakazo/contracts";
+import type { AppBootstrap } from "@cortexai-agent-hub/contracts";
 import { initialBootstrapTarget } from "./bootstrap-target";
 import { markOnce } from "./performance";
 import { rpc } from "./rpc";
@@ -7,7 +7,7 @@ let primedBootstrap: { botId?: string; promise: Promise<AppBootstrap> } | null =
 
 const initialTarget = initialBootstrapTarget(
   window.location.pathname,
-  Boolean(window.rakazoDesktop),
+  Boolean(window.cortexAiAgentHubDesktop),
 );
 if (initialTarget) {
   const { botId } = initialTarget;
@@ -26,9 +26,9 @@ export function takeInitialBootstrap(botId?: string) {
 }
 
 function requestBootstrap(botId?: string) {
-  markOnce("rk:renderer:bootstrap-request-start");
+  markOnce("cortexai-agent-hub:renderer:bootstrap-request-start");
   return rpc.bootstrap(botId ? { botId } : {}).then((bootstrap) => {
-    markOnce("rk:renderer:bootstrap-response");
+    markOnce("cortexai-agent-hub:renderer:bootstrap-response");
     return bootstrap;
   });
 }

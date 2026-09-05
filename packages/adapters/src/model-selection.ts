@@ -1,5 +1,5 @@
-import type { AgentRunRequest } from "@rakazo/adapter-kit";
-import type { findDefaultModelCredential } from "@rakazo/db";
+import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
+import type { findDefaultModelCredential } from "@cortexai-agent-hub/db";
 
 type ModelCredential = Awaited<ReturnType<typeof findDefaultModelCredential>>;
 

@@ -1,5 +1,5 @@
-import type { AdapterContext, MemoryCommitRequest } from "@rakazo/adapter-kit";
-import { createDb, type PrismaClient } from "@rakazo/db";
+import type { AdapterContext, MemoryCommitRequest } from "@cortexai-agent-hub/adapter-kit";
+import { createDb, type PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarkdownMemoryStore } from "./index.js";
 

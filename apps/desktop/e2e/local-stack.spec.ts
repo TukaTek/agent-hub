@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { type ElectronApplication, _electron as electron, expect, test } from "@playwright/test";
 
-const APP_MARKER = "Local Rakazo stack ready";
+const APP_MARKER = "Local CortexAI Agent Hub stack ready";
 const IMAGE_TAG = "v9.9.9";
-const STACK_PROBE_PATH = "/.well-known/rakazo-desktop-stack";
-const STACK_TOKEN_HEADER = "x-rakazo-desktop-stack-token";
+const STACK_PROBE_PATH = "/.well-known/cortexai-agent-hub-desktop-stack";
+const STACK_TOKEN_HEADER = "x-cortexai-agent-hub-desktop-stack-token";
 const COMPOSE_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "infra", "compose");
 
 type FakeDockerMode = "ok" | "daemon-down" | "pull-fails";
@@ -41,7 +41,7 @@ test.beforeAll(async () => {
     }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(
-      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Rakazo</title></head><body><main>${APP_MARKER}</main></body></html>`,
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>CortexAI Agent Hub</title></head><body><main>${APP_MARKER}</main></body></html>`,
     );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -58,7 +58,9 @@ test.afterAll(async () => {
 
 test.beforeEach(async () => {
   // The fake docker logs $PWD, which is the resolved path (macOS /var is a symlink).
-  userData = await realpath(await mkdtemp(path.join(tmpdir(), "rakazo-desktop-stack-")));
+  userData = await realpath(
+    await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-desktop-stack-")),
+  );
 });
 
 test.afterEach(async () => {
@@ -72,7 +74,7 @@ function fakeDockerLog() {
 }
 
 /**
- * Stands in for the docker CLI: records `cwd | RAKAZO_IMAGE_TAG | argv` for every call and
+ * Stands in for the docker CLI: records `cwd | CORTEXAI_AGENT_HUB_IMAGE_TAG | argv` for every call and
  * answers the handful of commands the app issues. The log path and mode are baked into the
  * script because the app passes docker an allowlisted environment.
  */
@@ -80,7 +82,7 @@ async function writeFakeDocker(mode: FakeDockerMode) {
   const script = path.join(userData, "fake-docker.sh");
   const lines = [
     "#!/bin/sh",
-    `printf '%s | %s | %s\\n' "$PWD" "$RAKAZO_IMAGE_TAG" "$*" >> '${fakeDockerLog()}'`,
+    `printf '%s | %s | %s\\n' "$PWD" "$CORTEXAI_AGENT_HUB_IMAGE_TAG" "$*" >> '${fakeDockerLog()}'`,
     'case "$1 $2" in',
     '  "compose version") echo "2.29.0"; exit 0 ;;',
     '  "info --format")',
@@ -88,13 +90,13 @@ async function writeFakeDocker(mode: FakeDockerMode) {
       ? '    echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1 ;;'
       : '    echo "27.1.1"; exit 0 ;;',
     "esac",
-    "# compose --env-file .env -f docker-compose.images.yml --project-name rakazo-desktop <command> ...",
+    "# compose --env-file .env -f docker-compose.images.yml --project-name cortexai-agent-hub-desktop <command> ...",
     'case "$8" in',
     "  pull)",
     mode === "pull-fails"
       ? '    echo "Error response from daemon: manifest unknown" >&2; exit 1 ;;'
       : '    echo "app Pulled"; sleep 2; echo "computer Pulled"; exit 0 ;;',
-    '  up) echo "Container rakazo-web-1 Started"; exit 0 ;;',
+    '  up) echo "Container cortexai-agent-hub-web-1 Started"; exit 0 ;;',
     '  logs) echo "web-1 | listening"; exit 0 ;;',
     "esac",
     "exit 0",
@@ -105,18 +107,18 @@ async function writeFakeDocker(mode: FakeDockerMode) {
 }
 
 async function launch(mode: FakeDockerMode | "missing") {
-  const env = { ...process.env, RAKAZO_PERFORMANCE_USER_DATA: userData };
-  // A stale RAKAZO_WEB_URL from the developer's shell would bypass setup entirely.
-  delete env.RAKAZO_WEB_URL;
+  const env = { ...process.env, CORTEXAI_AGENT_HUB_PERFORMANCE_USER_DATA: userData };
+  // A stale CORTEXAI_AGENT_HUB_WEB_URL from the developer's shell would bypass setup entirely.
+  delete env.CORTEXAI_AGENT_HUB_WEB_URL;
   return electron.launch({
     args: ["."],
     cwd: path.resolve(import.meta.dirname, ".."),
     env: {
       ...env,
-      RAKAZO_DOCKER_BINARY:
+      CORTEXAI_AGENT_HUB_DOCKER_BINARY:
         mode === "missing" ? "/nonexistent/docker" : await writeFakeDocker(mode),
-      RAKAZO_LOCAL_WEB_URL: serverUrl,
-      RAKAZO_IMAGE_TAG: IMAGE_TAG,
+      CORTEXAI_AGENT_HUB_LOCAL_WEB_URL: serverUrl,
+      CORTEXAI_AGENT_HUB_IMAGE_TAG: IMAGE_TAG,
     },
   });
 }
@@ -150,7 +152,7 @@ test("This computer installs and starts the stack, then opens the app", async ()
 
   const appWindowPromise = app.waitForEvent("window");
   await setup.getByRole("button", { name: "Continue" }).click();
-  await expect(setup.locator("#stack-phase")).toHaveText("Downloading Rakazo images…");
+  await expect(setup.locator("#stack-phase")).toHaveText("Downloading CortexAI Agent Hub images…");
   await expect(setup.locator("#stack-output")).toContainText("app Pulled");
   await expect(setup.getByRole("button", { name: "Continue" })).toBeDisabled();
   await setup.screenshot({
@@ -170,14 +172,14 @@ test("This computer installs and starts the stack, then opens the app", async ()
   const env = await readFile(envFile, "utf8");
   expect(env).toMatch(/^POSTGRES_PASSWORD=[0-9a-f]{32}$/m);
   expect(env).toMatch(/^BETTER_AUTH_SECRET=[0-9a-f]{64}$/m);
-  expect(env).not.toContain("RAKAZO_IMAGE_TAG=");
-  expect(env).not.toContain("RAKAZO_COMPUTER_IMAGE_TAG=");
+  expect(env).not.toContain("CORTEXAI_AGENT_HUB_IMAGE_TAG=");
+  expect(env).not.toContain("CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=");
   await expect(readFile(path.join(stackDir, "docker-compose.images.yml"), "utf8")).resolves.toBe(
     await readFile(path.join(COMPOSE_DIR, "docker-compose.images.yml"), "utf8"),
   );
 
   const compose =
-    "compose --env-file .env -f docker-compose.images.yml --project-name rakazo-desktop";
+    "compose --env-file .env -f docker-compose.images.yml --project-name cortexai-agent-hub-desktop";
   expect(await readLog()).toEqual([
     `${stackDir} | ${IMAGE_TAG} | compose version --short`,
     `${stackDir} | ${IMAGE_TAG} | info --format {{.ServerVersion}}`,
@@ -215,7 +217,7 @@ test("switching to Existing instance while the stack starts keeps that choice", 
   const setup = await app.firstWindow();
 
   await setup.getByRole("button", { name: "Continue" }).click();
-  await expect(setup.locator("#stack-phase")).toHaveText("Downloading Rakazo images…");
+  await expect(setup.locator("#stack-phase")).toHaveText("Downloading CortexAI Agent Hub images…");
 
   // Fake docker sleeps during pull; leave This computer before ready so followStack must not save.
   await setup.getByRole("radio", { name: /Existing instance/ }).check();

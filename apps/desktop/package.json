@@ -1,6 +1,6 @@
 {
-  "name": "@rakazo/desktop",
-  "productName": "Rakazo",
+  "name": "@cortexai-agent-hub/desktop",
+  "productName": "CortexAI Agent Hub",
   "version": "0.1.1",
   "license": "Apache-2.0",
   "type": "module",
@@ -8,27 +8,27 @@
   "scripts": {
     "dev": "pnpm build && electron .",
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
-    "pack": "pnpm --filter @rakazo/web build && pnpm build && electron-builder --mac --win --linux",
-    "pack:dir": "pnpm --filter @rakazo/web build && pnpm build && electron-builder --dir",
+    "pack": "pnpm --filter @cortexai-agent-hub/web build && pnpm build && electron-builder --mac --win --linux",
+    "pack:dir": "pnpm --filter @cortexai-agent-hub/web build && pnpm build && electron-builder --dir",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. apps/desktop/src",
     "test:e2e": "pnpm build && playwright test --config e2e/playwright.config.ts",
-    "release": "pnpm --filter @rakazo/web build && pnpm build && electron-builder --publish never"
+    "release": "pnpm --filter @cortexai-agent-hub/web build && pnpm build && electron-builder --publish never"
   },
   "dependencies": {
-    "@rakazo/contracts": "workspace:*",
+    "@cortexai-agent-hub/contracts": "workspace:*",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
-    "@rakazo/ui-tokens": "workspace:*",
+    "@cortexai-agent-hub/ui-tokens": "workspace:*",
     "electron": "^43.4.0",
     "electron-builder": "^26.0.12",
     "typescript": "^5.9.2",
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "dev.rakazo.desktop",
+    "appId": "com.tukatek.cortexai.agenthub.desktop",
     "directories": {
       "output": "out",
       "buildResources": "assets"
@@ -71,7 +71,7 @@
       "verifyUpdateCodeSignature": true
     },
     "linux": {
-      "executableName": "rakazo",
+      "executableName": "cortexai-agent-hub",
       "icon": "assets/icon.png",
       "target": [
         "AppImage"
@@ -80,8 +80,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "elie222",
-        "repo": "rakazo"
+        "owner": "TukaTek",
+        "repo": "agent-hub"
       }
     ]
   }

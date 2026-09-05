@@ -175,7 +175,7 @@ export function buildComposerMentionOptions(input: {
       kind: "bot",
       id: bot.id,
       name: bot.name,
-      subtitle: "Bot",
+      subtitle: "Assistant",
       color: bot.color,
     });
   }

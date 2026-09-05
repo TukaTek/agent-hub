@@ -1,5 +1,5 @@
-import type { JobPublisher, JobWorkerHost } from "@rakazo/adapter-kit";
-import { loadRootEnv } from "@rakazo/core/node/load-root-env";
+import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
+import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
 
@@ -39,12 +39,12 @@ import {
   resolveSandboxProvider,
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
-} from "@rakazo/adapters";
-import { resolveEncryptionKey, resolveSupervisorToken } from "@rakazo/core";
-import { createDb, createThreadEvents } from "@rakazo/db";
-import { SERVICE_NAMES } from "@rakazo/logging";
-import { createRootLogger } from "@rakazo/logging/axiom";
-import { MarkdownMemoryStore } from "@rakazo/memory";
+} from "@cortexai-agent-hub/adapters";
+import { resolveEncryptionKey, resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import { createDb, createThreadEvents } from "@cortexai-agent-hub/db";
+import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
+import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
+import { MarkdownMemoryStore } from "@cortexai-agent-hub/memory";
 
 const logger = createRootLogger(SERVICE_NAMES.worker);
 

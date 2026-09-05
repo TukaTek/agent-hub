@@ -1,6 +1,6 @@
 import http from "node:http";
 import path from "node:path";
-import { resolveSupervisorToken } from "@rakazo/core";
+import { resolveSupervisorToken } from "@cortexai-agent-hub/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computerNetworkNameFor, hostComputerUser } from "./computer-spec.js";
 
@@ -36,7 +36,7 @@ beforeEach(async () => {
   vi.resetModules();
   vi.resetAllMocks();
   vi.stubEnv("HOSTNAME", "");
-  vi.stubEnv("DATA_DIR", "/tmp/rakazo-loopback-test");
+  vi.stubEnv("DATA_DIR", "/tmp/cortexai-agent-hub-loopback-test");
   vi.stubEnv("SANDBOX_SCREEN_NETWORK", "published");
   vi.stubEnv("SANDBOX_SCREEN_HOST", "127.0.0.1");
   screen = http.createServer((_req, res) => res.end("ok"));
@@ -70,7 +70,7 @@ describe("computer loopback provision lifecycle", () => {
       Image: "test-image-id",
       Config: {
         User: hostComputerUser(),
-        Labels: { "rakazo.managed": "true", "rakazo.botId": "bot", "rakazo.spaceId": "space" },
+        Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
       },
       HostConfig: {
         NetworkMode: computerNetworkNameFor("bot"),
@@ -103,8 +103,8 @@ describe("computer loopback provision lifecycle", () => {
       headers: {
         authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
         "content-type": "application/json",
-        "x-rakazo-bot-id": "bot",
-        "x-rakazo-space-id": "space",
+        "x-cortexai-agent-hub-bot-id": "bot",
+        "x-cortexai-agent-hub-space-id": "space",
       },
       body: JSON.stringify({ botId: "bot", spaceId: "space", homePath }),
     });
@@ -124,9 +124,9 @@ describe("computer loopback provision lifecycle", () => {
       expect(options.HostConfig.PortBindings["7070/tcp"]).toEqual(
         enabled ? [{ HostIp: "127.0.0.1", HostPort: "0" }] : undefined,
       );
-      expect(options.HostConfig.Binds).toEqual([`${homePath}:/home/rakazo`]);
+      expect(options.HostConfig.Binds).toEqual([`${homePath}:/home/cortexai-agent-hub`]);
       expect(options.Env).toContainEqual(
-        expect.stringMatching(/^RAKAZO_COMPUTER_CONTROL_TOKEN=.+/),
+        expect.stringMatching(/^CORTEXAI_AGENT_HUB_COMPUTER_CONTROL_TOKEN=.+/),
       );
     }
   });

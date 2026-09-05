@@ -1,12 +1,11 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { CapabilityInstall, ConnectionCatalogItem } from "@rakazo/contracts";
+import type { CapabilityInstall, ConnectionCatalogItem } from "@cortexai-agent-hub/contracts";
 import {
   abortableDelay,
   buildFeaturedConnectorTiles,
   CONNECTION_CATALOG_PAGE_SIZE,
   EMPTY_PLUGIN_CATALOG_MESSAGE,
   filterConnectionCatalogItems,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   Button,
   Card,
@@ -21,7 +20,8 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rpc } from "../lib/rpc";
@@ -119,7 +119,11 @@ export function PluginsOverlay({
         displayName: item.name,
       });
       if (started.authorizationUrl)
-        window.open(started.authorizationUrl, "rakazo-plugin-connect", "noopener,noreferrer");
+        window.open(
+          started.authorizationUrl,
+          "cortexai-agent-hub-plugin-connect",
+          "noopener,noreferrer",
+        );
       if (item.noAuth && !started.authorizationUrl) {
         if (controller.signal.aborted) return;
         setItemConnected(item, true);
@@ -266,7 +270,10 @@ export function PluginsOverlay({
           />
         </div>
 
-        <div id="integration-list" className="rk-scroll flex-1 overflow-y-auto px-8 py-6">
+        <div
+          id="integration-list"
+          className="cortexai-agent-hub-scroll flex-1 overflow-y-auto px-8 py-6"
+        >
           {catalogError ? <p className="mb-4 text-sm text-destructive">{catalogError}</p> : null}
           {loading ? (
             <p className="text-muted-foreground/80">
@@ -554,8 +561,8 @@ export function PluginsOverlay({
                     ) : null}
                     <p className="text-xs leading-5 text-muted-foreground">
                       <Trans>
-                        Rakazo verifies the source before saving it. Credentials are encrypted and
-                        are never returned to clients or exposed to the model.
+                        CortexAI Agent Hub verifies the source before saving it. Credentials are
+                        encrypted and are never returned to clients or exposed to the model.
                       </Trans>
                     </p>
                     <div className="flex gap-2">

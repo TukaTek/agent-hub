@@ -5,8 +5,8 @@ import type {
   ServerUpdateRequest,
   ServerUpdateRun,
   ServerUpdateStatus,
-} from "@rakazo/contracts";
-import { ServerUpdateRunSchema } from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
+import { ServerUpdateRunSchema } from "@cortexai-agent-hub/contracts";
 import {
   DEFAULT_UPDATE_BRANCH,
   detectRestartSupervisor,
@@ -16,8 +16,8 @@ import {
   OFFICIAL_SERVER_IMAGE,
   resolveInstallKind,
   restartSupervisorAdvice,
-} from "@rakazo/core";
-import { outgoingCorrelationHeaders } from "@rakazo/logging";
+} from "@cortexai-agent-hub/core";
+import { outgoingCorrelationHeaders } from "@cortexai-agent-hub/logging";
 
 const PRODUCT_VERSION = "0.1.0";
 const STATE_TIMEOUT_MS = 15_000;
@@ -29,7 +29,7 @@ export interface UpdaterProxyConfig {
   url: string | null;
   token: string | null;
   gitSha: string | undefined;
-  /** Current `RAKAZO_IMAGE_TAG` when known; selects compose pull vs rebuild commands. */
+  /** Current `CORTEXAI_AGENT_HUB_IMAGE_TAG` when known; selects compose pull vs rebuild commands. */
   imageTag?: string | null;
   disabled?: boolean;
   /** Override for tests; defaults to process.cwd(). */
@@ -101,7 +101,7 @@ export async function readServerUpdateStatus(
     disabled: config.disabled === true,
   });
   const supervisor = detectRestartSupervisor(process.env);
-  const imageTagHint = config.imageTag?.trim() || process.env.RAKAZO_IMAGE_TAG?.trim() || null;
+  const imageTagHint = config.imageTag?.trim() || process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG?.trim() || null;
   const base: ServerUpdateStatus = {
     supported: install.kind === "sidecar",
     unsupportedReason: install.kind === "sidecar" ? null : install.reason,

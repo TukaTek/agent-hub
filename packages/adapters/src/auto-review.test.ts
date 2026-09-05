@@ -13,9 +13,9 @@ describe("resolveAutoReviewChecker", () => {
   it("prefers explicit env overrides", () => {
     expect(
       resolveAutoReviewChecker({
-        RAKAZO_AUTO_REVIEW_PROVIDER: "openrouter",
-        RAKAZO_AUTO_REVIEW_MODEL: "cheap/fast",
-        RAKAZO_LOCAL_MODELS: "local-a",
+        CORTEXAI_AGENT_HUB_AUTO_REVIEW_PROVIDER: "openrouter",
+        CORTEXAI_AGENT_HUB_AUTO_REVIEW_MODEL: "cheap/fast",
+        CORTEXAI_AGENT_HUB_LOCAL_MODELS: "local-a",
         PI_DEFAULT_MODEL: "other",
       }),
     ).toEqual({ provider: "openrouter", model: "cheap/fast" });
@@ -24,7 +24,7 @@ describe("resolveAutoReviewChecker", () => {
   it("prefers local models when configured", () => {
     expect(
       resolveAutoReviewChecker({
-        RAKAZO_LOCAL_MODELS: " llama-local , other ",
+        CORTEXAI_AGENT_HUB_LOCAL_MODELS: " llama-local , other ",
         PI_DEFAULT_PROVIDER: "openrouter",
         PI_DEFAULT_MODEL: "deepseek/deepseek-v4-flash-0731",
       }),
@@ -59,7 +59,7 @@ describe("isAutoReviewCheckerConfigured", () => {
     ).toBe(true);
     expect(
       isAutoReviewCheckerConfigured({
-        env: { RAKAZO_LOCAL_MODELS: "local-1" },
+        env: { CORTEXAI_AGENT_HUB_LOCAL_MODELS: "local-1" },
       }),
     ).toBe(true);
     expect(
@@ -74,16 +74,16 @@ describe("isAutoReviewCheckerConfigured", () => {
 describe("deploymentAutoReviewDefault", () => {
   it("defaults off", () => {
     expect(deploymentAutoReviewDefault({})).toBe(false);
-    expect(deploymentAutoReviewDefault({ RAKAZO_AUTO_REVIEW: "1" })).toBe(true);
-    expect(deploymentAutoReviewDefault({ RAKAZO_AUTO_REVIEW: "true" })).toBe(true);
+    expect(deploymentAutoReviewDefault({ CORTEXAI_AGENT_HUB_AUTO_REVIEW: "1" })).toBe(true);
+    expect(deploymentAutoReviewDefault({ CORTEXAI_AGENT_HUB_AUTO_REVIEW: "true" })).toBe(true);
   });
 });
 
 describe("autoReviewTimeoutMs", () => {
   it("defaults to 1500 and clamps bad values", () => {
     expect(autoReviewTimeoutMs({})).toBe(1_500);
-    expect(autoReviewTimeoutMs({ RAKAZO_AUTO_REVIEW_TIMEOUT_MS: "2000" })).toBe(2_000);
-    expect(autoReviewTimeoutMs({ RAKAZO_AUTO_REVIEW_TIMEOUT_MS: "nope" })).toBe(1_500);
+    expect(autoReviewTimeoutMs({ CORTEXAI_AGENT_HUB_AUTO_REVIEW_TIMEOUT_MS: "2000" })).toBe(2_000);
+    expect(autoReviewTimeoutMs({ CORTEXAI_AGENT_HUB_AUTO_REVIEW_TIMEOUT_MS: "nope" })).toBe(1_500);
   });
 });
 

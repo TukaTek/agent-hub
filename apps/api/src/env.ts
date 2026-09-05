@@ -2,15 +2,15 @@ import {
   resolveCloudAgentProvider,
   resolveDeploymentModel,
   resolveSandboxProvider,
-} from "@rakazo/adapters";
+} from "@cortexai-agent-hub/adapters";
 import {
   resolveAuthSecret,
   resolveEncryptionKey,
   resolveScreenProxySecret,
   resolveSupervisorToken,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 
-export { resolveCloudAgentProvider, resolveSandboxProvider } from "@rakazo/adapters";
+export { resolveCloudAgentProvider, resolveSandboxProvider } from "@cortexai-agent-hub/adapters";
 
 export interface AppEnv {
   nodeEnv: string;
@@ -82,8 +82,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const sandboxProvider = resolveSandboxProvider(source);
   const cloudAgentProvider = resolveCloudAgentProvider(source);
   const deploymentModel = resolveDeploymentModel(source);
-  const updaterUrl = optional(source.RAKAZO_UPDATER_URL);
-  const updaterToken = optional(source.RAKAZO_UPDATER_TOKEN);
+  const updaterUrl = optional(source.CORTEXAI_AGENT_HUB_UPDATER_URL);
+  const updaterToken = optional(source.CORTEXAI_AGENT_HUB_UPDATER_TOKEN);
   return {
     nodeEnv: source.NODE_ENV ?? "",
     databaseUrl: required(source, "DATABASE_URL"),
@@ -145,10 +145,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       .map((value) => value.trim())
       .filter(Boolean),
     port: Number(source.API_PORT ?? 3100),
-    gitSha: optional(source.GIT_SHA) ?? optional(source.RAKAZO_GIT_SHA),
+    gitSha: optional(source.GIT_SHA) ?? optional(source.CORTEXAI_AGENT_HUB_GIT_SHA),
     updaterUrl,
     updaterToken,
-    imageTag: optional(source.RAKAZO_IMAGE_TAG),
+    imageTag: optional(source.CORTEXAI_AGENT_HUB_IMAGE_TAG),
   };
 }
 

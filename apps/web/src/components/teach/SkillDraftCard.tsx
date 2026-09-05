@@ -1,7 +1,7 @@
+import type { SkillPlaybook } from "@cortexai-agent-hub/contracts";
+import { formatSkillRunPrompt } from "@cortexai-agent-hub/core";
+import { Button, Input, Label, Textarea } from "@cortexai-agent-hub/ui-web";
 import { Trans } from "@lingui/react/macro";
-import type { SkillPlaybook } from "@rakazo/contracts";
-import { formatSkillRunPrompt } from "@rakazo/core";
-import { Button, Input, Label, Textarea } from "@rakazo/ui-web";
 import { useEffect, useState } from "react";
 import { rpc } from "../../lib/rpc";
 

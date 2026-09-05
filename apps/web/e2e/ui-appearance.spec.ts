@@ -46,8 +46,20 @@ async function captureSidebarSearchSelected(
 
 test("account settings appearance control switches to light mode", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-appearance-${stamp}@rakazo.test`, "password12", "Appearance QA");
+  await signup(
+    page,
+    `ui-appearance-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Appearance QA",
+  );
   await completeOnboarding(page, testInfo);
+
+  const sidebarBrand = page.getByTestId("sidebar-brand");
+  await expect(sidebarBrand).toBeVisible();
+  await expect(sidebarBrand.getByRole("img", { name: "CortexAI logo" })).toHaveAttribute(
+    "src",
+    "/brand/cortexai-icon.png",
+  );
 
   await page.getByTestId("user-menu-trigger").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -61,6 +73,7 @@ test("account settings appearance control switches to light mode", async ({ page
 
   await settings.getByTestId("ui-appearance-light").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(sidebarBrand).toBeVisible();
   await expect(settings.getByTestId("ui-appearance-light")).toHaveAttribute("aria-pressed", "true");
   await captureScreenshot(page, testInfo, "ui-appearance-light-settings");
 
@@ -89,6 +102,7 @@ test("account settings appearance control switches to light mode", async ({ page
   await expect(settings).toBeVisible();
   await settings.getByTestId("ui-appearance-dark").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(sidebarBrand).toBeVisible();
   await settings.getByRole("button", { name: "Close user settings" }).click();
   await expect(settings).toBeHidden();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");

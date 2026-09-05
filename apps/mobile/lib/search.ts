@@ -1,4 +1,4 @@
-import type { SearchHit } from "@rakazo/contracts";
+import type { SearchHit } from "@cortexai-agent-hub/contracts";
 import { rpc } from "./api";
 
 export async function querySpaceSearch(q: string): Promise<SearchHit[]> {

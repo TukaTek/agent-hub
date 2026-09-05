@@ -61,7 +61,9 @@ afterEach(async () => {
 });
 
 async function fixture(botId: string) {
-  const root = await realpath(await mkdtemp(path.join(tmpdir(), "rakazo-desktop-containment-")));
+  const root = await realpath(
+    await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-desktop-containment-")),
+  );
   roots.push(root);
   const desktop = new DesktopSandboxProvider({ root });
   const computer = await desktop.provision({ botId, homePath: "/unused" }, ctx);

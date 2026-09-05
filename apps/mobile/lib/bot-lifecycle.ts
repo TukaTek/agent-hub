@@ -9,7 +9,7 @@ export function confirmDeleteBot(bot: { id: string; name: string }, onDeleted: (
       onDeleted();
     } catch (error) {
       Alert.alert(
-        t("Could not delete bot"),
+        t("Could not delete Assistant"),
         error instanceof Error ? error.message : t("Try again."),
       );
     }

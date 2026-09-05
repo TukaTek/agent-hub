@@ -1,4 +1,4 @@
-import type { DesktopUpdateState } from "@rakazo/contracts";
+import type { DesktopUpdateState } from "@cortexai-agent-hub/contracts";
 
 /** Long enough that a cold launch is never competing with the update feed for bandwidth. */
 export const LAUNCH_CHECK_DELAY_MS = 8_000;
@@ -73,7 +73,8 @@ export function classifyUpdaterFailure(error: unknown): UpdaterFailure {
   if (SIGNATURE.some((needle) => text.includes(needle))) {
     return {
       kind: "signature",
-      message: "This update could not be verified. Reinstall Rakazo from a trusted download.",
+      message:
+        "This update could not be verified. Reinstall CortexAI Agent Hub from a trusted download.",
     };
   }
   return {
@@ -142,7 +143,7 @@ export function reduceUpdateState(
         phase: "ready",
         availableVersion: event.version,
         percent: 100,
-        message: "Restart Rakazo to finish the update.",
+        message: "Restart CortexAI Agent Hub to finish the update.",
       };
     case "failed": {
       // electron-updater can emit late errors after a verified download; keep installable

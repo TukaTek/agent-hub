@@ -9,7 +9,7 @@ import type {
   RealtimeFanout,
   SandboxProvider,
   TransactionalEmailProvider,
-} from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   applyMessagingOutboundStatus,
   ChatSdkMessagingSurface,
@@ -52,16 +52,16 @@ import {
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
-} from "@rakazo/adapters";
-import { blockedAuthPaths, createAuth } from "@rakazo/auth";
-import { signupPolicyFromEnv } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapters";
+import { blockedAuthPaths, createAuth } from "@cortexai-agent-hub/auth";
+import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import {
   createDb,
   createThreadEvents,
   type PrismaClient,
   provisionMessagingIdentity,
   requireMembership,
-} from "@rakazo/db";
+} from "@cortexai-agent-hub/db";
 import {
   createServiceLogger,
   enrichLogContext,
@@ -69,9 +69,9 @@ import {
   installLogger,
   type Logger,
   SERVICE_NAMES,
-} from "@rakazo/logging";
-import { requestLogging } from "@rakazo/logging/hono";
-import { MarkdownMemoryStore } from "@rakazo/memory";
+} from "@cortexai-agent-hub/logging";
+import { requestLogging } from "@cortexai-agent-hub/logging/hono";
+import { MarkdownMemoryStore } from "@cortexai-agent-hub/memory";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
@@ -245,7 +245,7 @@ export async function createApp(
     email,
     onEmailError: (error) => getLogger().error("transactional email delivery failed", error),
     extraOrigins: [
-      "rakazo://",
+      "cortexai-agent-hub://",
       "exp://",
       "exp://*",
       "http://localhost:8081",
@@ -414,7 +414,7 @@ export async function createApp(
   });
   app.use("/rpc/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
-    const requestedSpaceId = c.req.header("x-rakazo-space-id");
+    const requestedSpaceId = c.req.header("x-cortexai-agent-hub-space-id");
     const actor = session?.user
       ? await requireMembership(prisma, session.user.id, requestedSpaceId).catch(() => null)
       : null;
@@ -434,7 +434,7 @@ export async function createApp(
     const actor = await requireMembership(
       prisma,
       session.user.id,
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     ).catch(() => null);
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
@@ -519,7 +519,7 @@ export async function createApp(
 function isTrustedOrigin(origin: string, env: AppEnv) {
   if (!origin) return true;
   if (origin === env.webOrigin || origin === env.apiUrl || origin === env.authUrl) return true;
-  if (origin.startsWith("rakazo://") || origin.startsWith("exp://")) return true;
+  if (origin.startsWith("cortexai-agent-hub://") || origin.startsWith("exp://")) return true;
   try {
     const host = new URL(origin).hostname;
     return isLoopbackHost(host);

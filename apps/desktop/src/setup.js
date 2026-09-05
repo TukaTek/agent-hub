@@ -1,5 +1,5 @@
 (() => {
-  const bridge = window.rakazoSetup;
+  const bridge = window.cortexAiAgentHubSetup;
   document.documentElement.dataset.platform = bridge?.platform ?? "browser";
 
   const form = document.getElementById("setup");
@@ -19,10 +19,10 @@
   const PHASE_LABELS = {
     "checking-docker": "Checking Docker…",
     preparing: "Preparing…",
-    pulling: "Downloading Rakazo images…",
+    pulling: "Downloading CortexAI Agent Hub images…",
     starting: "Starting services…",
-    "waiting-healthy": "Waiting for Rakazo to answer…",
-    ready: "Rakazo is running.",
+    "waiting-healthy": "Waiting for CortexAI Agent Hub to answer…",
+    ready: "CortexAI Agent Hub is running.",
   };
   const TERMINAL_PHASES = new Set([
     "idle",
@@ -170,7 +170,7 @@
       const result = await bridge.test(value);
       if (result.ok) {
         serverUrl.value = result.url;
-        setStatus(`Rakazo answered at ${result.url}.`, "ok");
+        setStatus(`CortexAI Agent Hub answered at ${result.url}.`, "ok");
       } else {
         setStatus(result.error ?? "Could not reach that address.", "error");
       }
@@ -246,7 +246,7 @@
         continueButton.focus();
       }
     } catch {
-      setStatus("Setup could not start. Quit Rakazo and try again.", "error");
+      setStatus("Setup could not start. Quit CortexAI Agent Hub and try again.", "error");
       setBusy(true);
     }
   }

@@ -1,5 +1,5 @@
+import { Button, Skeleton } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { Button, Skeleton } from "@rakazo/ui-web";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoadingState } from "./components/ai/primitives";
@@ -36,8 +36,8 @@ export function App() {
 
   useLayoutEffect(() => {
     if (session.isPending) return;
-    markOnce("rk:renderer:session-committed");
-    markAfterPaint("rk:renderer:session-painted");
+    markOnce("cortexai-agent-hub:renderer:session-committed");
+    markAfterPaint("cortexai-agent-hub:renderer:session-painted");
   }, [session.isPending]);
 
   if (showSessionUnavailable(gate, nextHolding)) {
@@ -49,7 +49,7 @@ export function App() {
     ) : (
       <div
         className="grid h-full place-items-center text-muted-foreground/80"
-        data-rakazo-app-state="session-pending"
+        data-cortexai-agent-hub-app-state="session-pending"
       >
         <Trans>Loading…</Trans>
       </div>
@@ -58,7 +58,7 @@ export function App() {
 
   const user = session.data?.user;
   return (
-    <div className="h-full" data-rakazo-app-state="ready">
+    <div className="h-full" data-cortexai-agent-hub-app-state="ready">
       <Suspense fallback={<div className="h-full bg-background" />}>
         <Routes>
           <Route path="/" element={user ? <Navigate to="/app" replace /> : <WelcomePage />} />
@@ -157,7 +157,7 @@ function ShellSkeleton() {
   return (
     <div
       className="flex h-full overflow-hidden bg-background"
-      data-rakazo-app-state="session-pending"
+      data-cortexai-agent-hub-app-state="session-pending"
     >
       <aside className="hidden w-[316px] shrink-0 border-e border-sidebar-border bg-sidebar px-3.5 pt-16 md:block">
         <Skeleton className="h-10 rounded-xl" />

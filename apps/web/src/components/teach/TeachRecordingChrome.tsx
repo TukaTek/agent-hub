@@ -1,6 +1,6 @@
+import type { TaughtSkill } from "@cortexai-agent-hub/contracts";
+import { Button } from "@cortexai-agent-hub/ui-web";
 import { Trans } from "@lingui/react/macro";
-import type { TaughtSkill } from "@rakazo/contracts";
-import { Button } from "@rakazo/ui-web";
 import { useEffect, useState } from "react";
 
 export function formatRemaining(expiresAt: string | null): string {
@@ -43,7 +43,7 @@ export function TeachRecordingChrome({
           <Trans>Recording: {recording.goal}</Trans>
         </div>
         <div className="text-[12px] text-muted-foreground">
-          <Trans>{remaining} left · bot is watching, not acting</Trans>
+          <Trans>{remaining} left · Assistant is watching, not acting</Trans>
         </div>
         <div className="text-[12px] text-destructive">
           <Trans>Do not type passwords into the demo. Use Take control for credentials.</Trans>
@@ -61,7 +61,7 @@ export function TeachRecordingChrome({
         <Trans>Recording: {recording.goal}</Trans>
       </div>
       <div className="mt-1 text-[13px] text-muted-foreground">
-        <Trans>{remaining} left · bot is watching, not acting</Trans>
+        <Trans>{remaining} left · Assistant is watching, not acting</Trans>
       </div>
       <div className="mt-2 text-[13px] text-destructive">
         <Trans>Do not type passwords into the demo. Use Take control for credentials.</Trans>

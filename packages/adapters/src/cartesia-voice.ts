@@ -7,7 +7,7 @@ import type {
   VoiceProvider,
   VoiceSynthesizeRequest,
   VoiceVerifyResult,
-} from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   readVoiceAudio,
   readVoiceJson,

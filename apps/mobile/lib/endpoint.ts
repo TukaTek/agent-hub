@@ -68,7 +68,7 @@ export async function probeApiBase(
     const res = await withAbort(
       fetchImpl(`${parsed.url}/rpc/health`, {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "rakazo://" },
+        headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
         body: JSON.stringify({ json: {} }),
         signal: controller.signal,
       }),
@@ -76,7 +76,7 @@ export async function probeApiBase(
     );
     if (!res.ok) {
       cancelResponseBody(res);
-      return { ok: false, error: t("That URL did not look like a Rakazo server") };
+      return { ok: false, error: t("That URL did not look like a CortexAI Agent Hub server") };
     }
     const body = (await withAbort(
       res.json().catch(() => ({})),
@@ -86,7 +86,7 @@ export async function probeApiBase(
       error?: { message?: string };
     };
     if (body.error || body.json?.ok !== true) {
-      return { ok: false, error: t("That URL did not look like a Rakazo server") };
+      return { ok: false, error: t("That URL did not look like a CortexAI Agent Hub server") };
     }
     return parsed;
   } catch {

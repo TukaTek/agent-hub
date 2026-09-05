@@ -5,11 +5,11 @@ import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 import { lingui } from "@lingui/vite-plugin";
-import type { DesktopStackProbeResponse } from "@rakazo/contracts";
+import type { DesktopStackProbeResponse } from "@cortexai-agent-hub/contracts";
 import {
   safeScreenProxyResponseHeaders,
   stripSensitiveHandshakeHeaders,
-} from "@rakazo/core/node/screen-proxy-response";
+} from "@cortexai-agent-hub/core/node/screen-proxy-response";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type PreviewServer, type ViteDevServer } from "vite";
@@ -17,8 +17,8 @@ import { resolveScreenProxySecret } from "../../packages/core/src/secrets-guard.
 import { resolveNovncTarget, safeProxyHeaders } from "./src/screen-proxy.js";
 
 const webPort = Number(process.env.WEB_PORT ?? 5173);
-const DESKTOP_STACK_PROBE_PATH = "/.well-known/rakazo-desktop-stack";
-const DESKTOP_STACK_TOKEN_HEADER = "x-rakazo-desktop-stack-token";
+const DESKTOP_STACK_PROBE_PATH = "/.well-known/cortexai-agent-hub-desktop-stack";
+const DESKTOP_STACK_TOKEN_HEADER = "x-cortexai-agent-hub-desktop-stack-token";
 
 function equalStackToken(expected: string, supplied: string | string[] | undefined) {
   if (expected === "" || typeof supplied !== "string") return false;
@@ -150,7 +150,7 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string)
 export default defineConfig(({ mode }) => {
   const rootEnv = loadEnv(mode, path.resolve(import.meta.dirname, "../.."), "");
   const api = process.env.API_PROXY_TARGET ?? rootEnv.API_PROXY_TARGET ?? "http://127.0.0.1:3100";
-  const previewHost = process.env.RAKAZO_HOST ?? rootEnv.RAKAZO_HOST ?? "localhost";
+  const previewHost = process.env.CORTEXAI_AGENT_HUB_HOST ?? rootEnv.CORTEXAI_AGENT_HUB_HOST ?? "localhost";
   const screenProxySecret = () =>
     resolveScreenProxySecret({
       ...process.env,
@@ -159,10 +159,10 @@ export default defineConfig(({ mode }) => {
         process.env.SANDBOX_SUPERVISOR_TOKEN ?? rootEnv.SANDBOX_SUPERVISOR_TOKEN,
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? rootEnv.BETTER_AUTH_SECRET,
     });
-  const performanceAssetDelayMs = Number(process.env.RAKAZO_PERFORMANCE_ASSET_DELAY_MS ?? 0);
+  const performanceAssetDelayMs = Number(process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_ASSET_DELAY_MS ?? 0);
   const desktopStackToken =
-    process.env.RAKAZO_DESKTOP_STACK_TOKEN ?? rootEnv.RAKAZO_DESKTOP_STACK_TOKEN ?? "";
-  const imageTag = process.env.RAKAZO_IMAGE_TAG ?? rootEnv.RAKAZO_IMAGE_TAG ?? "edge";
+    process.env.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ?? rootEnv.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ?? "";
+  const imageTag = process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? rootEnv.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? "edge";
   return {
     plugins: [
       react({
@@ -173,13 +173,13 @@ export default defineConfig(({ mode }) => {
       lingui(),
       tailwindcss(),
       {
-        name: "rakazo-desktop-stack-probe",
+        name: "cortexai-agent-hub-desktop-stack-probe",
         configureServer: (server) => attachDesktopStackProbe(server, desktopStackToken, imageTag),
         configurePreviewServer: (server) =>
           attachDesktopStackProbe(server, desktopStackToken, imageTag),
       },
       {
-        name: "rakazo-performance-asset-delay",
+        name: "cortexai-agent-hub-performance-asset-delay",
         configurePreviewServer(server) {
           if (!Number.isFinite(performanceAssetDelayMs) || performanceAssetDelayMs <= 0) return;
           server.middlewares.use((req, _res, next) => {
@@ -193,7 +193,7 @@ export default defineConfig(({ mode }) => {
         },
       },
       {
-        name: "rakazo-novnc-proxy",
+        name: "cortexai-agent-hub-novnc-proxy",
         configureServer: (server) => attachNovncProxy(server, screenProxySecret()),
         configurePreviewServer: (server) => attachNovncProxy(server, screenProxySecret()),
       },

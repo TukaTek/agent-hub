@@ -1,4 +1,4 @@
-import type { ThreadMessage } from "@rakazo/contracts";
+import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
 import { userVisibleMessages } from "./message-visibility.js";
 

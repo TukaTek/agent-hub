@@ -5,7 +5,12 @@ test("actions run by default while optional confirmations live in advanced user 
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `action-confirmations-${stamp}@rakazo.test`, "password12", "Approval UI");
+  await signup(
+    page,
+    `action-confirmations-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Approval UI",
+  );
   await completeOnboarding(page, testInfo);
 
   await sendDestinationWrite(page, "write this to the destination crm as a note");

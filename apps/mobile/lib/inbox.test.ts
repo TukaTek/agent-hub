@@ -23,8 +23,8 @@ describe("formatThreadTime", () => {
 
 describe("filterBots", () => {
   const bots = [
-    bot("seo", "SEO Bot", "Improves SEO", "tracking-pixel page"),
-    bot("inbox", "Inbox Triage", "Inbox Zero", "draft replies"),
+    bot("seo", "SEO Assistant", "Improves SEO", "tracking-pixel page"),
+    bot("inbox", "Inbox Triage", "Inbox Manager", "draft replies"),
   ];
 
   it("returns the full list when the query is empty", () => {
@@ -33,21 +33,21 @@ describe("filterBots", () => {
 
   it("matches name, title, or preview", () => {
     expect(filterBots(bots, "seo").map((item) => item.id)).toEqual(["seo"]);
-    expect(filterBots(bots, "zero").map((item) => item.id)).toEqual(["inbox"]);
+    expect(filterBots(bots, "manager").map((item) => item.id)).toEqual(["inbox"]);
     expect(filterBots(bots, "PIXEL").map((item) => item.id)).toEqual(["seo"]);
   });
 });
 
 describe("botTag", () => {
   it("keeps short titles that differ from the name", () => {
-    expect(botTag("Improves SEO", "SEO Bot")).toBe("Improves SEO");
-    expect(botTag("test", "Slack bot")).toBe("test");
+    expect(botTag("Improves SEO", "SEO Assistant")).toBe("Improves SEO");
+    expect(botTag("test", "Slack Assistant")).toBe("test");
   });
 
   it("hides empty, duplicate, or long titles", () => {
     expect(botTag("", "Chief")).toBe("");
     expect(botTag("Chief", "Chief")).toBe("");
-    expect(botTag("Lets me know whats happening in my inbox", "Slack bot")).toBe("");
+    expect(botTag("Lets me know whats happening in my inbox", "Slack Assistant")).toBe("");
   });
 });
 

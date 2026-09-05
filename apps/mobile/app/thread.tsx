@@ -1,12 +1,12 @@
-import { ChatMarkdown } from "@rakazo/chat-ui/native";
+import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/native";
 import type {
   AgentSkillCatalogEntry,
   Connection,
   ConnectionCatalogItem,
   MessageBlock,
   Routine,
-} from "@rakazo/contracts";
-import { canReactToThreadMessage } from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
+import { canReactToThreadMessage } from "@cortexai-agent-hub/contracts";
 import {
   abortableDelay,
   attachmentsForThread,
@@ -25,7 +25,7 @@ import {
   serializeComposerPrompt,
   truncateSlashDescription,
   userVisibleMessages,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";

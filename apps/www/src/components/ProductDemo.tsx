@@ -1,4 +1,4 @@
-import { Button } from "@rakazo/ui-web";
+import { Button } from "@cortexai-agent-hub/ui-web";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type DemoBot,
@@ -514,10 +514,10 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
     const color = BOT_COLORS[bots.length % BOT_COLORS.length] ?? "#3EC5A8";
     const bot: LiveBot = {
       id: `bot-${Date.now()}`,
-      name: text("New bot"),
+      name: text("New Assistant"),
       color,
       time: text("Now"),
-      preview: text("Say what you want this bot doing"),
+      preview: text("Say what you want this Assistant doing"),
       title: "",
       description: "",
       onboarding: true,
@@ -666,12 +666,12 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
               <span />
               <span />
             </div>
-            <span className="product-demo__drawer-title">{text("Bots")}</span>
+            <span className="product-demo__drawer-title">{text("Assistants")}</span>
             <div className="product-demo__chrome-actions">
               <button
                 type="button"
                 className="product-demo__new"
-                aria-label={text("New bot")}
+                aria-label={text("New Assistant")}
                 onClick={startNewBot}
               >
                 +
@@ -679,7 +679,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
               <button
                 type="button"
                 className="product-demo__sidebar-close"
-                aria-label={text("Hide bots")}
+                aria-label={text("Hide Assistants")}
                 onClick={closeMenu}
               >
                 ✕
@@ -727,7 +727,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
           <button
             type="button"
             className="product-demo__scrim"
-            aria-label={text("Hide bots")}
+            aria-label={text("Hide Assistants")}
             onClick={closeMenu}
           />
         ) : null}
@@ -739,7 +739,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
                 type="button"
                 ref={menuButtonRef}
                 className="product-demo__menu-btn"
-                aria-label={text("Show bots")}
+                aria-label={text("Show Assistants")}
                 aria-expanded={menuOpen}
                 aria-controls="product-demo-bots"
                 onClick={() => setMenuOpen(true)}
@@ -846,7 +846,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
                 <div className="product-demo__panel-actions">
                   <button
                     type="button"
-                    aria-label={text("Bot settings")}
+                    aria-label={text("Assistant settings")}
                     onClick={openSettings}
                   >
                     <svg
@@ -1222,7 +1222,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
         ) : null}
       </div>
       <p className="product-demo__caption">
-        {text("Live demo — pick a bot, open its computer, add a routine, or start a new chat.")}
+        {text("Live demo — pick an Assistant, open its computer, add a routine, or start a new chat.")}
       </p>
     </div>
   );

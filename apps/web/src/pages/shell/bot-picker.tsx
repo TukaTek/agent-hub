@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { Bot } from "@rakazo/contracts";
+import type { Bot } from "@cortexai-agent-hub/contracts";
 import {
   BotAvatar,
   Command,
@@ -8,7 +8,7 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
 import { Lock, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 

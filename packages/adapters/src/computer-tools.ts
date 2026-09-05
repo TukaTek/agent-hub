@@ -2,7 +2,7 @@ import type {
   AgentToolExecutionResult,
   ComputerAction,
   ComputerObservation,
-} from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
 
 export function parseComputerActions(value: unknown): ComputerAction[] {
   if (!Array.isArray(value) || value.length === 0) {

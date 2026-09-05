@@ -3,12 +3,12 @@ import type {
   AdapterContext,
   BackgroundJobPayloads,
   CloudAgentSnapshot,
-} from "@rakazo/adapter-kit";
-import { CloudAgentRequestRejected, runContinueJob } from "@rakazo/adapter-kit";
-import type { MessageBlock } from "@rakazo/contracts";
-import { cloudAgentHttpsUrl } from "@rakazo/core";
-import { appendEventInTransaction, type CloudAgent, Prisma } from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+} from "@cortexai-agent-hub/adapter-kit";
+import { CloudAgentRequestRejected, runContinueJob } from "@cortexai-agent-hub/adapter-kit";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { cloudAgentHttpsUrl } from "@cortexai-agent-hub/core";
+import { appendEventInTransaction, type CloudAgent, Prisma } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { cloudAgentsEnabled } from "./cloud-agent-factory.js";
 import { type CloudAgentDeps, cloudAgentBlock, enqueueCloudAgent } from "./cloud-agent-service.js";
 import { cloudAgentLaunchSchema, cloudAgentPromptSchema } from "./cloud-agent-tools.js";

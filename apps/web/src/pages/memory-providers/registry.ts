@@ -1,4 +1,4 @@
-import type { SpaceMemoryConfig } from "@rakazo/contracts";
+import type { SpaceMemoryConfig } from "@cortexai-agent-hub/contracts";
 import type { ComponentType } from "react";
 import { SupermemorySettingsForm } from "./SupermemorySettingsForm";
 

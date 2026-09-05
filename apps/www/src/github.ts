@@ -10,7 +10,7 @@ export async function fetchGithubStars(fetchImpl: typeof fetch = fetch): Promise
       fetchImpl(GITHUB_API_REPO, {
         headers: {
           Accept: "application/vnd.github+json",
-          "User-Agent": "rakazo-www",
+          "User-Agent": "cortexai-agent-hub-www",
         },
         signal: controller.signal,
       }),

@@ -7,11 +7,12 @@ import {
   openAiCompatAllowPublicHosts,
 } from "./openai-compatible-url.js";
 
-const savedAllowPublic = process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+const savedAllowPublic = process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
 
 afterEach(() => {
-  if (savedAllowPublic === undefined) delete process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
-  else process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = savedAllowPublic;
+  if (savedAllowPublic === undefined)
+    delete process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
+  else process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = savedAllowPublic;
 });
 
 describe("openai-compatible URL policy", () => {
@@ -52,7 +53,7 @@ describe("openai-compatible URL policy", () => {
   });
 
   it("allows public bigmodel host when ALLOW_PUBLIC=1 without rewriting /v4", () => {
-    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
     expect(assertAllowedOpenAiCompatibleUrl("https://open.bigmodel.cn/api/paas/v4").href).toBe(
       "https://open.bigmodel.cn/api/paas/v4",
     );
@@ -125,13 +126,13 @@ describe("openai-compatible URL policy", () => {
   });
 
   it("rejects public hosts unless explicitly allowed", () => {
-    delete process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+    delete process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
     expect(openAiCompatAllowPublicHosts()).toBe(false);
     expect(() => assertAllowedOpenAiCompatibleUrl("https://api.example.com/v1")).toThrow(
       /Public model endpoints are blocked.*private reverse proxy.*RFC1918/s,
     );
 
-    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
     expect(assertAllowedOpenAiCompatibleUrl("https://api.example.com/v1").href).toBe(
       "https://api.example.com/v1",
     );
@@ -140,7 +141,7 @@ describe("openai-compatible URL policy", () => {
 
 describe("assertHttpsForKeyedOpenAiCompatibleUrl", () => {
   it("rejects public http when an API key is set", () => {
-    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
     const url = assertAllowedOpenAiCompatibleUrl("http://api.example.com/v1");
     expect(() => assertHttpsForKeyedOpenAiCompatibleUrl(url, "secret-key")).toThrow(
       /must use HTTPS/,
@@ -148,7 +149,7 @@ describe("assertHttpsForKeyedOpenAiCompatibleUrl", () => {
   });
 
   it("allows public https when an API key is set", () => {
-    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
     const url = assertAllowedOpenAiCompatibleUrl("https://api.example.com/v1");
     expect(() => assertHttpsForKeyedOpenAiCompatibleUrl(url, "secret-key")).not.toThrow();
   });
@@ -161,7 +162,7 @@ describe("assertHttpsForKeyedOpenAiCompatibleUrl", () => {
   });
 
   it("skips the HTTPS check when no API key is set", () => {
-    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
     const url = assertAllowedOpenAiCompatibleUrl("http://api.example.com/v1");
     expect(() => assertHttpsForKeyedOpenAiCompatibleUrl(url, undefined)).not.toThrow();
     expect(() => assertHttpsForKeyedOpenAiCompatibleUrl(url, "  ")).not.toThrow();

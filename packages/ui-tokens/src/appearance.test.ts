@@ -45,10 +45,19 @@ describe("appearance preference", () => {
   it("returns distinct light and dark token sets", () => {
     expect(tokensForAppearance("dark")).toBe(darkTokens);
     expect(tokensForAppearance("light")).toBe(lightTokens);
+    const themeInvariantTokens = new Set<keyof ColorTokens>([
+      "destructiveForeground",
+      "brand",
+      "brandForeground",
+      "brandSurface",
+      "brandSurfaceForeground",
+    ]);
     for (const key of Object.keys(darkTokens) as (keyof ColorTokens)[]) {
-      if (key === "destructiveForeground") continue;
+      if (themeInvariantTokens.has(key)) continue;
       expect(darkTokens[key], key).not.toBe(lightTokens[key]);
     }
+    expect(lightTokens.brand).toBe("#F7933B");
+    expect(darkTokens.brandSurface).toBe("#231F20");
   });
 
   it("tolerates a throwing localStorage getter", () => {

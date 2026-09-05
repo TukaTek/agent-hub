@@ -1,6 +1,6 @@
+import type { ScratchpadItem } from "@cortexai-agent-hub/contracts";
+import { Button, Checkbox, Input } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { ScratchpadItem } from "@rakazo/contracts";
-import { Button, Checkbox, Input } from "@rakazo/ui-web";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

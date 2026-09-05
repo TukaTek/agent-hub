@@ -4,7 +4,7 @@ import {
   BOT_TITLE_MAX_LENGTH,
   type ComputerMode,
   normalizeCreateBotProfile,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput } from "react-native";

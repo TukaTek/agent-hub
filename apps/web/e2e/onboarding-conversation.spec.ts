@@ -9,7 +9,7 @@ test("focus choice suggests apps and preserves a completed connection", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `onboarding-${stamp}@rakazo.test`, "password12", "Robin");
+  await signup(page, `onboarding-${stamp}@cortexai-agent-hub.test`, "password12", "Robin");
   await completeOnboarding(page);
 
   await expect(

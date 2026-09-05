@@ -1,6 +1,6 @@
-import type { AgentRunRequest, ConnectorCall, ConnectorTool } from "@rakazo/adapter-kit";
-import type { ActionApprovalRule } from "@rakazo/core";
-import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
+import type { AgentRunRequest, ConnectorCall, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
+import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isApprovalPausedResult } from "./approval-effect.js";
 import { runAutoReviewJudge } from "./auto-review.js";

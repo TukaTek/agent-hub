@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
-import { canReleaseScreenLease, canTakeScreenLease } from "@rakazo/core";
+import { canReleaseScreenLease, canTakeScreenLease } from "@cortexai-agent-hub/core";
 import { z } from "zod";
 import {
   type SandboxInput,
@@ -37,7 +37,7 @@ export const DOCKER_BROWSER_ALIASES = new Set([
   "firefox",
   "google-chrome",
   "google-chrome-stable",
-  "rakazo-browser",
+  "cortexai-agent-hub-browser",
 ]);
 
 export function assertRequestIdentity(
@@ -55,8 +55,9 @@ export function hasComputerIdentity(
   botId: string,
   spaceId: string,
 ) {
-  const labeledSpaceId = labels?.["rakazo.spaceId"] ?? labels?.["rakazo.workspaceId"];
-  return labels?.["rakazo.botId"] === botId && labeledSpaceId === spaceId;
+  const labeledSpaceId =
+    labels?.["cortexai-agent-hub.spaceId"] ?? labels?.["cortexai-agent-hub.workspaceId"];
+  return labels?.["cortexai-agent-hub.botId"] === botId && labeledSpaceId === spaceId;
 }
 
 export function hasValidBearerToken(authorization: string | undefined, expectedToken: string) {
@@ -249,7 +250,7 @@ export function clearComputerScreenRegistry(
 }
 
 export function stopPrimaryBrowserCommand() {
-  const profile = `/home/rakazo/.browser-profiles/chromium`;
+  const profile = `/home/cortexai-agent-hub/.browser-profiles/chromium`;
   return [
     `pkill -TERM -f -- '--user-data-dir=${profile}$' || true`,
     `pkill -TERM -f -- '--user-data-dir=${profile} ' || true`,
@@ -281,8 +282,8 @@ export function stopExtraScreenCommand(index: number, options: { cancelRunWork?:
   }
   const layout = screenPorts(index);
   const fluxHome = `/tmp/fluxbox-home-${layout.displayNumber}`;
-  const profile = `/home/rakazo/.browser-profiles/chromium-screen-${layout.displayNumber}`;
-  const tokenFile = `/tmp/rakazo/control-token-${layout.displayNumber}`;
+  const profile = `/home/cortexai-agent-hub/.browser-profiles/chromium-screen-${layout.displayNumber}`;
+  const tokenFile = `/tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`;
   return [
     `pkill -f 'Xvfb ${layout.display} -screen' || true`,
     `pkill -f 'HOME=${fluxHome} DISPLAY=${layout.display} fluxbox' || true`,
@@ -301,21 +302,21 @@ export function ensureScreenCommand(index: number) {
     return `for i in $(seq 1 100); do xdpyinfo -display ${layout.display} >/dev/null 2>&1 && exit 0; sleep 0.1; done; exit 1`;
   }
   const fluxHome = `/tmp/fluxbox-home-${layout.displayNumber}`;
-  const log = `/tmp/rakazo/screen-${layout.displayNumber}`;
-  const profile = `/home/rakazo/.browser-profiles/chromium-screen-${layout.displayNumber}`;
+  const log = `/tmp/cortexai-agent-hub/screen-${layout.displayNumber}`;
+  const profile = `/home/cortexai-agent-hub/.browser-profiles/chromium-screen-${layout.displayNumber}`;
   return [
     `xdpyinfo -display ${layout.display} >/dev/null 2>&1 && exit 0 || true`,
-    `mkdir -p /tmp/rakazo ${fluxHome}/.fluxbox /tmp/.X11-unix ${profile}`,
+    `mkdir -p /tmp/cortexai-agent-hub ${fluxHome}/.fluxbox /tmp/.X11-unix ${profile}`,
     `rm -f /tmp/.X${layout.displayNumber}-lock /tmp/.X11-unix/X${layout.displayNumber}`,
     `Xvfb ${layout.display} -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >${log}-xvfb.log 2>&1 &`,
     `for i in $(seq 1 100); do xdpyinfo -display ${layout.display} >/dev/null 2>&1 && break; sleep 0.1; done`,
     `xdpyinfo -display ${layout.display} >/dev/null 2>&1 || exit 1`,
-    `cp /etc/rakazo/fluxbox/init ${fluxHome}/.fluxbox/init`,
-    `cp /etc/rakazo/fluxbox/apps ${fluxHome}/.fluxbox/apps 2>/dev/null || true`,
-    `cp /etc/rakazo/fluxbox/menu ${fluxHome}/.fluxbox/menu 2>/dev/null || true`,
+    `cp /etc/cortexai-agent-hub/fluxbox/init ${fluxHome}/.fluxbox/init`,
+    `cp /etc/cortexai-agent-hub/fluxbox/apps ${fluxHome}/.fluxbox/apps 2>/dev/null || true`,
+    `cp /etc/cortexai-agent-hub/fluxbox/menu ${fluxHome}/.fluxbox/menu 2>/dev/null || true`,
     `HOME=${fluxHome} DISPLAY=${layout.display} fluxbox -rc ${fluxHome}/.fluxbox/init >${log}-fluxbox.log 2>&1 &`,
-    `if [ -d /home/rakazo/.browser-profiles/chromium ]; then cp -a /home/rakazo/.browser-profiles/chromium/. ${profile}/; rm -f ${profile}/SingletonLock ${profile}/SingletonCookie ${profile}/SingletonSocket; fi`,
-    `DISPLAY=${layout.display} HOME=/home/rakazo rakazo-browser --user-data-dir=${profile} >${log}-browser.log 2>&1 &`,
+    `if [ -d /home/cortexai-agent-hub/.browser-profiles/chromium ]; then cp -a /home/cortexai-agent-hub/.browser-profiles/chromium/. ${profile}/; rm -f ${profile}/SingletonLock ${profile}/SingletonCookie ${profile}/SingletonSocket; fi`,
+    `DISPLAY=${layout.display} HOME=/home/cortexai-agent-hub cortexai-agent-hub-browser --user-data-dir=${profile} >${log}-browser.log 2>&1 &`,
     `x11vnc -display ${layout.display} -forever -shared -viewonly -nopw -listen 127.0.0.1 -rfbport ${layout.viewVncPort} -xkb -ncache 0 >${log}-x11vnc.log 2>&1 &`,
     `websockify --heartbeat=30 --web=/usr/share/novnc 0.0.0.0:${layout.viewPort} 127.0.0.1:${layout.viewVncPort} >${log}-novnc.log 2>&1 &`,
     `for i in $(seq 1 50); do (echo >/dev/tcp/127.0.0.1/${layout.viewPort}) >/dev/null 2>&1 && exit 0; sleep 0.1; done`,
@@ -350,7 +351,7 @@ export function containerActionStep(
     argv = ["env", `DISPLAY=${display}`, "xdg-open", target];
   } else {
     const application = DOCKER_BROWSER_ALIASES.has(action.application.toLowerCase())
-      ? "rakazo-browser"
+      ? "cortexai-agent-hub-browser"
       : action.application;
     argv = ["env", `DISPLAY=${display}`, application, ...(action.uri ? [action.uri] : [])];
   }
@@ -374,7 +375,9 @@ export function normalizeWorkspaceRelative(value: string) {
 }
 
 export function workspaceTarget(relative: string) {
-  return relative ? path.posix.join("/home/rakazo", relative) : "/home/rakazo";
+  return relative
+    ? path.posix.join("/home/cortexai-agent-hub", relative)
+    : "/home/cortexai-agent-hub";
 }
 
 export function sandboxTimeoutCommand(argv: string[], timeoutMs: number, completionMarker: string) {
@@ -401,8 +404,8 @@ export function interactiveScreenCommand(
 ) {
   const tokenFile =
     layout.displayNumber === 1
-      ? "/tmp/rakazo/control-token"
-      : `/tmp/rakazo/control-token-${layout.displayNumber}`;
+      ? "/tmp/cortexai-agent-hub/control-token"
+      : `/tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`;
   const stopProcesses =
     `pkill -f '^x11vnc .* -rfbport ${layout.controlVncPort}' || true; ` +
     `pkill -f '^/usr/bin/python3 .*websockify.*${layout.controlPort}' || true; ` +
@@ -417,8 +420,8 @@ export function interactiveScreenCommand(
     stopProcesses,
     `printf %s ${shellQuote(controlToken)} > ${tokenFile}`,
     `export DISPLAY=${layout.display}`,
-    `(x11vnc -display ${layout.display} -forever -shared -nopw -listen 127.0.0.1 -rfbport ${layout.controlVncPort} -xkb -ncache 0 >/tmp/rakazo/x11vnc-control-${layout.displayNumber}.log 2>&1 &)`,
-    `(websockify --heartbeat=30 --web=/usr/share/novnc 0.0.0.0:${layout.controlPort} 127.0.0.1:${layout.controlVncPort} >/tmp/rakazo/novnc-control-${layout.displayNumber}.log 2>&1 &)`,
+    `(x11vnc -display ${layout.display} -forever -shared -nopw -listen 127.0.0.1 -rfbport ${layout.controlVncPort} -xkb -ncache 0 >/tmp/cortexai-agent-hub/x11vnc-control-${layout.displayNumber}.log 2>&1 &)`,
+    `(websockify --heartbeat=30 --web=/usr/share/novnc 0.0.0.0:${layout.controlPort} 127.0.0.1:${layout.controlVncPort} >/tmp/cortexai-agent-hub/novnc-control-${layout.displayNumber}.log 2>&1 &)`,
     `for i in $(seq 1 50); do (echo >/dev/tcp/127.0.0.1/${layout.controlPort}) >/dev/null 2>&1 && exit 0; sleep 0.1; done`,
     "exit 1",
   ].join("; ");

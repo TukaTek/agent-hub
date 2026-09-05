@@ -1,18 +1,18 @@
-import type { RealtimeFanout } from "@rakazo/adapter-kit";
+import type { RealtimeFanout } from "@cortexai-agent-hub/adapter-kit";
 import {
   type BotSecretDestination,
   type MessageBlock,
   MessageBlock as MessageBlockSchema,
   type ProductEvent,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   blocksToAgentHistoryText,
   isApprovalAskBlock,
   isSecretAskBlock,
   messagingChannelId,
   sanitizeJsonValue,
-} from "@rakazo/core";
-import { getLogger } from "@rakazo/logging";
+} from "@cortexai-agent-hub/core";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
 import {

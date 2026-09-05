@@ -1,5 +1,5 @@
-import type { BotSecretDestination } from "@rakazo/contracts";
-import type { PrismaClient } from "@rakazo/db";
+import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import { requestWithBotSecret } from "./bot-secrets.js";
 import { EncryptedSecretStore } from "./secrets.js";

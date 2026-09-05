@@ -1,5 +1,5 @@
+import type { ModelCatalogEntry } from "@cortexai-agent-hub/contracts";
 import { t } from "@lingui/core/macro";
-import type { ModelCatalogEntry } from "@rakazo/contracts";
 
 /** Localize known provider auth hint fallbacks; pass through catalog `authHint` as-is. */
 export function localizedProviderHint(entry: ModelCatalogEntry): string {

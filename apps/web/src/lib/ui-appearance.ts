@@ -5,7 +5,7 @@ import {
   resolveAppearance,
   resolveAppearancePreference,
   tokensForAppearance,
-} from "@rakazo/ui-tokens";
+} from "@cortexai-agent-hub/ui-tokens";
 
 export type { AppearancePreference, ResolvedAppearance };
 

@@ -4,16 +4,19 @@ import type {
   ControlLeaseRef,
   JobPublisher,
   SandboxProvider,
-} from "@rakazo/adapter-kit";
-import { computerControlExpireJobKey, skillTeachingExpireJobKey } from "@rakazo/adapter-kit";
-import type { Actor, MessageBlock, TaughtSkill } from "@rakazo/contracts";
+} from "@cortexai-agent-hub/adapter-kit";
+import {
+  computerControlExpireJobKey,
+  skillTeachingExpireJobKey,
+} from "@cortexai-agent-hub/adapter-kit";
+import type { Actor, MessageBlock, TaughtSkill } from "@cortexai-agent-hub/contracts";
 import {
   buildPlaybookFromRecording,
   computerInputForDomKey,
   type SkillPlaybook,
   type TeachRecordingEvent,
   type TeachSnapshot,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
@@ -21,7 +24,7 @@ import {
   type Prisma,
   type PrismaClient,
   type ThreadEvents,
-} from "@rakazo/db";
+} from "@cortexai-agent-hub/db";
 import { scheduleComputerSleep } from "./computer-idle.js";
 import { toComputerRef } from "./computer-support.js";
 

@@ -6,7 +6,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: pt-BR\n"
-"Project-Id-Version: rakazo-web\n"
+"Project-Id-Version: cortexai-agent-hub-web\n"
 "Report-Msgid-Bugs-To: \n"
 "PO-Revision-Date: \n"
 "Last-Translator: \n"
@@ -615,8 +615,8 @@ msgid "Choose a new password"
 msgstr "Escolha uma nova senha"
 
 #: src/pages/ModelSettingsOverlay.tsx:329
-msgid "Choose which connected model Rakazo uses."
-msgstr "Escolha qual modelo conectado a Rakazo usa."
+msgid "Choose which connected model CortexAI Agent Hub uses."
+msgstr "Escolha qual modelo conectado a CortexAI Agent Hub usa."
 
 #: src/pages/shell/dialogs.tsx:208
 msgid "Clear"
@@ -1180,8 +1180,8 @@ msgid "Create your first bot"
 msgstr "Crie seu primeiro bot"
 
 #: src/pages/Auth.tsx:31
-msgid "Create your Rakazo"
-msgstr "Crie o seu Rakazo"
+msgid "Create your CortexAI Agent Hub"
+msgstr "Crie o seu CortexAI Agent Hub"
 
 #: src/components/AskCard.tsx:21
 msgid "Created"
@@ -2236,8 +2236,8 @@ msgstr "Cole uma chave de substituição"
 
 #: src/pages/ModelSettingsOverlay.tsx:433
 #: src/pages/Onboarding.tsx:363
-msgid "Paste the OpenAI-compatible address from your server. Rakazo adds /v1 if needed."
-msgstr "Cole o endereço compatível com OpenAI do seu servidor. Rakazo adiciona /v1 se necessário."
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "Cole o endereço compatível com OpenAI do seu servidor. CortexAI Agent Hub adiciona /v1 se necessário."
 
 #: src/pages/VoiceSettingsOverlay.tsx:266
 msgid "Paste your API key"
@@ -2292,8 +2292,8 @@ msgid "Queued"
 msgstr "Na fila"
 
 #: src/pages/PluginsOverlay.tsx:556
-msgid "Rakazo verifies the source before saving it. Credentials are encrypted and are never returned to clients or exposed to the model."
-msgstr "Rakazo verifica a fonte antes de salvá-la. As credenciais são criptografadas e nunca são devolvidas aos clientes ou expostas ao modelo."
+msgid "CortexAI Agent Hub verifies the source before saving it. Credentials are encrypted and are never returned to clients or exposed to the model."
+msgstr "CortexAI Agent Hub verifica a fonte antes de salvá-la. As credenciais são criptografadas e nunca são devolvidas aos clientes ou expostas ao modelo."
 
 #: src/pages/shell/bot-panel.tsx:414
 msgid "Read replies aloud"
@@ -2462,8 +2462,8 @@ msgid "Retry screen"
 msgstr ""
 
 #: src/pages/McpOAuthCallback.tsx:62
-msgid "Return to Rakazo"
-msgstr "Retorno a Rakazo"
+msgid "Return to CortexAI Agent Hub"
+msgstr "Retorno a CortexAI Agent Hub"
 
 #: src/pages/MessagingSettingsOverlay.tsx:318
 msgid "Revoke"
@@ -2698,8 +2698,8 @@ msgid "Sign in"
 msgstr "Entrar"
 
 #: src/pages/Auth.tsx:29
-msgid "Sign in to Rakazo"
-msgstr "Entrar no Rakazo"
+msgid "Sign in to CortexAI Agent Hub"
+msgstr "Entrar no CortexAI Agent Hub"
 
 #: src/pages/Auth.tsx:199
 #: src/pages/Welcome.tsx:32
@@ -2949,8 +2949,8 @@ msgid "This server uses browser sign-in. Authorize it to let your agents use its
 msgstr "Este servidor usa o login do navegador. Autorize-o a permitir que seus agentes usem suas ferramentas. Um pop-up será aberto."
 
 #: src/pages/ModelSettingsOverlay.tsx:701
-msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
-msgstr "Este login de assinatura ainda não está disponível no Rakazo. Use uma credencial de implantação ou escolha outro provedor."
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "Este login de assinatura ainda não está disponível no CortexAI Agent Hub. Use uma credencial de implantação ou escolha outro provedor."
 
 #: src/pages/RoutineSchedule.tsx:152
 msgid "Time of day"

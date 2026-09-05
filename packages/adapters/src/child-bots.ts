@@ -5,10 +5,10 @@ import type {
   ArtifactStore,
   JobPublisher,
   SandboxProvider,
-} from "@rakazo/adapter-kit";
-import { routineJobKey, runContinueJob, runJobKey } from "@rakazo/adapter-kit";
-import { type Actor, type Bot, GROUP_MEMBER_MIN } from "@rakazo/contracts";
-import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapter-kit";
+import { routineJobKey, runContinueJob, runJobKey } from "@cortexai-agent-hub/adapter-kit";
+import { type Actor, type Bot, GROUP_MEMBER_MIN } from "@cortexai-agent-hub/contracts";
+import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import {
   computerScopeKey,
   createRepos,
@@ -17,8 +17,8 @@ import {
   type Prisma,
   type PrismaClient,
   withTransactionRetry,
-} from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+} from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { toComputerRef } from "./computer-support.js";
 import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { resolveAgentHomePath } from "./home.js";

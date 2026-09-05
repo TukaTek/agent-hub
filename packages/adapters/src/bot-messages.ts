@@ -1,5 +1,5 @@
-import { runContinueJob } from "@rakazo/adapter-kit";
-import type { BotMessageIntent, MessageBlock } from "@rakazo/contracts";
+import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
+import type { BotMessageIntent, MessageBlock } from "@cortexai-agent-hub/contracts";
 import {
   BOT_MESSAGE_MAX_LENGTH,
   botMessageContext,
@@ -8,14 +8,14 @@ import {
   clampBotMessage,
   nextBotMessageHop,
   resolveBotAddress,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
   type PrismaClient,
   withTransactionRetry,
-} from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+} from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import type { ExecutorDeps } from "./executor.js";
 
 /**

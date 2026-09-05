@@ -1,4 +1,4 @@
-import type { ThreadMessage } from "@rakazo/contracts";
+import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
 import { providerLabel } from "./messaging";
 
 /** Plain message text for clipboard copy — text/ask/progress only, no chrome. */

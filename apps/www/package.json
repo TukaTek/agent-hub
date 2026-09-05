@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/www",
+  "name": "@cortexai-agent-hub/www",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -14,7 +14,7 @@
   "dependencies": {
     "@astrojs/react": "^6.0.2",
     "@astrojs/sitemap": "3.7.3",
-    "@rakazo/ui-web": "workspace:*",
+    "@cortexai-agent-hub/ui-web": "workspace:*",
     "@vercel/functions": "3.9.5",
     "astro": "^7.2.1",
     "posthog-js": "1.417.1",

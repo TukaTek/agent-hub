@@ -4,9 +4,9 @@ import {
   type SearchHit,
   type SpaceBot,
   type SpaceGroup,
-} from "@rakazo/contracts";
-import { groupBotsForSidebar } from "@rakazo/core";
-import { botColors } from "@rakazo/ui-tokens";
+} from "@cortexai-agent-hub/contracts";
+import { groupBotsForSidebar } from "@cortexai-agent-hub/core";
+import { botColors } from "@cortexai-agent-hub/ui-tokens";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {

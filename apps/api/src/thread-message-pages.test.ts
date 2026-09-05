@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@rakazo/db";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import { isPeerRun, loadAllMessages, loadMessagePage } from "./thread-message-pages.js";
 

@@ -1,7 +1,7 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
-import type { MessagingOutboundStatus } from "@rakazo/adapter-kit";
+import type { MessagingOutboundStatus } from "@cortexai-agent-hub/adapter-kit";
 import type { Adapter } from "chat";
 import { createSendblueAdapter } from "chat-adapter-sendblue";
 import type { MessagingPlatform } from "./chat-sdk-surface.js";

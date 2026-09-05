@@ -61,11 +61,11 @@ function CodeBlock(props: React.ComponentPropsWithoutRef<"pre">) {
   }, []);
 
   return (
-    <div className="rk-chat-markdown-pre-wrap">
+    <div className="cortexai-agent-hub-chat-markdown-pre-wrap">
       <pre {...props} ref={preRef} />
       <button
         type="button"
-        className="rk-chat-markdown-copy"
+        className="cortexai-agent-hub-chat-markdown-copy"
         onClick={handleCopy}
         aria-label={copied ? "Copied" : "Copy code"}
       >
@@ -94,7 +94,13 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   const source = streaming ? closeUnterminatedFence(children) : children;
 
   return (
-    <div className={streaming ? "rk-chat-markdown rk-chat-markdown-streaming" : "rk-chat-markdown"}>
+    <div
+      className={
+        streaming
+          ? "cortexai-agent-hub-chat-markdown cortexai-agent-hub-chat-markdown-streaming"
+          : "cortexai-agent-hub-chat-markdown"
+      }
+    >
       <ReactMarkdown
         components={components}
         remarkPlugins={[remarkGfm]}
@@ -103,7 +109,9 @@ export const ChatMarkdown = memo(function ChatMarkdown({
       >
         {source}
       </ReactMarkdown>
-      {streaming ? <span aria-hidden="true" className="rk-chat-markdown-cursor" /> : null}
+      {streaming ? (
+        <span aria-hidden="true" className="cortexai-agent-hub-chat-markdown-cursor" />
+      ) : null}
     </div>
   );
 });

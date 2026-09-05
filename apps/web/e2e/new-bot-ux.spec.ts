@@ -11,7 +11,7 @@ test("create opens empty chat, picker lists bots, and sidebar collapses", async 
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `new-bot-ux-${stamp}@rakazo.test`, "password12", "New Bot UX");
+  await signup(page, `new-bot-ux-${stamp}@cortexai-agent-hub.test`, "password12", "New Bot UX");
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);
@@ -48,7 +48,7 @@ test("create opens empty chat, picker lists bots, and sidebar collapses", async 
 
 test("later bot waits before showing the focus card; sending cancels it", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `focus-delay-${stamp}@rakazo.test`, "password12", "Focus Delay");
+  await signup(page, `focus-delay-${stamp}@cortexai-agent-hub.test`, "password12", "Focus Delay");
   await completeOnboarding(page);
   // First bot from onboarding shows the focus card immediately.
   await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible();

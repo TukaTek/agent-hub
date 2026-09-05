@@ -49,7 +49,7 @@ for (const mode of ["development", "preview"] as const) {
     let stop: () => Promise<void>;
 
     test.beforeAll(async () => {
-      const root = await mkdtemp(path.join(tmpdir(), "rakazo-screen-test-"));
+      const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-screen-test-"));
       await mkdir(path.join(root, "dist"));
       const upstream = createHttpServer((req, res) => {
         // Even a listener explicitly requesting same-origin access cannot loosen the proxy policy.

@@ -6,7 +6,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
-"Project-Id-Version: rakazo-web\n"
+"Project-Id-Version: cortexai-agent-hub-web\n"
 "Report-Msgid-Bugs-To: \n"
 "PO-Revision-Date: \n"
 "Last-Translator: \n"
@@ -615,8 +615,8 @@ msgid "Choose a new password"
 msgstr "새 비밀번호 선택"
 
 #: src/pages/ModelSettingsOverlay.tsx:329
-msgid "Choose which connected model Rakazo uses."
-msgstr "Rakazo에서 기본으로 사용할 연결된 모델을 선택하세요."
+msgid "Choose which connected model CortexAI Agent Hub uses."
+msgstr "CortexAI Agent Hub에서 기본으로 사용할 연결된 모델을 선택하세요."
 
 #: src/pages/shell/dialogs.tsx:208
 msgid "Clear"
@@ -1180,8 +1180,8 @@ msgid "Create your first bot"
 msgstr "첫 Bot 만들기"
 
 #: src/pages/Auth.tsx:31
-msgid "Create your Rakazo"
-msgstr "Rakazo 계정 만들기"
+msgid "Create your CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub 계정 만들기"
 
 #: src/components/AskCard.tsx:21
 msgid "Created"
@@ -2236,8 +2236,8 @@ msgstr "새 API 키를 붙여넣으세요"
 
 #: src/pages/ModelSettingsOverlay.tsx:433
 #: src/pages/Onboarding.tsx:363
-msgid "Paste the OpenAI-compatible address from your server. Rakazo adds /v1 if needed."
-msgstr "서버의 OpenAI 호환 주소를 붙여넣으세요. 필요하면 Rakazo가 /v1을 추가합니다."
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "서버의 OpenAI 호환 주소를 붙여넣으세요. 필요하면 CortexAI Agent Hub가 /v1을 추가합니다."
 
 #: src/pages/VoiceSettingsOverlay.tsx:266
 msgid "Paste your API key"
@@ -2292,8 +2292,8 @@ msgid "Queued"
 msgstr "대기 중"
 
 #: src/pages/PluginsOverlay.tsx:556
-msgid "Rakazo verifies the source before saving it. Credentials are encrypted and are never returned to clients or exposed to the model."
-msgstr "Rakazo는 저장하기 전에 연결 상태를 확인합니다. 인증 정보는 암호화되며 앱이나 AI 모델에 노출되지 않습니다."
+msgid "CortexAI Agent Hub verifies the source before saving it. Credentials are encrypted and are never returned to clients or exposed to the model."
+msgstr "CortexAI Agent Hub는 저장하기 전에 연결 상태를 확인합니다. 인증 정보는 암호화되며 앱이나 AI 모델에 노출되지 않습니다."
 
 #: src/pages/shell/bot-panel.tsx:414
 msgid "Read replies aloud"
@@ -2462,8 +2462,8 @@ msgid "Retry screen"
 msgstr ""
 
 #: src/pages/McpOAuthCallback.tsx:62
-msgid "Return to Rakazo"
-msgstr "Rakazo로 돌아가기"
+msgid "Return to CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub로 돌아가기"
 
 #: src/pages/MessagingSettingsOverlay.tsx:318
 msgid "Revoke"
@@ -2698,8 +2698,8 @@ msgid "Sign in"
 msgstr "로그인"
 
 #: src/pages/Auth.tsx:29
-msgid "Sign in to Rakazo"
-msgstr "Rakazo 로그인"
+msgid "Sign in to CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub 로그인"
 
 #: src/pages/Auth.tsx:199
 #: src/pages/Welcome.tsx:32
@@ -2949,8 +2949,8 @@ msgid "This server uses browser sign-in. Authorize it to let your agents use its
 msgstr "이 서버는 브라우저 로그인이 필요합니다. 인증을 누르면 새 창이 열리고, 완료 후 Bot이 도구를 사용할 수 있습니다."
 
 #: src/pages/ModelSettingsOverlay.tsx:701
-msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
-msgstr "이 구독 로그인 방식은 아직 Rakazo에서 지원되지 않습니다. 서버에 설정된 인증 정보를 사용하거나 다른 서비스를 선택하세요."
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "이 구독 로그인 방식은 아직 CortexAI Agent Hub에서 지원되지 않습니다. 서버에 설정된 인증 정보를 사용하거나 다른 서비스를 선택하세요."
 
 #: src/pages/RoutineSchedule.tsx:152
 msgid "Time of day"

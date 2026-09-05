@@ -1,5 +1,3 @@
-import { t } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
 import type {
   AgentSkillCatalogEntry,
   Bot,
@@ -9,12 +7,12 @@ import type {
   ModelCredential,
   ThinkingLevel,
   VoiceInfo,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   BotAvatar,
   Button,
@@ -24,7 +22,9 @@ import {
   Switch,
   Textarea,
   Toggle,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { t } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { X } from "lucide-react";
 import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { rpc } from "../../lib/rpc";
@@ -103,7 +103,7 @@ export function CreateBotForm({
         computerMode,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : t`Could not create bot`);
+      setError(err instanceof Error ? err.message : t`Could not create Assistant`);
     } finally {
       setSubmitting(false);
     }
@@ -113,9 +113,14 @@ export function CreateBotForm({
     <div>
       <div className="mb-4 flex items-center justify-between">
         <span className="text-[13.5px] text-muted-foreground">
-          <Trans>New bot</Trans>
+          <Trans>New Assistant</Trans>
         </span>
-        <Button variant="ghost" size="icon-sm" aria-label={t`Cancel new bot`} onClick={onCancel}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t`Cancel new Assistant`}
+          onClick={onCancel}
+        >
           <X size={16} strokeWidth={1.8} />
         </Button>
       </div>
@@ -135,7 +140,7 @@ export function CreateBotForm({
           value={name}
           maxLength={BOT_NAME_MAX_LENGTH}
           onChange={(e) => setName(e.target.value)}
-          placeholder={t`Name this bot`}
+          placeholder={t`Name this Assistant`}
           className="mt-2"
         />
       </label>
@@ -146,7 +151,7 @@ export function CreateBotForm({
           value={title}
           maxLength={BOT_TITLE_MAX_LENGTH}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={t`Describe what this bot does`}
+          placeholder={t`Describe what this Assistant does`}
           className="mt-2"
         />
       </label>
@@ -157,7 +162,7 @@ export function CreateBotForm({
           value={description}
           maxLength={BOT_DESCRIPTION_MAX_LENGTH}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder={t`What this bot is for`}
+          placeholder={t`What this Assistant is for`}
           rows={4}
           className="mt-2"
         />

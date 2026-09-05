@@ -1,4 +1,4 @@
-import type { ConnectionCatalogItem, SandboxKind } from "@rakazo/contracts";
+import type { ConnectionCatalogItem, SandboxKind } from "@cortexai-agent-hub/contracts";
 
 export interface AdapterContext {
   operationId: string;

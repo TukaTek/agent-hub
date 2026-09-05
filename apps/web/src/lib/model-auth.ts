@@ -1,9 +1,13 @@
-import type { ModelCatalogEntry } from "@rakazo/contracts";
-import { waitForModelOAuthCompletion } from "@rakazo/core";
+import type { ModelCatalogEntry } from "@cortexai-agent-hub/contracts";
+import { waitForModelOAuthCompletion } from "@cortexai-agent-hub/core";
 import { rpc } from "./rpc";
 
-export type { ModelCatalogEntry, ModelCredential, ModelOAuthBegin } from "@rakazo/contracts";
-export { cancelModelOAuthAttempt, finishModelOAuthAttempt } from "@rakazo/core";
+export type {
+  ModelCatalogEntry,
+  ModelCredential,
+  ModelOAuthBegin,
+} from "@cortexai-agent-hub/contracts";
+export { cancelModelOAuthAttempt, finishModelOAuthAttempt } from "@cortexai-agent-hub/core";
 
 /** English fallback auth hint for a catalog entry (localize at the UI call site). */
 export function providerHint(entry: ModelCatalogEntry) {

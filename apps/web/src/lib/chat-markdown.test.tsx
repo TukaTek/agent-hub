@@ -1,4 +1,4 @@
-import { ChatMarkdown } from "@rakazo/chat-ui/web";
+import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -30,7 +30,7 @@ describe("ChatMarkdown", () => {
 
     expect(html).toContain("<pre>");
     expect(html).toContain("const live = true;");
-    expect(html).toContain("rk-chat-markdown-cursor");
+    expect(html).toContain("cortexai-agent-hub-chat-markdown-cursor");
   });
 
   it("renders a copy button alongside each code block", () => {
@@ -38,8 +38,8 @@ describe("ChatMarkdown", () => {
       <ChatMarkdown>{"```ts\nconst value = 1;\n```"}</ChatMarkdown>,
     );
 
-    expect(html).toContain("rk-chat-markdown-pre-wrap");
+    expect(html).toContain("cortexai-agent-hub-chat-markdown-pre-wrap");
     expect(html).toContain('aria-label="Copy code"');
-    expect(html).toContain("rk-chat-markdown-copy");
+    expect(html).toContain("cortexai-agent-hub-chat-markdown-copy");
   });
 });

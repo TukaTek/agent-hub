@@ -11,15 +11,15 @@ Stage A bootstrap discoverability is also summarized in the [README](../README.m
 
 | Stage | Failure looks like | First move |
 | --- | --- | --- |
-| A: fetch installer | curl to raw GitHub fails | [`RAKAZO_INSTALLER_URL`](./self-host.md#restricted-networks--mirror-downloads) or pre-copy the script ([README](../README.md)) |
-| B: Compose + env example | curl under `infra/compose` fails | [`RAKAZO_DOWNLOAD_BASE`](./self-host.md#restricted-networks--mirror-downloads), [`--local`](./self-host.md#restricted-networks--mirror-downloads), or [`RAKAZO_DOWNLOAD_SKIP_EXISTING=1`](./self-host.md#restricted-networks--mirror-downloads) |
-| C: image pull | GHCR / Hub pull fails | [`RAKAZO_*_IMAGE*`](./self-host.md#restricted-networks--mirror-downloads), [`POSTGRES_IMAGE`](../infra/compose/docker-compose.images.yml) / [`BUSYBOX_IMAGE`](../infra/compose/docker-compose.images.yml); optional daemon `registry-mirrors` ([how](./self-host.md#restricted-networks--mirror-downloads); base example [docker-daemon.json](../infra/compose/docker-daemon.json)) |
+| A: fetch installer | curl to raw GitHub fails | [`CORTEXAI_AGENT_HUB_INSTALLER_URL`](./self-host.md#restricted-networks--mirror-downloads) or pre-copy the script ([README](../README.md)) |
+| B: Compose + env example | curl under `infra/compose` fails | [`CORTEXAI_AGENT_HUB_DOWNLOAD_BASE`](./self-host.md#restricted-networks--mirror-downloads), [`--local`](./self-host.md#restricted-networks--mirror-downloads), or [`CORTEXAI_AGENT_HUB_DOWNLOAD_SKIP_EXISTING=1`](./self-host.md#restricted-networks--mirror-downloads) |
+| C: image pull | GHCR / Hub pull fails | [`CORTEXAI_AGENT_HUB_*_IMAGE*`](./self-host.md#restricted-networks--mirror-downloads), [`POSTGRES_IMAGE`](../infra/compose/docker-compose.images.yml) / [`BUSYBOX_IMAGE`](../infra/compose/docker-compose.images.yml); optional daemon `registry-mirrors` ([how](./self-host.md#restricted-networks--mirror-downloads); base example [docker-daemon.json](../infra/compose/docker-daemon.json)) |
 
 ## Decision tree
 
 1. Cannot download the installer script → Stage A mirror / local copy.
 2. Installer runs but cannot fetch Compose YAML → Stage B base or `--local`.
-3. Compose pull fails on app/computer → GHCR mirror env (`RAKAZO_IMAGE`, `RAKAZO_IMAGE_TAG`, `RAKAZO_COMPUTER_IMAGE`, `RAKAZO_COMPUTER_IMAGE_TAG`).
+3. Compose pull fails on app/computer → GHCR mirror env (`CORTEXAI_AGENT_HUB_IMAGE`, `CORTEXAI_AGENT_HUB_IMAGE_TAG`, `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE`, `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG`).
 4. Pull fails only on Postgres/busybox → Hub overrides (`POSTGRES_IMAGE` / `BUSYBOX_IMAGE`) or daemon `registry-mirrors`.
 5. Stack is up but bots cannot call models / remote sandboxes → day-2 egress and [computer provider](./self-host.md#choosing-a-computer-provider) choice; local `SANDBOX_PROVIDER=docker` still needs a computer image.
 6. Arm host + mysterious computer crash → pin both image tags to one multi-arch release ([Published images and tags](./self-host.md#published-images-and-tags)).

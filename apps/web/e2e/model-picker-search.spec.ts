@@ -4,7 +4,7 @@ import { captureScreenshot, completeOnboarding, signup } from "./helpers";
 test("model dropdown search and provider group headers", async ({ page }, testInfo) => {
   const stamp = Date.now();
   const userName = `Model picker ${stamp}`;
-  await signup(page, `model-picker-${stamp}@rakazo.test`, "password12", userName);
+  await signup(page, `model-picker-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
 
   await page.getByRole("button", { name: new RegExp(userName) }).click();

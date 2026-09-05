@@ -14,7 +14,7 @@ import {
   runContinueJob,
   runJobKey,
   type SandboxProvider,
-} from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   acquireComputerExecutionLease,
   applyTeachingDesktopInput,
@@ -69,8 +69,8 @@ import {
   toComputerRef,
   touchRunningComputer,
   verifyMcpInstall,
-} from "@rakazo/adapters";
-import type { Auth } from "@rakazo/auth";
+} from "@cortexai-agent-hub/adapters";
+import type { Auth } from "@cortexai-agent-hub/auth";
 import {
   type Actor,
   appContract,
@@ -79,7 +79,7 @@ import {
   type Me,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   type SpaceNavigation,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   ACTIVE_RUN_STATUSES,
   AttachmentValidationError,
@@ -88,7 +88,7 @@ import {
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   appendEventInTransaction,
   createGroupRepos,
@@ -115,8 +115,8 @@ import {
   selectSpaceVoicePreference,
   type ThreadEvents,
   touchGroupUpdatedAt,
-} from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+} from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { createAgentSkillsService } from "./agent-skills.js";
 import { createOwnedArtifact, getOwnedArtifact, getSpaceArtifact } from "./artifacts.js";
 import {

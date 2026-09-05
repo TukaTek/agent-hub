@@ -1,4 +1,4 @@
-import type { AvatarStyle } from "@rakazo/contracts";
+import type { AvatarStyle } from "@cortexai-agent-hub/contracts";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -114,7 +114,7 @@ export default function Account() {
       setArchivedBots((bots) => bots.filter((bot) => bot.id !== botId));
     } catch (restoreError) {
       Alert.alert(
-        t("Could not restore bot"),
+        t("Could not restore Assistant"),
         restoreError instanceof Error ? restoreError.message : t("Try again."),
       );
     }
@@ -177,7 +177,7 @@ export default function Account() {
     Alert.alert(
       t("Delete your account?"),
       t(
-        "This permanently deletes your account, bots, conversations, memories, files, and saved connections. This cannot be undone.",
+        "This permanently deletes your account, Assistants, conversations, memories, files, and saved connections. This cannot be undone.",
       ),
       [
         { text: t("Cancel"), style: "cancel" },
@@ -436,7 +436,7 @@ export default function Account() {
 
         {archivedBots.length > 0 ? (
           <View style={styles.archivedSection}>
-            <Text style={styles.sectionTitle}>{t("Archived bots")}</Text>
+            <Text style={styles.sectionTitle}>{t("Archived Assistants")}</Text>
             {archivedBots.map((bot) => (
               <View key={bot.id} style={styles.archivedRow}>
                 <Text numberOfLines={1} style={styles.archivedName}>

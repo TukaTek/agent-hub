@@ -94,10 +94,10 @@ describe("desktop session permissions", () => {
   });
 
   it.each([
-    "rakazo-model-oauth",
-    "rakazo-mcp-oauth",
-    "rakazo-app-connect",
-    "rakazo-plugin-connect",
+    "cortexai-agent-hub-model-oauth",
+    "cortexai-agent-hub-mcp-oauth",
+    "cortexai-agent-hub-app-connect",
+    "cortexai-agent-hub-plugin-connect",
   ])("allows %s navigation without granting permissions to its popup", (name) => {
     const policy = policyFixture();
     expect(shouldOpenInAppPopup(new URL(appUrl).origin, providerUrl, name)).toBe(true);

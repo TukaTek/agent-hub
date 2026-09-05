@@ -1,13 +1,13 @@
-import type { Actor } from "@rakazo/contracts";
-import { buildSkillMd } from "@rakazo/core";
-import type { PrismaClient } from "@rakazo/db";
+import type { Actor } from "@cortexai-agent-hub/contracts";
+import { buildSkillMd } from "@cortexai-agent-hub/core";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import { createAgentSkillsService } from "./agent-skills.js";
 
 const actor: Actor = {
   spaceId: "space-1",
   userId: "user-1",
-  email: "user@rakazo.test",
+  email: "user@cortexai-agent-hub.test",
   isDeploymentOwner: true,
 };
 

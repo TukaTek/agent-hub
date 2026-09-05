@@ -1,14 +1,14 @@
-import type { AdapterContext, JobPublisher } from "@rakazo/adapter-kit";
-import { cloudAgentPollJob } from "@rakazo/adapter-kit";
-import { cloudAgentBlockFromPayload } from "@rakazo/core";
+import type { AdapterContext, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
+import { cloudAgentPollJob } from "@cortexai-agent-hub/adapter-kit";
+import { cloudAgentBlockFromPayload } from "@cortexai-agent-hub/core";
 import {
   appendEventInTransaction,
   type CloudAgent,
   createThreadMessageInTransaction,
   type PrismaClient,
   type ThreadEvents,
-} from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+} from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { type CloudAgentConnection, cloudAgentsEnabled } from "./cloud-agent-factory.js";
 import { cloudAgentLaunchSchema, cloudAgentReplySchema } from "./cloud-agent-tools.js";
 

@@ -4,8 +4,8 @@ import type {
   CloudAgentProvider,
   CloudAgentReplyRequest,
   CloudAgentSnapshot,
-} from "@rakazo/adapter-kit";
-import { CloudAgentRequestRejected } from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
+import { CloudAgentRequestRejected } from "@cortexai-agent-hub/adapter-kit";
 
 interface EmulatorAgent {
   id: string;

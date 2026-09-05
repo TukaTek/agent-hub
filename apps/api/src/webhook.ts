@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import type { JobPublisher } from "@rakazo/adapter-kit";
-import { runContinueJob } from "@rakazo/adapter-kit";
-import type { EncryptedSecretStore } from "@rakazo/adapters";
-import { hasValidBearerToken } from "@rakazo/core";
-import type { PrismaClient } from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+import type { JobPublisher } from "@cortexai-agent-hub/adapter-kit";
+import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
+import type { EncryptedSecretStore } from "@cortexai-agent-hub/adapters";
+import { hasValidBearerToken } from "@cortexai-agent-hub/core";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import type { Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
 
