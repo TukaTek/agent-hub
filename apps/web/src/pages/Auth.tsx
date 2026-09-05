@@ -9,8 +9,10 @@ import { clearSpaceSelection } from "../lib/rpc";
 type AuthMode = "in" | "up" | "forgot";
 type PasswordResetCapabilities = { passwordReset: boolean; resetUrl: string | null };
 
-const fieldClass = "mt-2 h-12 rounded-xl px-4 text-base md:text-base";
-const submitClass = "mt-3 h-12 w-full rounded-xl text-base";
+const fieldClass =
+  "mt-2 h-12 rounded-xl px-4 text-base focus-visible:border-brand focus-visible:ring-brand/30 md:text-base";
+const submitClass =
+  "mt-3 h-12 w-full rounded-xl bg-brand text-base font-semibold text-brand-foreground hover:bg-brand/90 focus-visible:border-brand focus-visible:ring-brand/40";
 
 export function AuthPage({ mode }: { mode: AuthMode }) {
   const { t } = useLingui();
@@ -311,13 +313,29 @@ function AuthFrame({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-full items-center justify-center bg-background px-6 py-16 text-foreground">
-      <form onSubmit={onSubmit} className="flex w-[460px] flex-col items-center">
-        <div className="flex h-[74px] w-[74px] items-center justify-center gap-[11px] rounded-full bg-muted">
-          <span className="h-5 w-[9px] rounded-full bg-primary" />
-          <span className="h-5 w-[9px] rounded-full bg-primary" />
-        </div>
-        <h1 aria-live="polite" className="mb-9 mt-7 text-4xl font-medium tracking-tight">
+    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-brand-surface px-5 py-10 text-brand-surface-foreground sm:px-6 sm:py-16">
+      <div
+        aria-hidden="true"
+        className="absolute -left-24 -top-24 h-80 w-80 rounded-full bg-brand/10 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-brand/8 blur-3xl"
+      />
+      <form
+        onSubmit={onSubmit}
+        className="relative flex w-full max-w-[500px] flex-col items-center rounded-[28px] border border-white/10 bg-card px-6 py-9 text-card-foreground shadow-2xl shadow-black/30 sm:px-10 sm:py-11"
+      >
+        <img
+          src="/brand/cortexai-icon.png"
+          alt="CortexAI logo"
+          data-testid="cortexai-logo"
+          className="h-[82px] w-[82px] object-contain"
+        />
+        <h1
+          aria-live="polite"
+          className="mb-9 mt-6 w-full text-center text-3xl font-medium tracking-tight sm:text-4xl"
+        >
           {title}
         </h1>
         {children}

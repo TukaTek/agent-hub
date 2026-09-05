@@ -10,6 +10,14 @@ test("logout protects bot deep links and sign-in restores the session", async ({
   const userName = "Auth Lifecycle";
 
   await page.goto("/sign-up");
+  await expect(page.getByTestId("cortexai-logo")).toHaveAttribute(
+    "src",
+    "/brand/cortexai-icon.png",
+  );
+  await expect(page.getByRole("button", { name: "Create account" })).toHaveCSS(
+    "background-color",
+    "rgb(247, 147, 59)",
+  );
   await expect(page.getByLabel("Name")).toHaveAttribute("autocomplete", "name");
   await expect(page.getByLabel("Email")).toHaveAttribute("autocomplete", "username");
   await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
@@ -32,6 +40,10 @@ test("logout protects bot deep links and sign-in restores the session", async ({
   await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
   await page.goto("/");
   await expect(page.getByText(/Your team of always-on agents/)).toBeVisible();
+  await expect(page.getByTestId("cortexai-logo")).toHaveAttribute(
+    "src",
+    "/brand/cortexai-icon.png",
+  );
   await page.getByRole("button", { name: /Sign up/ }).click();
   await expect(page).toHaveURL(/\/sign-up$/);
   await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
