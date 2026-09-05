@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ComputerAction, ComputerInput } from "@rakazo/adapter-kit";
+import type { ComputerAction, ComputerInput } from "@cortexai-agent-hub/adapter-kit";
 import { ComputerScreenUnavailableError } from "./computer-screens.js";
 import { clampRounded, shellQuote } from "./computer-support.js";
 
@@ -21,7 +21,7 @@ export interface ExtraDisplayEnvironment {
   browserProfilesDir: string;
 }
 
-const SCREEN_REGISTRY = "/tmp/rakazo/screen-assignments";
+const SCREEN_REGISTRY = "/tmp/cortexai-agent-hub/screen-assignments";
 
 // The SDK puts setup scripts in bash's argv. Only match a proxy executable,
 // never the enclosing runner whose script contains the same launch command.
@@ -51,11 +51,11 @@ export function allocateExtraDisplayCommand(screenKey: string, leaseId?: string)
     'case "$owner" in *:*) rest=${owner##*:}; case "$rest" in \'\'|*[!0-9]*) ;; *) incoming_fence=$rest; incoming_owner=${owner%:*}; esac ;; esac',
     // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion in the remote shell script
     'case "$current" in *:*) rest=${current##*:}; case "$rest" in \'\'|*[!0-9]*) ;; *) current_fence=$rest; current_owner=${current%:*}; esac ;; esac',
-    'if [ -n "$owner" ] && [ -n "$current" ] && [ "$owner" != "$current" ] && [ "$incoming_fence" -le "$current_fence" ]; then printf \'RAKAZO_SCREEN_INDEX=stale\\n\'; exit 75; fi',
+    'if [ -n "$owner" ] && [ -n "$current" ] && [ "$owner" != "$current" ] && [ "$incoming_fence" -le "$current_fence" ]; then printf \'CORTEXAI_AGENT_HUB_SCREEN_INDEX=stale\\n\'; exit 75; fi',
     'tmp="$slot.$$"',
     'printf \'%s\\n%s\\n\' "$index" "$owner" >"$tmp"',
     'mv "$tmp" "$slot"',
-    "printf 'RAKAZO_SCREEN_INDEX=%s\\n' \"$index\"",
+    "printf 'CORTEXAI_AGENT_HUB_SCREEN_INDEX=%s\\n' \"$index\"",
   ].join("\n");
 }
 
@@ -69,7 +69,7 @@ export function releaseExtraDisplayCommand(screenKey: string, leaseId?: string):
     'exec 9>"$dir/.lock"',
     "flock 9",
     `slot="$dir/${key}.slot"`,
-    "[ -f \"$slot\" ] || { printf 'RAKAZO_SCREEN_RELEASE=missing\\n'; exit 0; }",
+    "[ -f \"$slot\" ] || { printf 'CORTEXAI_AGENT_HUB_SCREEN_RELEASE=missing\\n'; exit 0; }",
     "index=$(sed -n '1p' \"$slot\")",
     "current=$(sed -n '2p' \"$slot\")",
     `owner=${shellQuote(owner)}`,
@@ -78,15 +78,15 @@ export function releaseExtraDisplayCommand(screenKey: string, leaseId?: string):
     'case "$owner" in *:*) rest=${owner##*:}; case "$rest" in \'\'|*[!0-9]*) ;; *) incoming_fence=$rest; incoming_owner=${owner%:*}; esac ;; esac',
     // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion in the remote shell script
     'case "$current" in *:*) rest=${current##*:}; case "$rest" in \'\'|*[!0-9]*) ;; *) current_fence=$rest; current_owner=${current%:*}; esac ;; esac',
-    '[ -z "$owner" ] || [ "$current" = "$owner" ] || { [ "$incoming_owner" = "$current_owner" ] && [ "$incoming_fence" -ge "$current_fence" ]; } || { printf \'RAKAZO_SCREEN_RELEASE=stale\\n\'; exit 0; }',
-    `if [ "$index" -ne 0 ]; then display_number=$((index + 1)); view_port=$((6080 + index * 2)); control_port=$((6081 + index * 2)); view_vnc_port=$((5900 + index * 2)); control_vnc_port=$((5901 + index * 2)); pkill -f "Xvfb :$display_number -screen" || true; pkill -f "HOME=/tmp/fluxbox-home-$display_number DISPLAY=:$display_number fluxbox" || true; pkill -f -- "chromium-screen-$display_number" || true; pkill -f "(^|/)x11vnc .* -rfbport $view_vnc_port" || true; pkill -f "(^|/)x11vnc .* -rfbport $control_vnc_port" || true; pkill -f "${websockifyProcessPattern("$view_port")}" || true; pkill -f "${noVncProxyProcessPattern("$view_port")}" || true; pkill -f "${websockifyProcessPattern("$control_port")}" || true; pkill -f "${noVncProxyProcessPattern("$control_port")}" || true; rm -f "/tmp/.X$display_number-lock" "/tmp/.X11-unix/X$display_number" "/tmp/rakazo/control-token-$display_number" "/tmp/rakazo/view-password-$display_number" "/tmp/rakazo-view-$display_number.vncpass" "/tmp/rakazo-control-$display_number.vncpass" "/tmp/rakazo/screen-$display_number.lock"; fi`,
+    '[ -z "$owner" ] || [ "$current" = "$owner" ] || { [ "$incoming_owner" = "$current_owner" ] && [ "$incoming_fence" -ge "$current_fence" ]; } || { printf \'CORTEXAI_AGENT_HUB_SCREEN_RELEASE=stale\\n\'; exit 0; }',
+    `if [ "$index" -ne 0 ]; then display_number=$((index + 1)); view_port=$((6080 + index * 2)); control_port=$((6081 + index * 2)); view_vnc_port=$((5900 + index * 2)); control_vnc_port=$((5901 + index * 2)); pkill -f "Xvfb :$display_number -screen" || true; pkill -f "HOME=/tmp/fluxbox-home-$display_number DISPLAY=:$display_number fluxbox" || true; pkill -f -- "chromium-screen-$display_number" || true; pkill -f "(^|/)x11vnc .* -rfbport $view_vnc_port" || true; pkill -f "(^|/)x11vnc .* -rfbport $control_vnc_port" || true; pkill -f "${websockifyProcessPattern("$view_port")}" || true; pkill -f "${noVncProxyProcessPattern("$view_port")}" || true; pkill -f "${websockifyProcessPattern("$control_port")}" || true; pkill -f "${noVncProxyProcessPattern("$control_port")}" || true; rm -f "/tmp/.X$display_number-lock" "/tmp/.X11-unix/X$display_number" "/tmp/cortexai-agent-hub/control-token-$display_number" "/tmp/cortexai-agent-hub/view-password-$display_number" "/tmp/cortexai-agent-hub-view-$display_number.vncpass" "/tmp/cortexai-agent-hub-control-$display_number.vncpass" "/tmp/cortexai-agent-hub/screen-$display_number.lock"; fi`,
     'rm -f "$slot"',
-    "printf 'RAKAZO_SCREEN_RELEASE=%s\\n' \"$index\"",
+    "printf 'CORTEXAI_AGENT_HUB_SCREEN_RELEASE=%s\\n' \"$index\"",
   ].join("; ");
 }
 
 export function parseAllocatedExtraDisplay(output: string): number {
-  const index = Number(output.match(/RAKAZO_SCREEN_INDEX=(\d+)/)?.[1]);
+  const index = Number(output.match(/CORTEXAI_AGENT_HUB_SCREEN_INDEX=(\d+)/)?.[1]);
   if (!Number.isInteger(index) || index < 0 || index >= TEAM_EXTRA_DISPLAY_LIMIT) {
     throw new ComputerScreenUnavailableError();
   }
@@ -94,7 +94,7 @@ export function parseAllocatedExtraDisplay(output: string): number {
 }
 
 export function parseReleasedExtraDisplay(output: string): number | undefined {
-  const match = output.match(/RAKAZO_SCREEN_RELEASE=(\d+)/);
+  const match = output.match(/CORTEXAI_AGENT_HUB_SCREEN_RELEASE=(\d+)/);
   if (!match) return undefined;
   const index = Number(match[1]);
   return Number.isInteger(index) && index >= 0 && index < TEAM_EXTRA_DISPLAY_LIMIT
@@ -144,19 +144,19 @@ export function ensureExtraDisplayCommand(
     throw new Error("ensureExtraDisplayCommand does not apply to the primary display");
   }
   const fluxHome = `/tmp/fluxbox-home-${layout.displayNumber}`;
-  const log = `/tmp/rakazo/screen-${layout.displayNumber}`;
+  const log = `/tmp/cortexai-agent-hub/screen-${layout.displayNumber}`;
   const profile = `${env.browserProfilesDir}/chromium-screen-${layout.displayNumber}`;
   const sharedProfile = `${env.browserProfilesDir}/chromium`;
-  const tokenFile = `/tmp/rakazo/control-token-${layout.displayNumber}`;
-  const passwordFile = `/tmp/rakazo/view-password-${layout.displayNumber}`;
-  const passwordAuthFile = `/tmp/rakazo-view-${layout.displayNumber}.vncpass`;
+  const tokenFile = `/tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`;
+  const passwordFile = `/tmp/cortexai-agent-hub/view-password-${layout.displayNumber}`;
+  const passwordAuthFile = `/tmp/cortexai-agent-hub-view-${layout.displayNumber}.vncpass`;
   return [
     "set -eu",
-    `mkdir -p /tmp/rakazo ${fluxHome}/.fluxbox /tmp/.X11-unix ${profile}`,
-    `exec 8>${shellQuote(`/tmp/rakazo/screen-${layout.displayNumber}.lock`)}`,
+    `mkdir -p /tmp/cortexai-agent-hub ${fluxHome}/.fluxbox /tmp/.X11-unix ${profile}`,
+    `exec 8>${shellQuote(`/tmp/cortexai-agent-hub/screen-${layout.displayNumber}.lock`)}`,
     "flock 8",
     `if [ -s ${shellQuote(passwordFile)} ]; then view_password=$(cat ${shellQuote(passwordFile)}); else umask 077; view_password=${shellQuote(viewPassword)}; printf %s "$view_password" >${shellQuote(passwordFile)}; fi`,
-    `if xdpyinfo -display ${layout.display} >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/${layout.viewVncPort}) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/${layout.viewPort}) >/dev/null 2>&1; then printf 'RAKAZO_SCREEN_PASSWORD=%s\n' "$view_password"; exit 0; fi`,
+    `if xdpyinfo -display ${layout.display} >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/${layout.viewVncPort}) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/${layout.viewPort}) >/dev/null 2>&1; then printf 'CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=%s\n' "$view_password"; exit 0; fi`,
     `if ! xdpyinfo -display ${layout.display} >/dev/null 2>&1; then`,
     `  rm -f /tmp/.X${layout.displayNumber}-lock /tmp/.X11-unix/X${layout.displayNumber} ${tokenFile}`,
     `  Xvfb ${layout.display} -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >${log}-xvfb.log 2>&1 &`,
@@ -183,13 +183,13 @@ export function ensureExtraDisplayCommand(
     `else`,
     `  exit 1`,
     `fi`,
-    `for i in $(seq 1 50); do if (echo >/dev/tcp/127.0.0.1/${layout.viewVncPort}) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/${layout.viewPort}) >/dev/null 2>&1; then printf 'RAKAZO_SCREEN_PASSWORD=%s\n' "$view_password"; exit 0; fi; sleep 0.1; done`,
+    `for i in $(seq 1 50); do if (echo >/dev/tcp/127.0.0.1/${layout.viewVncPort}) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/${layout.viewPort}) >/dev/null 2>&1; then printf 'CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=%s\n' "$view_password"; exit 0; fi; sleep 0.1; done`,
     "exit 1",
   ].join("\n");
 }
 
 export function parseExtraDisplayViewPassword(output: string): string {
-  const password = output.match(/RAKAZO_SCREEN_PASSWORD=([A-Za-z0-9_-]+)/)?.[1];
+  const password = output.match(/CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=([A-Za-z0-9_-]+)/)?.[1];
   if (!password) throw new ComputerScreenUnavailableError();
   return password;
 }
@@ -199,9 +199,9 @@ export function extraDisplayControlStartCommand(
   controlToken: string,
   password: string,
 ): string {
-  const passwordFile = `/tmp/rakazo-control-${layout.displayNumber}.vncpass`;
-  const tokenFile = `/tmp/rakazo/control-token-${layout.displayNumber}`;
-  const log = `/tmp/rakazo/screen-${layout.displayNumber}`;
+  const passwordFile = `/tmp/cortexai-agent-hub-control-${layout.displayNumber}.vncpass`;
+  const tokenFile = `/tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`;
+  const log = `/tmp/cortexai-agent-hub/screen-${layout.displayNumber}`;
   const vncPort = layout.controlVncPort;
   const proxyPort = layout.controlPort;
   return [
@@ -210,7 +210,7 @@ export function extraDisplayControlStartCommand(
     // Old x11vnc may outlive pkill briefly; do not store a new password until the VNC port is free.
     `for i in $(seq 1 50); do (echo >/dev/tcp/127.0.0.1/${vncPort}) >/dev/null 2>&1 || break; sleep 0.1; done`,
     `if (echo >/dev/tcp/127.0.0.1/${vncPort}) >/dev/null 2>&1; then exit 1; fi`,
-    `mkdir -p /tmp/rakazo`,
+    `mkdir -p /tmp/cortexai-agent-hub`,
     `printf %s ${shellQuote(controlToken)} > ${tokenFile}`,
     `x11vnc -storepasswd ${shellQuote(password)} ${passwordFile} >/dev/null`,
     `x11vnc -bg -display ${shellQuote(layout.display)} -forever -wait 50 -shared -rfbport ${vncPort} -rfbauth ${passwordFile} 2>${log}-control-x11vnc.log`,
@@ -238,22 +238,22 @@ export function extraDisplayControlStopCommand(
     `pkill -f '(^|/)x11vnc .* -rfbport ${layout.controlVncPort}' || true`,
     `pkill -f '${websockifyProcessPattern(layout.controlPort)}' || true`,
     `pkill -f '${noVncProxyProcessPattern(layout.controlPort)}' || true`,
-    `rm -f /tmp/rakazo-control-${layout.displayNumber}.vncpass`,
-    `rm -f /tmp/rakazo/control-token-${layout.displayNumber}`,
+    `rm -f /tmp/cortexai-agent-hub-control-${layout.displayNumber}.vncpass`,
+    `rm -f /tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`,
   ].join("; ");
   if (!controlToken) return stop;
-  return `[ -f /tmp/rakazo/control-token-${layout.displayNumber} ] && [ "$(cat /tmp/rakazo/control-token-${layout.displayNumber})" != ${shellQuote(controlToken)} ] || { ${stop}; }`;
+  return `[ -f /tmp/cortexai-agent-hub/control-token-${layout.displayNumber} ] && [ "$(cat /tmp/cortexai-agent-hub/control-token-${layout.displayNumber})" != ${shellQuote(controlToken)} ] || { ${stop}; }`;
 }
 
 export function observeExtraDisplayCommand(layout: ExtraDisplayLayout): string {
-  const imagePath = `/tmp/rakazo/observe-${layout.displayNumber}.png`;
+  const imagePath = `/tmp/cortexai-agent-hub/observe-${layout.displayNumber}.png`;
   return [
-    `DISPLAY=${layout.display} xdotool getmouselocation --shell 2>/tmp/rakazo/cursor-${layout.displayNumber}.txt || true`,
+    `DISPLAY=${layout.display} xdotool getmouselocation --shell 2>/tmp/cortexai-agent-hub/cursor-${layout.displayNumber}.txt || true`,
     `DISPLAY=${layout.display} scrot -o ${imagePath} 2>/dev/null || DISPLAY=${layout.display} import -window root ${imagePath}`,
     `test -s ${imagePath}`,
     `base64 -w0 ${imagePath} 2>/dev/null || base64 ${imagePath}`,
     `printf '\\nCURSOR '`,
-    `tr '\\n' ' ' </tmp/rakazo/cursor-${layout.displayNumber}.txt 2>/dev/null || true`,
+    `tr '\\n' ' ' </tmp/cortexai-agent-hub/cursor-${layout.displayNumber}.txt 2>/dev/null || true`,
   ].join("; ");
 }
 

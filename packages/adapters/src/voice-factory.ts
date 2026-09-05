@@ -1,4 +1,4 @@
-import type { VoiceProvider } from "@rakazo/adapter-kit";
+import type { VoiceProvider } from "@cortexai-agent-hub/adapter-kit";
 import { CartesiaVoiceProvider } from "./cartesia-voice.js";
 import { ElevenLabsVoiceProvider } from "./elevenlabs-voice.js";
 import { OpenAIVoiceProvider } from "./openai-voice.js";

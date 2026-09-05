@@ -4,7 +4,7 @@ import {
   BOT_TITLE_MAX_LENGTH,
   type ComputerMode,
   normalizeCreateBotProfile,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput } from "react-native";
@@ -39,7 +39,7 @@ export default function BotSettingsScreen() {
         setDescription(next.description ?? "");
         setComputerMode(next.computerMode);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : t("Could not load bot")));
+      .catch((err) => setError(err instanceof Error ? err.message : t("Could not load Assistant")));
   }, [botId]);
 
   async function save() {
@@ -71,7 +71,7 @@ export default function BotSettingsScreen() {
       }
       router.back();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("Could not save bot"));
+      setError(err instanceof Error ? err.message : t("Could not save Assistant"));
     } finally {
       setPending(false);
     }
@@ -91,7 +91,7 @@ export default function BotSettingsScreen() {
           value={name}
           maxLength={BOT_NAME_MAX_LENGTH}
           onChangeText={setName}
-          placeholder={t("Name this bot")}
+          placeholder={t("Name this Assistant")}
           placeholderTextColor="#6C6C70"
           style={{
             marginTop: 8,
@@ -106,7 +106,7 @@ export default function BotSettingsScreen() {
           value={title}
           maxLength={BOT_TITLE_MAX_LENGTH}
           onChangeText={setTitle}
-          placeholder={t("Describe what this bot does")}
+          placeholder={t("Describe what this Assistant does")}
           placeholderTextColor="#6C6C70"
           style={{
             marginTop: 8,
@@ -121,7 +121,7 @@ export default function BotSettingsScreen() {
           value={description}
           maxLength={BOT_DESCRIPTION_MAX_LENGTH}
           onChangeText={setDescription}
-          placeholder={t("What this bot is for")}
+          placeholder={t("What this Assistant is for")}
           placeholderTextColor="#6C6C70"
           multiline
           style={{

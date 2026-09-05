@@ -15,7 +15,7 @@ const ctx = {
 };
 
 describe("host-aware sandbox", () => {
-  const hostRoot = mkdtempSync(path.join(tmpdir(), "rakazo-host-root-"));
+  const hostRoot = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-host-root-"));
 
   afterAll(() => {
     rmSync(hostRoot, { recursive: true, force: true });
@@ -78,7 +78,7 @@ describe("host-aware sandbox", () => {
     let code = 1;
     for await (const event of desktop.execute(
       computer,
-      { argv: ["echo", "ok"], cwd: "/home/rakazo" },
+      { argv: ["echo", "ok"], cwd: "/home/cortexai-agent-hub" },
       ctx,
     )) {
       if (event.type === "exit") code = event.code;

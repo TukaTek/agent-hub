@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@rakazo/db";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 
 /**
  * Executor dep answering "does this bot belong to a messaging identity?" —

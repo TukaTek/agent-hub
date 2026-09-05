@@ -13,11 +13,11 @@
   "iconLibrary": "lucide",
   "rtl": false,
   "aliases": {
-    "components": "@rakazo/ui-web/components",
-    "utils": "@rakazo/ui-web/lib/utils",
-    "ui": "@rakazo/ui-web/components/ui",
-    "lib": "@rakazo/ui-web/lib",
-    "hooks": "@rakazo/ui-web/hooks"
+    "components": "@cortexai-agent-hub/ui-web/components",
+    "utils": "@cortexai-agent-hub/ui-web/lib/utils",
+    "ui": "@cortexai-agent-hub/ui-web/components/ui",
+    "lib": "@cortexai-agent-hub/ui-web/lib",
+    "hooks": "@cortexai-agent-hub/ui-web/hooks"
   },
   "menuColor": "default",
   "menuAccent": "subtle",

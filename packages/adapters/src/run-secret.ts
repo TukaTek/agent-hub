@@ -1,5 +1,5 @@
-import type { AdapterContext, ManagedConnectorProvider } from "@rakazo/adapter-kit";
-import type { Prisma, PrismaClient } from "@rakazo/db";
+import type { AdapterContext, ManagedConnectorProvider } from "@cortexai-agent-hub/adapter-kit";
+import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { type ApprovalPausedToolResult, resolveDuplicateEffectGate } from "./approval-effect.js";
 import type { EncryptedSecretStore } from "./secrets.js";
 

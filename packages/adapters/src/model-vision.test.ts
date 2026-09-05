@@ -43,7 +43,9 @@ describe("model vision gating for computer tools", () => {
   });
 
   it("treats unknown models as text-only", () => {
-    expect(modelAcceptsImageInput("openrouter", "rakazo-test/unknown-future-model")).toBe(false);
+    expect(
+      modelAcceptsImageInput("openrouter", "cortexai-agent-hub-test/unknown-future-model"),
+    ).toBe(false);
   });
 
   it("omits image-returning computer tools for text-only models", () => {

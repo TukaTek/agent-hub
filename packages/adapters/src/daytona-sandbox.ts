@@ -1,14 +1,6 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  Daytona,
-  type DaytonaConfig,
-  DaytonaNotFoundError,
-  DaytonaProcessExecutionTimeoutError,
-  type Sandbox,
-  SandboxState,
-} from "@daytona/sdk";
 import type {
   AdapterContext,
   CommandRequest,
@@ -24,8 +16,16 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
-} from "@rakazo/adapter-kit";
-import { boundedSandboxCommandTimeoutMs } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapter-kit";
+import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
+import {
+  Daytona,
+  type DaytonaConfig,
+  DaytonaNotFoundError,
+  DaytonaProcessExecutionTimeoutError,
+  type Sandbox,
+  SandboxState,
+} from "@daytona/sdk";
 import { CANCEL_PRIMARY_BROWSER_WORK } from "./computer-idle.js";
 import { ComputerScreenUnavailableError, screenSessionKey } from "./computer-screens.js";
 import {
@@ -132,7 +132,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
     const sandbox = await this.client.create(
       {
-        labels: { botId: request.botId, rakazo: "computer" },
+        labels: { botId: request.botId, "cortexai-agent-hub": "computer" },
         envVars: { VNC_RESOLUTION: "1280x800" },
         autoStopInterval: 0,
         autoDeleteInterval: -1,
@@ -588,7 +588,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     if (cached) return cached;
     const home = (await sandbox.getUserHomeDir()) ?? (await sandbox.getWorkDir());
     if (!home) throw new Error("Daytona did not report a sandbox home directory");
-    const root = path.posix.join(home, "rakazo-home");
+    const root = path.posix.join(home, "cortexai-agent-hub-home");
     if (this.boxes.get(sandbox.id) === sandbox) this.workspaceRoots.set(sandbox.id, root);
     return root;
   }
@@ -838,7 +838,7 @@ function daytonaCwd(root: string, cwd: string | undefined): string {
     !cwd ||
     cwd === "." ||
     cwd === "/" ||
-    cwd === "/home/rakazo" ||
+    cwd === "/home/cortexai-agent-hub" ||
     cwd === "/home/user" ||
     cwd === "/home/daytona" ||
     cwd === root
@@ -909,7 +909,7 @@ async function launchDaytonaApplication(
     String.raw`export DISPLAY=\${DISPLAY:-:99}`,
     `for app in ${candidates.map(shellQuote).join(" ")}; do`,
     '  if command -v "$app" >/dev/null 2>&1; then',
-    `    nohup "$app"${uri ? ` ${shellQuote(uri)}` : ""} >/tmp/rakazo-app.log 2>&1 &`,
+    `    nohup "$app"${uri ? ` ${shellQuote(uri)}` : ""} >/tmp/cortexai-agent-hub-app.log 2>&1 &`,
     "    exit 0",
     "  fi",
     "done",

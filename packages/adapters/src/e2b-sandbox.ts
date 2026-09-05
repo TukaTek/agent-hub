@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { type CommandResult, Sandbox, TimeoutError } from "@e2b/desktop";
 import type {
   AdapterContext,
   CommandRequest,
@@ -16,8 +15,9 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
-} from "@rakazo/adapter-kit";
-import { boundedSandboxCommandTimeoutMs } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapter-kit";
+import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
+import { type CommandResult, Sandbox, TimeoutError } from "@e2b/desktop";
 import { CANCEL_PRIMARY_BROWSER_WORK, sandboxIdleMs } from "./computer-idle.js";
 import { ComputerScreenUnavailableError, screenSessionKey } from "./computer-screens.js";
 import {
@@ -52,7 +52,7 @@ import {
   websockifyProcessPattern,
 } from "./extra-displays.js";
 
-const E2B_WORKSPACE = "/home/user/rakazo-home";
+const E2B_WORKSPACE = "/home/user/cortexai-agent-hub-home";
 const E2B_BROWSER_PROFILES = `${E2B_WORKSPACE}/.browser-profiles`;
 
 export interface E2BSandboxSdk {
@@ -65,7 +65,7 @@ export function e2bCreateOptions(botId: string, apiKey: string) {
   return {
     apiKey,
     timeoutMs: sandboxIdleMs(),
-    metadata: { botId, rakazo: "computer" },
+    metadata: { botId, "cortexai-agent-hub": "computer" },
     resolution: [1280, 800] as [number, number],
     lifecycle: { onTimeout: "pause" as const, autoResume: false },
   };
@@ -795,8 +795,8 @@ export class E2BSandboxProvider implements SandboxProvider {
   ): Promise<string> {
     const password = randomBytes(6).toString("base64url");
     if (layout.isPrimary) {
-      const passwordFile = "/tmp/rakazo-control.vncpass";
-      const tokenFile = "/tmp/rakazo-control.token";
+      const passwordFile = "/tmp/cortexai-agent-hub-control.vncpass";
+      const tokenFile = "/tmp/cortexai-agent-hub-control.token";
       const vncPort = layout.controlVncPort;
       const proxyPort = layout.controlPort;
       const command = [
@@ -806,12 +806,12 @@ export class E2BSandboxProvider implements SandboxProvider {
         `if netstat -tuln | grep -q ':${vncPort} '; then exit 1; fi`,
         `printf %s ${shellQuote(controlToken)} > ${tokenFile}`,
         `x11vnc -storepasswd ${shellQuote(password)} ${passwordFile} >/dev/null`,
-        `x11vnc -bg -display ${shellQuote(desktop.display)} -forever -wait 50 -shared -rfbport ${vncPort} -rfbauth ${passwordFile} 2>/tmp/rakazo-control-x11vnc.log`,
+        `x11vnc -bg -display ${shellQuote(desktop.display)} -forever -wait 50 -shared -rfbport ${vncPort} -rfbauth ${passwordFile} 2>/tmp/cortexai-agent-hub-control-x11vnc.log`,
         // Require the new x11vnc itself — proxy listen alone can pass with a leftover server.
         `for i in $(seq 1 50); do netstat -tuln | grep -q ':${vncPort} ' && break; sleep 0.1; done`,
         `if ! netstat -tuln | grep -q ':${vncPort} '; then exit 1; fi`,
         "cd /opt/noVNC/utils",
-        `(nohup ./novnc_proxy --vnc localhost:${vncPort} --listen ${proxyPort} --web /opt/noVNC >/tmp/rakazo-control-novnc.log 2>&1 &)`,
+        `(nohup ./novnc_proxy --vnc localhost:${vncPort} --listen ${proxyPort} --web /opt/noVNC >/tmp/cortexai-agent-hub-control-novnc.log 2>&1 &)`,
         `for i in $(seq 1 50); do netstat -tuln | grep -q ':${proxyPort} ' && exit 0; sleep 0.1; done`,
         "exit 1",
       ].join(" && ");
@@ -861,15 +861,15 @@ export class E2BSandboxProvider implements SandboxProvider {
 
 /** Reuse primary view credentials across API restarts without touching other VNC servers. */
 export function ensureE2BPrimaryViewCommand(display: string, password: string): string {
-  const passwordFile = "/tmp/rakazo/primary-view.password";
-  const authFile = "/tmp/rakazo-primary-view.vncpass";
+  const passwordFile = "/tmp/cortexai-agent-hub/primary-view.password";
+  const authFile = "/tmp/cortexai-agent-hub-primary-view.vncpass";
   return [
     "set -eu",
     "umask 077",
-    "mkdir -p /tmp/rakazo",
-    "exec 8>/tmp/rakazo/primary-view.lock",
+    "mkdir -p /tmp/cortexai-agent-hub",
+    "exec 8>/tmp/cortexai-agent-hub/primary-view.lock",
     "flock 8",
-    `if [ -s ${passwordFile} ] && [ -s ${authFile} ] && pgrep -f '(^|/)x11vnc .* -viewonly .* -rfbport 5900 -rfbauth ${authFile}( |$)' >/dev/null && (echo >/dev/tcp/127.0.0.1/5900) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1; then printf 'RAKAZO_SCREEN_PASSWORD=%s\\n' "$(cat ${passwordFile})"; exit 0; fi`,
+    `if [ -s ${passwordFile} ] && [ -s ${authFile} ] && pgrep -f '(^|/)x11vnc .* -viewonly .* -rfbport 5900 -rfbauth ${authFile}( |$)' >/dev/null && (echo >/dev/tcp/127.0.0.1/5900) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1; then printf 'CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=%s\\n' "$(cat ${passwordFile})"; exit 0; fi`,
     "pkill -f '(^|/)x11vnc .* -rfbport 5900( |$)' || true",
     `pkill -f '${noVncProxyProcessPattern(6080)}' || true`,
     `pkill -f '${websockifyProcessPattern(6080)}' || true`,
@@ -877,10 +877,10 @@ export function ensureE2BPrimaryViewCommand(display: string, password: string): 
     "if (echo >/dev/tcp/127.0.0.1/5900) >/dev/null 2>&1 || (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1; then exit 1; fi",
     `if [ -s ${passwordFile} ]; then password=$(cat ${passwordFile}); else password=${shellQuote(password)}; printf %s "$password" >${passwordFile}; fi`,
     `x11vnc -storepasswd "$password" ${authFile} >/dev/null 2>&1`,
-    `x11vnc -bg -display ${shellQuote(display)} -forever -wait 50 -shared -viewonly -listen 127.0.0.1 -rfbport 5900 -rfbauth ${authFile} 8>&- >/tmp/rakazo-primary-view-x11vnc.log 2>&1`,
+    `x11vnc -bg -display ${shellQuote(display)} -forever -wait 50 -shared -viewonly -listen 127.0.0.1 -rfbport 5900 -rfbauth ${authFile} 8>&- >/tmp/cortexai-agent-hub-primary-view-x11vnc.log 2>&1`,
     "cd /opt/noVNC/utils",
-    "(nohup ./novnc_proxy --vnc localhost:5900 --listen 6080 --web /opt/noVNC 8>&- >/tmp/rakazo-primary-view-novnc.log 2>&1 &)",
-    `for i in $(seq 1 50); do if (echo >/dev/tcp/127.0.0.1/5900) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1; then printf 'RAKAZO_SCREEN_PASSWORD=%s\\n' "$password"; exit 0; fi; sleep 0.1; done`,
+    "(nohup ./novnc_proxy --vnc localhost:5900 --listen 6080 --web /opt/noVNC 8>&- >/tmp/cortexai-agent-hub-primary-view-novnc.log 2>&1 &)",
+    `for i in $(seq 1 50); do if (echo >/dev/tcp/127.0.0.1/5900) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1; then printf 'CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=%s\\n' "$password"; exit 0; fi; sleep 0.1; done`,
     "exit 1",
   ].join("\n");
 }
@@ -898,11 +898,11 @@ function controlStreamStopCommand(controlToken?: string) {
     "pkill -f '(^|/)x11vnc .* -rfbport 5901' || true",
     `pkill -f '${websockifyProcessPattern(6081)}' || true`,
     `pkill -f '${noVncProxyProcessPattern(6081)}' || true`,
-    "rm -f /tmp/rakazo-control.vncpass",
-    "rm -f /tmp/rakazo-control.token",
+    "rm -f /tmp/cortexai-agent-hub-control.vncpass",
+    "rm -f /tmp/cortexai-agent-hub-control.token",
   ].join("; ");
   if (!controlToken) return stop;
-  return `[ -f /tmp/rakazo-control.token ] && [ "$(cat /tmp/rakazo-control.token)" != ${shellQuote(controlToken)} ] || { ${stop}; }`;
+  return `[ -f /tmp/cortexai-agent-hub-control.token ] && [ "$(cat /tmp/cortexai-agent-hub-control.token)" != ${shellQuote(controlToken)} ] || { ${stop}; }`;
 }
 
 async function observeE2BDesktop(
@@ -1087,7 +1087,7 @@ function e2bCwd(cwd: string | undefined): string {
     !cwd ||
     cwd === "." ||
     cwd === "/" ||
-    cwd === "/home/rakazo" ||
+    cwd === "/home/cortexai-agent-hub" ||
     cwd === "/home/user" ||
     cwd === E2B_WORKSPACE
   ) {
@@ -1095,8 +1095,8 @@ function e2bCwd(cwd: string | undefined): string {
   }
   const relative = cwd.startsWith(`${E2B_WORKSPACE}/`)
     ? cwd.slice(E2B_WORKSPACE.length + 1)
-    : cwd.startsWith("/home/rakazo/")
-      ? cwd.slice("/home/rakazo/".length)
+    : cwd.startsWith("/home/cortexai-agent-hub/")
+      ? cwd.slice("/home/cortexai-agent-hub/".length)
       : cwd;
   return workspacePath(E2B_WORKSPACE, relative);
 }

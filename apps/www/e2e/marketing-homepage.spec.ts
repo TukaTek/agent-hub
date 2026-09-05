@@ -26,7 +26,7 @@ test.describe("marketing homepage", () => {
 
     await expect(selfHost.locator("pre")).toHaveCount(0);
     await expect(selfHost).not.toContainText(
-      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir rakazo/i,
+      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir cortexai-agent-hub/i,
     );
 
     await selfHost.scrollIntoViewIfNeeded();
@@ -39,7 +39,7 @@ test.describe("marketing homepage", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("heading")).toBeVisible();
     await expect(dialog).not.toContainText(
-      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir rakazo/i,
+      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir cortexai-agent-hub/i,
     );
     await captureScreenshot(page, testInfo, "02-marketing-get-started");
   });
@@ -58,7 +58,7 @@ test.describe("marketing homepage", () => {
 
     await expect(selfHost.locator("pre")).toHaveCount(0);
     await expect(selfHost).not.toContainText(
-      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir rakazo/i,
+      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir cortexai-agent-hub/i,
     );
 
     await selfHost.scrollIntoViewIfNeeded();
@@ -71,7 +71,7 @@ test.describe("marketing homepage", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("heading")).toHaveText("你想如何开始？");
     await expect(dialog).not.toContainText(
-      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir rakazo/i,
+      /openssl|docker-compose\.images|POSTGRES_PASSWORD|BETTER_AUTH_SECRET|mkdir cortexai-agent-hub/i,
     );
     await captureScreenshot(page, testInfo, "04-marketing-zh-get-started");
   });

@@ -6,7 +6,7 @@ test("Korean webhook routine keeps technical field labels in English", async ({
 }, testInfo) => {
   const stamp = Date.now();
   const userName = `Korean Routine ${stamp}`;
-  await signup(page, `routine-ko-${stamp}@rakazo.test`, "password12", userName);
+  await signup(page, `routine-ko-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
 
   await page.getByRole("button", { name: new RegExp(userName) }).click();
@@ -34,7 +34,7 @@ test("Korean webhook routine keeps technical field labels in English", async ({
 
 test("routine test-run completes and survives reload", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `routine-${stamp}@rakazo.test`, "password12", "Routine");
+  await signup(page, `routine-${stamp}@cortexai-agent-hub.test`, "password12", "Routine");
   await completeOnboarding(page);
 
   await page.getByTitle("Agent computer").click();

@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
-import { createThreadEvents } from "@rakazo/db";
+import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
+import { createThreadEvents } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 process.env.WAKEUP_DRIVER = "memory";
@@ -14,7 +14,7 @@ const describeIntegration = hasDb ? describe : describe.skip;
 
 describeIntegration("run executor lifecycle", () => {
   let handles: Awaited<ReturnType<typeof import("../../../apps/api/src/app.ts")["createApp"]>>;
-  const dataDir = mkdtempSync(path.join(tmpdir(), "rakazo-executor-lifecycle-"));
+  const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-executor-lifecycle-"));
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   beforeAll(async () => {
@@ -92,7 +92,7 @@ describeIntegration("run executor lifecycle", () => {
   it("records an uncertain result without replaying an interrupted external effect", async () => {
     const prompt = "write this to the destination crm as a note";
     const seeded = await seedRun("uncertain-effect", prompt);
-    const args = { collection: "notes", title: "Rakazo result", body: prompt };
+    const args = { collection: "notes", title: "CortexAI Agent Hub result", body: prompt };
     const executionId = approvalEffectKey(seeded.run.id, "destination.write", args);
     await handles.prisma.externalEffect.create({
       data: {
@@ -130,7 +130,7 @@ describeIntegration("run executor lifecycle", () => {
   it("recreates the approval pause when an intended effect was interrupted before the card", async () => {
     const prompt = "write this to the destination crm as a note";
     const seeded = await seedRun("interrupted-before-approval", prompt);
-    const args = { collection: "notes", title: "Rakazo result", body: prompt };
+    const args = { collection: "notes", title: "CortexAI Agent Hub result", body: prompt };
     const executionId = approvalEffectKey(seeded.run.id, "destination.write", args);
     const effect = await handles.prisma.externalEffect.create({
       data: {
@@ -450,7 +450,7 @@ describeIntegration("run executor lifecycle", () => {
 
   it("applies the same no-parallel-run rule to the targeted group member", async () => {
     const cookie = await signup(
-      `executor-group-steering-${stamp}@rakazo.test`,
+      `executor-group-steering-${stamp}@cortexai-agent-hub.test`,
       "Executor group steering",
     );
     const me = await rpc<{ userId: string; spaceId: string }>(cookie, "me");
@@ -546,7 +546,10 @@ describeIntegration("run executor lifecycle", () => {
       completedAt?: Date;
     } = {},
   ) {
-    const cookie = await signup(`executor-${label}-${stamp}@rakazo.test`, `Executor ${label}`);
+    const cookie = await signup(
+      `executor-${label}-${stamp}@cortexai-agent-hub.test`,
+      `Executor ${label}`,
+    );
     const me = await rpc<{ userId: string; spaceId: string }>(cookie, "me");
     const bot = await rpc<{ id: string }>(cookie, "bots/create", {
       name: `Executor ${label}`,

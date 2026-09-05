@@ -9,14 +9,14 @@ import { applyUiAppearance, watchSystemAppearance } from "./lib/ui-appearance";
 import { resolveUiLocale } from "./lib/ui-locale";
 import "./styles.css";
 
-markOnce("rk:renderer:module-evaluated");
+markOnce("cortexai-agent-hub:renderer:module-evaluated");
 applyUiDirection(resolveUiLocale());
 applyUiAppearance();
 
 function PerformanceProbe() {
   useLayoutEffect(() => {
-    markOnce("rk:renderer:first-react-commit");
-    markAfterPaint("rk:renderer:first-react-painted");
+    markOnce("cortexai-agent-hub:renderer:first-react-commit");
+    markAfterPaint("cortexai-agent-hub:renderer:first-react-painted");
   }, []);
   return null;
 }

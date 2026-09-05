@@ -1,5 +1,9 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { VoiceCatalogEntry, VoiceCredential, VoiceInfo, VoiceStatus } from "@rakazo/contracts";
+import type {
+  VoiceCatalogEntry,
+  VoiceCredential,
+  VoiceInfo,
+  VoiceStatus,
+} from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,
@@ -12,7 +16,8 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { rpc } from "../lib/rpc";
@@ -149,8 +154,8 @@ export function VoiceSettingsOverlay({ onClose }: { onClose: () => void }) {
                 <Trans>Loading voice providers…</Trans>
               ) : (
                 <Trans>
-                  Bring your own key. The provider is swappable; your bots keep the same speak and
-                  call buttons.
+                  Bring your own key. The provider is swappable; your Assistants keep the same speak
+                  and call buttons.
                 </Trans>
               )}
             </DialogDescription>
@@ -186,7 +191,7 @@ export function VoiceSettingsOverlay({ onClose }: { onClose: () => void }) {
             <div className="mb-3 text-[13.5px] text-muted-foreground">
               <Trans>Providers</Trans>
             </div>
-            <div className="rk-scroll overflow-y-auto rounded-xl border border-border">
+            <div className="cortexai-agent-hub-scroll overflow-y-auto rounded-xl border border-border">
               {catalog.map((entry) => {
                 const connected = credentials.some((cred) => cred.provider === entry.id);
                 return (
@@ -227,7 +232,7 @@ export function VoiceSettingsOverlay({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          <div className="rk-scroll min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <div className="cortexai-agent-hub-scroll min-h-0 min-w-0 flex-1 overflow-y-auto">
             {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
             {notice ? <p className="mb-4 text-sm text-success">{notice}</p> : null}
             {selected ? (

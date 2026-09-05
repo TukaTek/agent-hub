@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/updater",
+  "name": "@cortexai-agent-hub/updater",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.1",
-    "@rakazo/contracts": "workspace:*",
-    "@rakazo/core": "workspace:*",
+    "@cortexai-agent-hub/contracts": "workspace:*",
+    "@cortexai-agent-hub/core": "workspace:*",
     "hono": "^4.9.6",
     "tsx": "^4.20.5"
   },

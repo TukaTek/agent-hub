@@ -3,7 +3,7 @@ import { captureScreenshot, completeOnboarding, openNewBot, signup } from "./hel
 
 test("bot creation, editing, and deletion persist", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `bot-crud-${stamp}@rakazo.test`, "password12", "Bot CRUD");
+  await signup(page, `bot-crud-${stamp}@cortexai-agent-hub.test`, "password12", "Bot CRUD");
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);
@@ -12,7 +12,7 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
   await expect(botList.getByRole("button", { name: /^Chief/ })).toBeVisible();
 
   await openNewBot(page);
-  await expect(page.getByText("New bot", { exact: true })).toBeVisible();
+  await expect(page.getByText("New Assistant", { exact: true })).toBeVisible();
   await page.locator("label:has-text('Name') input").fill("Researcher");
   const longTitle = `Market researcher ${"and source verifier ".repeat(9)}`;
   const normalizedLongTitle = longTitle.trim();

@@ -17,7 +17,12 @@ test("Team Computer gives bots a home folder plus shared space while Private sta
   const sharedMarker = `shared-${stamp}`;
   const privateMarker = `private-${stamp}`;
 
-  await signup(page, `team-computer-${stamp}@rakazo.test`, "password12", "Team Computer");
+  await signup(
+    page,
+    `team-computer-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Team Computer",
+  );
   await completeOnboarding(page);
   const chiefId = activeBotId(page);
 
@@ -85,7 +90,7 @@ test("user control leaves another Team bot's screen available", async ({ page },
   const stamp = Date.now();
   const marker = `after-release-${stamp}`;
 
-  await signup(page, `team-control-${stamp}@rakazo.test`, "password12", "Team Control");
+  await signup(page, `team-control-${stamp}@cortexai-agent-hub.test`, "password12", "Team Control");
   await completeOnboarding(page);
   const chiefId = activeBotId(page);
   const workerId = await createBot(page, "Worker", "team");
@@ -130,7 +135,7 @@ test("an active Team bot must be stopped before user takeover", async ({ page },
 
   await signup(
     page,
-    `active-team-control-${stamp}@rakazo.test`,
+    `active-team-control-${stamp}@cortexai-agent-hub.test`,
     "password12",
     "Active Team Control",
   );
@@ -211,13 +216,13 @@ test("an active Team bot must be stopped before user takeover", async ({ page },
 
 async function createBot(page: Page, name: string, mode: "team" | "dedicated") {
   await openNewBot(page);
-  await expect(page.getByText("New bot", { exact: true })).toBeVisible();
+  await expect(page.getByText("New Assistant", { exact: true })).toBeVisible();
   const team = page.getByRole("button", { name: "Team", exact: true });
   const privateComputer = page.getByRole("button", { name: "Private", exact: true });
   await expect(team).toHaveAttribute("aria-pressed", "true");
   if (mode === "dedicated") await privateComputer.click();
   await expect(mode === "team" ? team : privateComputer).toHaveAttribute("aria-pressed", "true");
-  await page.getByPlaceholder("Name this bot").fill(name);
+  await page.getByPlaceholder("Name this Assistant").fill(name);
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.waitForURL(/\/app\/[^/]+$/);
   await expect(page.getByPlaceholder(`Message ${name}`)).toBeVisible();

@@ -2,7 +2,7 @@ export const UI_LOCALES = ["en", "de", "ko", "tr", "hi", "pt-BR", "zh-CN"] as co
 
 export type UiLocale = (typeof UI_LOCALES)[number];
 
-export const UI_LOCALE_STORAGE_KEY = "rakazo.uiLocale";
+export const UI_LOCALE_STORAGE_KEY = "cortexai-agent-hub.uiLocale";
 
 export const UI_LOCALE_LABELS: Record<UiLocale, string> = {
   en: "English",

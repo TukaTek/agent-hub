@@ -4,7 +4,7 @@ import type {
   ComputerInput,
   ComputerRef,
   ControlLeaseRef,
-} from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
 import { SingleScreenClaimTracker } from "./computer-screens.js";
 import { FakeSandboxProvider } from "./fake-sandbox.js";
 

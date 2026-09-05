@@ -1,6 +1,6 @@
 # Desktop performance benchmarks
 
-Rakazo measures the production Vite renderer inside a packaged Electron directory build against a
+CortexAI Agent Hub measures the production Vite renderer inside a packaged Electron directory build against a
 disposable Postgres database, the scripted agent runtime, and the fake sandbox. No provider account
 or production data is used.
 
@@ -44,7 +44,7 @@ pnpm perf:compare .context/performance/before.json .context/performance/after.js
 - **Cache-cold launch** uses a fresh copy of an authenticated profile and clears Chromium's HTTP and
   code caches before navigation. It is not an OS-filesystem cold start.
 - **Warm launch** fully quits and relaunches Electron while preserving the primed profile and caches.
-- **Shell usable** means authenticated bots and the active 100-message thread have committed and
+- **Shell usable** means authenticated Assistants and the active 100-message thread have committed and
   painted.
 - **Settings painted/settled** separates React content paint from the end of the panel transition.
 - **Typing** records keydown to the next animation frame with a 100-message transcript mounted.

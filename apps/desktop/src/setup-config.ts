@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
-import type { DesktopSetup } from "@rakazo/contracts";
+import type { DesktopSetup } from "@cortexai-agent-hub/contracts";
 
-/** Where `pnpm dev` serves the Rakazo web app on this machine. */
+/** Where `pnpm dev` serves the CortexAI Agent Hub web app on this machine. */
 export const DEFAULT_LOCAL_WEB_URL = "http://127.0.0.1:5173";
 
 export const SETUP_FILE_NAME = "setup.json";
@@ -14,9 +14,9 @@ export type StartupTarget =
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 
 /**
- * Accepts what a person would actually type ("localhost:5173", "rakazo.example.com")
+ * Accepts what a person would actually type ("localhost:5173", "cortexai-agent-hub.example.com")
  * and returns a canonical http(s) origin, or null when the input can never
- * securely address a Rakazo server.
+ * securely address a CortexAI Agent Hub server.
  */
 export function normalizeServerUrl(input: string): string | null {
   const trimmed = input.trim();
@@ -41,7 +41,7 @@ export function normalizeServerUrl(input: string): string | null {
   // Public login cookies and API traffic must never cross a cleartext connection.
   if (url.protocol === "http:" && !isLocalNetworkHost(url.hostname)) return null;
 
-  // Rakazo serves its renderer, RPC, and auth routes from one origin. Keeping a
+  // CortexAI Agent Hub serves its renderer, RPC, and auth routes from one origin. Keeping a
   // user-supplied path would make the setup probe and the loaded app disagree.
   return url.origin;
 }
@@ -74,7 +74,7 @@ export function serializeSetup(setup: DesktopSetup): string {
 
 /**
  * Decides between the first-run setup window and the app window. An explicit
- * `RAKAZO_WEB_URL` still wins over saved configuration so test and performance
+ * `CORTEXAI_AGENT_HUB_WEB_URL` still wins over saved configuration so test and performance
  * harnesses can point the shell anywhere without touching a user's real setup.
  */
 export function resolveStartupTarget(input: {
@@ -124,13 +124,13 @@ export function servesBundledRenderer(targetUrl: string): boolean {
   }
 }
 
-/** Each Rakazo origin gets its own persistent cookie and storage partition. */
+/** Each CortexAI Agent Hub origin gets its own persistent cookie and storage partition. */
 export function sessionPartitionForServerUrl(targetUrl: string): string | null {
   try {
     const url = new URL(targetUrl);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     const digest = createHash("sha256").update(url.origin).digest("hex").slice(0, 24);
-    return `persist:rakazo-${digest}`;
+    return `persist:cortexai-agent-hub-${digest}`;
   } catch {
     return null;
   }
@@ -142,7 +142,7 @@ export function safeExternalUrl(targetUrl: string): string | null {
   return new URL(targetUrl).toString();
 }
 
-export function isRakazoHealth(value: unknown): boolean {
+export function isCortexAiAgentHubHealth(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const json = (value as { json?: unknown }).json;
   return (
@@ -162,7 +162,7 @@ function isLoopbackHost(hostname: string) {
 
 /**
  * Link-local addresses (IPv4 169.254/16, IPv6 fe80::/10) often host cloud
- * metadata endpoints. Cleartext HTTP to them is never a legitimate Rakazo
+ * metadata endpoints. Cleartext HTTP to them is never a legitimate CortexAI Agent Hub
  * deploy target, so they stay out of the private-network HTTP allowlist.
  */
 function isLinkLocalHost(hostname: string) {

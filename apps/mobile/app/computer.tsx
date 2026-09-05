@@ -1,4 +1,4 @@
-import type { ComputerMode, ComputerReleaseReason } from "@rakazo/contracts";
+import type { ComputerMode, ComputerReleaseReason } from "@cortexai-agent-hub/contracts";
 import { useLocalSearchParams, useNavigation } from "expo-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
@@ -29,7 +29,7 @@ export default function Computer() {
   const { t } = useI18n();
   const navigation = useNavigation();
   const { botId, name: nameParam } = useLocalSearchParams<{ botId?: string; name?: string }>();
-  const name = nameParam || t("Bot");
+  const name = nameParam || t("Assistant");
   const [computer, setComputer] = useState<ComputerStatus | null>(null);
   const [screenUrl, setScreenUrl] = useState<string | null>(null);
   const [screenError, setScreenError] = useState<string | null>(null);
@@ -268,7 +268,7 @@ export default function Computer() {
         <Text style={{ color: "#85858A", fontSize: 14 }}>{t("Teach a task")}</Text>
         <Text style={{ color: "#6C6C70", fontSize: 13.5, lineHeight: 20 }}>
           {t(
-            "Recording a live demonstration needs desktop or web with the full computer view. You can still ask this bot to run saved skills from chat.",
+            "Recording a live demonstration needs desktop or web with the full computer view. You can still ask this Assistant to run saved skills from chat.",
           )}
         </Text>
       </View>

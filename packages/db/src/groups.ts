@@ -5,7 +5,7 @@ import {
   type Group,
   type GroupMember,
   type SpaceGroup,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import type { Prisma, PrismaClient } from "./client.js";
 import { IsolationError } from "./scope.js";
 import { activeRunSelection, activeRunStatuses, previewFromBlocks } from "./thread-listing.js";

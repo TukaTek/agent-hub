@@ -1,9 +1,9 @@
-import type { ModelOAuthBegin } from "@rakazo/contracts";
+import type { ModelOAuthBegin } from "@cortexai-agent-hub/contracts";
 import {
   OPENAI_COMPATIBLE_BASE_URL_HINT,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   openAiCompatibleConnectReady,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -739,7 +739,7 @@ export default function Models() {
             {selected.auth === "oauth" && !subscriptionSignIn ? (
               <Text style={styles.secondary}>
                 {t(
-                  "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider.",
+                  "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider.",
                 )}
               </Text>
             ) : null}

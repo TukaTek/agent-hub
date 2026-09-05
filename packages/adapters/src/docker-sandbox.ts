@@ -13,8 +13,8 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
-} from "@rakazo/adapter-kit";
-import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapter-kit";
+import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@cortexai-agent-hub/core";
 import {
   boundedComputerActions,
   clampRounded,
@@ -60,8 +60,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     return `${this.supervisorUrl.replace(/\/$/, "")}${path}`;
   }
 
-  // No x-rakazo-screen-id here: the supervisor keys a screen off
-  // x-rakazo-bot-id alone (the ComputerRef's homeKey — shared across every
+  // No x-cortexai-agent-hub-screen-id here: the supervisor keys a screen off
+  // x-cortexai-agent-hub-bot-id alone (the ComputerRef's homeKey — shared across every
   // bot on a Team Computer, distinct per bot on a dedicated one). Keying it
   // off the calling bot's own id instead would give each bot on a shared
   // Team Computer its own Xvfb/Chromium/x11vnc stack — several times the RAM
@@ -74,10 +74,12 @@ export class DockerSandboxProvider implements SandboxProvider {
   private headers(context: AdapterContext, botId?: string) {
     return {
       authorization: `Bearer ${this.supervisorToken}`,
-      "x-rakazo-space-id": context.spaceId,
-      ...(botId ? { "x-rakazo-bot-id": botId } : {}),
-      ...(context.screenLeaseId ? { "x-rakazo-screen-lease-id": context.screenLeaseId } : {}),
-      ...(context.cancelRunWork ? { "x-rakazo-cancel-run-work": "1" } : {}),
+      "x-cortexai-agent-hub-space-id": context.spaceId,
+      ...(botId ? { "x-cortexai-agent-hub-bot-id": botId } : {}),
+      ...(context.screenLeaseId
+        ? { "x-cortexai-agent-hub-screen-lease-id": context.screenLeaseId }
+        : {}),
+      ...(context.cancelRunWork ? { "x-cortexai-agent-hub-cancel-run-work": "1" } : {}),
     };
   }
 
@@ -398,9 +400,10 @@ export class DockerSandboxProvider implements SandboxProvider {
 }
 
 function dockerCwd(cwd: string | undefined) {
-  if (!cwd || cwd === "." || cwd === "/" || cwd === "/home/rakazo") return "/home/rakazo";
-  const relative = cwd.startsWith("/home/rakazo/")
-    ? cwd.slice("/home/rakazo/".length)
+  if (!cwd || cwd === "." || cwd === "/" || cwd === "/home/cortexai-agent-hub")
+    return "/home/cortexai-agent-hub";
+  const relative = cwd.startsWith("/home/cortexai-agent-hub/")
+    ? cwd.slice("/home/cortexai-agent-hub/".length)
     : normalizeWorkspacePath(cwd);
-  return path.posix.join("/home/rakazo", relative);
+  return path.posix.join("/home/cortexai-agent-hub", relative);
 }

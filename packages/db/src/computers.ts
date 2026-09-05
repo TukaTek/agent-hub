@@ -1,7 +1,7 @@
-import type { ComputerMode } from "@rakazo/contracts";
+import type { ComputerMode } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "./client.js";
 
-export type { ComputerMode } from "@rakazo/contracts";
+export type { ComputerMode } from "@cortexai-agent-hub/contracts";
 
 export function parseComputerMode(scope: string): ComputerMode {
   if (scope === "team" || scope === "dedicated") return scope;

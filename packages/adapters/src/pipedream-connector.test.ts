@@ -1,4 +1,4 @@
-import type { AdapterContext } from "@rakazo/adapter-kit";
+import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PipedreamConnector, pipedreamConfigFromEnv } from "./pipedream-connector.js";
 import { ThirdPartyConnectorEmulator } from "./third-party-connector-emulator.js";
@@ -84,7 +84,7 @@ describe("PipedreamConnector", () => {
       }),
     ]);
     const started = await connector.begin(
-      { provider: "gmail", redirectUrl: "https://rakazo.example.test/app" },
+      { provider: "gmail", redirectUrl: "https://cortexai-agent-hub.example.test/app" },
       context,
     );
 
@@ -122,7 +122,7 @@ describe("PipedreamConnector", () => {
     );
     await expect(
       connector.begin(
-        { provider: "linear", redirectUrl: "https://rakazo.example.test/app" },
+        { provider: "linear", redirectUrl: "https://cortexai-agent-hub.example.test/app" },
         context,
       ),
     ).resolves.toEqual({ authorizationUrl: "about:blank?app=linear", state: "linear" });

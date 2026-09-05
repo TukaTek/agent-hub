@@ -1,4 +1,4 @@
-import { buildSkillMd, formatSkillsCatalogInstruction } from "@rakazo/core";
+import { buildSkillMd, formatSkillsCatalogInstruction } from "@cortexai-agent-hub/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   listAgentSkillRecords,

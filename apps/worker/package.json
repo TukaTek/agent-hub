@@ -1,5 +1,5 @@
 {
-  "name": "@rakazo/worker",
+  "name": "@cortexai-agent-hub/worker",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,11 +10,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@rakazo/adapter-kit": "workspace:*",
-    "@rakazo/adapters": "workspace:*",
-    "@rakazo/core": "workspace:*",
-    "@rakazo/db": "workspace:*",
-    "@rakazo/memory": "workspace:*"
+    "@cortexai-agent-hub/adapter-kit": "workspace:*",
+    "@cortexai-agent-hub/adapters": "workspace:*",
+    "@cortexai-agent-hub/core": "workspace:*",
+    "@cortexai-agent-hub/db": "workspace:*",
+    "@cortexai-agent-hub/memory": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

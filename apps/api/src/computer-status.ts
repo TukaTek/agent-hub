@@ -1,6 +1,6 @@
-import type { ComputerStatus } from "@rakazo/contracts";
-import { ACTIVE_RUN_STATUSES, computerScreenSize } from "@rakazo/core";
-import type { PrismaClient } from "@rakazo/db";
+import type { ComputerStatus } from "@cortexai-agent-hub/contracts";
+import { ACTIVE_RUN_STATUSES, computerScreenSize } from "@cortexai-agent-hub/core";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 
 /** Mirrors computer.takeover: an execution lease blocks user control unless waiting_takeover. */
 export function executionBlocksUserTakeover(input: {

@@ -36,7 +36,7 @@ describe("buildComposerMentionOptions", () => {
       "connector",
       "connector",
     ]);
-    expect(options.find((option) => option.kind === "bot")?.subtitle).toBe("Bot");
+    expect(options.find((option) => option.kind === "bot")?.subtitle).toBe("Assistant");
     expect(options.find((option) => option.name === "Gmail")?.subtitle).toBe("Connected");
     expect(options.find((option) => option.name === "Stripe")?.subtitle).toBe("Needs auth");
     expect(options.find((option) => option.kind === "routine")?.subtitle).toMatch(/Weekdays/i);

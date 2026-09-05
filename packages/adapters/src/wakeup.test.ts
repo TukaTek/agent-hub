@@ -1,4 +1,4 @@
-import type { BackgroundJobHandlers } from "@rakazo/adapter-kit";
+import type { BackgroundJobHandlers } from "@cortexai-agent-hub/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryJobQueue } from "./wakeup.js";
 

@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import { access, lstat, open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { serve } from "@hono/node-server";
-import type { ServerUpdateRun } from "@rakazo/contracts";
+import type { ServerUpdateRun } from "@cortexai-agent-hub/contracts";
 import {
   type ComposeUpdateStep,
   chooseUpdateStrategy,
@@ -32,7 +31,8 @@ import {
   selectLatestRelease,
   upsertEnvAssignments,
   validateUpdateRequest,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
+import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import {
   readTagState,
@@ -297,7 +297,7 @@ export function createUpdaterApp(
       throw new UpdateRefused("The deployment environment must be a regular, non-symlink file.");
     }
     const contents = upsertEnvAssignments(current, assignments);
-    const temporary = `${config.envFile}.rakazo-update-${randomUUID()}`;
+    const temporary = `${config.envFile}.cortexai-agent-hub-update-${randomUUID()}`;
     let temporaryFile: Awaited<ReturnType<typeof open>> | null = null;
     try {
       temporaryFile = await open(temporary, "wx", 0o600);
@@ -442,7 +442,7 @@ export function createUpdaterApp(
     if (decision.strategy === "build") {
       if (!checkout.present) {
         throw new UpdateRefused(
-          "Building a fork needs the deployment's git checkout, and RAKAZO_DEPLOY_DIR has no .git directory. Clone the fork to the deployment directory, or switch back to the official repository to use published images.",
+          "Building a fork needs the deployment's git checkout, and CORTEXAI_AGENT_HUB_DEPLOY_DIR has no .git directory. Clone the fork to the deployment directory, or switch back to the official repository to use published images.",
         );
       }
       if (checkout.remoteUrl === null) {
@@ -752,7 +752,9 @@ function startUpdater() {
   const config = resolveUpdaterConfig(process.env);
   const app = createUpdaterApp(config);
   return serve({ fetch: app.fetch, hostname: config.host, port: config.port }, () => {
-    console.log(`rakazo updater on http://${config.host}:${config.port} for ${config.deployDir}`);
+    console.log(
+      `cortexai-agent-hub updater on http://${config.host}:${config.port} for ${config.deployDir}`,
+    );
   });
 }
 

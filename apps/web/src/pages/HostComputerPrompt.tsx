@@ -1,5 +1,4 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { Me } from "@rakazo/contracts";
+import type { Me } from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,
@@ -7,7 +6,8 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useState } from "react";
 import { desktopBridge } from "../lib/desktop";
 import { rpc } from "../lib/rpc";
@@ -56,21 +56,21 @@ export function HostComputerPrompt({ initialMe }: { initialMe?: Me }) {
       <DialogContent showCloseButton={false} className="rounded-2xl p-6 sm:max-w-[440px]">
         <DialogHeader>
           <DialogTitle className="text-[22px]">
-            <Trans>Where should bots run?</Trans>
+            <Trans>Where should Assistants run?</Trans>
           </DialogTitle>
           <DialogDescription className="leading-relaxed">
-            <Trans>Docker is the default: bots use a shared Team Computer.</Trans>
+            <Trans>Docker is the default: Assistants use a shared Team Computer.</Trans>
             {mac ? (
               <Trans>
                 {" "}
-                macOS will not ask for extra permission if you let bots run on this Mac — they run
-                as you.
+                macOS will not ask for extra permission if you let Assistants run on this Mac — they
+                run as you.
               </Trans>
             ) : (
               <Trans>
                 {" "}
-                Your OS will not ask for extra permission if you let bots run on {hostLabel} — they
-                run as you.
+                Your OS will not ask for extra permission if you let Assistants run on {hostLabel} —
+                they run as you.
               </Trans>
             )}
           </DialogDescription>

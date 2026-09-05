@@ -1,5 +1,4 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { SpaceMemoryConfig } from "@rakazo/contracts";
+import type { SpaceMemoryConfig } from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,
@@ -12,7 +11,8 @@ import {
   NativeSelect,
   NativeSelectOption,
   Toggle,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { rpc } from "../lib/rpc";
@@ -171,7 +171,7 @@ export function MemorySettingsOverlay({
           </DialogClose>
         </div>
 
-        <div className="rk-scroll min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-8">
+        <div className="cortexai-agent-hub-scroll min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-8">
           {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
 
           {config === undefined ? (

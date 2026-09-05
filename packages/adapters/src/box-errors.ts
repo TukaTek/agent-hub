@@ -1,5 +1,5 @@
 import { ResponseError } from "@asciidev/box-sdk";
-import { redactSecrets } from "@rakazo/core";
+import { redactSecrets } from "@cortexai-agent-hub/core";
 
 /** Keep HTTP failures actionable without changing the SDK's status-based recovery contract. */
 export function wrapBoxCall<Args extends unknown[], Result>(

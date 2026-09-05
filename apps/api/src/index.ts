@@ -1,5 +1,5 @@
 import type { Socket } from "node:net";
-import { loadRootEnv } from "@rakazo/core/node/load-root-env";
+import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
 
@@ -10,7 +10,7 @@ import { loadEnv } from "./env.js";
 const env = loadEnv();
 const { app, stop } = await createApp(env);
 const server = serve({ fetch: app.fetch, port: env.port, hostname: env.apiHost }, () => {
-  console.log(`rakazo api on http://${env.apiHost}:${env.port}`);
+  console.log(`cortexai-agent-hub api on http://${env.apiHost}:${env.port}`);
 });
 
 // Long-lived connections (threads.subscribe SSE streams) never end on their

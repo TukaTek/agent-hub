@@ -9,8 +9,8 @@ compose=(docker compose -f "$ROOT/infra/compose/docker-compose.yml")
 # from the environment, so its absence is not an error).
 if [[ -f "$ROOT/.env" ]]; then compose=(docker compose --env-file "$ROOT/.env" -f "$ROOT/infra/compose/docker-compose.yml"); fi
 mkdir -p "$OUT"
-"${compose[@]}" exec -T postgres pg_dump -U rakazo rakazo > "$OUT/rakazo.sql"
-if [[ "${RAKAZO_BACKUP_SKIP_HOMES:-0}" == "1" ]]; then
+"${compose[@]}" exec -T postgres pg_dump -U cortexai-agent-hub cortexai-agent-hub > "$OUT/cortexai-agent-hub.sql"
+if [[ "${CORTEXAI_AGENT_HUB_BACKUP_SKIP_HOMES:-0}" == "1" ]]; then
   tar -czf "$OUT/homes.tgz" --files-from /dev/null
 else
   tar -czf "$OUT/homes.tgz" -C "$ROOT" data 2>/dev/null || tar -czf "$OUT/homes.tgz" --files-from /dev/null

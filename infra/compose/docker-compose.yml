@@ -2,15 +2,15 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: rakazo
-      POSTGRES_PASSWORD: rakazo
-      POSTGRES_DB: rakazo
+      POSTGRES_USER: cortexai-agent-hub
+      POSTGRES_PASSWORD: cortexai-agent-hub
+      POSTGRES_DB: cortexai-agent-hub
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rakazo"]
+      test: ["CMD-SHELL", "pg_isready -U cortexai-agent-hub"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -24,7 +24,7 @@ services:
       SUPERVISOR_HOST: "0.0.0.0"
       SUPERVISOR_PORT: "7091"
       DOCKER_SOCKET: /var/run/docker.sock
-      RAKAZO_COMPUTER_IMAGE: rakazo/computer:local
+      CORTEXAI_AGENT_HUB_COMPUTER_IMAGE: cortexai-agent-hub/computer:local
       SANDBOX_COMMAND_TIMEOUT_MS: ${SANDBOX_COMMAND_TIMEOUT_MS:-300000}
       SANDBOX_SUPERVISOR_TOKEN: ${SANDBOX_SUPERVISOR_TOKEN:?Set SANDBOX_SUPERVISOR_TOKEN in .env}
       SANDBOX_SCREEN_NETWORK: isolated
@@ -36,7 +36,7 @@ services:
         condition: service_completed_successfully
 
   computer:
-    image: rakazo/computer:local
+    image: cortexai-agent-hub/computer:local
     build:
       context: ../sandboxes/computer
     command: ["true"]
@@ -53,11 +53,11 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["bash", "-lc", "pnpm --filter @rakazo/db exec prisma migrate deploy && pnpm --filter @rakazo/api start"]
+    command: ["bash", "-lc", "pnpm --filter @cortexai-agent-hub/db exec prisma migrate deploy && pnpm --filter @cortexai-agent-hub/api start"]
     env_file:
       - ../../.env
     environment:
-      DATABASE_URL: postgres://rakazo:rakazo@postgres:5432/rakazo
+      DATABASE_URL: postgres://cortexai-agent-hub:cortexai-agent-hub@postgres:5432/cortexai-agent-hub
       API_HOST: "0.0.0.0"
       DATA_DIR: /data
       SANDBOX_SUPERVISOR_URL: http://supervisor:7091
@@ -78,12 +78,12 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["pnpm", "--filter", "@rakazo/worker", "start"]
+    command: ["pnpm", "--filter", "@cortexai-agent-hub/worker", "start"]
     env_file:
       - ../../.env
     environment:
       BETTER_AUTH_SECRET: ""
-      DATABASE_URL: postgres://rakazo:rakazo@postgres:5432/rakazo
+      DATABASE_URL: postgres://cortexai-agent-hub:cortexai-agent-hub@postgres:5432/cortexai-agent-hub
       DATA_DIR: /data
       SANDBOX_SUPERVISOR_URL: http://supervisor:7091
       WAKEUP_DRIVER: graphile
@@ -102,11 +102,11 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["pnpm", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
+    command: ["pnpm", "--filter", "@cortexai-agent-hub/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
     environment:
       API_PROXY_TARGET: http://api:3100
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET in .env}
-      RAKAZO_HOST: ${RAKAZO_HOST:-localhost}
+      CORTEXAI_AGENT_HUB_HOST: ${CORTEXAI_AGENT_HUB_HOST:-localhost}
     ports:
       - "127.0.0.1:5173:5173"
     depends_on:

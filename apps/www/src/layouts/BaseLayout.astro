@@ -10,7 +10,7 @@ import {
   localeHomePath,
   type Locale,
 } from "../i18n/locales";
-import { SITE_NAME, SITE_URL } from "../site";
+import { absoluteSiteUrl, SITE_NAME } from "../site";
 
 type Props = {
   title?: string;
@@ -28,15 +28,15 @@ const {
   structuredData,
   skipLabel = "Skip to content",
   homeAlternates = false,
-  ogImageAlt = "Rakazo — AI teammates you actually own. Your keys, your model, your machine.",
+  ogImageAlt = "CortexAI Agent Hub — personal, always-on AI assistants. Your keys, your model, your machine.",
 } = Astro.props;
 
 const locale: Locale = isLocale(Astro.currentLocale)
   ? Astro.currentLocale
   : (Astro.props.locale ?? DEFAULT_LOCALE);
 
-const canonical = new URL(Astro.url.pathname, SITE_URL).toString();
-const socialImage = new URL("/og-image.png", SITE_URL).toString();
+const canonical = absoluteSiteUrl(Astro.url.pathname);
+const socialImage = absoluteSiteUrl("/og-image.png");
 const structuredDataJson = structuredData
   ? JSON.stringify(structuredData).replaceAll("<", "\\u003c")
   : null;
@@ -44,7 +44,7 @@ const markdownAlternate = getMarkdownAlternate(Astro.url.pathname);
 const htmlLang = LOCALE_HTML_LANG[locale];
 const ogLocale = LOCALE_OG[locale];
 const homeUrls = Object.fromEntries(
-  LOCALES.map((l) => [l, new URL(localeHomePath(l), SITE_URL).toString()]),
+  LOCALES.map((l) => [l, absoluteSiteUrl(localeHomePath(l))]),
 ) as Record<Locale, string>;
 ---
 

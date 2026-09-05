@@ -1,4 +1,4 @@
-import type { SearchHit } from "@rakazo/contracts";
+import type { SearchHit } from "@cortexai-agent-hub/contracts";
 
 export function mobileSearchDestination(hit: SearchHit):
   | {

@@ -24,8 +24,8 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
-} from "@rakazo/adapter-kit";
-import { boundedSandboxCommandTimeoutMs, canReleaseScreenLease } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapter-kit";
+import { boundedSandboxCommandTimeoutMs, canReleaseScreenLease } from "@cortexai-agent-hub/core";
 import { boxResponseError, wrapBoxCall } from "./box-errors.js";
 import { SingleScreenClaimTracker } from "./computer-screens.js";
 import {
@@ -43,13 +43,13 @@ import {
 } from "./computer-workspace.js";
 
 const BOX_API_BASE = "https://ascii.dev/api/box/v1";
-const BOX_WORKSPACE = "/home/user/rakazo-home";
+const BOX_WORKSPACE = "/home/user/cortexai-agent-hub-home";
 const BOX_BROWSER_PROFILES = `${BOX_WORKSPACE}/.browser-profiles`;
 const BOX_READY_TIMEOUT_MS = 5 * 60_000;
 const BOX_API_COMMAND_TIMEOUT_SECONDS = 600;
 const BOX_TTL_SECONDS = 2 * 60 * 60;
 const BOX_EXPORT_CONCURRENCY = 16;
-const BOX_SCREEN_LEASE_PATH = "/tmp/rakazo-screen-lease";
+const BOX_SCREEN_LEASE_PATH = "/tmp/cortexai-agent-hub-screen-lease";
 
 export type BoxSandboxSdk = Pick<
   BoxApi,
@@ -181,8 +181,8 @@ export class BoxSandboxProvider implements SandboxProvider {
           ttlSeconds: BOX_TTL_SECONDS,
           noEnv: true,
           env: {
-            RAKAZO_BOT_ID: request.botId,
-            RAKAZO_SANDBOX: "computer",
+            CORTEXAI_AGENT_HUB_BOT_ID: request.botId,
+            CORTEXAI_AGENT_HUB_SANDBOX: "computer",
           },
         },
       },
@@ -333,7 +333,7 @@ export class BoxSandboxProvider implements SandboxProvider {
   async observe(computer: ComputerRef, context: AdapterContext): Promise<ComputerObservation> {
     const id = this.id(computer);
     await this.claimScreen(id, context);
-    const imagePath = `/tmp/rakazo-observe-${randomUUID()}.png`;
+    const imagePath = `/tmp/cortexai-agent-hub-observe-${randomUUID()}.png`;
     try {
       const result = await this.runCommand(
         id,
@@ -756,7 +756,7 @@ export class BoxSandboxProvider implements SandboxProvider {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<BoxCommandResult> {
-    const marker = `/tmp/rakazo-command-${randomUUID()}.completed-124`;
+    const marker = `/tmp/cortexai-agent-hub-command-${randomUUID()}.completed-124`;
     const wrapped = timeoutCommand(command, timeoutMs, marker);
     const timeoutSeconds = Math.ceil(timeoutMs / 1_000);
     const detached = timeoutSeconds + 5 > BOX_API_COMMAND_TIMEOUT_SECONDS;
@@ -827,7 +827,7 @@ export class BoxSandboxProvider implements SandboxProvider {
   }
 
   private async terminateCommand(id: string, marker: string): Promise<void> {
-    const pattern = marker.replace("rakazo", "[r]akazo");
+    const pattern = marker.replace("cortexai-agent-hub", "[r]akazo");
     await this.rawCommand(
       id,
       `pkill -TERM -f ${shellQuote(pattern)} 2>/dev/null || true; sleep 0.2; pkill -KILL -f ${shellQuote(pattern)} 2>/dev/null || true`,
@@ -954,18 +954,18 @@ function boxCwd(cwd: string | undefined): string {
     !cwd ||
     cwd === "." ||
     cwd === "/" ||
-    cwd === "/home/rakazo" ||
+    cwd === "/home/cortexai-agent-hub" ||
     cwd === "/home/user" ||
     cwd === BOX_WORKSPACE
   ) {
-    return "rakazo-home";
+    return "cortexai-agent-hub-home";
   }
   const relative = cwd.startsWith(`${BOX_WORKSPACE}/`)
     ? cwd.slice(BOX_WORKSPACE.length + 1)
-    : cwd.startsWith("/home/rakazo/")
-      ? cwd.slice("/home/rakazo/".length)
+    : cwd.startsWith("/home/cortexai-agent-hub/")
+      ? cwd.slice("/home/cortexai-agent-hub/".length)
       : cwd;
-  return path.posix.join("rakazo-home", normalizeWorkspacePath(relative));
+  return path.posix.join("cortexai-agent-hub-home", normalizeWorkspacePath(relative));
 }
 
 function configureBoxWorkspaceCommand(): string {
@@ -986,7 +986,7 @@ function launchBoxBrowserCommand(): string {
   return [
     "for app in google-chrome-stable google-chrome chromium firefox; do",
     '  if command -v "$app" >/dev/null 2>&1; then',
-    '    nohup env DISPLAY=:0 "$app" --no-first-run --no-default-browser-check --start-maximized >/tmp/rakazo-browser.log 2>&1 &',
+    '    nohup env DISPLAY=:0 "$app" --no-first-run --no-default-browser-check --start-maximized >/tmp/cortexai-agent-hub-browser.log 2>&1 &',
     "    sleep 1",
     "    DISPLAY=:0 wmctrl -r :ACTIVE: -b add,maximized_vert,maximized_horz 2>/dev/null || true",
     "    exit 0",
@@ -1102,7 +1102,7 @@ function boxActionCommand(action: Exclude<ComputerAction, { kind: "wait" }>): st
     const target = /^https?:\/\//i.test(action.path)
       ? action.path
       : workspacePath(BOX_WORKSPACE, action.path);
-    return `nohup env DISPLAY=:0 xdg-open ${shellQuote(target)} >/tmp/rakazo-open.log 2>&1 &`;
+    return `nohup env DISPLAY=:0 xdg-open ${shellQuote(target)} >/tmp/cortexai-agent-hub-open.log 2>&1 &`;
   }
   const applications =
     action.application === "browser"
@@ -1111,7 +1111,7 @@ function boxActionCommand(action: Exclude<ComputerAction, { kind: "wait" }>): st
   return [
     `for app in ${applications.map(shellQuote).join(" ")}; do`,
     '  if command -v "$app" >/dev/null 2>&1; then',
-    `    nohup env DISPLAY=:0 "$app"${action.uri ? ` ${shellQuote(action.uri)}` : ""} >/tmp/rakazo-app.log 2>&1 &`,
+    `    nohup env DISPLAY=:0 "$app"${action.uri ? ` ${shellQuote(action.uri)}` : ""} >/tmp/cortexai-agent-hub-app.log 2>&1 &`,
     "    exit 0",
     "  fi",
     "done",

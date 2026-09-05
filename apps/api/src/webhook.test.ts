@@ -169,7 +169,7 @@ describe("inbound webhook HTTP route", () => {
         authorization: `Bearer ${SECRET}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ event: "ci.failed", repo: "rakazo" }),
+      body: JSON.stringify({ event: "ci.failed", repo: "cortexai-agent-hub" }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({

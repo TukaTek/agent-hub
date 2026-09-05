@@ -1,10 +1,9 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type {
   Bot,
   MessagingAgentConnection,
   MessagingChannelMembership,
   MessagingStatus,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,
@@ -13,7 +12,8 @@ import {
   DialogTitle,
   NativeSelect,
   NativeSelectOption,
-} from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -85,7 +85,7 @@ export function MessagingSettingsOverlay({ onClose }: { onClose: () => void }) {
       <DialogContent
         data-testid="messaging-settings"
         showCloseButton={false}
-        className="rk-scroll block max-h-[calc(100%-2rem)] w-[640px] overflow-y-auto rounded-2xl p-6 sm:max-h-[calc(100%-5rem)] sm:max-w-[calc(100%-5rem)] sm:p-8"
+        className="cortexai-agent-hub-scroll block max-h-[calc(100%-2rem)] w-[640px] overflow-y-auto rounded-2xl p-6 sm:max-h-[calc(100%-5rem)] sm:max-w-[calc(100%-5rem)] sm:p-8"
       >
         <div className="flex items-start justify-between gap-6">
           <DialogTitle className="text-2xl font-medium text-foreground">
@@ -142,14 +142,14 @@ export function MessagingSettingsOverlay({ onClose }: { onClose: () => void }) {
           )}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <NativeSelect
-              aria-label={t`Bot to link`}
+              aria-label={t`Assistant to link`}
               value={linkBotId}
               onChange={(event) => {
                 setLinkBotId(event.target.value);
                 setLinkCode(null);
               }}
             >
-              <NativeSelectOption value="">{t`Choose a bot…`}</NativeSelectOption>
+              <NativeSelectOption value="">{t`Choose an Assistant…`}</NativeSelectOption>
               {bots.map((bot) => (
                 <NativeSelectOption key={bot.id} value={bot.id}>
                   {bot.name}

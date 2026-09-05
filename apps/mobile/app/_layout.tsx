@@ -1,4 +1,4 @@
-import { lightTokens } from "@rakazo/ui-tokens";
+import { lightTokens } from "@cortexai-agent-hub/ui-tokens";
 import { DarkTheme, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState } from "react";
@@ -81,7 +81,10 @@ export default function Layout() {
                   contentStyle: { backgroundColor: String(native.page) },
                 }}
               >
-                <Stack.Screen name="index" options={{ headerShown: false, title: "Rakazo" }} />
+                <Stack.Screen
+                  name="index"
+                  options={{ headerShown: false, title: "CortexAI Agent Hub" }}
+                />
                 <Stack.Screen name="sign-in" options={{ headerShown: false }} />
                 <Stack.Screen name="account" options={{ title: t("Account") }} />
                 <Stack.Screen name="models" options={{ title: t("Models") }} />
@@ -90,7 +93,7 @@ export default function Layout() {
                 <Stack.Screen
                   name="new"
                   options={{
-                    title: t("New bot"),
+                    title: t("New Assistant"),
                     presentation: "modal",
                     gestureEnabled: true,
                     headerBackVisible: false,

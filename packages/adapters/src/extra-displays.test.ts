@@ -86,17 +86,17 @@ describe("extra display ports", () => {
     const release = releaseExtraDisplayCommand("writer", "run-2:2");
     expect(allocate).toContain("flock 9");
     expect(allocate).not.toContain("writer");
-    expect(release).toContain("RAKAZO_SCREEN_RELEASE=stale");
+    expect(release).toContain("CORTEXAI_AGENT_HUB_SCREEN_RELEASE=stale");
     expect(release.indexOf("pkill -f")).toBeLessThan(release.indexOf('rm -f "$slot"'));
-    expect(parseAllocatedExtraDisplay("RAKAZO_SCREEN_INDEX=3\n")).toBe(3);
-    expect(parseReleasedExtraDisplay("RAKAZO_SCREEN_RELEASE=3\n")).toBe(3);
-    expect(parseReleasedExtraDisplay("RAKAZO_SCREEN_RELEASE=stale\n")).toBeUndefined();
+    expect(parseAllocatedExtraDisplay("CORTEXAI_AGENT_HUB_SCREEN_INDEX=3\n")).toBe(3);
+    expect(parseReleasedExtraDisplay("CORTEXAI_AGENT_HUB_SCREEN_RELEASE=3\n")).toBe(3);
+    expect(parseReleasedExtraDisplay("CORTEXAI_AGENT_HUB_SCREEN_RELEASE=stale\n")).toBeUndefined();
   });
 
   it("requires an authenticated password for view-only VNC", () => {
-    expect(parseExtraDisplayViewPassword("RAKAZO_SCREEN_PASSWORD=sandbox_secret-1\n")).toBe(
-      "sandbox_secret-1",
-    );
+    expect(
+      parseExtraDisplayViewPassword("CORTEXAI_AGENT_HUB_SCREEN_PASSWORD=sandbox_secret-1\n"),
+    ).toBe("sandbox_secret-1");
     expect(() => parseExtraDisplayViewPassword("no password\n")).toThrow(
       ComputerScreenUnavailableError,
     );

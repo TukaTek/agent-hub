@@ -1,5 +1,5 @@
 name: Bug report
-description: Something is broken in Rakazo
+description: Something is broken in CortexAI Agent Hub
 title: "[Bug]: "
 labels:
   - bug
@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        For **security vulnerabilities**, email [security@rakazo.com](mailto:security@rakazo.com) — do not use this form. See [SECURITY.md](https://github.com/elie222/rakazo/blob/main/SECURITY.md).
+        For **security vulnerabilities**, use [private vulnerability reporting](https://github.com/TukaTek/agent-hub/security/advisories/new) — do not use this form. See [SECURITY.md](https://github.com/TukaTek/agent-hub/blob/main/SECURITY.md).
 
   - type: checkboxes
     id: not-security
@@ -22,7 +22,7 @@ body:
     attributes:
       label: Description
       description: What went wrong? Keep it concise.
-      placeholder: The bot computer pane stays blank after sending a message.
+      placeholder: The assistant computer pane stays blank after sending a message.
     validations:
       required: true
 
@@ -33,7 +33,7 @@ body:
       description: Numbered steps from a clean local setup when possible.
       placeholder: |
         1. `pnpm dev`
-        2. Create a bot and send "hello"
+        2. Create an assistant and send "hello"
         3. Open the computer pane
     validations:
       required: true
@@ -55,7 +55,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Rakazo version or commit
+      label: CortexAI Agent Hub version or commit
       placeholder: v0.1.0 or abc1234
     validations:
       required: true

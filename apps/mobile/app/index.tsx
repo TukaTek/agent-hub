@@ -1,5 +1,10 @@
-import type { RunActivityRow, SearchHit, SpaceBot, SpaceGroup } from "@rakazo/contracts";
-import { groupBotsForSidebar } from "@rakazo/core";
+import type {
+  RunActivityRow,
+  SearchHit,
+  SpaceBot,
+  SpaceGroup,
+} from "@cortexai-agent-hub/contracts";
+import { groupBotsForSidebar } from "@cortexai-agent-hub/core";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -124,7 +129,7 @@ export default function Home() {
       setMe(nextMe);
     } catch (err) {
       if (requestId !== inboxRequestId.current) return;
-      setError(err instanceof Error ? err.message : t("Could not load bots"));
+      setError(err instanceof Error ? err.message : t("Could not load Assistants"));
     }
   }, []);
 
@@ -347,7 +352,7 @@ export default function Home() {
             accessibilityLabel={t("Create")}
             onPress={() =>
               Alert.alert(t("Create"), undefined, [
-                { text: t("New bot"), onPress: () => router.push("/new") },
+                { text: t("New Assistant"), onPress: () => router.push("/new") },
                 { text: t("New group"), onPress: () => router.push("/new-group") },
                 { text: t("New space"), onPress: () => router.push("/new-space") },
                 { text: t("Cancel"), style: "cancel" },
@@ -417,10 +422,10 @@ export default function Home() {
                 ? t("Searching…")
                 : t("No results")
               : query.trim()
-                ? t("No matching bots")
+                ? t("No matching Assistants")
                 : searching
                   ? t("Search conversations, files, and routines")
-                  : t("Tap + to create a bot")}
+                  : t("Tap + to create an Assistant")}
           </Text>
         }
         renderItem={({ item }) =>

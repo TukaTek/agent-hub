@@ -1,7 +1,11 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { SCRIPTED_MPEG, SCRIPTED_TRANSCRIPT, SCRIPTED_VOICE_ID } from "@rakazo/adapters";
+import {
+  SCRIPTED_MPEG,
+  SCRIPTED_TRANSCRIPT,
+  SCRIPTED_VOICE_ID,
+} from "@cortexai-agent-hub/adapters";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessionCookieHeader } from "./index.js";
 
@@ -18,7 +22,7 @@ describeVoice("voice credentials and speech HTTP", () => {
   let app: App;
   let stop: () => Promise<void>;
   const stamp = Date.now();
-  const dataDir = mkdtempSync(path.join(tmpdir(), "rakazo-voice-"));
+  const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-voice-"));
 
   beforeAll(async () => {
     const { createApp } = await import("../../../apps/api/src/app.ts");
@@ -37,8 +41,8 @@ describeVoice("voice credentials and speech HTTP", () => {
   });
 
   it("connects a scripted key, speaks, and transcribes without leaking the secret", async () => {
-    const cookie = await signup(app, `voice-${stamp}@rakazo.test`, "Voice User");
-    const other = await signup(app, `voice-other-${stamp}@rakazo.test`, "Other Voice");
+    const cookie = await signup(app, `voice-${stamp}@cortexai-agent-hub.test`, "Voice User");
+    const other = await signup(app, `voice-other-${stamp}@cortexai-agent-hub.test`, "Other Voice");
 
     const before = await rpc<{ ready: boolean; utterances: string[] }>(
       app,

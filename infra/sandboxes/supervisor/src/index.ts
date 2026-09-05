@@ -4,9 +4,9 @@ import { mkdir } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { serve } from "@hono/node-server";
-import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@rakazo/core";
-import { loadRootEnv } from "@rakazo/core/node/load-root-env";
 import Docker from "dockerode";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -64,7 +64,7 @@ loadRootEnv();
 const dockerSocketPath = resolveDockerSocketPath();
 const docker = dockerSocketPath ? new Docker({ socketPath: dockerSocketPath }) : new Docker();
 const computerContext =
-  process.env.RAKAZO_COMPUTER_CONTEXT ??
+  process.env.CORTEXAI_AGENT_HUB_COMPUTER_CONTEXT ??
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../computer");
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const dataDir = path.resolve(repositoryRoot, process.env.DATA_DIR ?? "./data");
@@ -112,10 +112,14 @@ app.post("/computers", async (c) => {
     })
     .parse(await c.req.json());
   try {
-    assertRequestIdentity(c.req.header("x-rakazo-bot-id"), c.req.header("x-rakazo-space-id"), {
-      botId: body.botId,
-      spaceId: body.spaceId,
-    });
+    assertRequestIdentity(
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      {
+        botId: body.botId,
+        spaceId: body.spaceId,
+      },
+    );
     return await withBotLifecycleLock(body.botId, async () => {
       await ensureComputerImage();
       const runtimeInfo = await inspectSupervisorContainer();
@@ -201,8 +205,8 @@ app.get("/computers/:id", async (c) => {
   try {
     const { container, info } = await managedContainer(
       id,
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     );
     const screenUrl = await publishedScreenUrl(container, info);
     return c.json({
@@ -230,22 +234,25 @@ app.post("/computers/:id/exec", async (c) => {
   try {
     const { container } = await managedContainer(
       id,
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     );
-    const screenId = c.req.header("x-rakazo-screen-id") || c.req.header("x-rakazo-bot-id") || id;
+    const screenId =
+      c.req.header("x-cortexai-agent-hub-screen-id") ||
+      c.req.header("x-cortexai-agent-hub-bot-id") ||
+      id;
     const screenIndex = computerScreens.get(id)?.get(screenId)?.index ?? 0;
     const layout = screenPorts(screenIndex);
     const result = await runContainerCommand(
       container,
       body.argv.length ? body.argv : ["/bin/echo", "ready"],
       {
-        workingDir: body.cwd ?? "/home/rakazo",
+        workingDir: body.cwd ?? "/home/cortexai-agent-hub",
         env: [
           `DISPLAY=${layout.display}`,
-          "HOME=/home/rakazo",
-          "PATH=/home/rakazo/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-          "NPM_CONFIG_PREFIX=/home/rakazo/.local",
+          "HOME=/home/cortexai-agent-hub",
+          "PATH=/home/cortexai-agent-hub/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "NPM_CONFIG_PREFIX=/home/cortexai-agent-hub/.local",
           "PIP_USER=1",
           ...Object.entries(body.env ?? {}).map(([k, v]) => `${k}=${v}`),
         ],
@@ -263,10 +270,10 @@ app.post("/computers/:id/observe", async (c) => {
   try {
     const { container, info, layout } = await managedScreen(
       c.req.param("id"),
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
-      c.req.header("x-rakazo-screen-id"),
-      c.req.header("x-rakazo-screen-lease-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      c.req.header("x-cortexai-agent-hub-screen-id"),
+      c.req.header("x-cortexai-agent-hub-screen-lease-id"),
     );
     const control = computerControlEndpoint(info);
     const observation = await preferComputerControl(
@@ -297,10 +304,10 @@ app.post("/computers/:id/actions", async (c) => {
   try {
     const { container, info, layout } = await managedScreen(
       c.req.param("id"),
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
-      c.req.header("x-rakazo-screen-id"),
-      c.req.header("x-rakazo-screen-lease-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      c.req.header("x-cortexai-agent-hub-screen-id"),
+      c.req.header("x-cortexai-agent-hub-screen-lease-id"),
     );
     const control = computerControlEndpoint(info);
     const attempt = await attemptComputerControl(
@@ -340,8 +347,8 @@ app.get("/computers/:id/files", async (c) => {
   try {
     const { container } = await managedContainer(
       c.req.param("id"),
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     );
     const relative = normalizeWorkspaceRelative(c.req.query("path") ?? "");
     const target = workspaceTarget(relative);
@@ -409,8 +416,8 @@ app.post("/computers/:id/files", async (c) => {
   try {
     const { container } = await managedContainer(
       c.req.param("id"),
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     );
     const target = workspaceTarget(normalizeWorkspaceRelative(body.path));
     await writeContainerFile(
@@ -431,10 +438,10 @@ app.get("/computers/:id/screen", async (c) => {
   try {
     const { container, info, layout } = await managedScreen(
       id,
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
-      c.req.header("x-rakazo-screen-id"),
-      c.req.header("x-rakazo-screen-lease-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      c.req.header("x-cortexai-agent-hub-screen-id"),
+      c.req.header("x-cortexai-agent-hub-screen-lease-id"),
     );
     const screenUrl = await publishedScreenUrl(container, info, layout.viewPort);
     return c.redirect(screenUrl);
@@ -460,10 +467,10 @@ app.post("/computers/:id/screen-mode", async (c) => {
   try {
     const { container, info, layout } = await managedScreen(
       c.req.param("id"),
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
-      c.req.header("x-rakazo-screen-id"),
-      c.req.header("x-rakazo-screen-lease-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      c.req.header("x-cortexai-agent-hub-screen-id"),
+      c.req.header("x-cortexai-agent-hub-screen-lease-id"),
     );
     if (body.interactive || body.revokeControl !== false) {
       await setInteractiveScreen(container, body.interactive, body.controlToken, layout);
@@ -501,10 +508,10 @@ app.post("/computers/:id/input", async (c) => {
   try {
     const { container, layout } = await managedScreen(
       id,
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
-      c.req.header("x-rakazo-screen-id"),
-      c.req.header("x-rakazo-screen-lease-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      c.req.header("x-cortexai-agent-hub-screen-id"),
+      c.req.header("x-cortexai-agent-hub-screen-lease-id"),
     );
     const result = await runContainerCommand(container, [
       "env",
@@ -526,12 +533,15 @@ app.delete("/computers/:id/screen", async (c) => {
     const id = c.req.param("id");
     const { container } = await managedContainer(
       id,
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     );
-    const screenId = c.req.header("x-rakazo-screen-id") || c.req.header("x-rakazo-bot-id") || id;
-    const cancelRunWork = c.req.header("x-rakazo-cancel-run-work") === "1";
-    const screenLeaseId = c.req.header("x-rakazo-screen-lease-id");
+    const screenId =
+      c.req.header("x-cortexai-agent-hub-screen-id") ||
+      c.req.header("x-cortexai-agent-hub-bot-id") ||
+      id;
+    const cancelRunWork = c.req.header("x-cortexai-agent-hub-cancel-run-work") === "1";
+    const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
     await withComputerScreenLock(id, async () => {
       const assigned = computerScreens.get(id);
       const index = assigned ? releaseAssignedScreen(assigned, screenId, screenLeaseId) : undefined;
@@ -560,8 +570,8 @@ app.post("/computers/:id/stop", async (c) => {
   try {
     const { container } = await managedContainer(
       id,
-      c.req.header("x-rakazo-bot-id"),
-      c.req.header("x-rakazo-space-id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
     );
     await container.stop().catch(() => undefined);
     await withComputerScreenLock(id, async () => {
@@ -575,11 +585,15 @@ app.post("/computers/:id/stop", async (c) => {
 
 app.delete("/computers/:id", async (c) => {
   const id = c.req.param("id");
-  const botId = c.req.header("x-rakazo-bot-id");
+  const botId = c.req.header("x-cortexai-agent-hub-bot-id");
   try {
     if (!botId) throw new Error("missing computer identity");
     return await withBotLifecycleLock(botId, async () => {
-      const { container } = await managedContainer(id, botId, c.req.header("x-rakazo-space-id"));
+      const { container } = await managedContainer(
+        id,
+        botId,
+        c.req.header("x-cortexai-agent-hub-space-id"),
+      );
       await container.remove({ force: true }).catch(() => undefined);
       await withComputerScreenLock(id, async () => {
         clearComputerScreenRegistry(computerScreens, id);
@@ -629,8 +643,8 @@ async function ensureComputerImage() {
             "start.sh",
             "control.py",
             "xcapture.c",
-            "rakazo-browser",
-            "rakazo-browser.desktop",
+            "cortexai-agent-hub-browser",
+            "cortexai-agent-hub-browser.desktop",
             "embed.html",
             "clipboard-bridge.js",
             "fluxbox.init",
@@ -655,13 +669,13 @@ async function findBotContainer(botId: string, spaceId: string) {
     filters: {
       // Space IDs were preserved when workspaces became Spaces. Search by the
       // stable bot label, then validate either generation of the Space label.
-      label: [`rakazo.botId=${botId}`],
+      label: [`cortexai-agent-hub.botId=${botId}`],
     },
   });
   for (const item of listed) {
     const container = docker.getContainer(item.Id);
     const info = await container.inspect();
-    if (isRakazoContainer(info, botId, spaceId)) return container;
+    if (isCortexAiAgentHubContainer(info, botId, spaceId)) return container;
   }
   return undefined;
 }
@@ -670,7 +684,8 @@ async function managedContainer(id: string, botId?: string, spaceId?: string) {
   if (!botId || !spaceId) throw new Error("missing computer identity");
   const container = docker.getContainer(id);
   const info = await container.inspect();
-  if (!isRakazoContainer(info, botId, spaceId)) throw new Error("computer identity mismatch");
+  if (!isCortexAiAgentHubContainer(info, botId, spaceId))
+    throw new Error("computer identity mismatch");
   return { container, info };
 }
 
@@ -703,9 +718,14 @@ async function managedScreen(
   });
 }
 
-function isRakazoContainer(info: Docker.ContainerInspectInfo, botId: string, spaceId: string) {
+function isCortexAiAgentHubContainer(
+  info: Docker.ContainerInspectInfo,
+  botId: string,
+  spaceId: string,
+) {
   const labels = info.Config.Labels ?? {};
-  const managed = labels["rakazo.managed"] === "true" || info.Config.Image === COMPUTER_IMAGE;
+  const managed =
+    labels["cortexai-agent-hub.managed"] === "true" || info.Config.Image === COMPUTER_IMAGE;
   return managed && hasComputerIdentity(labels, botId, spaceId);
 }
 
@@ -724,8 +744,8 @@ function hostHomePath(serviceHomePath: string, info: Docker.ContainerInspectInfo
 
 function computerControlEndpoint(info: Docker.ContainerInspectInfo) {
   const token = info.Config.Env?.find((value) =>
-    value.startsWith("RAKAZO_COMPUTER_CONTROL_TOKEN="),
-  )?.slice("RAKAZO_COMPUTER_CONTROL_TOKEN=".length);
+    value.startsWith("CORTEXAI_AGENT_HUB_COMPUTER_CONTROL_TOKEN="),
+  )?.slice("CORTEXAI_AGENT_HUB_COMPUTER_CONTROL_TOKEN=".length);
   return resolveComputerControlEndpoint({
     token,
     networkMode: info.HostConfig.NetworkMode,
@@ -933,7 +953,7 @@ async function removeBotNetwork(botId: string) {
               .inspect()
               .catch(() => undefined)
           )?.Config.Labels ?? {};
-        const owner = labels["rakazo.botId"];
+        const owner = labels["cortexai-agent-hub.botId"];
         owners.push(owner);
         if (owner === botId) {
           await network.disconnect({ Container: containerId, Force: true }).catch(() => undefined);
@@ -1002,7 +1022,7 @@ async function runContainerCommand(
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const timeoutMs = options.timeoutMs;
   const completionMarker = timeoutMs
-    ? `/tmp/rakazo-command-${randomUUID()}.completed-124`
+    ? `/tmp/cortexai-agent-hub-command-${randomUUID()}.completed-124`
     : undefined;
   const command =
     completionMarker && timeoutMs !== undefined
@@ -1012,8 +1032,8 @@ async function runContainerCommand(
     Cmd: command,
     AttachStdout: true,
     AttachStderr: true,
-    WorkingDir: options.workingDir ?? "/home/rakazo",
-    Env: options.env ?? ["DISPLAY=:1", "HOME=/home/rakazo"],
+    WorkingDir: options.workingDir ?? "/home/cortexai-agent-hub",
+    Env: options.env ?? ["DISPLAY=:1", "HOME=/home/cortexai-agent-hub"],
   });
   const stream = await exec.start({ hijack: true, stdin: false });
   const chunks: Buffer[] = [];
@@ -1107,8 +1127,8 @@ async function writeContainerFile(
     AttachStdin: true,
     AttachStdout: true,
     AttachStderr: true,
-    WorkingDir: "/home/rakazo",
-    Env: ["HOME=/home/rakazo"],
+    WorkingDir: "/home/cortexai-agent-hub",
+    Env: ["HOME=/home/cortexai-agent-hub"],
   });
   const stream = await exec.start({ hijack: true, stdin: true });
   const chunks: Buffer[] = [];

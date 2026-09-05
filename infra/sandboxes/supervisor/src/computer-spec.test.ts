@@ -30,22 +30,24 @@ import {
 describe("graphical computer spec", () => {
   it("creates a VNC desktop, not an alpine sleep fallback", () => {
     const options = containerCreateOptions({
-      name: "rakazo-bot-abc",
+      name: "cortexai-agent-hub-bot-abc",
       image: COMPUTER_IMAGE,
       botId: "abc",
       spaceId: "ws",
-      homePath: "/var/rakazo/homes/abc",
-      networkMode: "rakazo_default",
+      homePath: "/var/cortexai-agent-hub/homes/abc",
+      networkMode: "cortexai_agent_hub_default",
     });
-    expect(options.Image).toBe("rakazo/computer:local");
+    expect(options.Image).toBe("cortexai-agent-hub/computer:local");
     expect(options.Image).not.toMatch(/alpine/);
     expect(options).not.toHaveProperty("Entrypoint");
     expect(JSON.stringify(options)).not.toMatch(/sleep/);
-    expect(options.HostConfig.Binds).toEqual(["/var/rakazo/homes/abc:/home/rakazo"]);
+    expect(options.HostConfig.Binds).toEqual([
+      "/var/cortexai-agent-hub/homes/abc:/home/cortexai-agent-hub",
+    ]);
     expect(options.Env).toContain(
-      "PATH=/home/rakazo/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "PATH=/home/cortexai-agent-hub/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     );
-    expect(options.Env).toContain("NPM_CONFIG_PREFIX=/home/rakazo/.local");
+    expect(options.Env).toContain("NPM_CONFIG_PREFIX=/home/cortexai-agent-hub/.local");
     expect(options.ExposedPorts).toMatchObject({
       "6080/tcp": {},
       "6081/tcp": {},
@@ -77,7 +79,7 @@ describe("graphical computer spec", () => {
     expect(options.HostConfig.SecurityOpt).toEqual(["no-new-privileges:true"]);
     expect(options.HostConfig.PidsLimit).toBe(2048);
     expect(options.HostConfig.ReadonlyPaths).toContain("/usr/share/novnc");
-    expect(options.HostConfig.NetworkMode).toBe("rakazo_default");
+    expect(options.HostConfig.NetworkMode).toBe("cortexai_agent_hub_default");
   });
 
   it("still publishes host ports when NetworkMode is a per-bot isolated network", () => {
@@ -87,10 +89,10 @@ describe("graphical computer spec", () => {
       image: COMPUTER_IMAGE,
       botId: "bot_isolation",
       spaceId: "ws",
-      homePath: "/var/rakazo/homes/bot_isolation",
+      homePath: "/var/cortexai-agent-hub/homes/bot_isolation",
       networkMode,
     });
-    expect(networkMode).toMatch(/^rakazo-computer-bot_isolation-[0-9a-f]{32}$/);
+    expect(networkMode).toMatch(/^cortexai-agent-hub-computer-bot_isolation-[0-9a-f]{32}$/);
     expect(options.HostConfig.NetworkMode).toBe(networkMode);
     expect(options.HostConfig.PortBindings["6080/tcp"]).toEqual([
       { HostIp: "127.0.0.1", HostPort: "0" },
@@ -106,7 +108,7 @@ describe("graphical computer spec", () => {
   it("lists prior network name variants for cleanup", () => {
     const names = computerNetworkNamesForCleanup("bot_1");
     expect(names[0]).toBe(computerNetworkNameFor("bot_1"));
-    expect(names).toContain("rakazo-computer-bot_1");
+    expect(names).toContain("cortexai-agent-hub-computer-bot_1");
     expect(names.some((name) => /-[0-9a-f]{8}$/.test(name))).toBe(true);
     expect(names.some((name) => /-[0-9a-f]{32}$/.test(name))).toBe(true);
   });
@@ -122,29 +124,31 @@ describe("graphical computer spec", () => {
     const root = path.resolve(import.meta.dirname, "../../computer");
     const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
     const start = readFileSync(path.join(root, "start.sh"), "utf8");
-    const browser = readFileSync(path.join(root, "rakazo-browser"), "utf8");
-    const desktop = readFileSync(path.join(root, "rakazo-browser.desktop"), "utf8");
+    const browser = readFileSync(path.join(root, "cortexai-agent-hub-browser"), "utf8");
+    const desktop = readFileSync(path.join(root, "cortexai-agent-hub-browser.desktop"), "utf8");
     expect(dockerfile).toMatch(/chromium/);
-    expect(dockerfile).toMatch(/rakazo-browser\.desktop/);
+    expect(dockerfile).toMatch(/cortexai-agent-hub-browser\.desktop/);
     expect(dockerfile).toMatch(/control.py/);
     expect(dockerfile).toMatch(/USER 1000:1000/);
-    expect(start).toMatch(/rakazo-computer-control/);
-    expect(start).toMatch(/rakazo-browser/);
+    expect(start).toMatch(/cortexai-agent-hub-computer-control/);
+    expect(start).toMatch(/cortexai-agent-hub-browser/);
     expect(start).toMatch(/SingletonLock/);
-    expect(start).toMatch(/xdg-mime default rakazo-browser\.desktop/);
+    expect(start).toMatch(/xdg-mime default cortexai-agent-hub-browser\.desktop/);
     expect(start).toMatch(/register_browser_handler x-scheme-handler\/http/);
     expect(start).toMatch(/register_browser_handler x-scheme-handler\/https/);
     expect(start).toMatch(/register_browser_handler text\/html/);
     expect(start).toMatch(/xdg-mime query default/);
-    expect(start).toMatch(/failed to register rakazo-browser/);
+    expect(start).toMatch(/failed to register cortexai-agent-hub-browser/);
     expect(start).toMatch(/failed to set default web browser/);
-    expect(start).toMatch(/xdg-settings set default-web-browser rakazo-browser\.desktop/);
-    expect(start).not.toMatch(/xdg-mime default rakazo-browser\.desktop .*\|\| true/);
+    expect(start).toMatch(
+      /xdg-settings set default-web-browser cortexai-agent-hub-browser\.desktop/,
+    );
+    expect(start).not.toMatch(/xdg-mime default cortexai-agent-hub-browser\.desktop .*\|\| true/);
     expect(start).toMatch(/x11vnc .* -viewonly /);
     expect(browser).toMatch(/\.browser-profiles\/chromium/);
     expect(browser).toMatch(/chromium-screen-\$\{DISPLAY/);
     expect(browser).toMatch(/USER_DATA_DIR_SET/);
-    expect(desktop).toMatch(/Exec=\/usr\/local\/bin\/rakazo-browser %U/);
+    expect(desktop).toMatch(/Exec=\/usr\/local\/bin\/cortexai-agent-hub-browser %U/);
     expect(desktop).toMatch(/x-scheme-handler\/http/);
     expect(desktop).toMatch(/x-scheme-handler\/https/);
     expect(start).not.toMatch(/windowsize 1280 800/);
@@ -154,23 +158,23 @@ describe("graphical computer spec", () => {
     "selects a display-specific browser profile and preserves explicit profiles",
     () => {
       const root = path.resolve(import.meta.dirname, "../../computer");
-      const temp = mkdtempSync(path.join(tmpdir(), "rakazo-browser-wrapper-"));
+      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-browser-wrapper-"));
       const bin = path.join(temp, "bin");
       const capture = path.join(temp, "args");
       const home = path.join(temp, "home");
       const chromium = path.join(bin, "chromium");
       mkdirSync(bin);
-      writeFileSync(chromium, '#!/bin/sh\nprintf "%s\\n" "$@" > "$RAKAZO_TEST_ARGS"\n');
+      writeFileSync(chromium, '#!/bin/sh\nprintf "%s\\n" "$@" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n');
       chmodSync(chromium, 0o755);
 
       const run = (display: string, args: string[] = []) => {
-        const result = spawnSync("bash", [path.join(root, "rakazo-browser"), ...args], {
+        const result = spawnSync("bash", [path.join(root, "cortexai-agent-hub-browser"), ...args], {
           env: {
             ...process.env,
             DISPLAY: display,
             HOME: home,
             PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-            RAKAZO_TEST_ARGS: capture,
+            CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
           },
           encoding: "utf8",
         });
@@ -196,13 +200,13 @@ describe("graphical computer spec", () => {
     "clears crashed state from Chromium preferences and Local State",
     () => {
       const root = path.resolve(import.meta.dirname, "../../computer");
-      const temp = mkdtempSync(path.join(tmpdir(), "rakazo-browser-crash-"));
+      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-browser-crash-"));
       const bin = path.join(temp, "bin");
       const home = path.join(temp, "home");
       const chromium = path.join(bin, "chromium");
       const capture = path.join(temp, "args");
       mkdirSync(bin);
-      writeFileSync(chromium, '#!/bin/sh\nprintf "%s\\n" "$@" > "$RAKAZO_TEST_ARGS"\n');
+      writeFileSync(chromium, '#!/bin/sh\nprintf "%s\\n" "$@" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n');
       chmodSync(chromium, 0o755);
 
       const profile = path.join(home, ".browser-profiles/chromium");
@@ -217,13 +221,13 @@ describe("graphical computer spec", () => {
       writeFileSync(localStatePath, '{\n  "profile": {\n    "exited_cleanly": false\n  }\n}\n');
 
       try {
-        const result = spawnSync("bash", [path.join(root, "rakazo-browser")], {
+        const result = spawnSync("bash", [path.join(root, "cortexai-agent-hub-browser")], {
           env: {
             ...process.env,
             DISPLAY: ":1",
             HOME: home,
             PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-            RAKAZO_TEST_ARGS: capture,
+            CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
           },
           encoding: "utf8",
         });
@@ -245,13 +249,13 @@ describe("graphical computer spec", () => {
 
         writeFileSync(prefsPath, '{\n  "profile": {\n    "exit_type": "Crashed"\n  }\n}\n');
         symlinkSync("testhost-12345", path.join(profile, "SingletonLock"));
-        const skipped = spawnSync("bash", [path.join(root, "rakazo-browser")], {
+        const skipped = spawnSync("bash", [path.join(root, "cortexai-agent-hub-browser")], {
           env: {
             ...process.env,
             DISPLAY: ":1",
             HOME: home,
             PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-            RAKAZO_TEST_ARGS: capture,
+            CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
           },
           encoding: "utf8",
         });
@@ -264,7 +268,7 @@ describe("graphical computer spec", () => {
   );
 
   it("keeps container names stable so a bot can resume", () => {
-    expect(containerNameFor("bot_1")).toBe("rakazo-bot-bot_1");
+    expect(containerNameFor("bot_1")).toBe("cortexai-agent-hub-bot-bot_1");
     expect(containerNameFor("bot_1")).toBe(containerNameFor("bot_1"));
   });
 
@@ -317,7 +321,7 @@ describe("graphical computer spec", () => {
   });
 
   it("uses the container IP only for the internal screen network topology", () => {
-    const networkMode = "rakazo_default";
+    const networkMode = "cortexai_agent_hub_default";
     expect(
       resolveScreenPublishTarget({
         screenNetwork: "internal",
@@ -330,8 +334,8 @@ describe("graphical computer spec", () => {
     expect(
       resolveScreenPublishTarget({
         screenNetwork: "isolated",
-        networkMode: "rakazo-computer-bot-1",
-        networks: { "rakazo-computer-bot-1": { IPAddress: "172.20.0.4" } },
+        networkMode: "cortexai-agent-hub-computer-bot-1",
+        networks: { "cortexai-agent-hub-computer-bot-1": { IPAddress: "172.20.0.4" } },
         hostPort: "49152",
         containerPort: "6080",
       }),
@@ -340,11 +344,11 @@ describe("graphical computer spec", () => {
 
   it("does not publish computer control port 7070 on the host", () => {
     const options = containerCreateOptions({
-      name: "rakazo-bot-ctrl",
+      name: "cortexai-agent-hub-bot-ctrl",
       image: COMPUTER_IMAGE,
       botId: "ctrl",
       spaceId: "ws",
-      homePath: "/var/rakazo/homes/ctrl",
+      homePath: "/var/cortexai-agent-hub/homes/ctrl",
     });
     expect(options.HostConfig.PortBindings["7070/tcp"]).toBeUndefined();
     expect(options.ExposedPorts["7070/tcp"]).toBeUndefined();
@@ -352,7 +356,7 @@ describe("graphical computer spec", () => {
   });
 
   it("resolves computer control through the container network IP, never a host mapping", () => {
-    const networkMode = "rakazo_default";
+    const networkMode = "cortexai_agent_hub_default";
     expect(
       resolveComputerControlEndpoint({
         token: "secret",
@@ -404,11 +408,11 @@ describe("graphical computer spec", () => {
           "assert allow(['env', 'DISPLAY=:1', 'xdotool', 'click', '--repeat', '3', '4'], ':1')",
           "assert allow(['env', 'DISPLAY=:1', 'xdotool', 'type', '--clearmodifiers', '--', 'hi'], ':1')",
           "assert allow(['env', 'DISPLAY=:2', 'xdg-open', 'https://example.com'], ':2')",
-          "assert allow(['env', 'DISPLAY=:1', 'rakazo-browser'], ':1')",
-          "assert allow(['env', 'DISPLAY=:2', 'rakazo-browser', 'https://example.com'], ':2')",
+          "assert allow(['env', 'DISPLAY=:1', 'cortexai-agent-hub-browser'], ':1')",
+          "assert allow(['env', 'DISPLAY=:2', 'cortexai-agent-hub-browser', 'https://example.com'], ':2')",
           "assert allow(['env', 'DISPLAY=:1', 'xterm'], ':1')",
-          "assert long_lived(['env', 'DISPLAY=:1', 'rakazo-browser'])",
-          "assert long_lived(['env', 'DISPLAY=:1', 'rakazo-browser', 'https://example.com'])",
+          "assert long_lived(['env', 'DISPLAY=:1', 'cortexai-agent-hub-browser'])",
+          "assert long_lived(['env', 'DISPLAY=:1', 'cortexai-agent-hub-browser', 'https://example.com'])",
           "assert long_lived(['env', 'DISPLAY=:1', 'xterm'])",
           "assert long_lived(['env', 'DISPLAY=:1', 'xdg-open', 'https://example.com'])",
           "assert not long_lived(['env', 'DISPLAY=:1', 'xdotool', 'key', '--clearmodifiers', 'a'])",

@@ -1,12 +1,12 @@
-import { ChatMarkdown } from "@rakazo/chat-ui/native";
+import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/native";
 import type {
   AgentSkillCatalogEntry,
   Connection,
   ConnectionCatalogItem,
   MessageBlock,
   Routine,
-} from "@rakazo/contracts";
-import { canReactToThreadMessage } from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
+import { canReactToThreadMessage } from "@cortexai-agent-hub/contracts";
 import {
   abortableDelay,
   attachmentsForThread,
@@ -24,7 +24,7 @@ import {
   serializeComposerPrompt,
   truncateSlashDescription,
   userVisibleMessages,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import { Link, useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -502,7 +502,11 @@ function Thread() {
             <NativeSymbol ios="gearshape" android="settings-outline" size={21} color="#ECECEE" />
           </Pressable>
         ) : (
-          <Pressable accessibilityLabel={t("Bot actions")} hitSlop={8} onPress={showBotActions}>
+          <Pressable
+            accessibilityLabel={t("Assistant actions")}
+            hitSlop={8}
+            onPress={showBotActions}
+          >
             <NativeSymbol ios="ellipsis" android="ellipsis-horizontal" size={21} color="#ECECEE" />
           </Pressable>
         ),
@@ -533,7 +537,7 @@ function Thread() {
 
   function showBotActions() {
     if (!botId) return;
-    const bot = { id: botId, name: name || t("Bot") };
+    const bot = { id: botId, name: name || t("Assistant") };
     Alert.alert(bot.name, t("Archive keeps everything and can be undone. Delete is permanent."), [
       { text: t("Cancel"), style: "cancel" },
       {
@@ -543,7 +547,7 @@ function Thread() {
           Alert.alert(
             t("Clear conversation?"),
             t(
-              "This removes every message and stops current work. The bot, computer, memory, and routines are kept.",
+              "This removes every message and stops current work. The Assistant, computer, memory, and routines are kept.",
             ),
             [
               { text: t("Cancel"), style: "cancel" },
@@ -563,7 +567,7 @@ function Thread() {
             .then(leaveBot)
             .catch((error) =>
               Alert.alert(
-                t("Could not archive bot"),
+                t("Could not archive Assistant"),
                 error instanceof Error ? error.message : t("Try again."),
               ),
             ),
@@ -1820,7 +1824,7 @@ function Thread() {
           <Link
             href={{
               pathname: "/computer",
-              params: { botId: botId ?? "", name: name ?? t("Bot") },
+              params: { botId: botId ?? "", name: name ?? t("Assistant") },
             }}
             asChild
           >
@@ -2031,8 +2035,8 @@ const MessageBubble = memo(function MessageBubble({
   }
   const handoff = message.blocks.find((block) => block.kind === "handoff");
   if (handoff) {
-    const from = memberName(members, handoff.fromBotId) ?? t("bot");
-    const to = memberName(members, handoff.toBotId) ?? t("bot");
+    const from = memberName(members, handoff.fromBotId) ?? t("Assistant");
+    const to = memberName(members, handoff.toBotId) ?? t("Assistant");
     return (
       <AgentEventLabel
         label={t("{from} messaged {to}", { from, to })}
@@ -2053,8 +2057,8 @@ const MessageBubble = memo(function MessageBubble({
     const peer = sent ? peerMessage.toBotName : peerMessage.fromBotName;
     const peerBotId = sent ? peerMessage.toBotId : peerMessage.fromBotId;
     const label = sent
-      ? t("Messaged {peer}", { peer: peer ?? t("Bot") })
-      : t("Message from {peer}", { peer: peer ?? t("Bot") });
+      ? t("Messaged {peer}", { peer: peer ?? t("Assistant") })
+      : t("Message from {peer}", { peer: peer ?? t("Assistant") });
     const peerColor =
       bots.find((bot) => bot.id === peerBotId)?.color ??
       members?.find((member) => member.botId === peerBotId)?.color ??
@@ -2156,7 +2160,7 @@ const MessageBubble = memo(function MessageBubble({
     return (
       <Pressable
         disabled={removed}
-        onPress={() => onOpenBot(special.botId ?? "", special.name ?? t("Bot"))}
+        onPress={() => onOpenBot(special.botId ?? "", special.name ?? t("Assistant"))}
         style={{
           width: "90%",
           borderRadius: 18,
@@ -2176,14 +2180,14 @@ const MessageBubble = memo(function MessageBubble({
           }}
         >
           <Text style={{ color: "#ECECEE", fontSize: 15, fontWeight: "600" }}>
-            {special.name || t("Bot")}
+            {special.name || t("Assistant")}
           </Text>
           <Text style={{ color: removed ? "#EF4444" : "#4ECB71", fontSize: 13 }}>
             {special.status === "archived"
               ? t("archived")
               : special.status === "deleted"
                 ? t("deleted")
-                : t("bot")}
+                : t("Assistant")}
           </Text>
         </View>
         <Text
@@ -2699,7 +2703,7 @@ function AskBlock({
         </>
       ) : (
         <Text style={{ color: "#85858A", fontSize: 13.5 }}>
-          {t("Waiting for this bot’s response.")}
+          {t("Waiting for this Assistant’s response.")}
         </Text>
       )}
       {error ? <Text style={{ color: "#EF4444", fontSize: 13 }}>{error}</Text> : null}

@@ -8,10 +8,10 @@ compose=(docker compose -f "$ROOT/infra/compose/docker-compose.yml")
 # from the environment, so its absence is not an error).
 if [[ -f "$ROOT/.env" ]]; then compose=(docker compose --env-file "$ROOT/.env" -f "$ROOT/infra/compose/docker-compose.yml"); fi
 "${compose[@]}" up -d postgres
-until "${compose[@]}" exec -T postgres pg_isready -U rakazo >/dev/null 2>&1; do
+until "${compose[@]}" exec -T postgres pg_isready -U cortexai-agent-hub >/dev/null 2>&1; do
   sleep 1
 done
-"${compose[@]}" exec -T postgres psql -U rakazo -d rakazo < "$SRC/rakazo.sql"
+"${compose[@]}" exec -T postgres psql -U cortexai-agent-hub -d cortexai-agent-hub < "$SRC/cortexai-agent-hub.sql"
 if [[ -f "$SRC/homes.tgz" ]]; then
   tar -xzf "$SRC/homes.tgz" -C "$ROOT"
 fi

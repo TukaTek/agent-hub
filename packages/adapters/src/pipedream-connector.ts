@@ -6,7 +6,7 @@ import type {
   ConnectorEvent,
   ConnectorTool,
   ManagedConnectorProvider,
-} from "@rakazo/adapter-kit";
+} from "@cortexai-agent-hub/adapter-kit";
 import { collectPages, filterCatalog } from "./composio-connector.js";
 import {
   combineSignals,

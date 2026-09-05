@@ -7,7 +7,7 @@
 
   <application>
     <service
-      android:name=".RakazoNotificationService"
+      android:name=".CortexAiAgentHubNotificationService"
       android:exported="false"
       android:foregroundServiceType="remoteMessaging" />
   </application>

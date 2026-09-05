@@ -1,4 +1,4 @@
-import type { ProductEvent } from "@rakazo/contracts";
+import type { ProductEvent } from "@cortexai-agent-hub/contracts";
 import { i18n } from "./i18n";
 
 export type BrowserNotificationPermission = "default" | "denied" | "granted";
@@ -68,7 +68,7 @@ export function browserNotificationMessage(
   event: Pick<ProductEvent, "type" | "payload">,
   botName: string,
 ): { title: string; body: string } {
-  const name = botName.trim() || i18n._({ id: "Bot", message: "Bot" });
+  const name = botName.trim() || i18n._({ id: "Assistant", message: "Assistant" });
   if (event.type === "thread.message.created") {
     const blocks = Array.isArray(event.payload.blocks) ? event.payload.blocks : [];
     const body = blocks

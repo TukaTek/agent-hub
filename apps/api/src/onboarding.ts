@@ -1,12 +1,12 @@
-import type { ComposioProvider } from "@rakazo/adapters";
-import type { Actor, MessageBlock } from "@rakazo/contracts";
-import { featuredConnectorProvidersMatch } from "@rakazo/core";
+import type { ComposioProvider } from "@cortexai-agent-hub/adapters";
+import type { Actor, MessageBlock } from "@cortexai-agent-hub/contracts";
+import { featuredConnectorProvidersMatch } from "@cortexai-agent-hub/core";
 import {
   createThreadMessage,
   IsolationError,
   type PrismaClient,
   type ThreadEvents,
-} from "@rakazo/db";
+} from "@cortexai-agent-hub/db";
 
 /**
  * First-run conversational onboarding, seeded deterministically into the bot's

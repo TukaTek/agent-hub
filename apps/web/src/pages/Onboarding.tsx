@@ -1,10 +1,16 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   openAiCompatibleConnectReady,
   openAiCompatibleProbeSuccessMessage,
-} from "@rakazo/contracts";
-import { Button, Input, NativeSelect, NativeSelectOption, Textarea } from "@rakazo/ui-web";
+} from "@cortexai-agent-hub/contracts";
+import {
+  Button,
+  Input,
+  NativeSelect,
+  NativeSelectOption,
+  Textarea,
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { Check } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -228,7 +234,7 @@ export function OnboardingPage() {
       await rpc.onboarding.start({ botId: bot.id }).catch(() => undefined);
       navigate(`/app/${bot.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t`Could not create your bot`);
+      setError(err instanceof Error ? err.message : t`Could not create your Assistant`);
     }
   }
 
@@ -360,7 +366,7 @@ export function OnboardingPage() {
                       <Trans>Setup help</Trans>
                     </summary>
                     <p className="mt-1">
-                      {t`Paste the OpenAI-compatible address from your server. Rakazo adds /v1 if needed.`}
+                      {t`Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed.`}
                     </p>
                   </details>
                   <div className="mt-3">
@@ -575,7 +581,7 @@ export function OnboardingPage() {
         {step === "bot" ? (
           <div>
             <h1 className="text-[32px] font-medium text-foreground">
-              <Trans>Create your first bot</Trans>
+              <Trans>Create your first Assistant</Trans>
             </h1>
             <label htmlFor={`${fieldId}-name`} className="mt-8 block text-sm text-muted-foreground">
               <Trans>Name</Trans>
@@ -583,7 +589,7 @@ export function OnboardingPage() {
                 id={`${fieldId}-name`}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder={t`Name this bot`}
+                placeholder={t`Name this Assistant`}
                 className="mt-2"
               />
             </label>
@@ -596,7 +602,7 @@ export function OnboardingPage() {
                 id={`${fieldId}-title`}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder={t`Describe what this bot does`}
+                placeholder={t`Describe what this Assistant does`}
                 className="mt-2"
               />
             </label>
@@ -609,7 +615,7 @@ export function OnboardingPage() {
                 id={`${fieldId}-description`}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder={t`What this bot is for`}
+                placeholder={t`What this Assistant is for`}
                 rows={4}
                 className="mt-2"
               />

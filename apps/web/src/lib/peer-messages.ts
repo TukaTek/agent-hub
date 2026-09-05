@@ -1,4 +1,4 @@
-import type { MessageBlock, ThreadMessage } from "@rakazo/contracts";
+import type { MessageBlock, ThreadMessage } from "@cortexai-agent-hub/contracts";
 
 export interface PeerMessage {
   messageId: string;

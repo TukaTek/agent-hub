@@ -7,7 +7,7 @@ afterEach(() => {
 });
 
 function stubSelectedSpace(id: string) {
-  const store = new Map<string, string>([["rakazo:space-id", id]]);
+  const store = new Map<string, string>([["cortexai-agent-hub:space-id", id]]);
   const localStorage = {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => {
@@ -19,7 +19,7 @@ function stubSelectedSpace(id: string) {
   };
   vi.stubGlobal("window", { localStorage });
   vi.stubGlobal("localStorage", localStorage);
-  return (next: string) => store.set("rakazo:space-id", next);
+  return (next: string) => store.set("cortexai-agent-hub:space-id", next);
 }
 
 describe("Speaker", () => {
@@ -93,7 +93,7 @@ describe("Speaker", () => {
       expect.objectContaining({ credentials: "include" }),
     );
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
-    expect(headers.get("x-rakazo-space-id")).toBe("space-support");
+    expect(headers.get("x-cortexai-agent-hub-space-id")).toBe("space-support");
     expect(headers.get("content-type")).toBe("application/json");
     expect(prepare.mock.calls[0]?.[3]).toBe("space-support");
   });

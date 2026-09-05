@@ -3,8 +3,8 @@ import type {
   AgentRunRequest,
   AgentRuntime,
   AgentRuntimeEvent,
-} from "@rakazo/adapter-kit";
-import { abortableDelay, inferHandoffTargetName } from "@rakazo/core";
+} from "@cortexai-agent-hub/adapter-kit";
+import { abortableDelay, inferHandoffTargetName } from "@cortexai-agent-hub/core";
 
 const running = new Map<string, AbortController>();
 
@@ -346,7 +346,7 @@ export function inferScript(
         toolCalls: [
           {
             name: "destination.write",
-            args: { collection: "notes", title: "Rakazo result", body: prompt },
+            args: { collection: "notes", title: "CortexAI Agent Hub result", body: prompt },
           },
         ],
         complete: true,

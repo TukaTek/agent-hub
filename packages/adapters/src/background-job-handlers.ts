@@ -5,9 +5,9 @@ import type {
   JobPublisher,
   MessagingSurface,
   SandboxProvider,
-} from "@rakazo/adapter-kit";
-import { messagingDeliverJob } from "@rakazo/adapter-kit";
-import type { PrismaClient, ThreadEvents } from "@rakazo/db";
+} from "@cortexai-agent-hub/adapter-kit";
+import { messagingDeliverJob } from "@cortexai-agent-hub/adapter-kit";
+import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { expireComputerControl } from "./computer-control.js";
 import { scheduleComputerSleep, sleepComputerIfIdle } from "./computer-idle.js";
 import type { createRunExecutor } from "./executor.js";

@@ -1,4 +1,8 @@
-import { ACTIVE_RUN_STATUSES, avatarIdentitySeed, organicAvatarPath } from "@rakazo/core";
+import {
+  ACTIVE_RUN_STATUSES,
+  avatarIdentitySeed,
+  organicAvatarPath,
+} from "@cortexai-agent-hub/core";
 import { type CSSProperties, memo, useId, useSyncExternalStore } from "react";
 import { type AvatarStyle, useAvatarStyle } from "./avatar-style.js";
 import { cn } from "./lib/utils.js";
@@ -48,22 +52,22 @@ export const BotAvatar = memo(function BotAvatar({
   const idleDelay = (-(((seed * 13) % 45) / 10)).toFixed(2);
   const eyeGlow = `0 0 4px #FFFFFF, 0 0 8px #FFFFFF, 0 0 14px ${lightenColor(color, 20)}`;
   const idleEyeAnimation = {
-    "--rakazo-eye-animation-name": `rakazo-eyes-idle-${eyeVariant}`,
-    "--rakazo-eye-animation-duration": `${idleDuration}s`,
-    "--rakazo-eye-animation-easing": "cubic-bezier(0.4, 0, 0.2, 1)",
-    "--rakazo-eye-animation-delay": `${idleDelay}s`,
+    "--cortexai-agent-hub-eye-animation-name": `cortexai-agent-hub-eyes-idle-${eyeVariant}`,
+    "--cortexai-agent-hub-eye-animation-duration": `${idleDuration}s`,
+    "--cortexai-agent-hub-eye-animation-easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+    "--cortexai-agent-hub-eye-animation-delay": `${idleDelay}s`,
   } as CSSProperties;
   const workingEyeAnimation = {
-    "--rakazo-eye-animation-name": "rakazo-eyes-working",
-    "--rakazo-eye-animation-duration": "1.4s",
-    "--rakazo-eye-animation-easing": "ease-in-out",
-    "--rakazo-eye-animation-delay": "0s",
+    "--cortexai-agent-hub-eye-animation-name": "cortexai-agent-hub-eyes-working",
+    "--cortexai-agent-hub-eye-animation-duration": "1.4s",
+    "--cortexai-agent-hub-eye-animation-easing": "ease-in-out",
+    "--cortexai-agent-hub-eye-animation-delay": "0s",
   } as CSSProperties;
 
   return (
     <div
       className={cn(
-        "rakazo-bot-avatar group relative flex items-center justify-center rounded-full select-none",
+        "cortexai-agent-hub-bot-avatar group relative flex items-center justify-center rounded-full select-none",
         className,
       )}
       data-working={isWorking}
@@ -78,7 +82,7 @@ export const BotAvatar = memo(function BotAvatar({
       }}
     >
       <svg
-        className="rakazo-bot-avatar-ring absolute pointer-events-none"
+        className="cortexai-agent-hub-bot-avatar-ring absolute pointer-events-none"
         style={{
           inset: -4,
           width: size + 8,
@@ -108,7 +112,7 @@ export const BotAvatar = memo(function BotAvatar({
       </svg>
 
       <div
-        className="rakazo-bot-avatar-visor relative flex items-center justify-center overflow-hidden transition-transform duration-200 group-hover:scale-[1.04]"
+        className="cortexai-agent-hub-bot-avatar-visor relative flex items-center justify-center overflow-hidden transition-transform duration-200 group-hover:scale-[1.04]"
         style={{
           width: visorW,
           height: visorH,
@@ -129,7 +133,7 @@ export const BotAvatar = memo(function BotAvatar({
         {(["idle", "working"] as const).map((mode) => (
           <div
             key={mode}
-            className={`rakazo-bot-avatar-eyes rakazo-bot-avatar-eyes-${mode} absolute inset-0 z-10 flex items-center justify-center`}
+            className={`cortexai-agent-hub-bot-avatar-eyes cortexai-agent-hub-bot-avatar-eyes-${mode} absolute inset-0 z-10 flex items-center justify-center`}
             style={{
               gap: eyeGap,
               ...(mode === "idle" ? idleEyeAnimation : workingEyeAnimation),
@@ -182,7 +186,7 @@ function OrganicAvatar({
     <svg
       viewBox="-60 -60 120 120"
       aria-hidden="true"
-      className={cn("rakazo-organic-avatar overflow-visible select-none", className)}
+      className={cn("cortexai-agent-hub-organic-avatar overflow-visible select-none", className)}
       data-working={isWorking}
       data-shape-family={seed % 10}
       data-eye-pattern={seed % 4}
@@ -195,12 +199,12 @@ function OrganicAvatar({
       {(["idle", "working"] as const).map((mode) => (
         <path
           key={mode}
-          className={`rakazo-organic-avatar-body rakazo-organic-avatar-body-${mode}`}
+          className={`cortexai-agent-hub-organic-avatar-body cortexai-agent-hub-organic-avatar-body-${mode}`}
           d={shapeA}
           fill={color}
           style={
             {
-              "--rakazo-organic-path": `path("${shapeA}")`,
+              "--cortexai-agent-hub-organic-path": `path("${shapeA}")`,
               filter:
                 mode === "working"
                   ? `drop-shadow(0 0 ${Math.round(size * 0.16)}px ${color})`
@@ -222,7 +226,7 @@ function OrganicAvatar({
         {(["idle", "working"] as const).map((mode) => (
           <g
             key={mode}
-            className={`rakazo-organic-avatar-eyes rakazo-organic-avatar-eyes-${mode}`}
+            className={`cortexai-agent-hub-organic-avatar-eyes cortexai-agent-hub-organic-avatar-eyes-${mode}`}
             fill="#101014"
           >
             <rect x="-14" y="-12" width="7" height="24" rx="3.5" />
@@ -293,7 +297,7 @@ export function Wordmark({ className }: { className?: string }) {
         <span className="h-4 w-[7px] rounded-full bg-primary" />
       </div>
       <span className="font-[Aeonik,ui-sans-serif] text-[28px] tracking-tight text-foreground">
-        Rakazo
+        CortexAI Agent Hub
       </span>
     </div>
   );

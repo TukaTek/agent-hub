@@ -1,19 +1,23 @@
-import { type JobPublisher, runContinueJob } from "@rakazo/adapter-kit";
-import { cancelComputerRunWork, screenLeaseIdForRun, toComputerRef } from "@rakazo/adapters";
+import { type JobPublisher, runContinueJob } from "@cortexai-agent-hub/adapter-kit";
+import {
+  cancelComputerRunWork,
+  screenLeaseIdForRun,
+  toComputerRef,
+} from "@cortexai-agent-hub/adapters";
 import {
   type Actor,
   GROUP_MEMBER_MIN,
   type GroupMember,
   type RunStatus,
   type ThreadSnapshot,
-} from "@rakazo/contracts";
+} from "@cortexai-agent-hub/contracts";
 import {
   ACTIVE_RUN_STATUSES,
   isActive,
   projectMessages,
   resolveGroupTargetBotIds,
   runFailureError,
-} from "@rakazo/core";
+} from "@cortexai-agent-hub/core";
 import {
   appendEventInTransaction,
   createGroupRepos,
@@ -25,7 +29,7 @@ import {
   type PrismaClient,
   type ThreadEvents,
   touchGroupUpdatedAt,
-} from "@rakazo/db";
+} from "@cortexai-agent-hub/db";
 import {
   buildSendPrompt,
   buildUserMessageBlocks,
@@ -837,7 +841,7 @@ export async function reactToThreadMessage(
 export async function stopThreadRuns(
   deps: {
     prisma: PrismaClient;
-    sandbox: import("@rakazo/adapter-kit").SandboxProvider;
+    sandbox: import("@cortexai-agent-hub/adapter-kit").SandboxProvider;
   },
   actor: Actor,
   target: ThreadTarget,

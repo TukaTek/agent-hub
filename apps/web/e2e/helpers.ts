@@ -26,7 +26,9 @@ export async function rpc<T>(page: Page, procedure: string, body: unknown): Prom
 
 export async function completeOnboarding(page: Page, testInfo?: TestInfo) {
   await page.waitForURL(/\/(onboarding|app)/, { timeout: 20_000 });
-  const heading = page.getByRole("heading", { name: /Connect a model|Create your first bot/ });
+  const heading = page.getByRole("heading", {
+    name: /Connect a model|Create your first Assistant/,
+  });
   const chief = page.getByText("Chief").first();
   await heading.or(chief).waitFor({ timeout: 20_000 });
   if ((await chief.isVisible().catch(() => false)) && page.url().includes("/app")) return;
@@ -39,17 +41,17 @@ export async function completeOnboarding(page: Page, testInfo?: TestInfo) {
     if (testInfo) await captureScreenshot(page, testInfo, "02-connect-model");
     await page.getByRole("button", { name: "Skip for now" }).click();
     await page
-      .getByRole("heading", { name: "Create your first bot" })
+      .getByRole("heading", { name: "Create your first Assistant" })
       .or(chief)
       .waitFor({ timeout: 20_000 });
   }
   if (
     await page
-      .getByRole("heading", { name: "Create your first bot" })
+      .getByRole("heading", { name: "Create your first Assistant" })
       .isVisible()
       .catch(() => false)
   ) {
-    if (testInfo) await captureScreenshot(page, testInfo, "03-create-first-bot");
+    if (testInfo) await captureScreenshot(page, testInfo, "03-create-first-assistant");
     await page.locator("label:has-text('Name') input").fill("Chief");
     const created = page.waitForResponse(
       (response) => response.url().includes("/rpc/bots/create") && response.ok(),
@@ -71,7 +73,7 @@ export async function signup(
   testInfo?: TestInfo,
 ) {
   await page.goto("/sign-up");
-  await expect(page.getByRole("heading", { name: "Create your Rakazo" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
   if (testInfo) await captureScreenshot(page, testInfo, "01-sign-up");
   await page.getByPlaceholder("Your name").fill(name);
   await page.getByPlaceholder("Your email address").fill(email);
@@ -92,5 +94,5 @@ export async function captureScreenshot(page: Page, testInfo: TestInfo, name: st
 
 export async function openNewBot(page: Page) {
   await page.getByTitle("Create", { exact: true }).click();
-  await page.getByRole("button", { name: "New bot" }).click();
+  await page.getByRole("button", { name: "New Assistant" }).click();
 }

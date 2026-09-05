@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { DesktopReachability, DesktopSetup } from "@rakazo/contracts";
+import type { DesktopReachability, DesktopSetup } from "@cortexai-agent-hub/contracts";
 import { app, BrowserWindow, ipcMain, Menu, net, type Session, session, shell } from "electron";
 import {
   DesktopUpdateController,
@@ -26,7 +26,7 @@ import {
 } from "./renderer-assets.js";
 import {
   DEFAULT_LOCAL_WEB_URL,
-  isRakazoHealth,
+  isCortexAiAgentHubHealth,
   normalizeServerUrl,
   parseSetupInput,
   probeFailureMessage,
@@ -44,9 +44,9 @@ import {
   warmWindowTtlMs,
 } from "./window-options.js";
 
-const PERFORMANCE_USER_DATA = process.env.RAKAZO_PERFORMANCE_USER_DATA;
+const PERFORMANCE_USER_DATA = process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_USER_DATA;
 /** Test hook: where the app-managed stack answers. Mode `new` still requires loopback. */
-const LOCAL_WEB_URL = process.env.RAKAZO_LOCAL_WEB_URL?.trim() || DEFAULT_LOCAL_WEB_URL;
+const LOCAL_WEB_URL = process.env.CORTEXAI_AGENT_HUB_LOCAL_WEB_URL?.trim() || DEFAULT_LOCAL_WEB_URL;
 const PROBE_TIMEOUT_MS = 8_000;
 const PROBE_RESPONSE_LIMIT_BYTES = 64 * 1024;
 let mainWindow: BrowserWindow | null = null;
@@ -61,12 +61,12 @@ let openAppPromise: Promise<boolean> | null = null;
 let pendingPreviousWindow: BrowserWindow | null = null;
 let quitting = false;
 let warmWindowTimer: NodeJS.Timeout | undefined;
-const WARM_WINDOW_TTL_MS = warmWindowTtlMs(process.env.RAKAZO_WARM_WINDOW_TTL_MS);
+const WARM_WINDOW_TTL_MS = warmWindowTtlMs(process.env.CORTEXAI_AGENT_HUB_WARM_WINDOW_TTL_MS);
 
 const updaterEnvironment = {
   packaged: app.isPackaged,
   version: app.getVersion(),
-  disabled: process.env.RAKAZO_DISABLE_AUTO_UPDATE === "1",
+  disabled: process.env.CORTEXAI_AGENT_HUB_DISABLE_AUTO_UPDATE === "1",
 };
 const desktopUpdater = new DesktopUpdateController(updaterEnvironment, async () => {
   const module = await import("electron-updater");
@@ -75,13 +75,13 @@ const desktopUpdater = new DesktopUpdateController(updaterEnvironment, async () 
 let launchUpdateCheckScheduled = false;
 let localStack: LocalStackController;
 
-markOnce("rk:main:module-evaluated");
+markOnce("cortexai-agent-hub:main:module-evaluated");
 if (PERFORMANCE_USER_DATA) {
   app.setPath("userData", PERFORMANCE_USER_DATA);
   app.setPath("sessionData", path.join(PERFORMANCE_USER_DATA, "session"));
 }
-app.once("will-finish-launching", () => markOnce("rk:main:will-finish-launching"));
-app.once("ready", () => markOnce("rk:main:ready"));
+app.once("will-finish-launching", () => markOnce("cortexai-agent-hub:main:will-finish-launching"));
+app.once("ready", () => markOnce("cortexai-agent-hub:main:ready"));
 
 function markOnce(name: string) {
   if (performance.getEntriesByName(name).length === 0) performance.mark(name);
@@ -198,7 +198,7 @@ async function defaultSessionHasOriginData(origin: string): Promise<boolean> {
 }
 
 function createWindow(url: string, partition: string | null) {
-  markOnce("rk:main:window-create-start");
+  markOnce("cortexai-agent-hub:main:window-create-start");
   const icon = developmentIcon();
   const win = new BrowserWindow({
     ...browserWindowOptions(process.platform),
@@ -261,7 +261,7 @@ function createWindow(url: string, partition: string | null) {
     if (
       process.platform === "darwin" &&
       !quitting &&
-      process.env.RAKAZO_DISABLE_WARM_WINDOW !== "1"
+      process.env.CORTEXAI_AGENT_HUB_DISABLE_WARM_WINDOW !== "1"
     ) {
       event.preventDefault();
       win.hide();
@@ -275,18 +275,22 @@ function createWindow(url: string, partition: string | null) {
     clearTimeout(warmWindowTimer);
     if (mainWindow === win) mainWindow = null;
   });
-  markOnce("rk:main:window-created");
-  if (win.isVisible()) markOnce("rk:main:window-shown");
-  win.once("show", () => markOnce("rk:main:window-shown"));
-  win.once("ready-to-show", () => markOnce("rk:main:ready-to-show"));
-  win.webContents.once("dom-ready", () => markOnce("rk:main:dom-ready"));
-  win.webContents.once("did-finish-load", () => markOnce("rk:main:did-finish-load"));
-  win.webContents.once("did-stop-loading", () => markOnce("rk:main:did-stop-loading"));
-  markOnce("rk:main:load-url-start");
+  markOnce("cortexai-agent-hub:main:window-created");
+  if (win.isVisible()) markOnce("cortexai-agent-hub:main:window-shown");
+  win.once("show", () => markOnce("cortexai-agent-hub:main:window-shown"));
+  win.once("ready-to-show", () => markOnce("cortexai-agent-hub:main:ready-to-show"));
+  win.webContents.once("dom-ready", () => markOnce("cortexai-agent-hub:main:dom-ready"));
+  win.webContents.once("did-finish-load", () =>
+    markOnce("cortexai-agent-hub:main:did-finish-load"),
+  );
+  win.webContents.once("did-stop-loading", () =>
+    markOnce("cortexai-agent-hub:main:did-stop-loading"),
+  );
+  markOnce("cortexai-agent-hub:main:load-url-start");
   const loaded = loadAppUrl(win, url).then(
-    () => markOnce("rk:main:load-url-resolved"),
+    () => markOnce("cortexai-agent-hub:main:load-url-resolved"),
     (error: unknown) => {
-      markOnce("rk:main:load-url-rejected");
+      markOnce("cortexai-agent-hub:main:load-url-rejected");
       throw error;
     },
   );
@@ -404,7 +408,7 @@ function loadAppUrl(win: BrowserWindow, url: string): Promise<void> {
  * not a usable app. After session resolves, wait for a bootstrapped shell
  * (`data-ready` / shell-ready mark) or an auth/welcome/onboarding surface so a
  * bare Suspense fallback or pre-bootstrap ShellPage cannot pass. Plain e2e
- * fixtures omit the Rakazo app-state marker.
+ * fixtures omit the CortexAI Agent Hub app-state marker.
  */
 async function waitForMountedAppDocument(contents: Electron.WebContents) {
   const deadline = Date.now() + 8_000;
@@ -412,14 +416,14 @@ async function waitForMountedAppDocument(contents: Electron.WebContents) {
     if (contents.isCrashed()) throw new Error("Renderer stopped after load.");
     const ready = (await contents.executeJavaScript(`(() => {
       const appState =
-        document.querySelector("[data-rakazo-app-state]")?.getAttribute("data-rakazo-app-state") ??
+        document.querySelector("[data-cortexai-agent-hub-app-state]")?.getAttribute("data-cortexai-agent-hub-app-state") ??
         null;
       if (appState === "session-pending") return false;
 
       const shell = document.querySelector('[data-testid="shell-root"]');
       const shellBootstrapped = Boolean(
         (shell && shell.getAttribute("data-ready") === "true") ||
-          performance.getEntriesByName("rk:renderer:shell-ready").length > 0,
+          performance.getEntriesByName("cortexai-agent-hub:renderer:shell-ready").length > 0,
       );
       const authOrWelcomeSurface = Boolean(
         document.querySelector(
@@ -435,10 +439,10 @@ async function waitForMountedAppDocument(contents: Electron.WebContents) {
       const surfaceReady = shellBootstrapped || authOrWelcomeSurface;
       const sessionReady =
         appState === "ready" ||
-        performance.getEntriesByName("rk:renderer:session-committed").length > 0;
+        performance.getEntriesByName("cortexai-agent-hub:renderer:session-committed").length > 0;
       if (sessionReady && surfaceReady) return true;
 
-      // Desktop e2e fixtures mount a plain page without Rakazo app-state markers.
+      // Desktop e2e fixtures mount a plain page without CortexAI Agent Hub app-state markers.
       if (appState === null) {
         const bodyText = (document.body?.innerText || "").trim();
         if (bodyText.includes("Opening your Space")) return false;
@@ -460,7 +464,7 @@ async function installBundledRenderer(
   targetSession: Session,
   partition: string | null,
 ) {
-  if (!app.isPackaged || process.env.RAKAZO_DISABLE_BUNDLED_RENDERER === "1") return;
+  if (!app.isPackaged || process.env.CORTEXAI_AGENT_HUB_DISABLE_BUNDLED_RENDERER === "1") return;
   if (!servesBundledRenderer(targetUrl)) return;
   const webUrl = new URL(targetUrl);
   const installationKey = `${partition ?? "default"}:${webUrl.protocol}`;
@@ -501,7 +505,7 @@ async function installBundledRenderer(
     return forward();
   });
   bundledRendererInstallations.add(installationKey);
-  markOnce("rk:main:bundled-renderer-ready");
+  markOnce("cortexai-agent-hub:main:bundled-renderer-ready");
 }
 
 function oauthPopupWindowOptions() {
@@ -541,7 +545,7 @@ function createSetupWindow() {
     restoreAppWindowAfterSetup();
   });
   void win.loadFile(path.join(import.meta.dirname, "setup.html"));
-  markOnce("rk:main:setup-window-created");
+  markOnce("cortexai-agent-hub:main:setup-window-created");
   return win;
 }
 
@@ -573,8 +577,8 @@ function restoreAppWindowAfterSetup() {
 
 function installApplicationMenu() {
   const changeServer: Electron.MenuItemConstructorOptions = {
-    id: "change-rakazo-server",
-    label: "Change Rakazo Server…",
+    id: "change-cortexai-agent-hub-server",
+    label: "Change CortexAI Agent Hub Server…",
     accelerator: "CmdOrCtrl+Shift+K",
     click: () => showSetupWindow(),
   };
@@ -618,7 +622,7 @@ function installApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-/** Setup IPC must only answer the setup window, never a connected Rakazo server. */
+/** Setup IPC must only answer the setup window, never a connected CortexAI Agent Hub server. */
 function fromSetupWindow(event: Electron.IpcMainInvokeEvent) {
   return (
     setupWindow !== null && !setupWindow.isDestroyed() && event.sender === setupWindow.webContents
@@ -645,7 +649,8 @@ async function probeServer(rawUrl: string, signal?: AbortSignal): Promise<Deskto
         ok: false,
         status: response.status,
         url,
-        error: "That address redirects elsewhere. Enter the final Rakazo server address.",
+        error:
+          "That address redirects elsewhere. Enter the final CortexAI Agent Hub server address.",
       };
     }
     if (!response.ok) {
@@ -657,12 +662,12 @@ async function probeServer(rawUrl: string, signal?: AbortSignal): Promise<Deskto
       };
     }
     const health = await limitedJson(response);
-    if (!isRakazoHealth(health)) {
+    if (!isCortexAiAgentHubHealth(health)) {
       return {
         ok: false,
         status: response.status,
         url,
-        error: "That address did not respond like a Rakazo server.",
+        error: "That address did not respond like a CortexAI Agent Hub server.",
       };
     }
     return {
@@ -872,18 +877,18 @@ app.whenReady().then(async () => {
     imageTag: resolveImageTag({
       version: app.getVersion(),
       packaged: app.isPackaged,
-      override: process.env.RAKAZO_IMAGE_TAG,
+      override: process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG,
     }),
     probe: async (signal) => (await probeServer(LOCAL_WEB_URL, signal)).ok,
     randomHex: (bytes) => randomBytes(bytes).toString("hex"),
   });
   currentSetup = await readSetup(userDataDir);
   const target = resolveStartupTarget({
-    envUrl: process.env.RAKAZO_WEB_URL,
+    envUrl: process.env.CORTEXAI_AGENT_HUB_WEB_URL,
     saved: currentSetup,
-    forceSetup: process.env.RAKAZO_FORCE_SETUP === "1",
+    forceSetup: process.env.CORTEXAI_AGENT_HUB_FORCE_SETUP === "1",
   });
-  if (process.env.RAKAZO_PERFORMANCE_CLEAR_CACHE === "1") {
+  if (process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_CLEAR_CACHE === "1") {
     const cacheSessions = new Set<Session>([session.defaultSession]);
     if (target.kind === "app") {
       cacheSessions.add((await resolveSessionForTarget(target.url)).value);
@@ -891,7 +896,7 @@ app.whenReady().then(async () => {
     await Promise.all(
       [...cacheSessions].flatMap((value) => [value.clearCache(), value.clearCodeCaches({})]),
     );
-    markOnce("rk:main:caches-cleared");
+    markOnce("cortexai-agent-hub:main:caches-cleared");
   }
 
   const icon = developmentIcon();
