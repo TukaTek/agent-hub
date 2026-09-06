@@ -3231,7 +3231,7 @@ export function ShellPage() {
                     </div>
                   ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
                     <iframe
-                      title={t`Bot screen preview`}
+                      title={t`Assistant screen preview`}
                       src={embeddedScreenUrl}
                       sandbox={screenIframeSandbox(embeddedScreenUrl)}
                       className="h-full w-full border-0 bg-black"
@@ -3940,7 +3940,7 @@ export function ShellPage() {
             ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
               <>
                 <iframe
-                  title={t`Bot screen`}
+                  title={t`Assistant screen`}
                   src={embeddedScreenUrl}
                   sandbox={screenIframeSandbox(embeddedScreenUrl)}
                   className="h-full w-full border-0 bg-black"

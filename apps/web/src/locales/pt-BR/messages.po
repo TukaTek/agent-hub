@@ -490,11 +490,11 @@ msgid "Bot"
 msgstr "Bot"
 
 #: src/pages/Shell.tsx:3895
-msgid "Bot screen"
-msgstr "Tela do bot"
+msgid "Assistant screen"
+msgstr "Tela do assistente"
 
 #: src/pages/Shell.tsx:3193
-msgid "Bot screen preview"
+msgid "Assistant screen preview"
 msgstr "Pré-visualização da tela"
 
 #: src/pages/MessagingSettingsOverlay.tsx:145
