@@ -50,6 +50,7 @@ COPY --chmod=755 start.sh /usr/local/bin/cortexai-agent-hub-computer
 COPY --chmod=755 control.py /usr/local/bin/cortexai-agent-hub-computer-control
 COPY --from=capture-builder /build/libcortexai_agent_hub-xcapture.so /usr/local/lib/libcortexai_agent_hub-xcapture.so
 COPY --chmod=755 cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-browser
+COPY --chmod=755 cortexai-agent-hub-page-browser /usr/local/bin/cortexai-agent-hub-page-browser
 COPY --chmod=644 cortexai-agent-hub-browser.desktop /usr/share/applications/cortexai-agent-hub-browser.desktop
 COPY --chmod=644 fluxbox.init /etc/cortexai-agent-hub/fluxbox/init
 COPY --chmod=644 fluxbox.apps /etc/cortexai-agent-hub/fluxbox/apps
@@ -58,7 +59,7 @@ COPY --chmod=644 embed.html /usr/share/novnc/embed.html
 COPY --chmod=644 clipboard-bridge.js /usr/share/novnc/clipboard-bridge.js
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
-  && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser \
+  && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-page-browser \
     /etc/cortexai-agent-hub/fluxbox/init /etc/cortexai-agent-hub/fluxbox/apps /etc/cortexai-agent-hub/fluxbox/menu
 EXPOSE 7070 6080 6081 6082 6083 6084 6085 6086 6087 6088 6089 6090 6091 6092 6093 6094 6095
 USER 1000:1000

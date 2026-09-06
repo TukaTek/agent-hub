@@ -21,12 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - ChatGPT Plus or Pro sign-in for model access.
 - Mobile: point the app at a self-hosted API origin, a native iOS inbox, and take control of the live desktop.
 - Provider-neutral integrations: managed apps through Composio or Pipedream Connect, plus encrypted user-installed Treg, HTTPS MCP, and OpenAPI tool sources on web and mobile.
-- Revoke for connected Composio plugins.
+- Disconnect connected Composio plugins.
 - Routines in plain language instead of raw cron.
 
 ### Removed
 
-- Unused Grant folder picker in the desktop app. Bots never got a host folder that way.
+- Nonfunctional Grant folder picker in the desktop app.
+
+### Messaging upgrade notes
+
+- Webhooks use `/api/v1/messaging/webhook/<provider>`; the previous Sendblue path remains supported.
+- Configure credentials for each messaging provider in `.env`; see [.env.example](.env.example).
+- Unknown senders are ignored by default. `MESSAGING_OPEN_SIGNUP=true` restores automatic account
+  creation from incoming messages and requires a deployment model key.
 
 ## [0.1.0-beta] - 2026-08-13
 

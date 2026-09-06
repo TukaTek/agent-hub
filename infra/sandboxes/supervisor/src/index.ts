@@ -4,7 +4,11 @@ import { mkdir } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import {
+  boundedSandboxCommandTimeoutMs,
+  readBoundedJsonResponse,
+  resolveSupervisorToken,
+} from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
@@ -279,6 +283,79 @@ app.post("/computers/:id/exec", async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ stdout: "", stderr: message, code: 1 }, 200);
+  }
+});
+
+app.post("/computers/:id/browser", async (c) => {
+  // Read eagerly so the Node HTTP adapter observes disconnects during screen setup too.
+  const signal = c.req.raw.signal;
+  signal.throwIfAborted();
+  const body = z
+    .discriminatedUnion("command", [
+      z.object({
+        command: z.literal("navigate"),
+        url: z
+          .string()
+          .url()
+          .max(8192)
+          .refine((value) => {
+            if (!URL.canParse(value)) return false;
+            const url = new URL(value);
+            return /^https?:$/.test(url.protocol) && !url.username && !url.password;
+          }),
+      }),
+      z.object({ command: z.literal("snapshot") }),
+      z.object({
+        command: z.literal("act"),
+        actions: z
+          .array(
+            z.discriminatedUnion("kind", [
+              z.object({ kind: z.literal("click"), ref: z.string().min(1).max(200) }),
+              z.object({
+                kind: z.enum(["fill", "type"]),
+                ref: z.string().min(1).max(200),
+                text: z.string().max(32_000),
+              }),
+            ]),
+          )
+          .min(1)
+          .max(24),
+      }),
+    ])
+    .parse(await c.req.json());
+  try {
+    const { container, layout } = await managedScreen(
+      c.req.param("id"),
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      c.req.header("x-cortexai-agent-hub-screen-id"),
+      c.req.header("x-cortexai-agent-hub-screen-lease-id"),
+    );
+    const result = await runContainerCommand(
+      container,
+      ["/usr/local/bin/cortexai-agent-hub-page-browser", body.command, JSON.stringify(body)],
+      {
+        env: [
+          `DISPLAY=${layout.display}`,
+          "HOME=/home/cortexai-agent-hub",
+          "CORTEXAI_AGENT_HUB_BROWSER_WATCH_STDIN=1",
+        ],
+        timeoutMs: 25_000,
+        signal,
+      },
+    );
+    // A nonzero exit or malformed output cannot establish which mutations ran.
+    if (result.code !== 0 || Buffer.byteLength(result.stdout) > 512 * 1024) {
+      throw new Error("Page browser unavailable or interrupted");
+    }
+    return c.json(JSON.parse(result.stdout));
+  } catch {
+    return c.json({
+      ok: false,
+      fallback: "computer_act",
+      uncertain: body.command === "act",
+      error: "Page browser unavailable or interrupted. Inspect the screen before continuing.",
+    });
   }
 });
 
@@ -682,6 +759,7 @@ async function ensureComputerImage() {
             "control.py",
             "xcapture.c",
             "cortexai-agent-hub-browser",
+            "cortexai-agent-hub-page-browser",
             "cortexai-agent-hub-browser.desktop",
             "embed.html",
             "clipboard-bridge.js",
@@ -796,6 +874,8 @@ function computerControlEndpoint(info: Docker.ContainerInspectInfo) {
   });
 }
 
+export const MAX_COMPUTER_CONTROL_RESPONSE_BYTES = 16 * 1024 * 1024;
+
 export async function controlDesktop(
   endpoint: { url: string; token: string },
   actions: Array<z.infer<typeof computerActionSchema>>,
@@ -803,6 +883,7 @@ export async function controlDesktop(
   observe: boolean,
   settleMs: number,
 ) {
+  const signal = AbortSignal.timeout(computerControlTimeoutMs(actions, settleMs));
   let response: Response;
   try {
     response = await fetch(endpoint.url, {
@@ -820,7 +901,7 @@ export async function controlDesktop(
         observe,
         settleMs,
       }),
-      signal: AbortSignal.timeout(computerControlTimeoutMs(actions, settleMs)),
+      signal,
     });
   } catch (error) {
     if (isComputerControlUnavailable(error)) {
@@ -830,11 +911,11 @@ export async function controlDesktop(
     }
     throw error;
   }
-  const payload = (await response.json()) as {
+  const payload = await readBoundedJsonResponse<{
     completed?: unknown;
     observation?: unknown;
     error?: unknown;
-  };
+  }>(response, MAX_COMPUTER_CONTROL_RESPONSE_BYTES, signal);
   if (!response.ok) throw new Error(String(payload.error ?? "computer control failed"));
   if (typeof payload.completed !== "number")
     throw new Error("computer control returned no completion count");
@@ -843,6 +924,7 @@ export async function controlDesktop(
     ...(payload.observation ? { observation: payload.observation } : {}),
   };
 }
+
 const SCREEN_READY_TIMEOUT_MS = 45_000;
 
 // Docker publishes a container's port mapping (or assigns its internal IP)
@@ -1064,8 +1146,9 @@ async function inspectSupervisorContainer() {
 async function runContainerCommand(
   container: Docker.Container,
   argv: string[],
-  options: { workingDir?: string; env?: string[]; timeoutMs?: number } = {},
+  options: { workingDir?: string; env?: string[]; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
+  options.signal?.throwIfAborted();
   const timeoutMs = options.timeoutMs;
   const completionMarker = timeoutMs
     ? `/tmp/cortexai-agent-hub-command-${randomUUID()}.completed-124`
@@ -1078,16 +1161,30 @@ async function runContainerCommand(
     Cmd: command,
     AttachStdout: true,
     AttachStderr: true,
+    ...(options.signal ? { AttachStdin: true } : {}),
     WorkingDir: options.workingDir ?? "/home/cortexai-agent-hub",
     Env: options.env ?? ["DISPLAY=:1", "HOME=/home/cortexai-agent-hub"],
   });
-  const stream = await exec.start({ hijack: true, stdin: false });
+  options.signal?.throwIfAborted();
+  const stream = await exec.start({ hijack: true, stdin: Boolean(options.signal) });
   const chunks: Buffer[] = [];
-  await new Promise<void>((resolve, reject) => {
-    stream.on("data", (data: Buffer) => chunks.push(data));
-    stream.on("end", resolve);
-    stream.on("error", reject);
-  });
+  let onAbort: (() => void) | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      stream.on("data", (data: Buffer) => chunks.push(data));
+      stream.on("end", resolve);
+      stream.on("error", reject);
+      onAbort = () => {
+        // The page helper watches stdin EOF and exits even inside a blocked CDP call.
+        stream.destroy();
+        reject(options.signal?.reason ?? new Error("command cancelled"));
+      };
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      if (options.signal?.aborted) onAbort();
+    });
+  } finally {
+    if (onAbort) options.signal?.removeEventListener("abort", onAbort);
+  }
   const inspect = await exec.inspect();
   const code = inspect.ExitCode ?? 0;
   const completedWithExit124 =
