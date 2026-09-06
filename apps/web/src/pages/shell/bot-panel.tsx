@@ -1,4 +1,5 @@
 import type {
+  AgentSkillCatalogEntry,
   Bot,
   ComputerMode,
   Me,
@@ -30,6 +31,10 @@ import { rpc } from "../../lib/rpc";
 
 const ScratchpadSection = lazy(() =>
   import("../ScratchpadSection").then((module) => ({ default: module.ScratchpadSection })),
+);
+
+const KnowledgeSection = lazy(() =>
+  import("../KnowledgeSection").then((module) => ({ default: module.KnowledgeSection })),
 );
 
 const fieldLabelClass = "mt-4 block text-[14px] text-muted-foreground";
@@ -91,7 +96,12 @@ export function CreateBotForm({
     setError(null);
     setSubmitting(true);
     try {
-      await onCreate({ name, title, description, computerMode });
+      await onCreate({
+        name: name.trim(),
+        title: title.trim(),
+        description: description.trim(),
+        computerMode,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : t`Could not create Assistant`);
     } finally {
@@ -172,11 +182,13 @@ export function CreateBotForm({
 export function BotSettings({
   bot,
   memoryProviderConfigured,
+  onSkillsChange,
   onSave,
   onExport,
   onClear,
 }: {
   bot: Bot;
+  onSkillsChange: (skills: AgentSkillCatalogEntry[]) => void;
   memoryProviderConfigured: boolean;
   onSave: (patch: {
     name?: string;
@@ -195,6 +207,7 @@ export function BotSettings({
   onClear: () => void;
 }) {
   const { t } = useLingui();
+  const [advancedOpened, setAdvancedOpened] = useState(false);
   const ids = useId();
   const [name, setName] = useState(bot.name);
   const [title, setTitle] = useState(bot.title);
@@ -282,7 +295,14 @@ export function BotSettings({
           (entry) => entry.provider === effectiveProvider && entry.id === effectiveModelId,
         )
       : undefined;
-  const thinkingOptions = (effectiveEntry?.thinkingLevels ?? []).filter((level) => level !== "off");
+  const effectiveCredential = credentials.find(
+    (entry) => entry.provider === effectiveProvider && entry.modelId === effectiveModelId,
+  );
+  const thinkingOptions = (
+    effectiveCredential?.thinkingLevels ??
+    effectiveEntry?.thinkingLevels ??
+    []
+  ).filter((level) => level !== "off");
 
   return (
     <div data-testid="bot-settings">
@@ -320,7 +340,13 @@ export function BotSettings({
           className="mt-2"
         />
       </label>
-      <details data-testid="bot-settings-advanced" className="group mt-5">
+      <details
+        data-testid="bot-settings-advanced"
+        className="group mt-5"
+        onToggle={(event) => {
+          if (event.currentTarget.open) setAdvancedOpened(true);
+        }}
+      >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[14px] text-muted-foreground">
           <span className="text-muted-foreground">
             <Trans>Advanced</Trans>
@@ -332,6 +358,9 @@ export function BotSettings({
         <ComputerModePicker value={computerMode} onChange={setComputerMode} />
         <Suspense fallback={null}>
           <ScratchpadSection botId={bot.id} />
+          {advancedOpened ? (
+            <KnowledgeSection botId={bot.id} onSkillsChange={onSkillsChange} />
+          ) : null}
         </Suspense>
         <label htmlFor={`${ids}-model`} className={fieldLabelClass}>
           <Trans>Model</Trans>
@@ -445,11 +474,17 @@ export function BotSettings({
             setSaving(true);
             setError(null);
             const selected = modelKey ? parseModelOptionKey(modelKey) : null;
+            const nextName = name.trim();
+            const nextTitle = title.trim();
+            const nextDescription = description.trim();
+            setName(nextName);
+            setTitle(nextTitle);
+            setDescription(nextDescription);
             void onSave({
-              name,
-              title,
-              description,
-              instructions: description,
+              name: nextName,
+              title: nextTitle,
+              description: nextDescription,
+              instructions: nextDescription,
               computerMode,
               memoryScope,
               autoSpeak,

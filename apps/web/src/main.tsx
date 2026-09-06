@@ -5,18 +5,20 @@ import { App } from "./App";
 import { I18nBootstrap } from "./components/I18nBootstrap";
 import { applyUiDirection } from "./lib/apply-ui-direction";
 import { markAfterPaint, markOnce } from "./lib/performance";
+import { installPreloadRecovery } from "./lib/preload-recovery";
 import { applyUiAppearance, watchSystemAppearance } from "./lib/ui-appearance";
 import { resolveUiLocale } from "./lib/ui-locale";
 import "./styles.css";
 
-markOnce("cortexai-agent-hub:renderer:module-evaluated");
+markOnce("rk:renderer:module-evaluated");
+installPreloadRecovery();
 applyUiDirection(resolveUiLocale());
 applyUiAppearance();
 
 function PerformanceProbe() {
   useLayoutEffect(() => {
-    markOnce("cortexai-agent-hub:renderer:first-react-commit");
-    markAfterPaint("cortexai-agent-hub:renderer:first-react-painted");
+    markOnce("rk:renderer:first-react-commit");
+    markAfterPaint("rk:renderer:first-react-painted");
   }, []);
   return null;
 }

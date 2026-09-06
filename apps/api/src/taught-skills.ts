@@ -41,7 +41,12 @@ import {
   type TeachRecordingEvent,
   teachRecordingTtlMs,
 } from "@cortexai-agent-hub/core";
-import { IsolationError, type PrismaClient, type ThreadEvents } from "@cortexai-agent-hub/db";
+import {
+  expireComputerExecutionLeases,
+  IsolationError,
+  type PrismaClient,
+  type ThreadEvents,
+} from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
 
 type TaughtSkillRow = {
@@ -119,7 +124,7 @@ async function cancelActiveRuns(
     where: { botId, status: { in: [...ACTIVE_RUN_STATUSES] } },
     data: { status: "cancelled", completedAt: new Date() },
   });
-  await deps.prisma.computerExecutionLease.deleteMany({ where: { botId } });
+  await expireComputerExecutionLeases(deps.prisma, { botId });
   await deps.prisma.computer.updateMany({
     where: { executionBotId: botId },
     data: { executionRunId: null, executionBotId: null, executionLeaseExpiresAt: null },

@@ -45,6 +45,23 @@ describe("mobile appearance", () => {
     await setAppearancePreference("system");
   });
 
+  it("notifies mounted navigation when the saved preference loads", async () => {
+    const { UI_APPEARANCE_STORAGE_KEY, lightTokens } = await import(
+      "@cortexai-agent-hub/ui-tokens"
+    );
+    const { loadAppearancePreference, mobileTokens, subscribeAppearance } = await import(
+      "./appearance"
+    );
+    store.set(UI_APPEARANCE_STORAGE_KEY, "light");
+    const listener = vi.fn();
+    subscribeAppearance(listener);
+
+    await loadAppearancePreference();
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(mobileTokens()).toEqual(lightTokens);
+  });
+
   it("notifies subscribers when the OS scheme flips under System preference", async () => {
     const { resolveMobileAppearance, subscribeAppearance } = await import("./appearance");
     const listener = vi.fn();
@@ -56,5 +73,24 @@ describe("mobile appearance", () => {
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(resolveMobileAppearance()).toBe("light");
+  });
+
+  it("flips user bubble tokens when appearance switches with an existing preference", async () => {
+    const { mobileTokens, setAppearancePreference, subscribeAppearance } = await import(
+      "./appearance"
+    );
+    const listener = vi.fn();
+    subscribeAppearance(listener);
+
+    await setAppearancePreference("dark");
+    const darkBubble = mobileTokens().secondary;
+    const darkInk = mobileTokens().secondaryForeground;
+
+    listener.mockClear();
+    await setAppearancePreference("light");
+    expect(listener).toHaveBeenCalledOnce();
+    expect(mobileTokens().secondary).not.toBe(darkBubble);
+    expect(mobileTokens().secondaryForeground).not.toBe(darkInk);
+    expect(mobileTokens().secondary).not.toBe(mobileTokens().primary);
   });
 });

@@ -24,12 +24,17 @@ import {
   immutableRendererAsset,
   isRendererAssetMiss,
 } from "./renderer-assets.js";
+import { installSessionPermissions } from "./session-permissions.js";
 import {
   DEFAULT_LOCAL_WEB_URL,
+  desktopStackImageTag,
   isCortexAiAgentHubHealth,
+  managedLocalOpenUrl,
+  maySendDesktopStackToken,
   normalizeServerUrl,
   parseSetupInput,
   probeFailureMessage,
+  readProbeJson,
   resolveStartupTarget,
   safeExternalUrl,
   servesBundledRenderer,
@@ -48,8 +53,10 @@ const PERFORMANCE_USER_DATA = process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_USER_DA
 /** Test hook: where the app-managed stack answers. Mode `new` still requires loopback. */
 const LOCAL_WEB_URL = process.env.CORTEXAI_AGENT_HUB_LOCAL_WEB_URL?.trim() || DEFAULT_LOCAL_WEB_URL;
 const PROBE_TIMEOUT_MS = 8_000;
-const PROBE_RESPONSE_LIMIT_BYTES = 64 * 1024;
+const DESKTOP_STACK_PROBE_PATH = "/.well-known/cortexai-agent-hub-desktop-stack";
+const DESKTOP_STACK_TOKEN_HEADER = "x-cortexai-agent-hub-desktop-stack-token";
 let mainWindow: BrowserWindow | null = null;
+const appWindowTargets = new WeakMap<BrowserWindow, string>();
 let setupWindow: BrowserWindow | null = null;
 const bundledRendererInstallations = new Set<string>();
 let currentSetup: DesktopSetup | null = null;
@@ -61,6 +68,10 @@ let openAppPromise: Promise<boolean> | null = null;
 let pendingPreviousWindow: BrowserWindow | null = null;
 let quitting = false;
 let warmWindowTimer: NodeJS.Timeout | undefined;
+// Number of short-lived hidden probe windows currently alive. On Windows/Linux,
+// destroying the last window fires "window-all-closed" -> app.quit(); a probe
+// that runs before the first real window exists must not count as "all closed".
+let liveProbeWindows = 0;
 const WARM_WINDOW_TTL_MS = warmWindowTtlMs(process.env.CORTEXAI_AGENT_HUB_WARM_WINDOW_TTL_MS);
 
 const updaterEnvironment = {
@@ -75,13 +86,21 @@ const desktopUpdater = new DesktopUpdateController(updaterEnvironment, async () 
 let launchUpdateCheckScheduled = false;
 let localStack: LocalStackController;
 
-markOnce("cortexai-agent-hub:main:module-evaluated");
+markOnce("rk:main:module-evaluated");
 if (PERFORMANCE_USER_DATA) {
   app.setPath("userData", PERFORMANCE_USER_DATA);
   app.setPath("sessionData", path.join(PERFORMANCE_USER_DATA, "session"));
 }
-app.once("will-finish-launching", () => markOnce("cortexai-agent-hub:main:will-finish-launching"));
-app.once("ready", () => markOnce("cortexai-agent-hub:main:ready"));
+app.once("will-finish-launching", () => markOnce("rk:main:will-finish-launching"));
+app.once("ready", () => markOnce("rk:main:ready"));
+// Includes fresh partitions and popup-created sessions, before they load remote content.
+app.on("session-created", (value) => installSessionPermissions(value, permissionTarget));
+
+function permissionTarget() {
+  if (mainWindow === null || mainWindow.isDestroyed()) return null;
+  const url = appWindowTargets.get(mainWindow);
+  return url === undefined ? null : { webContents: mainWindow.webContents, url };
+}
 
 function markOnce(name: string) {
   if (performance.getEntriesByName(name).length === 0) performance.mark(name);
@@ -172,6 +191,9 @@ async function defaultSessionHasOriginData(origin: string): Promise<boolean> {
       sandbox: true,
     },
   });
+  // Increment only after construction succeeds so a throw cannot leave the
+  // counter stuck > 0 and permanently block quit on Windows/Linux.
+  liveProbeWindows++;
   try {
     await probe.loadURL(origin);
     return (await probe.webContents.executeJavaScript(`(async () => {
@@ -194,11 +216,12 @@ async function defaultSessionHasOriginData(origin: string): Promise<boolean> {
     return false;
   } finally {
     if (!probe.isDestroyed()) probe.destroy();
+    liveProbeWindows--;
   }
 }
 
 function createWindow(url: string, partition: string | null) {
-  markOnce("cortexai-agent-hub:main:window-create-start");
+  markOnce("rk:main:window-create-start");
   const icon = developmentIcon();
   const win = new BrowserWindow({
     ...browserWindowOptions(process.platform),
@@ -212,6 +235,7 @@ function createWindow(url: string, partition: string | null) {
     },
   });
   mainWindow = win;
+  appWindowTargets.set(win, url);
   const targetOrigin = safeOrigin(url);
   // Intentional OAuth flows open the provider's authorize page via a named
   // window; give those and same-origin popups a normal frame. Everything else
@@ -275,22 +299,18 @@ function createWindow(url: string, partition: string | null) {
     clearTimeout(warmWindowTimer);
     if (mainWindow === win) mainWindow = null;
   });
-  markOnce("cortexai-agent-hub:main:window-created");
-  if (win.isVisible()) markOnce("cortexai-agent-hub:main:window-shown");
-  win.once("show", () => markOnce("cortexai-agent-hub:main:window-shown"));
-  win.once("ready-to-show", () => markOnce("cortexai-agent-hub:main:ready-to-show"));
-  win.webContents.once("dom-ready", () => markOnce("cortexai-agent-hub:main:dom-ready"));
-  win.webContents.once("did-finish-load", () =>
-    markOnce("cortexai-agent-hub:main:did-finish-load"),
-  );
-  win.webContents.once("did-stop-loading", () =>
-    markOnce("cortexai-agent-hub:main:did-stop-loading"),
-  );
-  markOnce("cortexai-agent-hub:main:load-url-start");
+  markOnce("rk:main:window-created");
+  if (win.isVisible()) markOnce("rk:main:window-shown");
+  win.once("show", () => markOnce("rk:main:window-shown"));
+  win.once("ready-to-show", () => markOnce("rk:main:ready-to-show"));
+  win.webContents.once("dom-ready", () => markOnce("rk:main:dom-ready"));
+  win.webContents.once("did-finish-load", () => markOnce("rk:main:did-finish-load"));
+  win.webContents.once("did-stop-loading", () => markOnce("rk:main:did-stop-loading"));
+  markOnce("rk:main:load-url-start");
   const loaded = loadAppUrl(win, url).then(
-    () => markOnce("cortexai-agent-hub:main:load-url-resolved"),
+    () => markOnce("rk:main:load-url-resolved"),
     (error: unknown) => {
-      markOnce("cortexai-agent-hub:main:load-url-rejected");
+      markOnce("rk:main:load-url-rejected");
       throw error;
     },
   );
@@ -423,7 +443,7 @@ async function waitForMountedAppDocument(contents: Electron.WebContents) {
       const shell = document.querySelector('[data-testid="shell-root"]');
       const shellBootstrapped = Boolean(
         (shell && shell.getAttribute("data-ready") === "true") ||
-          performance.getEntriesByName("cortexai-agent-hub:renderer:shell-ready").length > 0,
+          performance.getEntriesByName("rk:renderer:shell-ready").length > 0,
       );
       const authOrWelcomeSurface = Boolean(
         document.querySelector(
@@ -439,7 +459,7 @@ async function waitForMountedAppDocument(contents: Electron.WebContents) {
       const surfaceReady = shellBootstrapped || authOrWelcomeSurface;
       const sessionReady =
         appState === "ready" ||
-        performance.getEntriesByName("cortexai-agent-hub:renderer:session-committed").length > 0;
+        performance.getEntriesByName("rk:renderer:session-committed").length > 0;
       if (sessionReady && surfaceReady) return true;
 
       // Desktop e2e fixtures mount a plain page without CortexAI Agent Hub app-state markers.
@@ -505,7 +525,7 @@ async function installBundledRenderer(
     return forward();
   });
   bundledRendererInstallations.add(installationKey);
-  markOnce("cortexai-agent-hub:main:bundled-renderer-ready");
+  markOnce("rk:main:bundled-renderer-ready");
 }
 
 function oauthPopupWindowOptions() {
@@ -545,7 +565,7 @@ function createSetupWindow() {
     restoreAppWindowAfterSetup();
   });
   void win.loadFile(path.join(import.meta.dirname, "setup.html"));
-  markOnce("cortexai-agent-hub:main:setup-window-created");
+  markOnce("rk:main:setup-window-created");
   return win;
 }
 
@@ -661,7 +681,7 @@ async function probeServer(rawUrl: string, signal?: AbortSignal): Promise<Deskto
         error: `The server answered with HTTP ${response.status}.`,
       };
     }
-    const health = await limitedJson(response);
+    const health = await readProbeJson(response);
     if (!isCortexAiAgentHubHealth(health)) {
       return {
         ok: false,
@@ -680,29 +700,27 @@ async function probeServer(rawUrl: string, signal?: AbortSignal): Promise<Deskto
   }
 }
 
-async function limitedJson(response: Response): Promise<unknown> {
-  if (response.body === null) return null;
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > PROBE_RESPONSE_LIMIT_BYTES) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+/** A public health response is not enough: another checkout may own the same fixed port. */
+async function probeManagedStack(
+  rawUrl: string,
+  token: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const url = normalizeServerUrl(rawUrl);
+  // Never put the private stack token on a cleartext LAN or .local hop.
+  if (url === null || !maySendDesktopStackToken(url)) return null;
+  const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS);
   try {
-    return JSON.parse(new TextDecoder().decode(body));
+    const response = await net.fetch(`${url}${DESKTOP_STACK_PROBE_PATH}`, {
+      method: "GET",
+      headers: { [DESKTOP_STACK_TOKEN_HEADER]: token },
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "manual",
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+    });
+    if (!response.ok) return null;
+    return desktopStackImageTag(await readProbeJson(response));
   } catch {
     return null;
   }
@@ -754,10 +772,13 @@ async function openAppOnce(targetUrl: string) {
     return true;
   } catch (error) {
     pendingPreviousWindow = null;
-    if (win !== null && !win.isDestroyed()) win.destroy();
     // Keep the previous app window so Cancel / close can restore it.
     if (previous !== null && !previous.isDestroyed()) mainWindow = previous;
+    // Show the setup window BEFORE destroying the failed one: on Windows/Linux,
+    // destroying the last window fires "window-all-closed" -> app.quit() before
+    // showSetupWindow() runs, so the app silently exits instead of showing this error.
     showSetupWindow(`Could not open that server. ${openFailureDetail(error)}`);
+    if (win !== null && !win.isDestroyed()) win.destroy();
     return false;
   }
 }
@@ -862,6 +883,7 @@ function safeOrigin(targetUrl: string) {
 }
 
 app.whenReady().then(async () => {
+  installSessionPermissions(session.defaultSession, permissionTarget);
   const userDataDir = app.getPath("userData");
   localStack = new LocalStackController({
     platform: process.platform,
@@ -874,12 +896,13 @@ app.whenReady().then(async () => {
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath(),
     }),
+    localWebUrl: LOCAL_WEB_URL,
     imageTag: resolveImageTag({
       version: app.getVersion(),
       packaged: app.isPackaged,
       override: process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG,
     }),
-    probe: async (signal) => (await probeServer(LOCAL_WEB_URL, signal)).ok,
+    probe: (url, signal, token) => probeManagedStack(url, token, signal),
     randomHex: (bytes) => randomBytes(bytes).toString("hex"),
   });
   currentSetup = await readSetup(userDataDir);
@@ -896,7 +919,7 @@ app.whenReady().then(async () => {
     await Promise.all(
       [...cacheSessions].flatMap((value) => [value.clearCache(), value.clearCodeCaches({})]),
     );
-    markOnce("cortexai-agent-hub:main:caches-cleared");
+    markOnce("rk:main:caches-cleared");
   }
 
   const icon = developmentIcon();
@@ -977,12 +1000,25 @@ app.whenReady().then(async () => {
         };
       }
 
-      const reachability = await probeServer(setup.serverUrl);
+      // Managed stacks authenticate LOCAL_WEB_URL only; never open a different loopback.
+      let openSetup = setup;
+      if (setup.mode === "new") {
+        const managedUrl = managedLocalOpenUrl(setup.serverUrl, LOCAL_WEB_URL);
+        if (managedUrl === null || !(await localStack.matchesDesiredStack())) {
+          return {
+            ok: false,
+            error: "The app-managed CortexAI Agent Hub services are not ready. Retry setup.",
+          };
+        }
+        openSetup = { mode: "new", serverUrl: managedUrl };
+      }
+
+      const reachability = await probeServer(openSetup.serverUrl);
       if (!reachability.ok) return { ok: false, error: reachability.error };
 
       // Open before persisting so a failed renderer load keeps the last working setup.
-      currentSetup = setup;
-      const opened = await openApp(setup.serverUrl);
+      currentSetup = openSetup;
+      const opened = await openApp(openSetup.serverUrl);
       if (!opened) {
         currentSetup = previousSetup;
         return {
@@ -997,7 +1033,7 @@ app.whenReady().then(async () => {
           ? watchRendererUntilCommitted(appWindow)
           : null;
       try {
-        await writeSetup(userDataDir, setup);
+        await writeSetup(userDataDir, openSetup);
         if (rendererWatch?.crashed()) {
           const message = await recoverFromCrashedSave(userDataDir, previousSetup, previousUrl);
           return { ok: false, error: message };
@@ -1073,19 +1109,31 @@ app.whenReady().then(async () => {
   if (target.kind === "setup") {
     showSetupWindow();
   } else if (target.source === "saved") {
-    const reachability = await probeServer(target.url);
-    if (reachability.ok) {
-      if (await openApp(target.url)) {
-        commitPendingAppSwitch();
-        destroySetupWindow();
+    if (currentSetup?.mode === "new") {
+      const managedUrl = managedLocalOpenUrl(target.url, LOCAL_WEB_URL);
+      const managedStackReady =
+        managedUrl !== null ? await localStack.matchesDesiredStack() : false;
+      if (managedStackReady && managedUrl !== null) {
+        if (await openApp(managedUrl)) {
+          commitPendingAppSwitch();
+          destroySetupWindow();
+        }
+      } else {
+        // Missing, stale, foreign, or owned by another process: reconcile the
+        // app-managed stack before any API or computer traffic is allowed.
+        void localStack.start();
+        showSetupWindow();
       }
-    } else if (currentSetup?.mode === "new") {
-      // The app-managed stack is down (reboot, Docker quit): bring it back up and let
-      // the setup window follow along instead of asking for a server address again.
-      void localStack.start();
-      showSetupWindow();
     } else {
-      showSetupWindow(`Could not reconnect to the saved server. ${reachability.error}`);
+      const reachability = await probeServer(target.url);
+      if (reachability.ok) {
+        if (await openApp(target.url)) {
+          commitPendingAppSwitch();
+          destroySetupWindow();
+        }
+      } else {
+        showSetupWindow(`Could not reconnect to the saved server. ${reachability.error}`);
+      }
     }
   } else {
     if (await openApp(target.url)) {
@@ -1096,6 +1144,9 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  // A hidden session probe (defaultSessionHasOriginData) can be the only window
+  // during startup; its teardown must not quit the app.
+  if (liveProbeWindows > 0) return;
   if (process.platform !== "darwin") app.quit();
 });
 

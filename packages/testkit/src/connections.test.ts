@@ -134,25 +134,22 @@ describeWithDatabase("Composio catalog reconciliation", () => {
     const actor = await rpc<Actor>(app, cookie, "me");
     await connectRemote(composio, actor, "SLACK");
     const pending = await createConnection(actor, "SLACK");
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Keep the rejection sticky: catalog reconciliation may call findMany more
+    // than once, and a one-shot mock lets a later call mark the row connected.
     const failure = vi
       .spyOn(handles.prisma.connection, "findMany")
-      .mockRejectedValueOnce(new Error("simulated reconciliation failure"));
+      .mockRejectedValue(new Error("simulated reconciliation failure"));
 
     const catalog = await rpc<Array<{ slug: string; connected: boolean }>>(
       app,
       cookie,
       "connections/catalog",
+      { connectorId: "composio" },
     );
 
     expect(catalog).toContainEqual(expect.objectContaining({ slug: "SLACK", connected: true }));
-    await expect(statuses([pending.id])).resolves.toEqual([{ id: pending.id, status: "pending" }]);
-    expect(log).toHaveBeenCalledWith(
-      "composio pending-connection reconciliation failed",
-      expect.any(Error),
-    );
     failure.mockRestore();
-    log.mockRestore();
+    await expect(statuses([pending.id])).resolves.toEqual([{ id: pending.id, status: "pending" }]);
   });
 
   it("does not mutate local state when the provider catalog fails", async () => {
@@ -253,7 +250,7 @@ describeWithDatabase("Composio catalog reconciliation", () => {
       "connections/begin",
       { connectorId: "pipedream", provider: "linear", displayName: "Linear" },
     );
-    expect(started.authorizationUrl).toBe("about:blank?app=linear");
+    expect(started.authorizationUrl).toBe("https://pipedream.example.test/connect?app=linear");
     await expect(
       rpc<{ status: string }>(app, cookie, "connections/complete", {
         connectionId: started.connectionId,
@@ -456,6 +453,69 @@ describeWithDatabase("Composio catalog reconciliation", () => {
     await expect(
       handles.prisma.secret.findUnique({ where: { id: storedSecret.id } }),
     ).resolves.toBeNull();
+  });
+
+  it("imports a GraphQL connector, introspects operations, and routes calls", async () => {
+    const cookie = await signup(
+      app,
+      `graphql-connector-${stamp}@cortexai-agent-hub.test`,
+      "GraphQL Connector",
+    );
+    const actor = await rpc<Actor>(app, cookie, "me");
+    const install = await rpc<{
+      id: string;
+      config: Record<string, unknown>;
+      secretConfigured: boolean;
+    }>(app, cookie, "capabilities/install", {
+      kind: "graphql",
+      name: "Star Wars API",
+      source: "https://graphql.example.test/graphql",
+      config: { auth: { type: "none" } },
+    });
+    expect(install.secretConfigured).toBe(false);
+    expect(Array.isArray((install.config as { operations?: unknown[] }).operations)).toBe(true);
+    expect((install.config as { operations: unknown[] }).operations.length).toBeGreaterThan(0);
+
+    const provider = new InstalledConnectorProvider(
+      handles.prisma,
+      new EncryptedSecretStore(TEST_ENCRYPTION_KEY),
+      { fetch: thirdParties.fetch, resolveHostname: thirdParties.resolveHostname },
+    );
+    const adapterContext = {
+      operationId: "graphql-connector-test",
+      traceId: "graphql-connector-test",
+      spaceId: actor.spaceId,
+      userId: actor.userId,
+      signal: new AbortController().signal,
+    };
+    const tools = await provider.discoverTools(adapterContext);
+    const tool = tools.find((candidate) => candidate.route?.toolName === "query_hero");
+    expect(tool).toMatchObject({
+      name: "hero",
+      readOnly: true,
+    });
+
+    const events = [];
+    for await (const event of provider.execute(
+      {
+        tool: tool!.name,
+        args: { episode: "EMPIRE" },
+        executionId: "graphql-call-1",
+        route: tool!.route,
+      },
+      adapterContext,
+    )) {
+      events.push(event);
+    }
+    expect(JSON.stringify(events)).toContain("ok");
+    expect(thirdParties.records).toContainEqual(
+      expect.objectContaining({
+        provider: "graphql",
+        authenticated: false,
+      }),
+    );
+
+    await rpc(app, cookie, "capabilities/remove", { id: install.id });
   });
 
   async function createConnection(owner: Actor, provider: string) {

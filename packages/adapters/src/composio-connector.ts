@@ -1,4 +1,3 @@
-import console from "node:console";
 import { Composio } from "@composio/core";
 import type {
   AdapterContext,
@@ -9,17 +8,19 @@ import type {
   ConnectorTool,
   ManagedConnectorProvider,
 } from "@cortexai-agent-hub/adapter-kit";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import {
   composioToolkitDirectory,
   mergeCatalogWithConnected,
   type ToolkitDirectoryEntry,
 } from "./composio-catalog-cache.js";
 import { DestinationEmulator } from "./destination-emulator.js";
+import { isVitestRuntime } from "./test-runtime.js";
 
 type ComposioSession = Awaited<ReturnType<Composio["create"]>>;
 
 export function isComposioEnabled(apiKey: string | undefined): boolean {
-  return Boolean(apiKey) && !process.env.VITEST;
+  return Boolean(apiKey) && !isVitestRuntime();
 }
 
 export function asConnectorTools(input: unknown): ConnectorTool[] {
@@ -266,7 +267,7 @@ export class ComposioConnector implements ComposioProvider {
   }
 
   private async loadDirectory(): Promise<ToolkitDirectoryEntry[]> {
-    const session = await this.sessionFor("__cortexAiAgentHub_catalog__");
+    const session = await this.sessionFor("__cortexai-agent-hub_catalog__");
     const toolkits = await collectPages((cursor) => session.toolkits({ limit: 50, cursor }));
     return toolkits.map((toolkit) => ({
       slug: toolkit.slug,
@@ -418,7 +419,9 @@ export class ConnectorRegistry implements ConnectorProvider {
         try {
           return [connectorId, await provider.discoverTools(context)] as const;
         } catch (error) {
-          console.error("connector discovery failed", connectorId, sanitizeComposioError(error));
+          getLogger().error("connector discovery failed", sanitizeComposioError(error), {
+            "connector.id": connectorId,
+          });
           return [connectorId, []] as const;
         }
       }),

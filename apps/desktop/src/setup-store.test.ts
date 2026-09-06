@@ -58,6 +58,21 @@ describe("setup store", () => {
   });
 
   it.runIf(process.platform !== "win32")(
+    "does not load setup through a final symlink",
+    async () => {
+      const target = path.join(userData, "linked-setup.json");
+      await writeFile(
+        target,
+        JSON.stringify({ mode: "existing", serverUrl: "https://cortexai-agent-hub.example.com" }),
+        "utf8",
+      );
+      await symlink(target, setupFilePath(userData));
+
+      await expect(readSetup(userData)).resolves.toBeNull();
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "replaces a final symlink instead of overwriting its target",
     async () => {
       const victim = path.join(userData, "victim.txt");
@@ -79,6 +94,11 @@ describe("setup store", () => {
 
   it("falls back to setup when the saved file is corrupt", async () => {
     await writeFile(setupFilePath(userData), "{ not json", "utf8");
+    await expect(readSetup(userData)).resolves.toBeNull();
+  });
+
+  it("does not buffer an oversized saved setup", async () => {
+    await writeFile(setupFilePath(userData), " ".repeat(64 * 1024 + 1), "utf8");
     await expect(readSetup(userData)).resolves.toBeNull();
   });
 });

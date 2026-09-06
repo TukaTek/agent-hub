@@ -15,9 +15,14 @@ import {
   mergeThreadHistory,
   prependThreadHistoryPage,
   progressMessageId,
+  readBoundedJsonResponse,
   reduceLiveMessageBlocks,
   runFailureError,
+  signupRequiresEmailVerification,
   type ThreadHistory,
+  takeLiveMessage,
+  updateCloudAgentMessages,
+  updateMessageReaction,
   upsertMessageById,
 } from "@cortexai-agent-hub/core";
 import * as SecureStore from "expo-secure-store";
@@ -37,6 +42,8 @@ const ENDPOINT_KEY = "cortexai-agent-hub.api_base";
 const SPACE_KEY = "cortexai-agent-hub.space_id";
 const SPACE_ROLLBACK_KEY = "cortexai-agent-hub.space_rollback";
 const RPC_TIMEOUT_MS = 8_000;
+export const MAX_MOBILE_AUTH_RESPONSE_BYTES = 256 * 1024;
+export const MAX_MOBILE_RPC_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 let cachedApiBase: string | undefined;
 let cachedSpaceId = "";
@@ -296,16 +303,21 @@ async function authenticateWithEmail(
   action: "sign-in" | "sign-up",
   input: { email: string; password: string; name?: string },
 ) {
-  const res = await fetch(`${currentApiBase()}/api/auth/${action}/email`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
-    body: JSON.stringify(input),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  const { response, body } = await fetchMobileJson<unknown>(
+    `${currentApiBase()}/api/auth/${action}/email`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
+      body: JSON.stringify(input),
+    },
+    {},
+  );
+  if (!response.ok) {
     throw new Error(responseErrorMessage(body, `Could not ${action.replace("-", " ")}`));
   }
-  const token = tokenFromAuthResponse(res, body);
+  const token = tokenFromAuthResponse(response, body);
+  if (action === "sign-up" && signupRequiresEmailVerification(body))
+    return { verificationRequired: true };
   if (!token)
     throw new Error(
       t(
@@ -316,6 +328,7 @@ async function authenticateWithEmail(
     );
   if (!(await clearSpace())) throw new Error(t("Could not clear the previous space"));
   await saveSessionToken(token);
+  return { verificationRequired: false };
 }
 
 export function signIn(email: string, password: string) {
@@ -329,62 +342,135 @@ export function signUp(email: string, password: string, name: string) {
 export type PasswordResetCapabilities = { passwordReset: boolean; resetUrl: string | null };
 
 export async function passwordResetCapabilities(): Promise<PasswordResetCapabilities> {
-  const response = await fetch(`${currentApiBase()}/api/auth/capabilities`, {
-    headers: { origin: "cortexai-agent-hub://" },
-  });
+  const { response, body } = await fetchMobileJson<PasswordResetCapabilities>(
+    `${currentApiBase()}/api/auth/capabilities`,
+    { headers: { origin: "cortexai-agent-hub://" } },
+    { passwordReset: false, resetUrl: null },
+  );
   if (!response.ok) throw new Error("Could not load password recovery settings");
-  return (await response.json()) as PasswordResetCapabilities;
+  return body;
 }
 
 export async function requestPasswordReset(email: string, redirectTo: string): Promise<void> {
-  const response = await fetch(`${currentApiBase()}/api/auth/request-password-reset`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
-    body: JSON.stringify({ email, redirectTo }),
-  });
-  const body = await response.json().catch(() => ({}));
+  const { response, body } = await fetchMobileJson<unknown>(
+    `${currentApiBase()}/api/auth/request-password-reset`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
+      body: JSON.stringify({ email, redirectTo }),
+    },
+    {},
+  );
   if (!response.ok) throw new Error(responseErrorMessage(body, t("Could not send reset email")));
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  const response = await fetch(`${currentApiBase()}/api/auth/change-password`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: "cortexai-agent-hub://",
-      ...(await authHeaders()),
+  const { response, body } = await fetchMobileJson<unknown>(
+    `${currentApiBase()}/api/auth/change-password`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "cortexai-agent-hub://",
+        ...(await authHeaders()),
+      },
+      body: JSON.stringify({ currentPassword, newPassword, revokeOtherSessions: true }),
     },
-    body: JSON.stringify({ currentPassword, newPassword, revokeOtherSessions: true }),
-  });
-  const body = await response.json().catch(() => ({}));
+    {},
+  );
   if (!response.ok) throw new Error(responseErrorMessage(body, t("Could not change password")));
+}
+
+async function fetchMobileJson<T>(
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit,
+  invalidJsonFallback?: T,
+): Promise<{ response: Response; body: T }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("Request timed out")), RPC_TIMEOUT_MS);
+  try {
+    const response = await withAbort(
+      fetch(input, { ...init, signal: controller.signal }),
+      controller.signal,
+    );
+    try {
+      const body = await readBoundedJsonResponse<T>(
+        response,
+        MAX_MOBILE_AUTH_RESPONSE_BYTES,
+        controller.signal,
+      );
+      return { response, body };
+    } catch (error) {
+      if (invalidJsonFallback !== undefined && error instanceof SyntaxError) {
+        return { response, body: invalidJsonFallback };
+      }
+      throw error;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function signOut() {
   await rpc("notifications/unregisterPush").catch(() => undefined);
   const headers = await authHeaders();
-  await fetch(`${currentApiBase()}/api/auth/sign-out`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://", ...headers },
-  }).catch(() => undefined);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
+  try {
+    await withAbort(
+      fetch(`${currentApiBase()}/api/auth/sign-out`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "cortexai-agent-hub://",
+          ...headers,
+        },
+        signal: controller.signal,
+      }),
+      controller.signal,
+    ).catch(() => undefined);
+  } finally {
+    clearTimeout(timer);
+  }
   const sessionCleared = await clearSessionToken();
   const spaceCleared = await clearSpace();
   if (!sessionCleared || !spaceCleared) throw new Error(t("Could not clear the local session"));
 }
 
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error("Request timed out"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("Request timed out"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function deleteAccount(password: string) {
   await rpc("notifications/unregisterPush").catch(() => undefined);
-  const res = await fetch(`${currentApiBase()}/api/auth/delete-user`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: "cortexai-agent-hub://",
-      ...(await authHeaders()),
+  const { response, body } = await fetchMobileJson<unknown>(
+    `${currentApiBase()}/api/auth/delete-user`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "cortexai-agent-hub://",
+        ...(await authHeaders()),
+      },
+      body: JSON.stringify({ password }),
     },
-    body: JSON.stringify({ password }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
+    {},
+  );
+  if (!response.ok) {
     throw new Error(responseErrorMessage(body, t("Could not delete account")));
   }
   await clearSessionToken();
@@ -417,7 +503,11 @@ export async function rpc<T>(
       body: JSON.stringify({ json: body }),
       signal: controller.signal,
     });
-    const parsed = (await res.json()) as { json?: T; error?: { message?: string } };
+    const parsed = await readBoundedJsonResponse<{ json?: T; error?: { message?: string } }>(
+      res,
+      MAX_MOBILE_RPC_RESPONSE_BYTES,
+      controller.signal,
+    );
     if (!res.ok || parsed.error) throw new Error(parsed.error?.message ?? `rpc ${proc} failed`);
     return parsed.json as T;
   } finally {
@@ -465,6 +555,7 @@ export type MobileMessage = {
   botId?: string;
   replyToMessageId?: string;
   thumbsUp?: boolean;
+  createdAt?: string;
   blocks: MessageBlock[];
 };
 
@@ -542,23 +633,44 @@ const MESSAGING_PROVIDER_LABELS: Record<string, string> = {
   slack: "Slack",
   whatsapp: "WhatsApp",
   telegram: "Telegram",
+  lark: "Feishu",
 };
 
-export function messagingProviderLabel(provider: string): string {
+export function messagingProviderLabel(provider: string, transport?: string): string {
+  if (provider === "sendblue" && ["iMessage", "SMS", "RCS"].includes(transport ?? "")) {
+    return transport!;
+  }
   return MESSAGING_PROVIDER_LABELS[provider] ?? provider;
+}
+
+export function copyableMobileMessageText(message: MobileMessage): string {
+  return message.blocks
+    .map((block) => {
+      if (block.kind === "channel_message") {
+        return `${messagingProviderLabel(block.provider, block.transport)} · ${block.fromLabel}: ${block.text}`;
+      }
+      if (block.kind === "text" || block.kind === "progress" || block.kind === "ask")
+        return block.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 export function blockText(message: MobileMessage) {
   return message.blocks
     .map((block) => {
       if (block.kind === "channel_message") {
-        return `${messagingProviderLabel(block.provider)} · ${block.fromLabel}: ${block.text}`;
+        return `${messagingProviderLabel(block.provider, block.transport)} · ${block.fromLabel}: ${block.text}`;
       }
+      if (block.kind === "cloud_agent")
+        return `${block.title}: ${block.status}${block.prUrl ? ` ${block.prUrl}` : ""}`;
       if (block.kind === "subagent") {
         return `${block.name ?? "subagent"}: ${block.result || block.progress || block.task || ""}`;
       }
       if (block.kind === "child_bot") {
-        return `${block.status === "archived" ? "Archived" : block.status === "deleted" ? "Deleted" : "Assistant"} ${block.name ?? ""}`;
+        return `${block.status === "archived" ? "Archived" : block.status === "deleted" ? "Deleted" : "Bot"} ${block.name ?? ""}`;
       }
       if (block.kind === "chart") return `[chart: ${block.name ?? "chart"}]`;
       if (block.kind === "image") return `[image: ${block.name ?? "attachment"}]`;
@@ -584,22 +696,6 @@ type ThreadEvent = {
   runId?: string;
   payload?: Record<string, unknown>;
 };
-
-function takeMobileLiveMessage(
-  snapshot: MobileSnapshot,
-  liveId: string,
-): { previous: MobileMessage | undefined; remaining: MobileMessage[] } {
-  let previous: MobileMessage | undefined;
-  const remaining: MobileMessage[] = [];
-  for (const message of snapshot.messages) {
-    if (message.id === liveId) {
-      previous = message;
-    } else if (!message.id.startsWith("progress:") || message.runId) {
-      remaining.push(message);
-    }
-  }
-  return { previous, remaining };
-}
 
 export async function subscribeThread(
   target: { botId: string } | { groupId: string },
@@ -705,7 +801,7 @@ export function applyMobileThreadEvent(
   }
   if (event.type === "thread.progress") {
     const progressId = progressMessageId(event);
-    const { previous, remaining } = takeMobileLiveMessage(prev, progressId);
+    const { previous, remaining } = takeLiveMessage(prev.messages, progressId);
     const streaming: MobileMessage = {
       id: progressId,
       role: "bot",
@@ -724,7 +820,7 @@ export function applyMobileThreadEvent(
   }
   if (event.type === "agent.tool.called") {
     const progressId = progressMessageId(event);
-    const { previous, remaining } = takeMobileLiveMessage(prev, progressId);
+    const { previous, remaining } = takeLiveMessage(prev.messages, progressId);
     const streaming: MobileMessage = {
       id: progressId,
       role: "bot",
@@ -767,20 +863,22 @@ export function applyMobileThreadEvent(
       messages: [...prev.messages.filter((message) => message.id !== streaming.id), streaming],
     };
   }
-  if (event.type === "thread.message.reaction") {
-    const messageId = String(event.payload?.messageId ?? "");
+  if (event.type === "thread.cloud_agent") {
     return {
       ...prev,
       cursor: event.seq ?? prev.cursor,
-      messages: prev.messages.map((message) =>
-        message.id === messageId
-          ? { ...message, thumbsUp: event.payload?.thumbsUp === true }
-          : message,
-      ),
+      messages: updateCloudAgentMessages(prev.messages, event.payload ?? {}),
+    };
+  }
+  if (event.type === "thread.message.reaction") {
+    return {
+      ...prev,
+      cursor: event.seq ?? prev.cursor,
+      messages: updateMessageReaction(prev.messages, event.payload ?? {}),
     };
   }
   if (event.type === "thread.message.created" || event.type === "thread.message.updated") {
-    const { remaining } = takeMobileLiveMessage(prev, progressMessageId(event));
+    const { remaining } = takeLiveMessage(prev.messages, progressMessageId(event));
     const next: MobileMessage = {
       id: String(event.payload?.messageId ?? event.id ?? `msg:${event.seq ?? 0}`),
       runId: event.runId ? String(event.runId) : undefined,

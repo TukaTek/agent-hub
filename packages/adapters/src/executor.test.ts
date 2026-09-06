@@ -4,6 +4,7 @@ import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   createRunExecutor,
+  createRunWorkspaceCheckpoint,
   loadCurrentTurnImages,
   missingTurnImagesInstruction,
   runNotificationsEnabled,
@@ -12,14 +13,96 @@ import {
   threadContextForRun,
 } from "./executor.js";
 
+describe("run workspace checkpoint", () => {
+  it("skips clean turns and flushes once after a mutation", async () => {
+    const persist = vi.fn(async () => undefined);
+    const checkpoint = createRunWorkspaceCheckpoint(persist);
+
+    await expect(checkpoint.flush()).resolves.toBe(false);
+    checkpoint.markDirty();
+    await expect(checkpoint.flush()).resolves.toBe(true);
+    await expect(checkpoint.flush()).resolves.toBe(false);
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
+  it("marks materialized steering files for checkpointing", async () => {
+    const persist = vi.fn(async () => undefined);
+    const checkpoint = createRunWorkspaceCheckpoint(persist);
+
+    checkpoint.markFiles([]);
+    await expect(checkpoint.flush()).resolves.toBe(false);
+    checkpoint.markFiles([{ path: "attachments/result.txt" }]);
+    await expect(checkpoint.flush()).resolves.toBe(true);
+  });
+
+  it("keeps a failed checkpoint dirty for retry", async () => {
+    const persist = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("checkpoint failed"))
+      .mockResolvedValueOnce(undefined);
+    const checkpoint = createRunWorkspaceCheckpoint(persist);
+    checkpoint.markDirty();
+
+    await expect(checkpoint.flush()).rejects.toThrow("checkpoint failed");
+    await expect(checkpoint.flush()).resolves.toBe(true);
+    expect(persist).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("run tool selection", () => {
-  const toolNames = (trigger: string, groupId: string | null = null) =>
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])("gates page browsers (%s) independently of cloud agents (%s)", (page, cloud) => {
+    const names = selectBuiltinToolsForRun({
+      graphicalToolsAllowed: false,
+      pageBrowserAllowed: page,
+      cloudAgentEnabled: cloud,
+      groupId: null,
+      trigger: "message",
+      semanticMemoryEnabled: false,
+      messagingChannelRun: false,
+    }).map((tool) => tool.name);
+    expect(names.includes("browser_snapshot")).toBe(page);
+    expect(names.includes("cloud_agent_status")).toBe(cloud);
+    expect(names).not.toContain("computer_act");
+  });
+
+  const toolNames = (
+    trigger: string,
+    groupId: string | null = null,
+    options?: { graphicalToolsAllowed?: boolean; pageBrowserAllowed?: boolean },
+  ) =>
     selectBuiltinToolsForRun({
-      graphicalToolsAllowed: true,
+      graphicalToolsAllowed: options?.graphicalToolsAllowed ?? true,
+      pageBrowserAllowed: options?.pageBrowserAllowed ?? true,
       groupId,
       trigger,
       semanticMemoryEnabled: false,
+      messagingChannelRun: false,
     }).map((tool) => tool.name);
+
+  it("keeps page browser tools without vision, and hides them without a graphical computer", () => {
+    const withPage = toolNames("message", null, {
+      graphicalToolsAllowed: false,
+      pageBrowserAllowed: true,
+    });
+    expect(withPage).toEqual(
+      expect.arrayContaining(["browser_navigate", "browser_snapshot", "browser_act"]),
+    );
+    expect(withPage).not.toEqual(expect.arrayContaining(["computer_observe", "computer_act"]));
+
+    const withoutPage = toolNames("message", null, {
+      graphicalToolsAllowed: true,
+      pageBrowserAllowed: false,
+    });
+    expect(withoutPage).not.toEqual(
+      expect.arrayContaining(["browser_navigate", "browser_snapshot", "browser_act"]),
+    );
+    expect(withoutPage).toEqual(expect.arrayContaining(["computer_observe", "computer_act"]));
+  });
 
   it("withholds schedule creation only from routine-triggered runs", () => {
     expect(toolNames("routine")).not.toContain("schedule_create");
@@ -292,6 +375,38 @@ describe("run notification preference", () => {
 });
 
 describe("createRunExecutor", () => {
+  it("excludes private summaries and memory tools from group messaging runs", () => {
+    const messages = [{ role: "user", content: "Group request" }];
+    expect(
+      threadContextForRun(
+        "messaging",
+        {
+          messages,
+          summary: "Private test detail",
+          historyCompactedUpToSeq: 12,
+        },
+        true,
+      ),
+    ).toEqual({
+      messages,
+      summary: null,
+      historyCompactedUpToSeq: null,
+      includeSemanticRecall: false,
+    });
+    const tools = selectBuiltinToolsForRun({
+      graphicalToolsAllowed: false,
+      groupId: null,
+      trigger: "messaging",
+      semanticMemoryEnabled: true,
+      messagingChannelRun: true,
+    }).map((tool) => tool.name);
+    expect(tools).not.toContain("recall_memory");
+    expect(tools).not.toContain("remember");
+    expect(tools).not.toContain("save_memory");
+    expect(tools.some((tool) => tool.startsWith("scratchpad_"))).toBe(false);
+    expect(tools).toContain("web_fetch");
+  });
+
   it("isolates routine runs from every thread-history source", () => {
     const threadContext = {
       messages: [{ role: "user", content: "Create this routine" }],
@@ -299,13 +414,13 @@ describe("createRunExecutor", () => {
       historyCompactedUpToSeq: 4,
     };
 
-    expect(threadContextForRun("routine", threadContext)).toEqual({
+    expect(threadContextForRun("routine", threadContext, false)).toEqual({
       messages: [],
       summary: null,
       historyCompactedUpToSeq: null,
       includeSemanticRecall: false,
     });
-    expect(threadContextForRun("user", threadContext)).toEqual({
+    expect(threadContextForRun("user", threadContext, false)).toEqual({
       ...threadContext,
       includeSemanticRecall: true,
     });

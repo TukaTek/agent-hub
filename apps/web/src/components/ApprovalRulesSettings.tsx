@@ -113,8 +113,8 @@ export function ApprovalRulesSettings() {
       </h3>
       <p className="mt-2 text-[13.5px] leading-[1.5] text-muted-foreground">
         <Trans>
-          Assistants act without asking by default. Add an exception only when you want to review a
-          type of action first. These preferences apply across all your Assistants.
+          Bots act without asking by default. Add an exception only when you want to review a type
+          of action first.
         </Trans>
       </p>
       <div className="mt-4 flex flex-col items-start gap-2">

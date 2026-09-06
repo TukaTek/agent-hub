@@ -13,6 +13,7 @@ import {
   type PrismaClient,
   touchGroupUpdatedAt,
 } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import type { ExecutorDeps } from "./executor.js";
 
 export async function handoffToGroupBot(
@@ -176,11 +177,11 @@ export async function handoffToGroupBot(
   });
   if ("error" in committed) return committed;
   await deps.events.notify(run.threadId, committed.eventSeq).catch((error) => {
-    console.error("group handoff realtime notification", error);
+    getLogger().error("group handoff realtime notification", error);
   });
   await deps.jobs.enqueue(runContinueJob(committed.runId)).catch((error) => {
     // The queued run is durable and the job reconciler will repair a missed immediate wake.
-    console.error("group handoff enqueue", error);
+    getLogger().error("group handoff enqueue", error);
   });
   return {
     ok: true,

@@ -153,7 +153,7 @@ const DE_ROSTER: RosterBot[] = [
     name: "Chief of Staff",
     color: "#8B93A8",
     slug: "cortexai-agent-hub/chief-of-staff",
-    desc: "Führt die Woche: Briefings, Buchungen und Übergaben zwischen deinen anderen Assistenten.",
+    desc: "Führt die Woche: Briefings, Buchungen und Übergaben zwischen deinen anderen Bots.",
   },
 ];
 
@@ -204,7 +204,7 @@ const KO_ROSTER: RosterBot[] = [
     name: "Chief of Staff",
     color: "#8B93A8",
     slug: "cortexai-agent-hub/chief-of-staff",
-    desc: "한 주를 운영합니다: 브리핑, 예약, 다른 어시스턴트 사이의 핸드오프.",
+    desc: "한 주를 운영합니다: 브리핑, 예약, 다른 봇 사이의 핸드오프.",
   },
 ];
 
@@ -255,7 +255,7 @@ const ZH_ROSTER: RosterBot[] = [
     name: "Chief of Staff",
     color: "#8B93A8",
     slug: "cortexai-agent-hub/chief-of-staff",
-    desc: "统筹整周：准备简报、安排日程，并协调其他助手之间的交接。",
+    desc: "统筹整周：准备简报、安排日程，并协调其他 Bot 之间的交接。",
   },
 ];
 
@@ -264,7 +264,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     title: "CortexAI Agent Hub | Personal, always-on AI assistants",
     description: SITE_DESCRIPTION,
     ogImageAlt:
-      "CortexAI Agent Hub — personal, always-on AI assistants. Your keys, your model, your machine.",
+      "CortexAI Agent Hub. AI teammates you actually own. Your keys, your model, your machine.",
     availableLanguage: "English",
     skipToContent: "Skip to content",
     starFallback: "Star",
@@ -273,7 +273,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       primary: "Primary",
       menu: "Menu",
       product: "Product",
-      bots: "Assistants",
+      bots: "Bots",
       selfHost: "Self-host",
       openSource: "Open source",
       docs: "Docs",
@@ -282,7 +282,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     hero: {
       badge: "Apache-2.0",
       pill: "Self-hosted",
-      heading: "Personal AI assistants that keep working",
+      heading: "AI teammates you actually own",
       lead: "Give an assistant real work. It signs in to your tools, uses them the way you do, and comes back when it needs you.",
       getStarted: "Get started",
       viewOnGithub: "View on GitHub",
@@ -297,22 +297,22 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       features: [
         {
           title: "Any model, your key",
-          body: "Point an assistant at Claude, GPT, Grok, or a local model. Swap per assistant: the efficient one triages, the capable one writes.",
+          body: "Point a bot at Claude, GPT, Grok, or a local model. Swap per bot: the cheap one triages, the smart one writes.",
         },
         {
           title: "Readable routines",
-          body: "Show an assistant a workflow once and it saves a routine as plain Markdown you can read, edit, and commit.",
+          body: "Show a bot a workflow once and it saves a routine as plain Markdown you can read, edit, and commit.",
         },
         {
           title: "Approvals that hold",
-          body: "Set what an assistant may do alone and what it must ask about. Every action lands in an audit log you own.",
+          body: "Set what a bot may do alone and what it must ask about. Every action lands in an audit log you own.",
         },
       ],
     },
     roster: {
-      eyebrow: "Assistant templates",
-      heading: "Give each assistant a job",
-      copy: "Start a new assistant and it interviews you — a few questions about the work, how you write, and where it lives. Then it gets going.",
+      eyebrow: "Bot Templates",
+      heading: "Give each bot a job",
+      copy: "Start a new bot and it interviews you. A few questions about the work, how you write, and where it lives. Then it gets going.",
       bots: EN_ROSTER,
     },
     openSource: {
@@ -325,7 +325,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
         "Docker runner and sandboxed browser",
         "Bring your own model keys",
         "Routines, memory, and audit log",
-        "Unlimited assistants, no seats, no limits",
+        "Unlimited bots, no seats, no limits",
         "Community support on GitHub",
       ],
       starOnGithub: "Star on GitHub",
@@ -336,12 +336,12 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       cloudItems: [
         "Managed sandboxes, always on",
         "Your keys, your model spend",
-        "Same assistants, same routines, no migration",
+        "Same bots, same routines, no migration",
       ],
       getStarted: "Get started",
     },
     cta: {
-      heading: "Meet your first assistant",
+      heading: "Meet your first bot",
       copy: "Give CortexAI Agent Hub something you have been putting off and let it handle the follow-through.",
       getStarted: "Get started",
       viewOnGithub: "View on GitHub",
@@ -396,7 +396,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     description:
       "CortexAI Agent Hub bietet persönliche, dauerhaft aktive KI-Assistenten, die echte Arbeit erledigen. Deine Keys, dein Modell, deine Maschine.",
     ogImageAlt:
-      "CortexAI Agent Hub — KI-Teamkollegen, die dir wirklich gehören. Deine Keys, dein Modell, deine Maschine.",
+      "CortexAI Agent Hub. KI-Teamkollegen, die dir wirklich gehören. Deine Keys, dein Modell, deine Maschine.",
     availableLanguage: "German",
     skipToContent: "Zum Inhalt springen",
     starFallback: "Star",
@@ -405,7 +405,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       primary: "Hauptnavigation",
       menu: "Menü",
       product: "Produkt",
-      bots: "Assistenten",
+      bots: "Bots",
       selfHost: "Self-host",
       openSource: "Open Source",
       docs: "Docs",
@@ -429,22 +429,22 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       features: [
         {
           title: "Beliebiges Modell, dein Key",
-          body: "Richte einen Assistenten auf Claude, GPT, Grok oder ein lokales Modell aus. Pro Assistent wechselbar: der günstige triagiert, der smarte schreibt.",
+          body: "Richte einen Bot auf Claude, GPT, Grok oder ein lokales Modell aus. Pro Bot wechselbar: der günstige triagiert, der smarte schreibt.",
         },
         {
           title: "Lesbare Routinen",
-          body: "Zeig einem Assistenten einmal einen Workflow. Er speichert eine Routine als Markdown, das du lesen, editieren und committen kannst.",
+          body: "Zeig einem Bot einmal einen Workflow. Er speichert eine Routine als Markdown, das du lesen, editieren und committen kannst.",
         },
         {
           title: "Freigaben, die greifen",
-          body: "Lege fest, was ein Assistent allein darf und worum er fragen muss. Jede Aktion landet in einem Audit-Log, das dir gehört.",
+          body: "Lege fest, was ein Bot allein darf und worum er fragen muss. Jede Aktion landet in einem Audit-Log, das dir gehört.",
         },
       ],
     },
     roster: {
-      eyebrow: "Assistenten-Vorlagen",
-      heading: "Gib jedem Assistenten eine Aufgabe",
-      copy: "Starte einen neuen Assistenten und er interviewt dich — ein paar Fragen zur Arbeit, zu deinem Schreibstil und wo sie lebt. Dann legt er los.",
+      eyebrow: "Bot-Vorlagen",
+      heading: "Gib jedem Bot eine Aufgabe",
+      copy: "Starte einen neuen Bot und er interviewt dich. Ein paar Fragen zur Arbeit, zu deinem Schreibstil und wo sie lebt. Dann legt er los.",
       bots: DE_ROSTER,
     },
     openSource: {
@@ -457,7 +457,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
         "Docker-Runner und sandboxierter Browser",
         "Eigene Model-Keys mitbringen",
         "Routinen, Memory und Audit-Log",
-        "Unbegrenzte Assistenten, keine Seats, keine Limits",
+        "Unbegrenzte Bots, keine Seats, keine Limits",
         "Community-Support auf GitHub",
       ],
       starOnGithub: "Auf GitHub mit Stern markieren",
@@ -468,12 +468,12 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       cloudItems: [
         "Managed Sandboxes, immer an",
         "Deine Keys, dein Model-Spend",
-        "Dieselben Assistenten, dieselben Routinen, keine Migration",
+        "Dieselben Bots, dieselben Routinen, keine Migration",
       ],
       getStarted: "Loslegen",
     },
     cta: {
-      heading: "Triff deinen ersten Assistenten",
+      heading: "Triff deinen ersten Bot",
       copy: "Gib CortexAI Agent Hub etwas, das du aufgeschoben hast — und lass es den Follow-through übernehmen.",
       getStarted: "Loslegen",
       viewOnGithub: "Auf GitHub ansehen",
@@ -527,7 +527,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     title: "CortexAI Agent Hub | 개인 AI 어시스턴트",
     description:
       "CortexAI Agent Hub는 실제 업무를 수행하는 개인용 상시 AI 어시스턴트를 제공합니다. 키, 모델, 머신 — 모두 당신 것.",
-    ogImageAlt: "CortexAI Agent Hub — 진짜로 내 것인 AI 팀원. 키, 모델, 머신 — 모두 당신 것.",
+    ogImageAlt: "CortexAI Agent Hub. 진짜로 내 것인 AI 팀원. 키, 모델, 머신, 모두 당신 것.",
     availableLanguage: "Korean",
     skipToContent: "본문으로 건너뛰기",
     starFallback: "Star",
@@ -536,7 +536,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       primary: "주 메뉴",
       menu: "메뉴",
       product: "제품",
-      bots: "어시스턴트",
+      bots: "봇",
       selfHost: "셀프 호스트",
       openSource: "오픈소스",
       docs: "Docs",
@@ -560,22 +560,22 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       features: [
         {
           title: "어떤 모델이든, 키는 당신 것",
-          body: "어시스턴트를 Claude, GPT, Grok 또는 로컬 모델에 연결하세요. 어시스턴트마다 바꿀 수 있습니다. 저렴한 모델은 분류하고, 똑똑한 모델은 작성합니다.",
+          body: "봇을 Claude, GPT, Grok 또는 로컬 모델에 연결하세요. 봇마다 바꿀 수 있습니다. 저렴한 모델은 분류하고, 똑똑한 모델은 작성합니다.",
         },
         {
           title: "읽을 수 있는 루틴",
-          body: "워크플로를 한 번 보여주면 어시스턴트가 읽고 수정하고 커밋할 수 있는 Markdown 루틴으로 저장합니다.",
+          body: "워크플로를 한 번 보여주면 봇이 읽고 수정하고 커밋할 수 있는 Markdown 루틴으로 저장합니다.",
         },
         {
           title: "지키는 승인",
-          body: "어시스턴트가 혼자 해도 되는 일과 물어야 하는 일을 정하세요. 모든 액션은 당신이 소유한 감사 로그에 남습니다.",
+          body: "봇이 혼자 해도 되는 일과 물어야 하는 일을 정하세요. 모든 액션은 당신이 소유한 감사 로그에 남습니다.",
         },
       ],
     },
     roster: {
-      eyebrow: "어시스턴트 템플릿",
-      heading: "어시스턴트마다 역할을 주세요",
-      copy: "새 어시스턴트를 시작하면 인터뷰합니다 — 업무, 글쓰기 방식, 작업이 어디에 있는지 몇 가지 질문. 그다음 바로 시작합니다.",
+      eyebrow: "봇 템플릿",
+      heading: "봇마다 역할을 주세요",
+      copy: "새 봇을 시작하면 인터뷰합니다. 업무, 글쓰기 방식, 작업이 어디에 있는지 몇 가지 질문. 그다음 바로 시작합니다.",
       bots: KO_ROSTER,
     },
     openSource: {
@@ -588,7 +588,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
         "Docker 러너와 샌드박스 브라우저",
         "모델 키는 직접 가져오기",
         "루틴, 메모리, 감사 로그",
-        "어시스턴트 무제한, 시트·한도 없음",
+        "봇 무제한, 시트·한도 없음",
         "GitHub 커뮤니티 지원",
       ],
       starOnGithub: "GitHub에서 Star",
@@ -599,12 +599,12 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       cloudItems: [
         "상시 가동 관리형 샌드박스",
         "키와 모델 비용은 당신 것",
-        "같은 어시스턴트, 같은 루틴, 마이그레이션 없음",
+        "같은 봇, 같은 루틴, 마이그레이션 없음",
       ],
       getStarted: "시작하기",
     },
     cta: {
-      heading: "첫 어시스턴트를 만나보세요",
+      heading: "첫 봇을 만나보세요",
       copy: "미뤄 두었던 일을 CortexAI Agent Hub에 맡기고, 후속까지 맡기세요.",
       getStarted: "시작하기",
       viewOnGithub: "GitHub에서 보기",
@@ -667,7 +667,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       primary: "主导航",
       menu: "菜单",
       product: "产品",
-      bots: "助手",
+      bots: "Bot",
       selfHost: "自托管",
       openSource: "开源",
       docs: "文档",
@@ -691,22 +691,22 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       features: [
         {
           title: "任意模型，密钥归你",
-          body: "让助手使用 Claude、GPT、Grok 或本地模型。可按助手切换：用便宜的模型做分流，用聪明的模型写作。",
+          body: "让 Bot 使用 Claude、GPT、Grok 或本地模型。可按 Bot 切换：用便宜的模型做分流，用聪明的模型写作。",
         },
         {
           title: "可读的例行任务",
-          body: "给助手演示一次工作流程，它就会把例行任务保存为纯 Markdown，你可以阅读、编辑并提交到版本库。",
+          body: "给 Bot 演示一次工作流程，它就会把例行任务保存为纯 Markdown，你可以阅读、编辑并提交到版本库。",
         },
         {
           title: "可靠的审批",
-          body: "设定助手可以独立做什么、什么必须先请示。每个操作都会写入归你所有的审计日志。",
+          body: "设定 Bot 可以独立做什么、什么必须先请示。每个操作都会写入归你所有的审计日志。",
         },
       ],
     },
     roster: {
-      eyebrow: "助手模板",
-      heading: "给每个助手分配一份工作",
-      copy: "新建一个助手，它会先面试你：几个关于工作内容、写作风格和运行位置的问题。然后它就开始干活。",
+      eyebrow: "Bot 模板",
+      heading: "给每个 Bot 分配一份工作",
+      copy: "新建一个 Bot，它会先面试你：几个关于工作内容、写作风格和运行位置的问题。然后它就开始干活。",
       bots: ZH_ROSTER,
     },
     openSource: {
@@ -719,7 +719,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
         "Docker 运行器和沙箱浏览器",
         "自带模型密钥",
         "例行任务、记忆和审计日志",
-        "助手数量不限，无席位、无额度限制",
+        "Bot 数量不限，无席位、无额度限制",
         "GitHub 社区支持",
       ],
       starOnGithub: "在 GitHub 上点星",
@@ -730,12 +730,12 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       cloudItems: [
         "托管沙箱，始终在线",
         "密钥归你，模型费用归你",
-        "同样的助手和例行任务，无需迁移",
+        "同样的 Bot 和例行任务，无需迁移",
       ],
       getStarted: "开始使用",
     },
     cta: {
-      heading: "认识你的第一个助手",
+      heading: "认识你的第一个 Bot",
       copy: "把一件你一直拖延的事交给 CortexAI Agent Hub，让它负责跟进到底。",
       getStarted: "开始使用",
       viewOnGithub: "在 GitHub 上查看",

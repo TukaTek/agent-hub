@@ -24,12 +24,14 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ConnectorIcon } from "../components/connector-icon";
 import { rpc } from "../lib/api";
+import { mobileTokens } from "../lib/appearance";
 import { useI18n } from "../lib/i18n";
 import { loadLastBotId } from "../lib/last-bot";
 import { native, useThemedStyles } from "../lib/native";
 
-type SourceKind = "treg" | "mcp" | "api";
+type SourceKind = "treg" | "mcp" | "api" | "graphql";
 
 export default function Integrations() {
   const styles = useThemedStyles(createIntegrationsStyles);
@@ -64,7 +66,11 @@ export default function Integrations() {
     setCatalogReady(true);
     try {
       const installs = await rpc<CapabilityInstall[]>("capabilities/list");
-      setSources(installs.filter((item) => item.kind === "mcp" || item.kind === "api"));
+      setSources(
+        installs.filter(
+          (item) => item.kind === "mcp" || item.kind === "api" || item.kind === "graphql",
+        ),
+      );
     } catch {
       // Tool sources are optional; keep featured/catalog usable if this fails.
     }
@@ -181,8 +187,14 @@ export default function Integrations() {
     setSourceError(null);
     try {
       await rpc("capabilities/install", {
-        kind: sourceKind === "api" ? "api" : "mcp",
-        name: name.trim() || (sourceKind === "treg" ? "Treg" : t("Custom connector")),
+        kind: sourceKind === "treg" ? "mcp" : sourceKind,
+        name:
+          name.trim() ||
+          (sourceKind === "treg"
+            ? "Treg"
+            : sourceKind === "graphql"
+              ? "GraphQL"
+              : t("Custom connector")),
         source: url.trim(),
         credential: credential.trim() || undefined,
         config:
@@ -190,7 +202,9 @@ export default function Integrations() {
             ? { preset: "treg", auth: { type: "bearer" } }
             : sourceKind === "api"
               ? { openApi: true, auth: { type: requiresAuth ? "bearer" : "none" } }
-              : { preset: "custom", auth: { type: requiresAuth ? "bearer" : "none" } },
+              : sourceKind === "graphql"
+                ? { auth: { type: requiresAuth ? "bearer" : "none" } }
+                : { preset: "custom", auth: { type: requiresAuth ? "bearer" : "none" } },
       });
       setCredential("");
       setSourceKind(null);
@@ -218,8 +232,6 @@ export default function Integrations() {
   return (
     <SafeAreaView edges={["bottom"]} style={styles.screen}>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-        <Text style={styles.explanation}>{t("Connect apps.")}</Text>
-
         <TextInput
           value={query}
           onChangeText={(value) => {
@@ -260,6 +272,7 @@ export default function Integrations() {
                         disabled ? { opacity: 0.7 } : null,
                       ]}
                     >
+                      <ConnectorIcon name={tile.label} logo={item?.logo} />
                       <View style={styles.grow}>
                         <Text numberOfLines={1} style={styles.title}>
                           {tile.label}
@@ -295,6 +308,7 @@ export default function Integrations() {
                   key={key}
                   style={[styles.row, catalogColumns === 2 ? styles.catalogCell : null]}
                 >
+                  <ConnectorIcon name={item.name} logo={item.logo} />
                   <View style={styles.grow}>
                     <Text numberOfLines={1} style={styles.title}>
                       {item.name}
@@ -351,7 +365,7 @@ export default function Integrations() {
         {advancedOpen ? (
           <View style={styles.advancedBody}>
             <View style={styles.actions}>
-              {(["mcp", "api", "treg"] as const).map((kind) => (
+              {(["mcp", "api", "graphql", "treg"] as const).map((kind) => (
                 <Pressable
                   key={kind}
                   accessibilityRole="button"
@@ -363,7 +377,9 @@ export default function Integrations() {
                       ? t("Add Treg")
                       : kind === "mcp"
                         ? t("Add MCP server")
-                        : t("Add OpenAPI")}
+                        : kind === "graphql"
+                          ? t("Add GraphQL")
+                          : t("Add OpenAPI")}
                   </Text>
                 </Pressable>
               ))}
@@ -378,7 +394,9 @@ export default function Integrations() {
                     ? t("Connect Treg")
                     : sourceKind === "mcp"
                       ? t("Remote MCP server")
-                      : t("OpenAPI JSON")}
+                      : sourceKind === "graphql"
+                        ? t("GraphQL endpoint")
+                        : t("OpenAPI JSON")}
                 </Text>
                 <TextInput
                   value={name}
@@ -396,7 +414,9 @@ export default function Integrations() {
                     placeholder={
                       sourceKind === "mcp"
                         ? t("https://example.com/mcp")
-                        : t("https://example.com/openapi.json")
+                        : sourceKind === "graphql"
+                          ? t("https://example.com/graphql")
+                          : t("https://example.com/openapi.json")
                     }
                     placeholderTextColor={native.tertiaryLabel}
                     style={styles.input}
@@ -476,10 +496,10 @@ export default function Integrations() {
 }
 
 function createIntegrationsStyles() {
+  const tokens = mobileTokens();
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: native.page },
     content: { padding: 20, gap: 14 },
-    explanation: { color: native.secondaryLabel, fontSize: 14, lineHeight: 20 },
     section: { color: native.secondaryLabel, fontSize: 14, fontWeight: "600", marginTop: 10 },
     actions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
     smallButton: {
@@ -518,8 +538,8 @@ function createIntegrationsStyles() {
     title: { color: native.label, fontSize: 15, fontWeight: "600" },
     secondary: { color: native.secondaryLabel, fontSize: 13 },
     link: { color: native.label, fontSize: 14, fontWeight: "600" },
-    remove: { color: "#E96B6B", fontSize: 14, fontWeight: "600" },
-    error: { color: "#E96B6B", fontSize: 14 },
+    remove: { color: tokens.destructive, fontSize: 14, fontWeight: "600" },
+    error: { color: tokens.destructive, fontSize: 14 },
     advancedToggle: {
       marginTop: 8,
       minHeight: 44,

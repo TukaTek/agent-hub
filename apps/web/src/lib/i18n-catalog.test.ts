@@ -1,6 +1,7 @@
 import { i18n } from "@lingui/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import de from "../../scripts/translations-de.json";
+import es from "../../scripts/translations-es.json";
 import hi from "../../scripts/translations-hi.json";
 import ko from "../../scripts/translations-ko.json";
 import ptBR from "../../scripts/translations-pt-BR.json";
@@ -19,10 +20,10 @@ describe("lingui catalogs", () => {
     expect(i18n._({ id: "Settings", message: "Settings" })).toBe("Settings");
     expect(
       i18n._({
-        id: "Cancel new Assistant",
-        message: "Cancel new Assistant",
+        id: "Cancel new bot",
+        message: "Cancel new bot",
       }),
-    ).toBe("Cancel new Assistant");
+    ).toBe("Cancel new bot");
   });
 
   it("formats ICU cron-style messages with reordered placeholders", () => {
@@ -109,7 +110,7 @@ describe("lingui catalogs", () => {
       "at {timeSelect}": "{timeSelect}",
       "{0, plural, one {# model} other {# models}}": "{0, plural, one {# 个模型} other {# 个模型}}",
       "{botName} · {0, plural, one {# peer} other {# peers}}":
-        "{botName} · {0, plural, one {# 个同事助手} other {# 个同事助手}}",
+        "{botName} · {0, plural, one {# 个同事 Bot} other {# 个同事 Bot}}",
     });
     i18n.activate("zh-CN");
     expect(
@@ -146,10 +147,31 @@ describe("lingui catalogs", () => {
         message: "{botName} · {0, plural, one {# peer} other {# peers}}",
         values: { botName: "Scout", 0: 2 },
       }),
-    ).toBe("Scout · 2 个同事助手");
+    ).toBe("Scout · 2 个同事 Bot");
+
+    i18n.load("es", {
+      "every {intervalAmountSelect} {intervalUnitSelect}":
+        "cada {intervalAmountSelect} {intervalUnitSelect}",
+      "at {timeSelect}": "a las {timeSelect}",
+    });
+    i18n.activate("es");
+    expect(
+      i18n._({
+        id: "every {intervalAmountSelect} {intervalUnitSelect}",
+        message: "every {intervalAmountSelect} {intervalUnitSelect}",
+        values: { intervalAmountSelect: "5", intervalUnitSelect: "minutos" },
+      }),
+    ).toBe("cada 5 minutos");
+    expect(
+      i18n._({
+        id: "at {timeSelect}",
+        message: "at {timeSelect}",
+        values: { timeSelect: "09:00" },
+      }),
+    ).toBe("a las 09:00");
   });
 
-  it("uses seeded catalog strings for German, Korean, Turkish, Hindi, Brazilian Portuguese, and Simplified Chinese chrome", () => {
+  it("uses seeded catalog strings for German, Korean, Turkish, Hindi, Brazilian Portuguese, Simplified Chinese, and Spanish chrome", () => {
     i18n.load("de", de as Record<string, string>);
     i18n.activate("de");
     expect(i18n._({ id: "Settings", message: "Settings" })).toBe("Einstellungen");
@@ -179,5 +201,10 @@ describe("lingui catalogs", () => {
     i18n.activate("zh-CN");
     expect(i18n._({ id: "Settings", message: "Settings" })).toBe("设置");
     expect(i18n._({ id: "Cancel", message: "Cancel" })).toBe("取消");
+
+    i18n.load("es", es as Record<string, string>);
+    i18n.activate("es");
+    expect(i18n._({ id: "Settings", message: "Settings" })).toBe("Configuración");
+    expect(i18n._({ id: "Cancel", message: "Cancel" })).toBe("Cancelar");
   });
 });

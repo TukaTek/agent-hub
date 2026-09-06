@@ -1,21 +1,57 @@
+import { timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
+import type { DesktopStackProbeResponse } from "@cortexai-agent-hub/contracts";
+import {
+  safeScreenProxyResponseHeaders,
+  stripSensitiveHandshakeHeaders,
+} from "@cortexai-agent-hub/core/node/screen-proxy-response";
 import { lingui } from "@lingui/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type PreviewServer, type ViteDevServer } from "vite";
 import { resolveScreenProxySecret } from "../../packages/core/src/secrets-guard.ts";
-import {
-  resolveNovncTarget,
-  safeProxyHeaders,
-  safeProxyResponseHeaders,
-  stripSensitiveHandshakeHeaders,
-} from "./src/screen-proxy.js";
+import { resolveNovncTarget, safeProxyHeaders } from "./src/screen-proxy.js";
 
 const webPort = Number(process.env.WEB_PORT ?? 5173);
+const DESKTOP_STACK_PROBE_PATH = "/.well-known/cortexai-agent-hub-desktop-stack";
+const DESKTOP_STACK_TOKEN_HEADER = "x-cortexai-agent-hub-desktop-stack-token";
+
+function equalStackToken(expected: string, supplied: string | string[] | undefined) {
+  if (expected === "" || typeof supplied !== "string") return false;
+  const expectedBytes = Buffer.from(expected);
+  const suppliedBytes = Buffer.from(supplied);
+  return (
+    expectedBytes.byteLength === suppliedBytes.byteLength &&
+    timingSafeEqual(expectedBytes, suppliedBytes)
+  );
+}
+
+function attachDesktopStackProbe(
+  server: ViteDevServer | PreviewServer,
+  token: string,
+  imageTag: string,
+) {
+  server.middlewares.use((req, res, next) => {
+    if (req.url?.split("?", 1)[0] !== DESKTOP_STACK_PROBE_PATH) {
+      next();
+      return;
+    }
+    if (!equalStackToken(token, req.headers[DESKTOP_STACK_TOKEN_HEADER])) {
+      res.statusCode = 404;
+      res.end("Not found");
+      return;
+    }
+    const body: DesktopStackProbeResponse = { ok: true, imageTag };
+    res.statusCode = 200;
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("content-type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(body));
+  });
+}
 
 function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string) {
   server.middlewares.use((req, res, next) => {
@@ -44,10 +80,7 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string)
         ...(target.protocol === "https:" ? { servername: target.hostname } : {}),
       },
       (incoming) => {
-        res.writeHead(incoming.statusCode ?? 502, {
-          ...safeProxyResponseHeaders(incoming.headers),
-          "access-control-allow-origin": "*",
-        });
+        res.writeHead(incoming.statusCode ?? 502, safeScreenProxyResponseHeaders(incoming.headers));
         incoming.pipe(res);
       },
     );
@@ -130,6 +163,12 @@ export default defineConfig(({ mode }) => {
   const performanceAssetDelayMs = Number(
     process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_ASSET_DELAY_MS ?? 0,
   );
+  const desktopStackToken =
+    process.env.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ??
+    rootEnv.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ??
+    "";
+  const imageTag =
+    process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? rootEnv.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? "edge";
   return {
     plugins: [
       react({
@@ -139,6 +178,12 @@ export default defineConfig(({ mode }) => {
       }),
       lingui(),
       tailwindcss(),
+      {
+        name: "cortexai-agent-hub-desktop-stack-probe",
+        configureServer: (server) => attachDesktopStackProbe(server, desktopStackToken, imageTag),
+        configurePreviewServer: (server) =>
+          attachDesktopStackProbe(server, desktopStackToken, imageTag),
+      },
       {
         name: "cortexai-agent-hub-performance-asset-delay",
         configurePreviewServer(server) {

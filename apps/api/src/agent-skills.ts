@@ -2,7 +2,9 @@ import { BUILTIN_AGENT_SKILLS } from "@cortexai-agent-hub/adapters";
 import type { Actor, AgentSkill, AgentSkillSource } from "@cortexai-agent-hub/contracts";
 import {
   buildSkillMd,
+  findSkillByName,
   isSkillReadOnly,
+  mergeBuiltinSkills,
   parseSkillMd,
   type SkillSource,
 } from "@cortexai-agent-hub/core";
@@ -135,10 +137,9 @@ export function createAgentSkillsService(prisma: PrismaClient) {
         where: { spaceId: actor.spaceId, userId: actor.userId },
         orderBy: [{ name: "asc" }, { id: "asc" }],
       });
-      const catalog = [...builtinCatalog(), ...rows.map(mapAgentSkill)].map(
+      return mergeBuiltinSkills(builtinCatalog(), rows.map(mapAgentSkill)).map(
         ({ content: _content, ...entry }) => entry,
       );
-      return catalog;
     },
 
     async listWithContent(actor: Actor): Promise<AgentSkill[]> {
@@ -146,7 +147,7 @@ export function createAgentSkillsService(prisma: PrismaClient) {
         where: { spaceId: actor.spaceId, userId: actor.userId },
         orderBy: [{ name: "asc" }, { id: "asc" }],
       });
-      return [...builtinCatalog(), ...rows.map(mapAgentSkill)];
+      return mergeBuiltinSkills(builtinCatalog(), rows.map(mapAgentSkill));
     },
 
     async get(actor: Actor, input: { skillId?: string; name?: string }): Promise<AgentSkill> {
@@ -159,19 +160,18 @@ export function createAgentSkillsService(prisma: PrismaClient) {
         return mapAgentSkill(await owned(actor, input.skillId));
       }
       const name = input.name?.trim() ?? "";
-      const builtin = builtinCatalog().find(
-        (skill) => skill.name.toLowerCase() === name.toLowerCase(),
-      );
-      if (builtin) return builtin;
-      const row = await prisma.agentSkill.findFirst({
+      const rows = await prisma.agentSkill.findMany({
         where: {
           spaceId: actor.spaceId,
           userId: actor.userId,
-          name: { equals: name, mode: "insensitive" },
         },
+        orderBy: [{ name: "asc" }, { id: "asc" }],
       });
-      if (!row) throw new IsolationError();
-      return mapAgentSkill(row);
+      const row = findSkillByName(rows, name);
+      if (row) return mapAgentSkill(row);
+      const builtin = findSkillByName(builtinCatalog(), name);
+      if (!builtin) throw new IsolationError();
+      return builtin;
     },
 
     async create(
@@ -231,7 +231,7 @@ export function createAgentSkillsService(prisma: PrismaClient) {
         throw new ORPCError("BAD_REQUEST", { message: "Builtin and plugin skills are read-only." });
       }
       const resolved = resolveSkillContent({ ...input, prior: existing });
-      if (resolved.name.toLowerCase() !== existing.name.toLowerCase()) {
+      if (!findSkillByName([existing], resolved.name)) {
         const clash = await prisma.agentSkill.findFirst({
           where: {
             spaceId: actor.spaceId,

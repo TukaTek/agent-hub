@@ -54,7 +54,7 @@ const SIGN_IN_START_WAIT_MS = 30_000;
 export type StoredModelSecret =
   | { kind: "api_key"; key: string }
   | { kind: "oauth"; credential: OAuthCredential }
-  | { kind: "openai_compatible"; baseUrl: string; apiKey?: string };
+  | { kind: "openai_compatible"; baseUrl: string; apiKey?: string; reasoning?: boolean };
 
 export type PiOAuthConnected = {
   status: "connected";
@@ -126,6 +126,7 @@ export function parseModelSecret(plaintext: string): StoredModelSecret {
           kind: "openai_compatible",
           baseUrl: parsed.baseUrl.trim(),
           ...(apiKey ? { apiKey } : {}),
+          ...(typeof parsed.reasoning === "boolean" ? { reasoning: parsed.reasoning } : {}),
         };
       }
       if (
@@ -150,6 +151,7 @@ export function serializeModelSecret(secret: StoredModelSecret): string {
       kind: "openai_compatible",
       baseUrl: secret.baseUrl,
       ...(secret.apiKey ? { apiKey: secret.apiKey } : {}),
+      ...(secret.reasoning !== undefined ? { reasoning: secret.reasoning } : {}),
     });
   }
   return secret.key;

@@ -18,74 +18,17 @@ bash install-images.sh
 ```
 
 The installer downloads `docker-compose.images.yml` and `.env.images.example`, creates `.env` with
-random secrets, then pulls and starts the images. It preserves an existing `.env` when rerun. To
-customize the public URL, image tag, or optional providers before startup, run
-`bash install-images.sh --prepare-only`, edit `.env`, then run `bash install-images.sh`.
-Flags may be combined in either order: `--prepare-only`, `--local`.
-
-### Restricted networks / mirror downloads
-
-Stage B of the installer (Compose YAML and `.env.images.example`) downloads from
-`DOWNLOAD_BASE`. Override it with a generic HTTPS mirror of `infra/compose` — do not rely on
-vendor-specific CDN defaults:
-
-```bash
-export CORTEXAI_AGENT_HUB_DOWNLOAD_BASE=https://example.com/mirror/cortexai-agent-hub/infra/compose
-bash install-images.sh
-```
-
-Trailing slashes on `CORTEXAI_AGENT_HUB_DOWNLOAD_BASE` are trimmed; non-HTTPS bases are rejected. Downloads
-use finite curl retries (`--retry 3 --retry-delay 2 --retry-all-errors` when supported).
-
-To reuse files already present in the working directory (skip curl when the target exists), set
-`CORTEXAI_AGENT_HUB_DOWNLOAD_SKIP_EXISTING=1` and/or pass `--local`:
-
-```bash
-# after placing docker-compose.images.yml and .env.images.example locally
-bash install-images.sh --local --prepare-only
-# or
-CORTEXAI_AGENT_HUB_DOWNLOAD_SKIP_EXISTING=1 bash install-images.sh --prepare-only
-```
-
-If skip mode is on and a required file is missing, the installer still downloads it (or fails with
-the URL in the error).
-
-Stage A (fetching `install-images.sh` itself) is separate. When raw GitHub is unreachable, point the
-bootstrap curl at your mirror of the installer script, for example:
-
-```bash
-export CORTEXAI_AGENT_HUB_INSTALLER_URL=https://example.com/mirror/cortexai-agent-hub/infra/compose/install-images.sh
-mkdir -p cortexai-agent-hub && cd cortexai-agent-hub &&
-curl -fsSLO "${CORTEXAI_AGENT_HUB_INSTALLER_URL}" &&
-bash install-images.sh
-```
-
-Stage C (`docker compose pull`) uses `CORTEXAI_AGENT_HUB_IMAGE`, `CORTEXAI_AGENT_HUB_IMAGE_TAG`,
-`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE`, and `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG` (defaults
-`ghcr.io/tukatek/agent-hub/{app,computer}`). When GHCR is unreachable, override those
-four in `.env` to a registry you control — keep app and computer on the same
-mirror. Do not rely on vendor-specific CDN defaults:
-
-```env
-CORTEXAI_AGENT_HUB_IMAGE=registry.example.com/mirror/TukaTek/agent-hub/app
-CORTEXAI_AGENT_HUB_IMAGE_TAG=edge
-CORTEXAI_AGENT_HUB_COMPUTER_IMAGE=registry.example.com/mirror/TukaTek/agent-hub/computer
-CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=edge
-```
-
-After `--prepare-only`, edit `.env` then rerun `bash install-images.sh` (or
-`docker compose --env-file .env -f docker-compose.images.yml pull`). Arm64 tag
-pairing is unchanged — set both tags to the same published multi-arch release
-(see [Published images and tags](#published-images-and-tags)).
-
-`postgres:16` and `busybox:1` still pull from Docker Hub. Stage C does not cover
-them; configure the Docker daemon `registry-mirrors` or vendor those images.
+random secrets, then pulls and starts the images. It preserves an existing `.env` when rerun. For
+the installer secret list, non-reuse rules, and recovery, see
+[Self-host secrets checklist](./self-host-secrets.md). To customize the public URL, image tag, or
+optional providers before startup, run `bash install-images.sh --prepare-only`, edit `.env`, then
+run `bash install-images.sh`. Flags may be combined in either order: `--prepare-only`, `--local`.
 
 `SANDBOX_PROVIDER` defaults to `docker`. The images Compose file runs a sandbox supervisor
 (from the app image, on the internal network only) and pulls `ghcr.io/tukatek/agent-hub/computer`.
 Signup and local Docker computers work without an E2B account. Optional remote providers: set
-`SANDBOX_PROVIDER` to `e2b`, `daytona`, or `box` and add the matching API key. Compose requires
-`SANDBOX_SUPERVISOR_TOKEN` for the Docker path; leave it empty and `compose up` fails closed.
+`SANDBOX_PROVIDER` to `e2b`, `daytona`, or `box` and add the matching API key. The published-images
+Compose stack requires `SANDBOX_SUPERVISOR_TOKEN` for every provider; leave it empty and `compose up` fails closed.
 
 Optional: set `OPENROUTER_API_KEY` or connect a model in the UI after signup.
 
@@ -107,10 +50,15 @@ app.example.com {
 }
 ```
 
-Open **Agent computer** on an Assistant, or send a message that uses the desktop, to see
+Open **Agent computer** on a bot, or send a message that uses the desktop, to see
 the local Docker computer. For in-stack Caddy plus remote E2B computers, use the
 [production Compose](#public-single-vm-deployment) path and `infra/compose/Caddyfile.prod`
 instead of this host proxy.
+
+### Restricted networks / mirror downloads
+
+If the installer, Compose downloads, or image pulls are blocked, use the
+[restricted-network guide](./self-host-restricted-network.md) for mirror settings and local files.
 
 ## Docker Compose (single machine)
 
@@ -122,7 +70,7 @@ instead of this host proxy.
 
 On Windows, if an older clone with `core.autocrlf=true` leaves the computer pane hung on boot (`bash\r` in sandbox logs): from a clean worktree, set `git config core.autocrlf false`, run `git add --renormalize . && git checkout -- .`, then rebuild with `pnpm sandbox:build`.
 
-Compose runs Postgres, the sandbox supervisor (Docker socket), API, worker, and a Vite preview of the web app. Assistant computers are sibling containers (`cortexai-agent-hub/computer:local`) on separate per-Assistant networks; only the supervisor and screen proxy join each one. The API process does not get an unrestricted Docker socket; the supervisor owns the lifecycle.
+Compose runs Postgres, the sandbox supervisor (Docker socket), API, worker, and a Vite preview of the web app. Bot computers are sibling containers (`cortexai-agent-hub/computer:local`) on separate per-bot networks; only the supervisor and screen proxy join each one. The API process does not get an unrestricted Docker socket; the supervisor owns the lifecycle.
 
 Postgres is published on **loopback only** (`127.0.0.1:5433` on the host). Do not expose that port on a public VPS. Change `POSTGRES_PASSWORD` and keep Postgres on an internal network when you deploy remotely.
 
@@ -142,9 +90,17 @@ WEB_ORIGIN=https://app.example.com
 API_URL=https://app.example.com
 ```
 
-Cookies and CORS follow those origins. `SIGNUPS_ENABLED` / `SIGNUP_ALLOWLIST` seed the initial deployment settings. After initialization, the deployment owner's Settings values are the effective signup policy.
+Cookies and CORS follow those origins. `SIGNUPS_ENABLED` / `SIGNUP_ALLOWLIST` seed the signup
+policy when the API starts for the first time. They are not reapplied on restart, so configure them
+before that first start.
 
-### Password recovery email
+With a nonempty signup allowlist, users—including existing accounts—must verify their email to sign
+in. Configure SMTP below before enabling an allowlist or upgrading an allowlisted deployment.
+
+For a public deployment, configure SMTP and an allowlist before the API's first start.
+Keep an installation without email on a trusted local network.
+
+### Verification and password recovery email
 
 Password changes for signed-in users require no email configuration. Forgotten-password recovery
 appears on sign-in only when a transactional email provider is available. CortexAI Agent Hub uses a
@@ -171,8 +127,22 @@ EMAIL_EMULATOR=true
 
 The emulator is forcibly disabled when `NODE_ENV=production` and requires the API to bind to a
 loopback host. In `NODE_ENV=development`, captured messages are available from
-`http://127.0.0.1:3100/api/dev/emails` with cache disabled; the API console logs only delivery
+`http://127.0.0.1:3100/api/dev/emails` with cache disabled; the API logs only delivery
 metadata, never reset tokens. The inbox route is not registered in test, staging, or production.
+
+### Logging
+
+Backend services write structured logs to stdout. `LOG_LEVEL` is `debug`, `info`, `warn`, `error`,
+or `off` (default `info`). Production defaults to `LOG_FORMAT=json`; development defaults to pretty
+unless you set `json` or `pretty`.
+
+Axiom is optional. Set both `AXIOM_TOKEN` and `AXIOM_DATASET` for ingest to one shared dataset.
+Services set `service.name` (`cortexai-agent-hub-api`, `cortexai-agent-hub-worker`, `cortexai-agent-hub-sandbox-supervisor`,
+`cortexai-agent-hub-updater`). A partial Axiom config logs a one-time warning and stays off. `AXIOM_EDGE` is a
+regional hostname; `AXIOM_EDGE_URL` must be https and wins when both are set.
+
+Compose passes these into the API, worker, supervisor, and updater. Computer containers and updater
+child commands do not receive them.
 
 Optional:
 
@@ -182,7 +152,7 @@ SIGNUP_ALLOWLIST=you@example.com,@company.com
 SANDBOX_PROVIDER=docker   # or none, e2b, daytona, box. Keep fake only for pnpm test.
 AGENT_RUNTIME=pi          # Keep scripted only for pnpm test.
 WAKEUP_DRIVER=graphile
-SANDBOX_IDLE_MS=600000    # pause the Assistant computer after 10 minutes idle
+SANDBOX_IDLE_MS=600000    # pause the bot computer after 10 minutes idle
 SANDBOX_COMMAND_TIMEOUT_MS=300000 # stop a shell command after 5 minutes
 MAX_TOOL_CALLS_PER_TURN=  # optional Pi turn tool-call fuse; unset/0 = unlimited
 E2B_API_KEY=              # when SANDBOX_PROVIDER=e2b
@@ -214,19 +184,32 @@ loopback, RFC1918, and `host.docker.internal` targets. To permit public hostname
 only to public addresses; redirects and DNS answers that reach private or link-local networks are
 rejected.
 
+For servers that accept standard `reasoning_effort`, enable **Supports thinking** under
+**Advanced** when connecting. The setting is saved on the connection (no env var or restart).
+Existing connections default to disabled. Reconnect former Qwen-list or deployment-local models
+via **Settings → Models** and turn it on; the old environment list is no longer read.
+
+Enabled connections default to medium thinking. Web and desktop expose **Thinking** in a bot's
+advanced settings; mobile inherits the same backend policy. CortexAI Agent Hub sends standard
+`reasoning_effort` (`minimal`, `low`, `medium`, `high`, or `none` when off); the server owns
+model-specific translation. Leave **Supports thinking** off when the server lacks standard effort
+support. Existing token limits still apply; effort is not a separate reasoning-token budget.
+
 Do not commit `.env`. Never put `COMPOSIO_API_KEY`, OpenRouter keys, or provider tokens in git, logs, or chat.
+
+Optional messaging platforms (iMessage, Slack, WhatsApp, Telegram, Feishu/Lark) mount when their env credentials are set — see `.env.example`. Point a Feishu/Lark bot event subscription at `/api/v1/messaging/webhook/lark` (webhook/HTTP inbound only; do not enable long connection). Groups stay iMessage-only.
 
 ## Choosing a computer provider
 
-The Electron desktop app is a client of the same API. Docker and E2B still apply. On first launch, Electron asks the deployment owner whether Assistants should keep using Docker or run on this Mac as you. `SANDBOX_PROVIDER=desktop` is a separate, explicit provider that always runs commands on the service host.
+The Electron desktop app is a client of the same API. Docker and E2B still apply. On first launch, Electron asks the deployment owner whether bots should keep using Docker or run on this Mac as you. `SANDBOX_PROVIDER=desktop` is a separate, explicit provider that always runs commands on the service host.
 
 - **Published images** (`docker-compose.images.yml`) default to `SANDBOX_PROVIDER=docker` with a
   local supervisor and published `ghcr.io/tukatek/agent-hub/computer` image. No E2B account required.
   Optional: set `e2b`, `daytona`, or `box` plus the matching API key for remote computers.
 - **Docker** is the quick-start default for published images and for a source checkout / full local
-  Compose stack. Workspace Assistants share a persistent Team Computer by default; Private computers are
+  Compose stack. Workspace bots share a persistent Team Computer by default; Private computers are
   optional. Keep the supervisor private, as the included Compose files do.
-- **E2B** runs Assistant computers away from the CortexAI Agent Hub host and is a good choice for public or multi-user
+- **E2B** runs bot computers away from the CortexAI Agent Hub host and is a good choice for public or multi-user
   production deployments. CortexAI Agent Hub checkpoints the portable workspace and browser-profile directory to
   `DATA_DIR`; the E2B disk is a runtime cache, not the durable source of truth.
 - **Daytona** provides the same remote-computer contract through Daytona sandboxes. Configure
@@ -234,15 +217,17 @@ The Electron desktop app is a client of the same API. Docker and E2B still apply
 - **Box by ASCII** provides a managed Linux desktop through `BOX_API_KEY` and optionally
   `BOX_API_URL`. CortexAI Agent Hub always creates or resumes boxes with `noEnv: true`, keeps the portable
   workspace under `/home/user/cortexai-agent-hub-home`, and refreshes a two-hour TTL. A Box currently exposes one
-  shared desktop, so concurrent Team Assistants can still use shell and files but only one can use
+  shared desktop, so concurrent Team bots can still use shell and files but only one can use
   graphical tools at a time.
 - **Desktop provider** / **This Mac** runs commands on the API/worker host. Docker stays the default.
-  The Electron app asks once; if you choose This Mac, Assistants can use working directories under your home
+  The Electron app asks once; if you choose This Mac, bots can use working directories under your home
   folder. Do not enable it on a public or shared service. macOS does not show its own permission
   dialog for this.
 - **Fake** is only an emulator for verification.
 - **None** boots the product without a computer host (fallback when Docker/supervisor is not
   configured, or when a remote provider is selected without its API key).
+
+For provider configuration and health checks, see the [provider setup guide](./self-host-sandbox-providers.md).
 
 ## Backup
 
@@ -250,12 +235,14 @@ The Electron desktop app is a client of the same API. Docker and E2B still apply
 ./scripts/backup.sh
 ```
 
-This dumps Postgres (`pg_dump`) and archives `data/` into `backups/<stamp>/`.
+This dumps Postgres (`pg_dump`) and archives `data/` into `backups/<stamp>/`. A missing
+`data/` produces an empty archive; database or archive errors fail the backup. Discard the
+output directory of any failed run.
 
 ## Public single-VM deployment
 
 `infra/compose/docker-compose.prod.yml` runs the hosted product with Postgres, the API, worker, web app,
-and automatic HTTPS through Caddy. It uses E2B for Assistant computers, so the VM never exposes a Docker
+and automatic HTTPS through Caddy. It uses E2B for bot computers, so the VM never exposes a Docker
 supervisor or browser containers. The root-equivalent updater sidecar is an explicit opt-in profile.
 
 Before deploying to a new Ubuntu host, create and verify a key-only `deploy` account, then apply the
@@ -297,7 +284,8 @@ WEB_ORIGIN=https://app.example.com
 API_URL=https://app.example.com
 SIGNUPS_ENABLED=true
 SIGNUP_ALLOWLIST=owner@example.com,reviewer@example.com
-SANDBOX_PROVIDER=e2b # Production default; or daytona / box with the matching API key.
+# e2b, daytona, or box
+SANDBOX_PROVIDER=e2b
 AGENT_RUNTIME=pi
 WAKEUP_DRIVER=graphile
 DATA_DIR=/data
@@ -322,9 +310,6 @@ curl --fail https://app.example.com/health
 **Build, do not pull, for a first deployment.** `CORTEXAI_AGENT_HUB_IMAGE_TAG` ships as `local`, a tag no
 registry serves, so the commands above build `api`, `worker`, and `web` from the checkout you just
 cloned. The opt-in command under [Updater sidecar](#updater-sidecar) builds `updater` when needed.
-Running `docker compose … pull` first — as earlier versions of this page told you to — fails outright
-with `error from registry: denied` whenever the tag you are on has not been published, and there is
-nothing to fall back to.
 
 Passing `GIT_SHA` is what makes `GET /health` report a `"revision"`; a locally built image has no
 other way to know its commit. Prebuilt images from the registry bake it in at publish time, so when
@@ -349,7 +334,21 @@ Postgres custom-format dump plus an application-data archive under `/var/backups
 `0600` and seven-day rotation. These local snapshots help with operator mistakes but are not a
 substitute for an encrypted off-host backup or provider snapshot.
 
+The scheduled backup uses `/srv/cortexai-agent-hub` by default. For another deployment directory, set
+`CORTEXAI_AGENT_HUB_DEPLOY_DIR=/absolute/path/to/checkout` in a root-owned `/etc/cortexai-agent-hub/backup.env`
+(mode `0600`). The service reads this optional file on each run; the script uses the selected
+checkout's `.env` and production Compose file. If the stack was started with a custom `-p`,
+set the same `COMPOSE_PROJECT_NAME` in that file. For a manual run, export these variables instead.
+When updating an existing backup installation, reinstall both the script and service unit,
+then run `systemctl daemon-reload`.
+
 ## Restore
+
+For backups created by `scripts/backup.sh`, use an empty `cortexai-agent-hub` database in the development
+Compose stack, with application services stopped. The SQL import runs in one transaction and
+stops on the first error, including conflicts with existing tables. Files are restored and
+application services started only after the import succeeds. This script does not consume the
+production snapshot's custom-format `cortexai-agent-hub.dump` or `appdata.tgz`.
 
 ```bash
 ./scripts/restore.sh backups/<stamp>
@@ -426,7 +425,7 @@ this repository that is:
 | Image | Contents |
 | --- | --- |
 | `ghcr.io/tukatek/agent-hub/app` | api, worker, web, and sandbox supervisor — one image, multiple commands |
-| `ghcr.io/tukatek/agent-hub/computer` | Linux desktop used as each Assistant computer |
+| `ghcr.io/tukatek/agent-hub/computer` | Linux desktop used as each bot computer |
 | `ghcr.io/tukatek/agent-hub/updater` | the updater sidecar, plus the Docker CLI |
 
 `infra/compose/docker-compose.images.yml` is the no-checkout path for those app and computer tags
@@ -568,23 +567,19 @@ least 32 characters in production). It must differ from `BETTER_AUTH_SECRET`,
 `SANDBOX_SUPERVISOR_TOKEN`, and `SCREEN_PROXY_SECRET`. Leave the profile disabled if you would
 rather not grant the capability.
 
-## What “CortexAI Agent Hub Cloud” still needs
+## Other deployment layouts
 
-The product cannot be “pushed live” as a Vercel serverless app. Graphile Worker, Postgres `LISTEN`, Pi runs, and Docker computers need durable processes and a sandbox host.
+API and worker need always-on processes; serverless request handlers are not sufficient. Use a
+Node.js version supported by the root `package.json`, Postgres 16 and a persistent `DATA_DIR` volume shared by API and worker, with encrypted off-host
+backups. The current home store uses a local filesystem, so deployments on separate hosts need a
+shared filesystem; an object-storage adapter is not available yet.
 
-To run a hosted product (same codebase):
+Use the same HTTPS origin for the web app, `/api`, and `/rpc`. Preserve the authenticated screen
+proxy routes. Choose a [computer provider](#choosing-a-computer-provider) appropriate to the
+service's trust boundary, and configure `SIGNUPS_ENABLED` and `SIGNUP_ALLOWLIST` before the API's
+first start.
+The optional marketing site in `apps/www` can be hosted separately.
 
-1. Push `main` (this checkout may be ahead of GitHub).
-2. Provision managed Postgres 16 and run `pnpm db:migrate`.
-3. Run **API** and **worker** as always-on Node 22 services (Fly machines, a VM, ECS, k8s). Not lambda-style request handlers.
-4. Persist and back up `DATA_DIR` (Assistant homes, browser profiles, artifacts). Today the concrete store is a local filesystem (`LocalAgentHomeStore`), so attach a CortexAI Agent Hub-owned durable volume shared by API and worker processes. The storage contract is separate from the computer-provider contract, but an object-storage implementation is not wired yet.
-5. Choose computers: **`SANDBOX_PROVIDER=e2b`**, `daytona`, or `box` with the matching provider key for a public or multi-user production service. Each Team or Private Computer reconnects to its sandbox id (`providerRef`), while workspace state is checkpointed outside the provider at run completion, explicit stop, and idle suspension. If that sandbox is gone—or the deployment changes providers—the replacement is hydrated from CortexAI Agent Hub's copy. Idle computers pause after `SANDBOX_IDLE_MS` (default 10 minutes) and resume on the next message or Take control. Docker remains the local and trusted single-machine default.
-6. A Hetzner CX22 (2 vCPU / 4 GB) is enough for API + worker + Postgres when E2B owns the desktops. 2 GB works for a quiet box; 8 GB is only needed if you also run Docker computers on that same machine.
-7. Set public HTTPS `WEB_ORIGIN` / `BETTER_AUTH_URL` / `API_URL`, secrets, and an OpenRouter (or other Pi) deployment key if you want to skip per-user model keys.
-8. Put the web app behind the same origin as `/api` and `/rpc` (Vite preview proxy, or a reverse proxy). Docker noVNC connections use short-lived signed `/novnc/*` capabilities; do not replace that route with an unrestricted port proxy.
-9. Deploy `apps/www` to your public website and point `app.example.com` (or similar) at the product origin.
-10. Turn on `SIGNUP_ALLOWLIST` until you want open registration. There is no CortexAI Agent Hub-managed model billing in version 1 — users bring keys.
-
-Expo / desktop installers are clients of that origin (`EXPO_PUBLIC_API_URL`, `CORTEXAI_AGENT_HUB_WEB_URL`). They are not a Cloud control plane.
+## Connect mobile clients
 
 The iOS and Android app can also point at a self-hosted origin at runtime. On the sign-in screen, tap **Use a custom server** and enter the same HTTPS origin as `WEB_ORIGIN` (for example `https://app.example.com`). Store builds still default to `EXPO_PUBLIC_API_URL`; the in-app setting is an override for people running their own API. Changing the server signs the device out of any previous session.

@@ -211,9 +211,9 @@ export const UpdateBotInput = z
   .object({
     botId: Id,
     name: z.string().trim().min(1).max(BOT_NAME_MAX_LENGTH).optional(),
-    title: z.string().max(BOT_TITLE_MAX_LENGTH).optional(),
-    description: z.string().max(BOT_DESCRIPTION_MAX_LENGTH).optional(),
-    instructions: z.string().max(BOT_INSTRUCTIONS_MAX_LENGTH).optional(),
+    title: z.string().trim().max(BOT_TITLE_MAX_LENGTH).optional(),
+    description: z.string().trim().max(BOT_DESCRIPTION_MAX_LENGTH).optional(),
+    instructions: z.string().trim().max(BOT_INSTRUCTIONS_MAX_LENGTH).optional(),
     notifyOnFinish: z.boolean().optional(),
     color: z.string().optional(),
     pinned: z.boolean().optional(),
@@ -479,7 +479,7 @@ export type ActionAutoReviewSettings = z.infer<typeof ActionAutoReviewSettingsSc
 
 export const CapabilityInstallSchema = z.object({
   id: Id,
-  kind: z.enum(["skill", "plugin", "mcp", "api", "connection"]),
+  kind: z.enum(["skill", "plugin", "mcp", "api", "graphql", "connection"]),
   name: z.string(),
   source: z.string(),
   version: z.string().nullable(),
@@ -670,6 +670,7 @@ export const RunSchema = z.object({
     "bot_message",
     "webhook",
     "messaging",
+    "cloud_agent",
   ]),
   routineId: Id.nullable(),
   modelProvider: z.string().nullable(),
@@ -711,6 +712,8 @@ export const ModelCredentialSchema = z.object({
   isDefault: z.boolean(),
   baseUrl: z.string().optional(),
   modelId: z.string().optional(),
+  reasoning: z.boolean().optional(),
+  thinkingLevels: z.array(ThinkingLevelSchema).optional(),
 });
 export type ModelCredential = z.infer<typeof ModelCredentialSchema>;
 
@@ -723,6 +726,7 @@ export const ModelConnectInputSchema = z
     baseUrl: z.string().optional(),
     label: z.string().optional(),
     modelId: z.string().optional(),
+    reasoning: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.provider === OPENAI_COMPATIBLE_PROVIDER_ID) {
