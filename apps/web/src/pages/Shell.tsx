@@ -1,5 +1,3 @@
-import { t } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import type {
   AgentSkillCatalogEntry,
@@ -68,6 +66,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@cortexai-agent-hub/ui-web";
+import { t } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import {
   ArrowDown,
   ArrowUp,

@@ -354,7 +354,11 @@ export async function requestPasswordReset(email: string, redirectTo: string): P
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   const response = await fetch(`${currentApiBase()}/api/auth/change-password`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://", ...(await authHeaders()) },
+    headers: {
+      "content-type": "application/json",
+      origin: "cortexai-agent-hub://",
+      ...(await authHeaders()),
+    },
     body: JSON.stringify({ currentPassword, newPassword, revokeOtherSessions: true }),
   });
   const body = await response.json().catch(() => ({}));
@@ -370,7 +374,11 @@ export async function signOut() {
     await withAbort(
       fetch(`${currentApiBase()}/api/auth/sign-out`, {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "cortexai-agent-hub://", ...headers },
+        headers: {
+          "content-type": "application/json",
+          origin: "cortexai-agent-hub://",
+          ...headers,
+        },
         signal: controller.signal,
       }),
       controller.signal,
@@ -405,7 +413,11 @@ export async function deleteAccount(password: string) {
   await rpc("notifications/unregisterPush").catch(() => undefined);
   const res = await fetch(`${currentApiBase()}/api/auth/delete-user`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: "cortexai-agent-hub://", ...(await authHeaders()) },
+    headers: {
+      "content-type": "application/json",
+      origin: "cortexai-agent-hub://",
+      ...(await authHeaders()),
+    },
     body: JSON.stringify({ password }),
   });
   const body = await res.json().catch(() => ({}));

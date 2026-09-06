@@ -6,7 +6,11 @@ import { createTestSink } from "./test-sink.js";
 describe("logger", () => {
   it("filters levels including off", () => {
     const sink = createTestSink();
-    const logger = createLogger({ service: "cortexai-agent-hub-api", level: "warn", sinks: [sink] });
+    const logger = createLogger({
+      service: "cortexai-agent-hub-api",
+      level: "warn",
+      sinks: [sink],
+    });
     logger.debug("d");
     logger.info("i");
     logger.warn("w");

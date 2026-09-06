@@ -1,6 +1,10 @@
 import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
 import { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { botMessageHopExhausted, nextBotMessageHop, renderGroupMembersContext } from "@cortexai-agent-hub/core";
+import {
+  botMessageHopExhausted,
+  nextBotMessageHop,
+  renderGroupMembersContext,
+} from "@cortexai-agent-hub/core";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,

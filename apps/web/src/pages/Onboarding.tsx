@@ -1,10 +1,12 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   openAiCompatibleConnectReady,
   openAiCompatibleProbeSuccessMessage,
 } from "@cortexai-agent-hub/contracts";
-import { featuredModelProviders, selectedProviderOutsideSearchResults } from "@cortexai-agent-hub/core";
+import {
+  featuredModelProviders,
+  selectedProviderOutsideSearchResults,
+} from "@cortexai-agent-hub/core";
 import {
   Button,
   Input,
@@ -13,6 +15,7 @@ import {
   NativeSelectOption,
   Textarea,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { Check } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";

@@ -2,11 +2,11 @@
  * Provider-neutral helpers for the release-watch routine eval (GitHub issue about
  * Chief-of-Staff daily release monitoring falling back to a computer browser).
  *
- * Offline pieces run in normal CI. The live LLM path maps Elie's "GPT 5.6 Luna"
+ * Offline pieces run in normal CI. The live LLM path maps the "GPT 5.6 Luna"
  * name to a concrete model id without locking the product to one vendor.
  */
 
-/** Elie's name for the eval model. */
+/** Product name for the eval model. */
 export const RELEASE_WATCH_EVAL_MODEL_LABEL = "GPT 5.6 Luna";
 
 /**
@@ -43,8 +43,8 @@ export type EmulatedGithubRelease = {
 /** Seeded cortexai-agent-hub releases so evals succeed without the public internet. */
 export const DEFAULT_CORTEXAI_AGENT_HUB_EMULATED_RELEASES: readonly EmulatedGithubRelease[] = [
   {
-    owner: "elie222",
-    repo: "cortexai-agent-hub",
+    owner: "TukaTek",
+    repo: "agent-hub",
     tag: "v0.4.2",
     name: "v0.4.2 — routine tools + connector emulators",
     body: "Routines can bind connector tools. Composio emulator covers GitHub releases offline.",
@@ -52,8 +52,8 @@ export const DEFAULT_CORTEXAI_AGENT_HUB_EMULATED_RELEASES: readonly EmulatedGith
     htmlUrl: "https://github.com/TukaTek/agent-hub/releases/tag/v0.4.2",
   },
   {
-    owner: "elie222",
-    repo: "cortexai-agent-hub",
+    owner: "TukaTek",
+    repo: "agent-hub",
     tag: "v0.4.1",
     name: "v0.4.1 — computer + plugin guidance",
     body: "Prefer connected plugins over browsing when reading app data.",
@@ -95,7 +95,7 @@ export function assessReleaseWatchRoutinePrompt(prompt: string): {
     };
   }
 
-  const mentionsRepo = /cortexai-agent-hub|elie222/i.test(text);
+  const mentionsRepo = /cortexai(?:[-\s]+agent[-\s]+hub)?|tukatek|agent-hub/i.test(text);
   const mentionsReleases = /release/i.test(text);
   const mentionsGithubTool =
     /GITHUB_LIST_RELEASES|GITHUB_GET_RELEASE|list(?:\s+\w+){0,4}\s+releases|github\s+(tool|integration|plugin|connector|api)/i.test(

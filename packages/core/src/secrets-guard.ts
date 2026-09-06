@@ -110,7 +110,8 @@ export function resolveUpdaterToken(env: NodeJS.ProcessEnv = process.env): strin
   return resolveDedicatedSecret(env, {
     name: "CORTEXAI_AGENT_HUB_UPDATER_TOKEN",
     conflicts: ["BETTER_AUTH_SECRET", "SANDBOX_SUPERVISOR_TOKEN", "SCREEN_PROXY_SECRET"],
-    missingMessage: "Set CORTEXAI_AGENT_HUB_UPDATER_TOKEN to a dedicated random updater credential.",
+    missingMessage:
+      "Set CORTEXAI_AGENT_HUB_UPDATER_TOKEN to a dedicated random updater credential.",
     conflictMessage:
       "CORTEXAI_AGENT_HUB_UPDATER_TOKEN must differ from BETTER_AUTH_SECRET, SANDBOX_SUPERVISOR_TOKEN, and SCREEN_PROXY_SECRET.",
   });

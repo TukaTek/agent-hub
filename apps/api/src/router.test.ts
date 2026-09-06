@@ -1,8 +1,11 @@
-import { RPCHandler } from "@orpc/server/fetch";
-import { COMPUTER_SCREEN_UNAVAILABLE, ComputerScreenUnavailableError } from "@cortexai-agent-hub/adapters";
+import {
+  COMPUTER_SCREEN_UNAVAILABLE,
+  ComputerScreenUnavailableError,
+} from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
+import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import { createRouter, type RouterDeps } from "./router.js";
 

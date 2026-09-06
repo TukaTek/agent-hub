@@ -859,7 +859,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("validates custom thinking against the saved connection capability", async () => {
-    const cookie = await signup(app, `custom-thinking-${stamp}@cortexai-agent-hub.test`, "Custom Thinking");
+    const cookie = await signup(
+      app,
+      `custom-thinking-${stamp}@cortexai-agent-hub.test`,
+      "Custom Thinking",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", botInput("Thinking Bot"));
     const connection = {
       provider: "openai-compatible",

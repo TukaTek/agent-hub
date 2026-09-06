@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
 import type { MemoryDocument } from "@cortexai-agent-hub/contracts";
+import { expect, test } from "@playwright/test";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
 test("memory and skills are readable and editable in the app", async ({ page }, testInfo) => {

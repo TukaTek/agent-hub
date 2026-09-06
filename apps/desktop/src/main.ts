@@ -669,7 +669,8 @@ async function probeServer(rawUrl: string, signal?: AbortSignal): Promise<Deskto
         ok: false,
         status: response.status,
         url,
-        error: "That address redirects elsewhere. Enter the final CortexAI Agent Hub server address.",
+        error:
+          "That address redirects elsewhere. Enter the final CortexAI Agent Hub server address.",
       };
     }
     if (!response.ok) {

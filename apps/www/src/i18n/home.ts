@@ -261,7 +261,7 @@ const ZH_ROSTER: RosterBot[] = [
 
 const HOME_COPY: Record<Locale, HomeCopy> = {
   en: {
-    title: "CortexAI Agent Hub | Open source Grok Bot alternative",
+    title: "CortexAI Agent Hub | Personal, always-on AI assistants",
     description: SITE_DESCRIPTION,
     ogImageAlt:
       "CortexAI Agent Hub. AI teammates you actually own. Your keys, your model, your machine.",
@@ -283,7 +283,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       badge: "Apache-2.0",
       pill: "Self-hosted",
       heading: "AI teammates you actually own",
-      lead: "CortexAI Agent Hub is an open source Grok Bot alternative. Give a bot real work. It signs in to your tools, uses them the way you do, and comes back when it needs you.",
+      lead: "Give an assistant real work. It signs in to your tools, uses them the way you do, and comes back when it needs you.",
       getStarted: "Get started",
       viewOnGithub: "View on GitHub",
       setupWithAgent: "Set up with your agent",
@@ -392,9 +392,9 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     },
   },
   de: {
-    title: "CortexAI Agent Hub | Open-Source-Alternative zu Grok Bot",
+    title: "CortexAI Agent Hub | Persönliche KI-Assistenten",
     description:
-      "CortexAI Agent Hub ist eine Open-Source-Alternative zu Grok Bot für persistente KI-Teamkollegen, die echte Arbeit erledigen. Deine Keys, dein Modell, deine Maschine.",
+      "CortexAI Agent Hub bietet persönliche, dauerhaft aktive KI-Assistenten, die echte Arbeit erledigen. Deine Keys, dein Modell, deine Maschine.",
     ogImageAlt:
       "CortexAI Agent Hub. KI-Teamkollegen, die dir wirklich gehören. Deine Keys, dein Modell, deine Maschine.",
     availableLanguage: "German",
@@ -415,7 +415,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       badge: "Apache-2.0",
       pill: "Self-hosted",
       heading: "KI-Teamkollegen, die dir wirklich gehören",
-      lead: "CortexAI Agent Hub ist eine Open-Source-Alternative zu Grok Bot. Gib einem Bot echte Arbeit. Er meldet sich in deinen Tools an, nutzt sie wie du — und kommt zurück, wenn er dich braucht.",
+      lead: "Gib einem Assistenten echte Arbeit. Er meldet sich in deinen Tools an, nutzt sie wie du — und kommt zurück, wenn er dich braucht.",
       getStarted: "Loslegen",
       viewOnGithub: "Auf GitHub ansehen",
       setupWithAgent: "Mit deinem Agenten einrichten",
@@ -524,9 +524,9 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     },
   },
   ko: {
-    title: "CortexAI Agent Hub | 오픈소스 Grok Bot 대안",
+    title: "CortexAI Agent Hub | 개인 AI 어시스턴트",
     description:
-      "CortexAI Agent Hub는 실제 업무를 수행하는 지속형 AI 팀원을 위한 오픈소스 Grok Bot 대안입니다. 키, 모델, 머신, 모두 당신 것.",
+      "CortexAI Agent Hub는 실제 업무를 수행하는 개인용 상시 AI 어시스턴트를 제공합니다. 키, 모델, 머신 — 모두 당신 것.",
     ogImageAlt: "CortexAI Agent Hub. 진짜로 내 것인 AI 팀원. 키, 모델, 머신, 모두 당신 것.",
     availableLanguage: "Korean",
     skipToContent: "본문으로 건너뛰기",
@@ -546,7 +546,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       badge: "Apache-2.0",
       pill: "셀프 호스트",
       heading: "진짜로 내 것인 AI 팀원",
-      lead: "CortexAI Agent Hub는 오픈소스 Grok Bot 대안입니다. 봇에게 실제 업무를 맡기세요. 봇이 도구에 로그인하고, 당신처럼 사용하며, 필요할 때 돌아와 묻습니다.",
+      lead: "어시스턴트에게 실제 업무를 맡기세요. 어시스턴트가 도구에 로그인하고, 당신처럼 사용하며, 필요할 때 돌아와 묻습니다.",
       getStarted: "시작하기",
       viewOnGithub: "GitHub에서 보기",
       setupWithAgent: "에이전트로 설정하기",
@@ -655,9 +655,9 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     },
   },
   zh: {
-    title: "CortexAI Agent Hub | 开源 Grok Bot 替代品",
+    title: "CortexAI Agent Hub | 个人 AI 助手",
     description:
-      "CortexAI Agent Hub 是一个开源 Grok Bot 替代品，用于运行真正干活的持久化 AI 队友。密钥、模型、机器，都归你所有。",
+      "CortexAI Agent Hub 提供真正干活、持续在线的个人 AI 助手。密钥、模型、机器，都归你所有。",
     ogImageAlt: "CortexAI Agent Hub：真正属于你的 AI 队友。密钥、模型、机器，都归你所有。",
     availableLanguage: "Chinese",
     skipToContent: "跳到主要内容",
@@ -677,7 +677,7 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       badge: "Apache-2.0",
       pill: "自托管",
       heading: "真正属于你的 AI 队友",
-      lead: "CortexAI Agent Hub 是一个开源 Grok Bot 替代品。把真正的工作交给 Bot：它会登录你的工具，像你一样使用它们，并在需要你时回来询问。",
+      lead: "把真正的工作交给助手：它会登录你的工具，像你一样使用它们，并在需要你时回来询问。",
       getStarted: "开始使用",
       viewOnGithub: "在 GitHub 上查看",
       setupWithAgent: "用你的智能体安装",

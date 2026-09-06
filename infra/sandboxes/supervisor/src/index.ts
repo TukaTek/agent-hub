@@ -4,12 +4,12 @@ import { mkdir } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { serve } from "@hono/node-server";
 import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { requestLogging } from "@cortexai-agent-hub/logging/hono";
+import { serve } from "@hono/node-server";
 import Docker from "dockerode";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -122,10 +122,14 @@ app.post("/computers", async (c) => {
     })
     .parse(await c.req.json());
   try {
-    assertRequestIdentity(c.req.header("x-cortexai-agent-hub-bot-id"), c.req.header("x-cortexai-agent-hub-space-id"), {
-      botId: body.botId,
-      spaceId: body.spaceId,
-    });
+    assertRequestIdentity(
+      c.req.header("x-cortexai-agent-hub-bot-id"),
+      c.req.header("x-cortexai-agent-hub-space-id"),
+      {
+        botId: body.botId,
+        spaceId: body.spaceId,
+      },
+    );
     return await withBotLifecycleLock(body.botId, async () => {
       await ensureComputerImage();
       const runtimeInfo = await inspectSupervisorContainer();
@@ -249,7 +253,10 @@ app.post("/computers/:id/exec", async (c) => {
       c.req.header("x-cortexai-agent-hub-bot-id"),
       c.req.header("x-cortexai-agent-hub-space-id"),
     );
-    const screenId = c.req.header("x-cortexai-agent-hub-screen-id") || c.req.header("x-cortexai-agent-hub-bot-id") || id;
+    const screenId =
+      c.req.header("x-cortexai-agent-hub-screen-id") ||
+      c.req.header("x-cortexai-agent-hub-bot-id") ||
+      id;
     const screenIndex = computerScreens.get(id)?.get(screenId)?.index ?? 0;
     const layout = screenPorts(screenIndex);
     const result = await runContainerCommand(
@@ -545,7 +552,10 @@ app.delete("/computers/:id/screen", async (c) => {
       c.req.header("x-cortexai-agent-hub-bot-id"),
       c.req.header("x-cortexai-agent-hub-space-id"),
     );
-    const screenId = c.req.header("x-cortexai-agent-hub-screen-id") || c.req.header("x-cortexai-agent-hub-bot-id") || id;
+    const screenId =
+      c.req.header("x-cortexai-agent-hub-screen-id") ||
+      c.req.header("x-cortexai-agent-hub-bot-id") ||
+      id;
     const cancelRunWork = c.req.header("x-cortexai-agent-hub-cancel-run-work") === "1";
     const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
     await withComputerScreenLock(id, async () => {
@@ -595,7 +605,11 @@ app.delete("/computers/:id", async (c) => {
   try {
     if (!botId) throw new Error("missing computer identity");
     return await withBotLifecycleLock(botId, async () => {
-      const { container } = await managedContainer(id, botId, c.req.header("x-cortexai-agent-hub-space-id"));
+      const { container } = await managedContainer(
+        id,
+        botId,
+        c.req.header("x-cortexai-agent-hub-space-id"),
+      );
       await container.remove({ force: true }).catch(() => undefined);
       await withComputerScreenLock(id, async () => {
         clearComputerScreenRegistry(computerScreens, id);
@@ -708,7 +722,8 @@ async function managedContainer(id: string, botId?: string, spaceId?: string) {
   if (!botId || !spaceId) throw new Error("missing computer identity");
   const container = docker.getContainer(id);
   const info = await container.inspect();
-  if (!isCortexAiAgentHubContainer(info, botId, spaceId)) throw new Error("computer identity mismatch");
+  if (!isCortexAiAgentHubContainer(info, botId, spaceId))
+    throw new Error("computer identity mismatch");
   return { container, info };
 }
 
@@ -741,9 +756,14 @@ async function managedScreen(
   });
 }
 
-function isCortexAiAgentHubContainer(info: Docker.ContainerInspectInfo, botId: string, spaceId: string) {
+function isCortexAiAgentHubContainer(
+  info: Docker.ContainerInspectInfo,
+  botId: string,
+  spaceId: string,
+) {
   const labels = info.Config.Labels ?? {};
-  const managed = labels["cortexai-agent-hub.managed"] === "true" || info.Config.Image === COMPUTER_IMAGE;
+  const managed =
+    labels["cortexai-agent-hub.managed"] === "true" || info.Config.Image === COMPUTER_IMAGE;
   return managed && hasComputerIdentity(labels, botId, spaceId);
 }
 

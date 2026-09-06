@@ -136,6 +136,8 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Could not reach that server": "无法连接到该服务器",
   "Could not reach this model server": "无法连接到此模型服务器",
   "Could not remove source": "无法移除此来源",
+  "Could not restore Assistant": "无法恢复助手",
+  "Could not delete Assistant": "无法删除助手",
   "Could not restore bot": "无法恢复 Bot",
   "Could not revoke connection": "无法撤销连接",
   "Could not save bot": "无法保存 Bot",
@@ -174,6 +176,8 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Delete {name}?": "要删除 {name} 吗？",
   "Delete this group? Bots and their solo threads are kept.":
     "要删除此群组吗？Bot 及其单独对话会保留。",
+  "Delete this group? Assistants and their solo threads are kept.":
+    "要删除此群组吗？助手及其单独对话会保留。",
   "Delete your account?": "要删除你的账户吗？",
   "Delete…": "删除…",
   Denied: "已拒绝",
@@ -249,6 +253,7 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Needs takeover": "等待接管",
   "New password": "新密码",
   "New bot": "新建 Bot",
+  "New Assistant": "新建助手",
   "New group": "新建群组",
   "New section": "新建分组",
   "New space": "新建空间",
@@ -370,11 +375,16 @@ export const ZH_MESSAGES: Record<string, string> = {
   Team: "团队",
   "Team Computer": "团队电脑",
   "That doesn’t look like a URL": "这看起来不像 URL",
-  "That URL did not look like a CortexAI Agent Hub server": "该地址看起来不是 CortexAI Agent Hub 服务器",
+  "That URL did not look like a CortexAI Agent Hub server":
+    "该地址看起来不是 CortexAI Agent Hub 服务器",
   "That URL is missing a host": "该地址缺少主机名",
   "The server changed while starting the request": "请求开始时服务器已更改",
   "This permanently deletes your account, bots, conversations, memories, files, and saved connections. This cannot be undone.":
     "这将永久删除你的账户、Bot、对话、记忆、文件和已保存的连接。此操作无法撤销。",
+  "This permanently deletes your account, Assistants, conversations, memories, files, and saved connections. This cannot be undone.":
+    "这将永久删除你的账户、助手、对话、记忆、文件和已保存的连接。此操作无法撤销。",
+  "Archived Assistants": "已归档助手",
+  Assistant: "助手",
   "This routine no longer exists": "此例行任务已不存在",
   Thread: "对话",
   Title: "标题",

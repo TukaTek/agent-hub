@@ -42,7 +42,10 @@ function fixture() {
     if (script.endsWith("backup-prod.sh")) {
       // Relocate only the fixed output directory: never write to real host backups.
       expect(source).toContain('BACKUP_ROOT="/var/backups/cortexai-agent-hub"');
-      source = source.replace('BACKUP_ROOT="/var/backups/cortexai-agent-hub"', `BACKUP_ROOT="${snapshots}"`);
+      source = source.replace(
+        'BACKUP_ROOT="/var/backups/cortexai-agent-hub"',
+        `BACKUP_ROOT="${snapshots}"`,
+      );
     }
     write(path.join(checkout, script), source);
   }
@@ -157,7 +160,9 @@ describe("development backup failures", () => {
     write(path.join(f.checkout, "data/home.txt"), "example home");
     expect(f.run("scripts/backup.sh", ["example"]).status).toBe(0);
     const output = path.join(f.checkout, "backups/example");
-    expect(readFileSync(path.join(output, "cortexai-agent-hub.sql"), "utf8")).toContain("CREATE TABLE");
+    expect(readFileSync(path.join(output, "cortexai-agent-hub.sql"), "utf8")).toContain(
+      "CREATE TABLE",
+    );
     expect(contents(path.join(output, "homes.tgz"))).toContain("data/home.txt");
     expect(f.commands()[0].includes("--env-file")).toBe(hasEnv);
     if (hasEnv) expect(f.commands()[0]).toContain(path.join(f.checkout, ".env"));
@@ -280,7 +285,9 @@ describe("production backup deployment and archive behavior", () => {
 
   it("rejects relative deployment paths before any backup commands", () => {
     const f = fixture();
-    const result = f.run("infra/compose/backup-prod.sh", [], { CORTEXAI_AGENT_HUB_DEPLOY_DIR: "relative" });
+    const result = f.run("infra/compose/backup-prod.sh", [], {
+      CORTEXAI_AGENT_HUB_DEPLOY_DIR: "relative",
+    });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("absolute path");
     expect(f.commands()).toEqual([]);

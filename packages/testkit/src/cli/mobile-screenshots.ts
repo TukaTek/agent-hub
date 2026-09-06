@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { serve } from "@hono/node-server";
 import {
   ComposioEmulator,
   EmailEmulator,
@@ -10,6 +9,7 @@ import {
   ThirdPartyConnectorEmulator,
 } from "@cortexai-agent-hub/adapters";
 import { createThreadMessage, type PrismaClient } from "@cortexai-agent-hub/db";
+import { serve } from "@hono/node-server";
 import { sessionCookieHeader } from "../index.js";
 import { runProcess } from "./process.js";
 
@@ -33,11 +33,15 @@ async function main() {
   await mkdir(REPORT_DIR, { recursive: true });
   await mkdir(DATA_DIR, { recursive: true });
 
-  execFileSync("pnpm", ["--filter", "@cortexai-agent-hub/db", "exec", "prisma", "migrate", "deploy"], {
-    cwd: path.join(ROOT, "packages", "db"),
-    env: process.env,
-    stdio: "inherit",
-  });
+  execFileSync(
+    "pnpm",
+    ["--filter", "@cortexai-agent-hub/db", "exec", "prisma", "migrate", "deploy"],
+    {
+      cwd: path.join(ROOT, "packages", "db"),
+      env: process.env,
+      stdio: "inherit",
+    },
+  );
   const thirdParties = new ThirdPartyConnectorEmulator();
   const pipedream = new PipedreamConnector(
     {

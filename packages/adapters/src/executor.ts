@@ -4202,8 +4202,9 @@ export async function loadCurrentTurnImages(
     },
   });
   const byId = new Map(rows.map((row) => [row.id, row]));
-  const images: NonNullable<import("@cortexai-agent-hub/adapter-kit").AgentRunRequest["currentTurnImages"]> =
-    [];
+  const images: NonNullable<
+    import("@cortexai-agent-hub/adapter-kit").AgentRunRequest["currentTurnImages"]
+  > = [];
 
   for (const block of imageBlocks) {
     const row = byId.get(block.artifactId);

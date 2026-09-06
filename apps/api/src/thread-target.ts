@@ -1,5 +1,9 @@
 import { type JobPublisher, runContinueJob } from "@cortexai-agent-hub/adapter-kit";
-import { cancelComputerRunWork, screenLeaseIdForRun, toComputerRef } from "@cortexai-agent-hub/adapters";
+import {
+  cancelComputerRunWork,
+  screenLeaseIdForRun,
+  toComputerRef,
+} from "@cortexai-agent-hub/adapters";
 import {
   type Actor,
   GROUP_MEMBER_MIN,

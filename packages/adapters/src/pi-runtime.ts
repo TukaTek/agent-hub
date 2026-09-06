@@ -1,3 +1,13 @@
+import type {
+  AdapterContext,
+  AgentRunRequest,
+  AgentRuntime,
+  AgentRuntimeEvent,
+  AgentSteeringMessage,
+  AgentToolExecutionResult,
+  ConnectorTool,
+} from "@cortexai-agent-hub/adapter-kit";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
   type Api,
@@ -9,16 +19,6 @@ import {
   Type,
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type {
-  AdapterContext,
-  AgentRunRequest,
-  AgentRuntime,
-  AgentRuntimeEvent,
-  AgentSteeringMessage,
-  AgentToolExecutionResult,
-  ConnectorTool,
-} from "@cortexai-agent-hub/adapter-kit";
-import { getLogger } from "@cortexai-agent-hub/logging";
 import { isToolPauseResult } from "./approval-effect.js";
 import { builtinAgentTools, DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";

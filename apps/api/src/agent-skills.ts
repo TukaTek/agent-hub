@@ -1,4 +1,3 @@
-import { ORPCError } from "@orpc/server";
 import { BUILTIN_AGENT_SKILLS } from "@cortexai-agent-hub/adapters";
 import type { Actor, AgentSkill, AgentSkillSource } from "@cortexai-agent-hub/contracts";
 import {
@@ -10,6 +9,7 @@ import {
   type SkillSource,
 } from "@cortexai-agent-hub/core";
 import { IsolationError, type PrismaClient } from "@cortexai-agent-hub/db";
+import { ORPCError } from "@orpc/server";
 
 type AgentSkillRow = {
   id: string;

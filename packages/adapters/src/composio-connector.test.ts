@@ -1,4 +1,8 @@
-import type { AdapterContext, ConnectorEvent, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  ConnectorEvent,
+  ConnectorTool,
+} from "@cortexai-agent-hub/adapter-kit";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { describe, expect, it, vi } from "vitest";
 import { composioToolkitDirectory } from "./composio-catalog-cache.js";

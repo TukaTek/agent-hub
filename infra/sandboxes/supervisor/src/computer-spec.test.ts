@@ -43,7 +43,9 @@ describe("graphical computer spec", () => {
     expect(options.Image).not.toMatch(/alpine/);
     expect(options).not.toHaveProperty("Entrypoint");
     expect(JSON.stringify(options)).not.toMatch(/sleep/);
-    expect(options.HostConfig.Binds).toEqual(["/var/cortexai-agent-hub/homes/abc:/home/cortexai-agent-hub"]);
+    expect(options.HostConfig.Binds).toEqual([
+      "/var/cortexai-agent-hub/homes/abc:/home/cortexai-agent-hub",
+    ]);
     expect(options.Env).toContain(
       "PATH=/home/cortexai-agent-hub/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     );
@@ -141,7 +143,9 @@ describe("graphical computer spec", () => {
     expect(start).toMatch(/xdg-mime query default/);
     expect(start).toMatch(/failed to register cortexai-agent-hub-browser/);
     expect(start).toMatch(/failed to set default web browser/);
-    expect(start).toMatch(/xdg-settings set default-web-browser cortexai-agent-hub-browser\.desktop/);
+    expect(start).toMatch(
+      /xdg-settings set default-web-browser cortexai-agent-hub-browser\.desktop/,
+    );
     expect(start).not.toMatch(/xdg-mime default cortexai-agent-hub-browser\.desktop .*\|\| true/);
     expect(start).toMatch(/x11vnc .* -viewonly /);
     expect(browser).toMatch(/\.browser-profiles\/chromium/);

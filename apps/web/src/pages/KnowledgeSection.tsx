@@ -1,5 +1,8 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { AgentSkill, AgentSkillCatalogEntry, MemoryDocument } from "@cortexai-agent-hub/contracts";
+import type {
+  AgentSkill,
+  AgentSkillCatalogEntry,
+  MemoryDocument,
+} from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Skeleton,
@@ -9,6 +12,7 @@ import {
   TabsTrigger,
   Textarea,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
 import { downloadArtifactBytes } from "../lib/artifact-open";
 import { rpc } from "../lib/rpc";

@@ -4,12 +4,12 @@ import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
-import { lingui } from "@lingui/vite-plugin";
 import type { DesktopStackProbeResponse } from "@cortexai-agent-hub/contracts";
 import {
   safeScreenProxyResponseHeaders,
   stripSensitiveHandshakeHeaders,
 } from "@cortexai-agent-hub/core/node/screen-proxy-response";
+import { lingui } from "@lingui/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type PreviewServer, type ViteDevServer } from "vite";
@@ -150,7 +150,8 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string)
 export default defineConfig(({ mode }) => {
   const rootEnv = loadEnv(mode, path.resolve(import.meta.dirname, "../.."), "");
   const api = process.env.API_PROXY_TARGET ?? rootEnv.API_PROXY_TARGET ?? "http://127.0.0.1:3100";
-  const previewHost = process.env.CORTEXAI_AGENT_HUB_HOST ?? rootEnv.CORTEXAI_AGENT_HUB_HOST ?? "localhost";
+  const previewHost =
+    process.env.CORTEXAI_AGENT_HUB_HOST ?? rootEnv.CORTEXAI_AGENT_HUB_HOST ?? "localhost";
   const screenProxySecret = () =>
     resolveScreenProxySecret({
       ...process.env,
@@ -159,10 +160,15 @@ export default defineConfig(({ mode }) => {
         process.env.SANDBOX_SUPERVISOR_TOKEN ?? rootEnv.SANDBOX_SUPERVISOR_TOKEN,
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? rootEnv.BETTER_AUTH_SECRET,
     });
-  const performanceAssetDelayMs = Number(process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_ASSET_DELAY_MS ?? 0);
+  const performanceAssetDelayMs = Number(
+    process.env.CORTEXAI_AGENT_HUB_PERFORMANCE_ASSET_DELAY_MS ?? 0,
+  );
   const desktopStackToken =
-    process.env.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ?? rootEnv.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ?? "";
-  const imageTag = process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? rootEnv.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? "edge";
+    process.env.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ??
+    rootEnv.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN ??
+    "";
+  const imageTag =
+    process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? rootEnv.CORTEXAI_AGENT_HUB_IMAGE_TAG ?? "edge";
   return {
     plugins: [
       react({

@@ -136,7 +136,9 @@ export class DockerSandboxProvider implements SandboxProvider {
       "x-cortexai-agent-hub-space-id": context.spaceId,
       ...outgoingCorrelationHeaders(),
       ...(botId ? { "x-cortexai-agent-hub-bot-id": botId } : {}),
-      ...(context.screenLeaseId ? { "x-cortexai-agent-hub-screen-lease-id": context.screenLeaseId } : {}),
+      ...(context.screenLeaseId
+        ? { "x-cortexai-agent-hub-screen-lease-id": context.screenLeaseId }
+        : {}),
       ...(context.cancelRunWork ? { "x-cortexai-agent-hub-cancel-run-work": "1" } : {}),
     };
   }
@@ -490,7 +492,8 @@ function requestDeadline(timeoutMs: number, message: string) {
 }
 
 function dockerCwd(cwd: string | undefined) {
-  if (!cwd || cwd === "." || cwd === "/" || cwd === "/home/cortexai-agent-hub") return "/home/cortexai-agent-hub";
+  if (!cwd || cwd === "." || cwd === "/" || cwd === "/home/cortexai-agent-hub")
+    return "/home/cortexai-agent-hub";
   const relative = cwd.startsWith("/home/cortexai-agent-hub/")
     ? cwd.slice("/home/cortexai-agent-hub/".length)
     : normalizeWorkspacePath(cwd);

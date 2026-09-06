@@ -1,8 +1,8 @@
-import { Trans } from "@lingui/react/macro";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { cloudAgentHttpsUrl } from "@cortexai-agent-hub/core";
 import { Badge } from "@cortexai-agent-hub/ui-web/components/ui/badge";
 import { Card, CardContent } from "@cortexai-agent-hub/ui-web/components/ui/card";
+import { Trans } from "@lingui/react/macro";
 
 export function CloudAgentCard({
   block,

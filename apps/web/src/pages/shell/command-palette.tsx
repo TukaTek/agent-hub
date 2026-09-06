@@ -1,5 +1,3 @@
-import { t } from "@lingui/core/macro";
-import { Trans } from "@lingui/react/macro";
 import type { Bot } from "@cortexai-agent-hub/contracts";
 import {
   Badge,
@@ -14,6 +12,8 @@ import {
   CommandShortcut,
   Kbd,
 } from "@cortexai-agent-hub/ui-web";
+import { t } from "@lingui/core/macro";
+import { Trans } from "@lingui/react/macro";
 import { useEffect, useMemo, useState } from "react";
 
 function isApplePlatform() {

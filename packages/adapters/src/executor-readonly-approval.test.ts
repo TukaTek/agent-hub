@@ -1,4 +1,8 @@
-import type { AgentRunRequest, ConnectorCall, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AgentRunRequest,
+  ConnectorCall,
+  ConnectorTool,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
 import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import { beforeEach, describe, expect, it, vi } from "vitest";

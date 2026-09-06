@@ -23,11 +23,15 @@ describe("server address normalization", () => {
     expect(normalizeServerUrl("127.0.0.1:5173")).toBe("http://127.0.0.1:5173");
     expect(normalizeServerUrl("localhost:5173")).toBe("http://localhost:5173");
     expect(normalizeServerUrl("192.168.1.20:3100")).toBe("http://192.168.1.20:3100");
-    expect(normalizeServerUrl("cortexai-agent-hub.example.com")).toBe("https://cortexai-agent-hub.example.com");
+    expect(normalizeServerUrl("cortexai-agent-hub.example.com")).toBe(
+      "https://cortexai-agent-hub.example.com",
+    );
   });
 
   it("keeps an explicit secure scheme and port but stores only the origin", () => {
-    expect(normalizeServerUrl("https://cortexai-agent-hub.example.com")).toBe("https://cortexai-agent-hub.example.com");
+    expect(normalizeServerUrl("https://cortexai-agent-hub.example.com")).toBe(
+      "https://cortexai-agent-hub.example.com",
+    );
     expect(normalizeServerUrl("https://cortexai-agent-hub.example.com:8443/team")).toBe(
       "https://cortexai-agent-hub.example.com:8443",
     );
@@ -80,7 +84,9 @@ describe("managed local open URL", () => {
   it("rejects a different loopback origin even when both are local", () => {
     expect(managedLocalOpenUrl("http://127.0.0.1:5199", DEFAULT_LOCAL_WEB_URL)).toBeNull();
     expect(managedLocalOpenUrl("http://localhost:5173", DEFAULT_LOCAL_WEB_URL)).toBeNull();
-    expect(managedLocalOpenUrl("https://cortexai-agent-hub.example.com", DEFAULT_LOCAL_WEB_URL)).toBeNull();
+    expect(
+      managedLocalOpenUrl("https://cortexai-agent-hub.example.com", DEFAULT_LOCAL_WEB_URL),
+    ).toBeNull();
   });
 });
 
@@ -96,7 +102,10 @@ describe("desktop stack token transport", () => {
 
 describe("saved setup", () => {
   it("round-trips through the on-disk format", () => {
-    const setup = { mode: "existing", serverUrl: "https://cortexai-agent-hub.example.com" } as const;
+    const setup = {
+      mode: "existing",
+      serverUrl: "https://cortexai-agent-hub.example.com",
+    } as const;
     expect(parseStoredSetup(serializeSetup(setup))).toEqual(setup);
   });
 

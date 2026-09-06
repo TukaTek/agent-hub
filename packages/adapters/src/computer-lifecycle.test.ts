@@ -254,7 +254,9 @@ describe("computer provisioning", () => {
   ])(
     "restores saved files before reconnecting to $kind/$providerRef (fresh=$fresh)",
     async (next) => {
-      const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-provision-reconnect-update-"));
+      const dataDir = await mkdtemp(
+        path.join(tmpdir(), "cortexai-agent-hub-provision-reconnect-update-"),
+      );
       const home = new LocalAgentHomeStore(dataDir);
       const sandbox = new FakeSandboxProvider();
       const ref = {
@@ -386,7 +388,9 @@ describe("computer provisioning", () => {
   });
 
   it("releases the screen when activation fails on a resumed Team computer", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-activation-rollback-"));
+    const dataDir = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-team-activation-rollback-"),
+    );
     const ref = {
       id: "provider-1",
       botId: "team-home",
@@ -449,7 +453,9 @@ describe("computer provisioning", () => {
   });
 
   it("retains a fresh provider reference when rollback also fails", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-prepare-rollback-failure-"));
+    const dataDir = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-prepare-rollback-failure-"),
+    );
     const prepareError = new Error("provider preparation failed");
     const rollbackError = new Error("provider deletion failed");
     const ref = {
@@ -1522,7 +1528,9 @@ describe("computer replacement", () => {
 
   it("continues recover when checkpoint fails with an ordinary provider error", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-recover-checkpoint-"));
-    const homeRoot = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-recover-checkpoint-home-"));
+    const homeRoot = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-recover-checkpoint-home-"),
+    );
     const home = new LocalAgentHomeStore(homeRoot);
     const sandbox = new FakeSandboxProvider();
     const first = await sandbox.provision({ botId: "bot-1", homePath: dataDir }, context);
@@ -1580,7 +1588,9 @@ describe("computer replacement", () => {
 
   it("aborts update when checkpoint fails with an ordinary provider error", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-update-checkpoint-"));
-    const homeRoot = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-update-checkpoint-home-"));
+    const homeRoot = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-update-checkpoint-home-"),
+    );
     const home = new LocalAgentHomeStore(homeRoot);
     const sandbox = new FakeSandboxProvider();
     const first = await sandbox.provision({ botId: "bot-1", homePath: dataDir }, context);

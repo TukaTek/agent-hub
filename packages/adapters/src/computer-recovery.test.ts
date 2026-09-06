@@ -1,7 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AdapterContext, JobPublisher, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  JobPublisher,
+  SandboxProvider,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComputerBusyError, provisionComputer, replaceComputer } from "./computer-lifecycle.js";

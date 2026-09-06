@@ -27,7 +27,9 @@ const DEFAULT_CATALOG: ReadonlyArray<Omit<ComposioCatalogItem, "connected">> = [
 /** Deterministic, offline Composio catalog and connection emulator for product tests. */
 export class ComposioEmulator implements ComposioProvider {
   private readonly connectedByUser = new Map<string, Set<string>>();
-  private githubReleases: EmulatedGithubRelease[] = [...DEFAULT_CORTEXAI_AGENT_HUB_EMULATED_RELEASES];
+  private githubReleases: EmulatedGithubRelease[] = [
+    ...DEFAULT_CORTEXAI_AGENT_HUB_EMULATED_RELEASES,
+  ];
   readonly executions: Array<{
     userId: string;
     botId?: string;
@@ -147,8 +149,8 @@ export class ComposioEmulator implements ComposioProvider {
   }
 
   private executeGithub(tool: string, args: Record<string, unknown>): Record<string, unknown> {
-    const owner = String(args.owner ?? args.owner_name ?? "elie222");
-    const repo = String(args.repo ?? args.repository ?? "cortexai-agent-hub");
+    const owner = String(args.owner ?? args.owner_name ?? "TukaTek");
+    const repo = String(args.repo ?? args.repository ?? "agent-hub");
     const matched = this.githubReleases.filter(
       (release) =>
         release.owner.toLowerCase() === owner.toLowerCase() &&
@@ -193,8 +195,8 @@ function githubReleaseTools(): ConnectorTool[] {
       inputSchema: {
         type: "object",
         properties: {
-          owner: { type: "string", description: "Repository owner, e.g. elie222" },
-          repo: { type: "string", description: "Repository name, e.g. cortexai-agent-hub" },
+          owner: { type: "string", description: "Repository owner, e.g. TukaTek" },
+          repo: { type: "string", description: "Repository name, e.g. agent-hub" },
         },
         required: ["owner", "repo"],
       },

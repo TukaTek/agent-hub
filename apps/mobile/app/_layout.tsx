@@ -68,7 +68,10 @@ export default function Layout() {
                   contentStyle: { backgroundColor: String(native.page) },
                 }}
               >
-                <Stack.Screen name="index" options={{ headerShown: false, title: "CortexAI Agent Hub" }} />
+                <Stack.Screen
+                  name="index"
+                  options={{ headerShown: false, title: "CortexAI Agent Hub" }}
+                />
                 <Stack.Screen name="sign-in" options={{ headerShown: false }} />
                 <Stack.Screen name="account" options={{ title: t("Account") }} />
                 <Stack.Screen

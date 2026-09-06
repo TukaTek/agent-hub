@@ -70,7 +70,11 @@ describe("computer loopback provision lifecycle", () => {
       Image: "test-image-id",
       Config: {
         User: hostComputerUser(),
-        Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+        Labels: {
+          "cortexai-agent-hub.managed": "true",
+          "cortexai-agent-hub.botId": "bot",
+          "cortexai-agent-hub.spaceId": "space",
+        },
       },
       HostConfig: {
         NetworkMode: computerNetworkNameFor("bot"),

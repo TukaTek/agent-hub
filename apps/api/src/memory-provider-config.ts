@@ -1,4 +1,3 @@
-import { ORPCError } from "@orpc/server";
 import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import {
   memoryProviderRequiresDeploymentOwner,
@@ -7,6 +6,7 @@ import {
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { findSpaceMemoryConfig, Prisma, type PrismaClient } from "@cortexai-agent-hub/db";
+import { ORPCError } from "@orpc/server";
 import { withSerializableRetry } from "./serializable-retry.js";
 
 export interface MemoryProviderConfigDeps {

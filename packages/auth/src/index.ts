@@ -1,5 +1,13 @@
-import type { TransactionalEmail, TransactionalEmailProvider } from "@cortexai-agent-hub/adapter-kit";
-import { emailAllowed, isMessagingEmail, parseAllowlist, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
+import type {
+  TransactionalEmail,
+  TransactionalEmailProvider,
+} from "@cortexai-agent-hub/adapter-kit";
+import {
+  emailAllowed,
+  isMessagingEmail,
+  parseAllowlist,
+  signupPolicyFromEnv,
+} from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";

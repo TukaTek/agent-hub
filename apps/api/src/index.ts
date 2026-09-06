@@ -3,9 +3,9 @@ import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
 
-import { serve } from "@hono/node-server";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
+import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
 

@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
-import { createThreadEvents, createThreadMessage, loadRunHistoryMessages } from "@cortexai-agent-hub/db";
+import {
+  createThreadEvents,
+  createThreadMessage,
+  loadRunHistoryMessages,
+} from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 process.env.WAKEUP_DRIVER = "memory";
@@ -743,7 +747,10 @@ describeIntegration("run executor lifecycle", () => {
       completedAt?: Date;
     } = {},
   ) {
-    const cookie = await signup(`executor-${label}-${stamp}@cortexai-agent-hub.test`, `Executor ${label}`);
+    const cookie = await signup(
+      `executor-${label}-${stamp}@cortexai-agent-hub.test`,
+      `Executor ${label}`,
+    );
     const me = await rpc<{ userId: string; spaceId: string }>(cookie, "me");
     const bot = await rpc<{ id: string }>(cookie, "bots/create", {
       name: `Executor ${label}`,

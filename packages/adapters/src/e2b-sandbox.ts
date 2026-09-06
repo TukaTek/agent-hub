@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { type CommandResult, Sandbox, TimeoutError } from "@e2b/desktop";
 import type {
   AdapterContext,
   CommandRequest,
@@ -18,6 +17,7 @@ import type {
   ScreenSession,
 } from "@cortexai-agent-hub/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
+import { type CommandResult, Sandbox, TimeoutError } from "@e2b/desktop";
 import { CANCEL_PRIMARY_BROWSER_WORK, sandboxIdleMs } from "./computer-idle.js";
 import { ComputerScreenUnavailableError, screenSessionKey } from "./computer-screens.js";
 import {
@@ -65,7 +65,7 @@ export function e2bCreateOptions(botId: string, apiKey: string) {
   return {
     apiKey,
     timeoutMs: sandboxIdleMs(),
-    metadata: { botId, cortexai-agent-hub: "computer" },
+    metadata: { botId, "cortexai-agent-hub": "computer" },
     resolution: [1280, 800] as [number, number],
     lifecycle: { onTimeout: "pause" as const, autoResume: false },
   };

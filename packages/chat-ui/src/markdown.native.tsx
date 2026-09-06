@@ -1,4 +1,8 @@
-import { type ColorTokens, darkTokens, type ResolvedAppearance } from "@cortexai-agent-hub/ui-tokens";
+import {
+  type ColorTokens,
+  darkTokens,
+  type ResolvedAppearance,
+} from "@cortexai-agent-hub/ui-tokens";
 import Markdown, {
   MarkdownStream,
   type RenderRules,

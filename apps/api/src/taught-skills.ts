@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { ORPCError } from "@orpc/server";
-import type { AgentHomeStore, JobPublisher, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AgentHomeStore,
+  JobPublisher,
+  SandboxProvider,
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   type AdapterContext,
   runContinueJob,
@@ -44,6 +47,7 @@ import {
   type PrismaClient,
   type ThreadEvents,
 } from "@cortexai-agent-hub/db";
+import { ORPCError } from "@orpc/server";
 
 type TaughtSkillRow = {
   id: string;
@@ -133,7 +137,9 @@ async function cancelActiveRuns(
 async function ensureGraphicalComputer(
   deps: TaughtSkillsDeps,
   actor: Actor,
-  bot: Awaited<ReturnType<ReturnType<typeof import("@cortexai-agent-hub/db").createRepos>["getBot"]>>,
+  bot: Awaited<
+    ReturnType<ReturnType<typeof import("@cortexai-agent-hub/db").createRepos>["getBot"]>
+  >,
 ) {
   if (bot.computer?.kind === "desktop") {
     throw new ORPCError("BAD_REQUEST", {
@@ -176,7 +182,9 @@ async function ensureGraphicalComputer(
 async function grantTakeover(
   deps: TaughtSkillsDeps,
   actor: Actor,
-  bot: Awaited<ReturnType<ReturnType<typeof import("@cortexai-agent-hub/db").createRepos>["getBot"]>>,
+  bot: Awaited<
+    ReturnType<ReturnType<typeof import("@cortexai-agent-hub/db").createRepos>["getBot"]>
+  >,
   until: Date,
 ): Promise<{ bot: typeof bot; leaseId: string }> {
   if (!bot.computer) throw new IsolationError();

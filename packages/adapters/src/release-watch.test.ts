@@ -30,7 +30,7 @@ describe("release-watch diagnosis", () => {
 
     const good = assessReleaseWatchRoutinePrompt(
       [
-        "Daily: use GITHUB_LIST_RELEASES for owner elie222 repo cortexai-agent-hub.",
+        "Daily: use GITHUB_LIST_RELEASES for owner TukaTek repo agent-hub.",
         "Summarize new release tags and capability notes from release bodies.",
         "Prefer the GitHub plugin tools; do not browse or Bing-search.",
       ].join(" "),

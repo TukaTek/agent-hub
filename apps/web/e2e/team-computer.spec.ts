@@ -17,7 +17,12 @@ test("Team Computer gives bots a home folder plus shared space while Private sta
   const sharedMarker = `shared-${stamp}`;
   const privateMarker = `private-${stamp}`;
 
-  await signup(page, `team-computer-${stamp}@cortexai-agent-hub.test`, "password12", "Team Computer");
+  await signup(
+    page,
+    `team-computer-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Team Computer",
+  );
   await completeOnboarding(page);
   const chiefId = activeBotId(page);
 

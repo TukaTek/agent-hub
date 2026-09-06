@@ -101,7 +101,8 @@ export async function readServerUpdateStatus(
     disabled: config.disabled === true,
   });
   const supervisor = detectRestartSupervisor(process.env);
-  const imageTagHint = config.imageTag?.trim() || process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG?.trim() || null;
+  const imageTagHint =
+    config.imageTag?.trim() || process.env.CORTEXAI_AGENT_HUB_IMAGE_TAG?.trim() || null;
   const base: ServerUpdateStatus = {
     supported: install.kind === "sidecar",
     unsupportedReason: install.kind === "sidecar" ? null : install.reason,
