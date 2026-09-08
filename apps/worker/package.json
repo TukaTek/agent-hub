@@ -10,6 +10,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@cortexai-agent-hub/auth": "workspace:*",
     "@cortexai-agent-hub/adapter-kit": "workspace:*",
     "@cortexai-agent-hub/adapters": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",

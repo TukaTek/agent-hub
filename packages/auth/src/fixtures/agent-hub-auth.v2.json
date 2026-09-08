@@ -1,0 +1,52 @@
+{
+  "contractVersion": 2,
+  "transport": "hub-tenant-auth",
+  "supersedes": "agent-hub-auth.v1.json",
+  "product": { "slug": "cortexai-agent-hub", "code": "CAIA" },
+  "endpoints": {
+    "lookup": "/api/tenant-auth/lookup",
+    "login": "/api/tenant-auth/login",
+    "refresh": "/api/tenant-auth/refresh",
+    "revoke": "/api/tenant-auth/revoke",
+    "session": "/api/tenant-auth/session",
+    "config": "/api/tenant-auth/config?product=cortexai-agent-hub"
+  },
+  "lookupRequest": { "email": "user@example.test" },
+  "lookupResponse": {
+    "tenantId": "fixture-tenant",
+    "tenantName": "Fixture",
+    "tenantSlug": "fixture",
+    "idpType": "native"
+  },
+  "loginRequest": { "email": "user@example.test", "password": "synthetic-test-password" },
+  "sessionResponse": {
+    "success": true,
+    "user": {
+      "id": "fixture-user",
+      "tenantId": "fixture-tenant",
+      "email": "user@example.test",
+      "displayName": "Fixture User",
+      "role": "user"
+    },
+    "accessToken": "synthetic-opaque-access-token",
+    "accessTokenExpiresAt": "2030-01-02T00:00:00.000Z",
+    "refreshToken": "synthetic-opaque-refresh-token",
+    "refreshTokenExpiresAt": "2030-01-31T00:00:00.000Z",
+    "returnUrl": null,
+    "products": [
+      { "id": "cortexai-agent-hub", "name": "CortexAI Agent Hub", "enabled": true, "role": "user" }
+    ]
+  },
+  "verification": {
+    "identity": ["user.tenantId", "user.id"],
+    "entitlement": "products entry with id=cortexai-agent-hub and enabled=true, followed by a successful product config request",
+    "tokenFormat": "opaque",
+    "jwtVerification": false,
+    "oauthClientRequired": false,
+    "tenantDiscovery": "lookup; confirm returned tenantId equals authenticated user.tenantId",
+    "refreshIdentity": "must equal original authenticated tenant and user",
+    "configHandling": "server-side only; may contain provider credentials; do not return to the browser as authentication state",
+    "revocation": "revalidate product config before authorizing protected work; do not cache entitlement until access-token expiry"
+  },
+  "configDenied": { "status": 403, "error": "access_denied" }
+}

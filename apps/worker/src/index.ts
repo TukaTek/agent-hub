@@ -1,4 +1,5 @@
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
+import { createUserWorkAuthorizer, hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
@@ -124,6 +125,11 @@ async function main() {
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
   const executor = createRunExecutor({
+    authorizeUserWork: createUserWorkAuthorizer(
+      prisma,
+      hubAuthFromEnv(process.env),
+      resolveEncryptionKey(process.env),
+    ),
     prisma,
     runtime,
     sandbox,

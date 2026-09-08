@@ -37,7 +37,9 @@ export async function bootstrapUserSpace(
   // Concurrent bootstraps for the same user (e.g. overlapping first phone
   // inbounds) race on every unique key below; each step either wins or
   // joins the winner's state instead of failing.
-  const slug = `user-${user.id.slice(0, 12)}`;
+  // Hub IDs share a prefix. Preserve their complete identity hash instead of
+  // shrinking the workspace boundary to the first eight hexadecimal digits.
+  const slug = `user-${user.id.startsWith("hub_") ? user.id : user.id.slice(0, 12)}`;
   let orgId = newId();
   try {
     await prisma.organization.create({

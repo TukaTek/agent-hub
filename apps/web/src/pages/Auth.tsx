@@ -8,7 +8,11 @@ import { authClient } from "../lib/auth";
 import { clearSpaceSelection } from "../lib/rpc";
 
 type AuthMode = "in" | "up" | "forgot";
-type PasswordResetCapabilities = { passwordReset: boolean; resetUrl: string | null };
+type PasswordResetCapabilities = {
+  passwordReset: boolean;
+  resetUrl: string | null;
+  mode?: "local" | "hub";
+};
 
 const fieldClass =
   "mt-2 h-12 rounded-xl px-4 text-base focus-visible:border-brand focus-visible:ring-brand/30 md:text-base";
@@ -17,7 +21,7 @@ const submitClass =
 const AUTH_CAPABILITIES_TIMEOUT_MS = 8_000;
 const MAX_AUTH_CAPABILITIES_RESPONSE_BYTES = 64 * 1024;
 
-export function AuthPage({ mode }: { mode: AuthMode }) {
+export function AuthPage({ mode: requestedMode }: { mode: AuthMode }) {
   const { t } = useLingui();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,6 +35,8 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   // Signup triggers a session refresh that remounts the anonymous auth page.
   const sent = resetSent || searchParams.get("verify") === "email";
   const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
+  const mode = reset?.mode === "hub" ? "in" : requestedMode;
+  const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
   const title = sent ? (
     <Trans>Check your email</Trans>
@@ -43,7 +49,6 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   );
 
   useEffect(() => {
-    if (mode === "up") return;
     let active = true;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), AUTH_CAPABILITIES_TIMEOUT_MS);
@@ -59,7 +64,9 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
       .then((capabilities) => {
         if (active) setReset(capabilities);
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (active) setCapabilitiesFailed(true);
+      })
       .finally(() => clearTimeout(timer));
     return () => {
       active = false;
@@ -73,6 +80,29 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
     setPending(true);
     setError(null);
     try {
+      if (reset?.mode === "hub") {
+        const response = await fetch("/api/auth/hub/sign-in", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        if (!response.ok) {
+          const body = await readBoundedJsonResponse<{ code?: string }>(
+            response,
+            MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+          );
+          setError(
+            body.code === "HUB_IDP_UNSUPPORTED"
+              ? t`This organization’s sign-in method is not supported yet`
+              : t`Could not sign in through CortexAI Hub`,
+          );
+          return;
+        }
+        clearSpaceSelection();
+        window.location.assign("/app");
+        return;
+      }
       if (mode === "forgot") {
         if (!reset?.passwordReset || !reset.resetUrl) {
           setError(t`Password recovery is not configured for this server`);
@@ -112,6 +142,22 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
     } finally {
       setPending(false);
     }
+  }
+
+  if (!reset) {
+    return (
+      <AuthFrame onSubmit={(event) => event.preventDefault()} title={title}>
+        {capabilitiesFailed ? (
+          <p role="alert" className="text-sm text-destructive">
+            <Trans>Could not reach the server</Trans>
+          </p>
+        ) : (
+          <Button disabled className={submitClass}>
+            <Trans>Loading…</Trans>
+          </Button>
+        )}
+      </AuthFrame>
+    );
   }
 
   return (
@@ -211,27 +257,29 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
               <Trans>Create account</Trans>
             )}
           </Button>
-          <p className="mt-8 text-muted-foreground">
-            {mode === "in" ? (
-              <>
-                <Trans>Don’t have an account?</Trans>{" "}
-                <Link to="/sign-up" className="font-medium text-foreground">
-                  <Trans>Sign up</Trans>
-                </Link>
-              </>
-            ) : mode === "up" ? (
-              <>
-                <Trans>Already have an account?</Trans>{" "}
+          {reset.mode !== "hub" ? (
+            <p className="mt-8 text-muted-foreground">
+              {mode === "in" ? (
+                <>
+                  <Trans>Don’t have an account?</Trans>{" "}
+                  <Link to="/sign-up" className="font-medium text-foreground">
+                    <Trans>Sign up</Trans>
+                  </Link>
+                </>
+              ) : mode === "up" ? (
+                <>
+                  <Trans>Already have an account?</Trans>{" "}
+                  <Link to="/sign-in" className="font-medium text-foreground">
+                    <Trans>Sign in</Trans>
+                  </Link>
+                </>
+              ) : (
                 <Link to="/sign-in" className="font-medium text-foreground">
-                  <Trans>Sign in</Trans>
+                  <Trans>Back to sign in</Trans>
                 </Link>
-              </>
-            ) : (
-              <Link to="/sign-in" className="font-medium text-foreground">
-                <Trans>Back to sign in</Trans>
-              </Link>
-            )}
-          </p>
+              )}
+            </p>
+          ) : null}
         </>
       )}
     </AuthFrame>

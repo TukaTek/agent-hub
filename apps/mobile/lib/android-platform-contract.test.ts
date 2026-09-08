@@ -8,6 +8,7 @@ const mobileRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 describe("Android mobile platform contract", () => {
   it("keeps authentication actions reachable while the keyboard is open", () => {
     const signIn = readFileSync(resolve(mobileRoot, "app/sign-in.tsx"), "utf8");
+    expect(signIn).toContain('signIn(email.trim(), password, reset?.mode === "hub")');
     expect(signIn).toContain("KeyboardAvoidingView");
     expect(signIn).toContain("Keyboard.dismiss");
     expect(signIn).toContain("keyboardDismissMode");

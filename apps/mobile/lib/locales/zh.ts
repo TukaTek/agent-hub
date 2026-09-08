@@ -1,4 +1,8 @@
 export const ZH_MESSAGES: Record<string, string> = {
+  "This organization’s sign-in method is not supported yet": "暂不支持此组织的登录方式",
+  "Could not reach the server": "无法连接到服务器",
+  "Hub sign-in is currently available in the web app.": "目前请在网页版中使用 Hub 登录。",
+  "Open web app": "打开网页版",
   "Cloud agent": "云端智能体",
   "Pull request": "拉取请求",
   running: "运行中",

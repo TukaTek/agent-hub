@@ -302,9 +302,10 @@ export async function captureApiRequestContext(): Promise<ApiRequestContext> {
 async function authenticateWithEmail(
   action: "sign-in" | "sign-up",
   input: { email: string; password: string; name?: string },
+  hub = false,
 ) {
   const { response, body } = await fetchMobileJson<unknown>(
-    `${currentApiBase()}/api/auth/${action}/email`,
+    `${currentApiBase()}/api/auth/${hub ? "hub/sign-in" : `${action}/email`}`,
     {
       method: "POST",
       headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
@@ -331,15 +332,19 @@ async function authenticateWithEmail(
   return { verificationRequired: false };
 }
 
-export function signIn(email: string, password: string) {
-  return authenticateWithEmail("sign-in", { email, password });
+export function signIn(email: string, password: string, hub = false) {
+  return authenticateWithEmail("sign-in", { email, password }, hub);
 }
 
 export function signUp(email: string, password: string, name: string) {
   return authenticateWithEmail("sign-up", { email, password, name });
 }
 
-export type PasswordResetCapabilities = { passwordReset: boolean; resetUrl: string | null };
+export type PasswordResetCapabilities = {
+  passwordReset: boolean;
+  resetUrl: string | null;
+  mode?: "local" | "hub";
+};
 
 export async function passwordResetCapabilities(): Promise<PasswordResetCapabilities> {
   const { response, body } = await fetchMobileJson<PasswordResetCapabilities>(

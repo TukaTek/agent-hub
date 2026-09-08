@@ -13,6 +13,11 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, organization } from "better-auth/plugins";
+import { createHubAuth, rejectHubAccountMutation } from "./hub.js";
+import type { HubAuthConfig } from "./hub-client.js";
+
+export { type HubAuthConfig, hubAuthFromEnv } from "./hub-client.js";
+export { createUserWorkAuthorizer } from "./hub-sessions.js";
 
 export interface AuthEnv {
   secret: string;
@@ -24,6 +29,8 @@ export interface AuthEnv {
   email?: TransactionalEmailProvider;
   onEmailError?: (error: unknown) => void;
   beforeDeleteUser?: (userId: string) => Promise<void>;
+  hub?: HubAuthConfig;
+  tokenEncryptionKey?: string;
 }
 
 export async function resolveSignupPolicy(
@@ -44,6 +51,10 @@ export async function resolveSignupPolicy(
 }
 
 export function createAuth(prisma: PrismaClient, env: AuthEnv) {
+  if (env.hub && !env.tokenEncryptionKey) throw new Error("Hub token encryption key is required");
+  const hub = env.hub
+    ? createHubAuth(prisma, env.hub, { ...env, tokenEncryptionKey: env.tokenEncryptionKey! })
+    : undefined;
   return betterAuth({
     appName: "CortexAI Agent Hub",
     secret: env.secret,
@@ -51,7 +62,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     trustedOrigins: [env.webOrigin, env.baseURL, ...(env.extraOrigins ?? [])],
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     emailAndPassword: {
-      enabled: true,
+      enabled: !hub,
       // Signup policy is mutable deployment state, so the request hook below
       // enforces it instead of freezing an environment value at process start.
       disableSignUp: false,
@@ -117,6 +128,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       },
     },
     plugins: [
+      ...(hub ? [hub.plugin] : []),
       bearer(),
       organization({
         allowUserToCreateOrganization: false,
@@ -125,8 +137,12 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     ],
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (hub) rejectHubAccountMutation(ctx.path);
         for (const value of [ctx.body?.email, ctx.body?.newEmail]) {
-          if (typeof value === "string" && isMessagingEmail(value)) {
+          if (
+            typeof value === "string" &&
+            (isMessagingEmail(value) || value.toLowerCase().endsWith("@hub.invalid"))
+          ) {
             throw new APIError("BAD_REQUEST", { message: "Email is not available" });
           }
         }
@@ -164,6 +180,12 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
                 findSession: async (token: string) => {
                   const session = await ctx.context.internalAdapter.findSession(token);
                   if (!session || isMessagingEmail(session.user.email)) return null;
+                  if (session.user.id.startsWith("hub_")) {
+                    return hub && (await hub.authorizeSession(session.session.id, session.user.id))
+                      ? session
+                      : null;
+                  }
+                  if (hub) return null;
                   if (session.user.emailVerified) return session;
                   policy ??= await resolveSignupPolicy(prisma, env);
                   return policy.allowlist.length === 0 ? session : null;
@@ -176,10 +198,21 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     },
     databaseHooks: {
       session: {
+        delete: {
+          before: async (session) => {
+            if (hub) await hub.revokeSession(session.id);
+          },
+        },
         create: {
           before: async (session, ctx) => {
             // The auth adapter can still be inside the signup transaction.
             const user = await ctx?.context.internalAdapter.findUserById(session.userId);
+            if (hub) {
+              if (ctx?.path !== "/hub/sign-in" || !user?.id.startsWith("hub_")) {
+                throw new APIError("FORBIDDEN", { message: "Sign in through CortexAI Hub" });
+              }
+              return;
+            }
             const policy = await resolveSignupPolicy(prisma, env);
             if (
               !user ||

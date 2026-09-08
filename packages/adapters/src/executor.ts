@@ -445,6 +445,8 @@ function runtimeFallbackModel(runtime: AgentRuntime) {
 }
 
 export interface ExecutorDeps {
+  /** Optional deployment identity gate, shared by interactive and scheduled runs. */
+  authorizeUserWork?: (userId: string) => Promise<boolean>;
   prisma: PrismaClient;
   events: ThreadEvents;
   runtime: AgentRuntime;
@@ -894,6 +896,21 @@ export function createRunExecutor(deps: ExecutorDeps) {
 
       const runSecrets = [...deps.secrets];
       try {
+        if (deps.authorizeUserWork && !(await deps.authorizeUserWork(run.userId))) {
+          await deps.events.finalizeRun({
+            spaceId: run.spaceId,
+            threadId: run.threadId,
+            botId: run.botId,
+            runId,
+            taskId: run.taskId,
+            attemptId: attempt.id,
+            leaseOwner: workerId,
+            leaseFence: fence,
+            outcome: "failed",
+            error: "Sign in through CortexAI Hub to continue",
+          });
+          return;
+        }
         const sourceBlocks =
           run.trigger === "messaging" && run.sourceMessageId
             ? ((
@@ -1419,6 +1436,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
           executionId: string,
         ) => {
           context.signal.throwIfAborted();
+          if (deps.authorizeUserWork && !(await deps.authorizeUserWork(run.userId))) {
+            runAbortController?.abort();
+            throw new Error("Sign in through CortexAI Hub to continue");
+          }
           if (handedOff) {
             return { error: "This stage was handed off. End the turn without more tool calls." };
           }

@@ -126,10 +126,12 @@ export function AccountSettingsOverlay({
             <Trans>Account</Trans>
           </h3>
           <p className="mt-3 text-[14px] text-foreground/75">{name}</p>
-          {email ? <p className="mt-1 text-[13px] text-muted-foreground/70">{email}</p> : null}
+          {email && !email.endsWith("@hub.invalid") ? (
+            <p className="mt-1 text-[13px] text-muted-foreground/70">{email}</p>
+          ) : null}
         </section>
 
-        <ChangePasswordSection email={email} />
+        {!email?.endsWith("@hub.invalid") ? <ChangePasswordSection email={email} /> : null}
 
         {messagingEnabled && onOpenMessaging ? (
           <section className="mt-5 rounded-xl border border-border px-4 py-4">

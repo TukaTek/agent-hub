@@ -51,7 +51,7 @@ import {
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
 } from "@cortexai-agent-hub/adapters";
-import { blockedAuthPaths, createAuth } from "@cortexai-agent-hub/auth";
+import { blockedAuthPaths, createAuth, createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
 import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import {
   createDb,
@@ -237,6 +237,8 @@ export async function createApp(
     env.agentRuntime === "scripted" ? new ScriptedAgentRuntime() : new PiAgentRuntime();
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
+    hub: env.hubAuth,
+    tokenEncryptionKey: env.encryptionKey,
     secret: env.authSecret,
     baseURL: env.authUrl,
     webOrigin: env.webOrigin,
@@ -285,6 +287,7 @@ export async function createApp(
     CLOUD_AGENT_SPACE_ID: env.cloudAgentSpaceId,
   });
   const executor = createRunExecutor({
+    authorizeUserWork: createUserWorkAuthorizer(prisma, env.hubAuth, env.encryptionKey),
     prisma,
     runtime,
     sandbox,
@@ -392,8 +395,9 @@ export async function createApp(
   );
   app.get("/api/auth/capabilities", (c) =>
     c.json({
-      passwordReset: Boolean(email),
-      resetUrl: email ? new URL("/reset-password", env.webOrigin).href : null,
+      mode: env.hubAuth ? "hub" : "local",
+      passwordReset: !env.hubAuth && Boolean(email),
+      resetUrl: !env.hubAuth && email ? new URL("/reset-password", env.webOrigin).href : null,
     }),
   );
   if (localEmailEmulator && env.nodeEnv === "development") {
@@ -421,9 +425,19 @@ export async function createApp(
     if (actor) {
       enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     }
+    let requestSignal = c.req.raw.signal;
+    if (env.hubAuth && session) {
+      const grant = await prisma.hubSession.findUnique({
+        where: { sessionId: session.session.id },
+      });
+      requestSignal = AbortSignal.any([
+        requestSignal,
+        AbortSignal.timeout(Math.max(0, (grant?.accessUntil.getTime() ?? 0) - Date.now())),
+      ]);
+    }
     const { matched, response } = await rpc.handle(c.req.raw, {
       prefix: "/rpc",
-      context: { actor, signal: c.req.raw.signal },
+      context: { actor, signal: requestSignal },
     });
     if (matched) return c.newResponse(response.body, response);
     await next();

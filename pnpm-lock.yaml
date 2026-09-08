@@ -348,6 +348,9 @@ importers:
       '@cortexai-agent-hub/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
+      '@cortexai-agent-hub/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@cortexai-agent-hub/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -13522,9 +13525,7 @@ snapshots:
       metro-runtime: 0.84.5
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
     optional: true
 
   '@react-native/metro-config@0.86.3(@babel/core@7.29.7)':
