@@ -42,3 +42,11 @@ for (const desktop of [false, true]) {
     await captureScreenshot(page, testInfo, "hub-native-sign-in");
   });
 }
+
+test("capability network failure blocks authentication", async ({ page }) => {
+  await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
+  await page.route("**/api/auth/capabilities", (route) => route.abort("failed"));
+  await page.goto("/sign-in");
+  await expect(page.getByRole("alert")).toHaveText("Could not reach the server");
+  await expect(page.getByRole("button", { name: "Continue with email" })).toHaveCount(0);
+});
