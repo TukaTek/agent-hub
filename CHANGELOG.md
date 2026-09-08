@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Optional CortexAI Hub sign-in across web, desktop, and mobile, using tenant discovery and live product-access checks.
+
 ### Changed
 
 - Rebranded the product as CortexAI Agent Hub across the web, desktop, mobile, runtime, packaging, and self-hosting surfaces. The web welcome, authentication, and chat screens now use the official CortexAI mark and theme-safe charcoal and orange brand styling.

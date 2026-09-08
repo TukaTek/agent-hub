@@ -3,6 +3,7 @@ import {
   resolveDeploymentModel,
   resolveSandboxProvider,
 } from "@cortexai-agent-hub/adapters";
+import { type HubAuthConfig, hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import {
   resolveAuthSecret,
   resolveEncryptionKey,
@@ -13,6 +14,7 @@ import {
 export { resolveCloudAgentProvider, resolveSandboxProvider } from "@cortexai-agent-hub/adapters";
 
 export interface AppEnv {
+  hubAuth?: HubAuthConfig;
   nodeEnv: string;
   databaseUrl: string;
   realtimeDatabaseUrl: string;
@@ -90,6 +92,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const updaterUrl = optional(source.CORTEXAI_AGENT_HUB_UPDATER_URL);
   const updaterToken = optional(source.CORTEXAI_AGENT_HUB_UPDATER_TOKEN);
   return {
+    hubAuth: hubAuthFromEnv(source),
     nodeEnv: source.NODE_ENV ?? "",
     databaseUrl: required(source, "DATABASE_URL"),
     realtimeDatabaseUrl: source.REALTIME_DATABASE_URL ?? required(source, "DATABASE_URL"),

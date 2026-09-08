@@ -2,6 +2,7 @@ import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   AccessibilityInfo,
+  ActivityIndicator,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -40,7 +41,7 @@ export default function SignIn() {
   const tokens = useMobileTokens();
   const router = useRouter();
   const { mode: requestedMode } = useLocalSearchParams<{ mode?: string | string[] }>();
-  const [mode, setMode] = useState<AuthMode>(() => initialAuthMode(requestedMode));
+  const [formMode, setMode] = useState<AuthMode>(() => initialAuthMode(requestedMode));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -51,6 +52,8 @@ export default function SignIn() {
   const [apiBase, setApiBase] = useState(() => currentApiBase());
   const [serverOpen, setServerOpen] = useState(false);
   const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
+  const mode = reset?.mode === "hub" ? "in" : formMode;
+  const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
   const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
@@ -63,11 +66,14 @@ export default function SignIn() {
   useEffect(() => {
     let active = true;
     setReset(null);
+    setCapabilitiesFailed(false);
     void passwordResetCapabilities()
       .then((capabilities) => {
         if (active) setReset(capabilities);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (active) setCapabilitiesFailed(true);
+      });
     return () => {
       active = false;
     };
@@ -118,7 +124,7 @@ export default function SignIn() {
           return;
         }
       } else {
-        await signIn(email.trim(), password);
+        await signIn(email.trim(), password, reset?.mode === "hub");
       }
       router.replace("/");
     } catch (err) {
@@ -165,7 +171,15 @@ export default function SignIn() {
                       ? t("Sign up for CortexAI Agent Hub")
                       : t("Reset your password")}
               </Text>
-              {resetSent ? (
+              {!reset ? (
+                capabilitiesFailed ? (
+                  <Text accessibilityRole="alert" style={{ color: tokens.destructive }}>
+                    {t("Could not reach the server")}
+                  </Text>
+                ) : (
+                  <ActivityIndicator />
+                )
+              ) : resetSent ? (
                 <View style={{ alignItems: "center", marginTop: 28 }}>
                   <Pressable
                     accessibilityRole="button"
@@ -272,39 +286,41 @@ export default function SignIn() {
                       </Text>
                     </Pressable>
                   ) : null}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginTop: 24,
-                    }}
-                  >
-                    <Text style={{ color: tokens.mutedForeground, fontSize: 15 }}>
-                      {mode === "in"
-                        ? t("Don’t have an account?")
-                        : mode === "up"
-                          ? t("Already have an account?")
-                          : ""}
-                    </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      hitSlop={8}
-                      onPress={() => {
-                        setMode((current) => (current === "in" ? "up" : "in"));
-                        setError(null);
+                  {reset.mode !== "hub" ? (
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        marginTop: 24,
                       }}
-                      style={{ marginLeft: 5 }}
                     >
-                      <Text style={{ color: tokens.foreground, fontSize: 15, fontWeight: "600" }}>
+                      <Text style={{ color: tokens.mutedForeground, fontSize: 15 }}>
                         {mode === "in"
-                          ? t("Sign up")
+                          ? t("Don’t have an account?")
                           : mode === "up"
-                            ? t("Sign in")
-                            : t("Back to sign in")}
+                            ? t("Already have an account?")
+                            : ""}
                       </Text>
-                    </Pressable>
-                  </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        hitSlop={8}
+                        onPress={() => {
+                          setMode((current) => (current === "in" ? "up" : "in"));
+                          setError(null);
+                        }}
+                        style={{ marginLeft: 5 }}
+                      >
+                        <Text style={{ color: tokens.foreground, fontSize: 15, fontWeight: "600" }}>
+                          {mode === "in"
+                            ? t("Sign up")
+                            : mode === "up"
+                              ? t("Sign in")
+                              : t("Back to sign in")}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </>
               )}
             </ScrollView>

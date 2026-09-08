@@ -246,6 +246,13 @@ test("sign-in, spawn, and stop work in the shell", async ({ page }, testInfo) =>
     if (message.type() === "error") browserErrors.push(message.text());
   });
   page.on("requestfailed", (request) => {
+    // Auth unmount/StrictMode cleanup intentionally cancels this bounded lookup.
+    // Keep all other request failures (including real capability network errors).
+    if (
+      new URL(request.url()).pathname === "/api/auth/capabilities" &&
+      request.failure()?.errorText === "net::ERR_ABORTED"
+    )
+      return;
     failedRequests.push(
       `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ""}`,
     );

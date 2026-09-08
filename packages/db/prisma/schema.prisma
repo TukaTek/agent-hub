@@ -18,6 +18,7 @@ model User {
   avatarStyle                 String                       @default("robot")
   sessions                    Session[]
   accounts                    Account[]
+  hubIdentity                 HubIdentity?
   members                     Member[]
   invitations                 Invitation[]
   modelCredentials            UserModelCredential[]
@@ -45,10 +46,35 @@ model Session {
   userId               String
   user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   activeOrganizationId String?
+  hubSession           HubSession?
 
   @@unique([token])
   @@index([userId])
   @@map("session")
+}
+
+model HubIdentity {
+  userId  String @id
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  origin  String
+  tenant  String
+  subject String
+
+  @@unique([origin, tenant, subject])
+  @@map("hub_identity")
+}
+
+model HubSession {
+  sessionId    String   @id
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  refreshToken String
+  accessUntil  DateTime
+  accessToken  String?
+  // Retained for old OAuth sessions, which must sign in again.
+  audience     String?
+  clientId     String?
+
+  @@map("hub_session")
 }
 
 model Account {

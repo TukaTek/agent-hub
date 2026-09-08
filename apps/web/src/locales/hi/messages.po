@@ -13,6 +13,14 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: src/pages/Auth.tsx
+msgid "Continue with CortexAI Hub"
+msgstr "CortexAI Hub के साथ जारी रखें"
+
+#: src/pages/Auth.tsx
+msgid "Could not sign in through CortexAI Hub"
+msgstr "CortexAI Hub के माध्यम से साइन इन नहीं हो सका"
+
 #: src/pages/Shell.tsx:2688
 msgid " (unread)"
 msgstr " (अपठित)"
@@ -3259,3 +3267,7 @@ msgstr "GraphQL एंडपॉइंट जोड़ें"
 #: src/pages/PluginsOverlay.tsx:601
 msgid "No tool sources yet."
 msgstr "अभी कोई टूल स्रोत नहीं है।"
+
+#: src/pages/Auth.tsx
+msgid "This organization’s sign-in method is not supported yet"
+msgstr ""

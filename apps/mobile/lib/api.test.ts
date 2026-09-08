@@ -82,6 +82,23 @@ describe("mobile API authentication", () => {
     expect(resumeLiveNotifications).not.toHaveBeenCalled();
   });
 
+  it("uses native Hub login and securely stores only the app session", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ token: "hub-app-session" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await signIn("user@example.test", "synthetic-password", true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api/auth/hub/sign-in",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ email: "user@example.test", password: "synthetic-password" }),
+      }),
+    );
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
+      "cortexai-agent-hub.session_token",
+      "hub-app-session",
+    );
+  });
+
   it("creates an account and persists its session token", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ token: "signup-token" }));
     vi.stubGlobal("fetch", fetchMock);

@@ -13,6 +13,14 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: src/pages/Auth.tsx
+msgid "Continue with CortexAI Hub"
+msgstr "Continue with CortexAI Hub"
+
+#: src/pages/Auth.tsx
+msgid "Could not sign in through CortexAI Hub"
+msgstr "Could not sign in through CortexAI Hub"
+
 #: src/pages/Shell.tsx:2688
 msgid " (unread)"
 msgstr " (unread)"
@@ -3259,3 +3267,7 @@ msgstr "Add GraphQL endpoint"
 #: src/pages/PluginsOverlay.tsx:601
 msgid "No tool sources yet."
 msgstr "No tool sources yet."
+
+#: src/pages/Auth.tsx
+msgid "This organization’s sign-in method is not supported yet"
+msgstr ""
