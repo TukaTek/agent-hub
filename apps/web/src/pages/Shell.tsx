@@ -94,6 +94,7 @@ import {
   Monitor,
   MoreHorizontal,
   PanelLeftClose,
+  PanelLeftOpen,
   Paperclip,
   Plus,
   Puzzle,
@@ -2436,6 +2437,7 @@ export function ShellPage() {
         />
       ) : null}
       <aside
+        id="bots-sidebar"
         data-testid="bots-sidebar"
         data-collapsed={botsSidebarCollapsed ? "true" : "false"}
         inert={botsSidebarCollapsed && !mobileSidebarOpen ? true : undefined}
@@ -3033,6 +3035,21 @@ export function ShellPage() {
       >
         <div className="app-drag flex items-center justify-between border-b border-sidebar-border px-3 py-[17px] md:px-[22px]">
           <div className="flex min-w-0 items-center gap-2">
+            {botsSidebarCollapsed ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                data-testid="restore-bots-sidebar"
+                aria-label={t`Show bots`}
+                title={t`Show bots`}
+                aria-controls="bots-sidebar"
+                aria-expanded={false}
+                onClick={() => setBotsSidebarCollapsedPref(false)}
+                className="app-no-drag hidden shrink-0 md:inline-flex"
+              >
+                <PanelLeftOpen size={19} strokeWidth={1.7} aria-hidden="true" />
+              </Button>
+            ) : null}
             <button
               type="button"
               aria-label={t`Open navigation`}
