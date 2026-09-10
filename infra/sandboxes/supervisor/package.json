@@ -14,7 +14,7 @@
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/logging": "workspace:*",
     "dockerode": "^4.0.7",
-    "hono": "^4.9.6",
+    "hono": "^4.13.5",
     "tsx": "^4.20.5",
     "zod": "^4.1.5"
   },

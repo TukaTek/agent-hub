@@ -15,7 +15,7 @@
     "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/logging": "workspace:*",
-    "hono": "^4.9.6",
+    "hono": "^4.13.5",
     "tsx": "^4.20.5"
   },
   "devDependencies": {
