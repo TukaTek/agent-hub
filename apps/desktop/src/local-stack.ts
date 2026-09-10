@@ -1,4 +1,5 @@
 import { copyFile, lstat, mkdir, readFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import path from "node:path";
 import type { DesktopLocalStackState } from "@cortexai-agent-hub/contracts";
 import {
@@ -17,10 +18,36 @@ export const STACK_PROJECT_NAME = "cortexai-agent-hub-desktop";
 export const STACK_COMPOSE_FILE = "docker-compose.images.yml";
 export const STACK_ENV_TEMPLATE = ".env.images.example";
 export const STACK_ENV_FILE = ".env";
+export const STACK_WEB_URL_FILE = ".desktop-web-url";
 export const STACK_TOKEN_FILE = ".desktop-stack-token";
 export const STACK_OUTPUT_LINES = 20;
 export const STACK_HEALTH_TIMEOUT_MS = 120_000;
 export const COMPOSE_WAIT_TIMEOUT_S = 300;
+
+export async function readStackWebUrl(dir: string, fallback: string): Promise<string> {
+  const raw = await readPrivateFile(path.join(dir, STACK_WEB_URL_FILE), 128);
+  const match = raw?.match(/^http:\/\/127\.0\.0\.1:(\d{4,5})$/);
+  const port = Number(match?.[1]);
+  return match && port >= 1024 && port <= 65535 && raw === `http://127.0.0.1:${port}`
+    ? raw
+    : fallback;
+}
+
+/** Docker owns the final bind; a racing listener is handled by bounded up retries. */
+export async function allocateLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close((error) => {
+        if (error) reject(error);
+        else if (address && typeof address !== "string") resolve(address.port);
+        else reject(new Error("No loopback port allocated."));
+      });
+    });
+  });
+}
 
 const HEALTH_POLL_INTERVAL_MS = 2_000;
 const COMPOSE_VERSION_TIMEOUT_MS = 15_000;
@@ -144,7 +171,22 @@ export type LocalStackEvent =
   | { type: "failed"; message: string };
 
 export function initialStackState(imageTag: string): DesktopLocalStackState {
-  return { phase: "idle", message: null, output: [], imageTag };
+  return { phase: "idle", message: null, output: [], layerBytes: {}, imageTag };
+}
+
+/** `COMPOSE_PROGRESS=plain` reports a layer's downloaded size and never its total. */
+const PULL_PROGRESS = /^\s*(\S+)\s+Downloading\s+([\d.]+)\s*([kKMG]?B)\b/;
+const BYTE_UNITS: Record<string, number> = { B: 1, kB: 1e3, MB: 1e6, GB: 1e9 };
+
+/** Layers report a growing size, so the largest value seen for a layer is what it has pulled. */
+function reduceLayerBytes(layerBytes: Record<string, number>, line: string) {
+  const match = PULL_PROGRESS.exec(line);
+  if (match === null) return layerBytes;
+  const layer = match[1] ?? "";
+  const unit = match[3] === "KB" ? "kB" : (match[3] ?? "");
+  const bytes = Number(match[2]) * (BYTE_UNITS[unit] ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= (layerBytes[layer] ?? 0)) return layerBytes;
+  return { ...layerBytes, [layer]: bytes };
 }
 
 export function reduceStackState(
@@ -152,7 +194,7 @@ export function reduceStackState(
   event: LocalStackEvent,
 ): DesktopLocalStackState {
   if (event.type === "check-start") {
-    return { ...state, phase: "checking-docker", message: null, output: [] };
+    return { ...state, phase: "checking-docker", message: null, output: [], layerBytes: {} };
   }
   // Terminal phases only leave through the next check-start.
   if (state.phase === "ready" || state.phase === "failed") return state;
@@ -177,7 +219,11 @@ export function reduceStackState(
       ) {
         return state;
       }
-      return { ...state, output: [...state.output, event.line].slice(-STACK_OUTPUT_LINES) };
+      return {
+        ...state,
+        output: [...state.output, event.line].slice(-STACK_OUTPUT_LINES),
+        layerBytes: reduceLayerBytes(state.layerBytes, event.line),
+      };
     case "ready":
       return { ...state, phase: "ready", message: null };
     case "failed":
@@ -200,7 +246,9 @@ export function stackFailureMessage(
     case "image-not-found":
       return `Images for ${imageTag} are not published yet. Try again in a few minutes.`;
     case "port-in-use":
-      return "Port 5173 or 3100 is already in use on this computer. Stop what is using it, then retry.";
+      return "Could not bind a local port after retrying. Retry to choose another port.";
+    case "address-pool-exhausted":
+      return "Docker has no free network address pools. Remove unused Docker networks or expand Docker’s address pools, then retry.";
     case "network":
       return "Could not reach the image registry. Check the internet connection, then retry.";
     case "daemon-down":
@@ -233,10 +281,13 @@ export interface LocalStackDeps {
   stackDir: string;
   resourceDir: string;
   localWebUrl: string;
+  allocatePort?: () => Promise<number>;
   imageTag: string;
   /** Returns the authenticated running image tag, or null for any other listener. */
   probe: (url: string, signal: AbortSignal, token: string) => Promise<string | null>;
   randomHex: (bytes: number) => string;
+  /** Called on every state change so the setup window is pushed progress instead of polling for it. */
+  onState?: (state: DesktopLocalStackState) => void;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   healthTimeoutMs?: number;
 }
@@ -260,6 +311,7 @@ function defaultSleep(ms: number, signal: AbortSignal) {
  */
 export class LocalStackController {
   private current: DesktopLocalStackState;
+  private currentWebUrl: string;
   private currentStackToken: string | null = null;
   private running: Promise<DesktopLocalStackState> | null = null;
   private stopping: Promise<DesktopLocalStackState> | null = null;
@@ -270,6 +322,11 @@ export class LocalStackController {
 
   constructor(private readonly deps: LocalStackDeps) {
     this.current = initialStackState(deps.imageTag);
+    this.currentWebUrl = deps.localWebUrl;
+  }
+
+  webUrl(): string {
+    return this.currentWebUrl;
   }
 
   state(): DesktopLocalStackState {
@@ -277,7 +334,7 @@ export class LocalStackController {
   }
 
   /** Fast path for launch: only a stack with our private token and desired image may be reused. */
-  async matchesDesiredStack(url = this.deps.localWebUrl): Promise<boolean> {
+  async matchesDesiredStack(url = this.currentWebUrl): Promise<boolean> {
     const token = await readStackToken(this.deps.stackDir);
     if (token === null) return false;
     this.currentStackToken = token;
@@ -335,15 +392,22 @@ export class LocalStackController {
   private async runStop(): Promise<DesktopLocalStackState> {
     const binary = resolveDockerBinary(this.deps.platform, this.deps.env, this.deps.exists);
     const stopped = binary === null ? null : await this.compose(binary, ["stop"], STOP_TIMEOUT_MS);
-    this.current =
+    this.setState(
       stopped?.code === 0
         ? initialStackState(this.deps.imageTag)
-        : { ...this.current, phase: "failed", message: STOP_FAILED };
+        : { ...this.current, phase: "failed", message: STOP_FAILED },
+    );
     return this.current;
   }
 
   private push(event: LocalStackEvent) {
-    this.current = reduceStackState(this.current, event);
+    this.setState(reduceStackState(this.current, event));
+  }
+
+  private setState(next: DesktopLocalStackState) {
+    if (next === this.current) return;
+    this.current = next;
+    this.deps.onState?.(next);
   }
 
   private async run(): Promise<DesktopLocalStackState> {
@@ -429,7 +493,19 @@ export class LocalStackController {
     const upArgs = composeSupportsWaitTimeout(version.stdout)
       ? ["up", "-d", "--wait", "--wait-timeout", String(COMPOSE_WAIT_TIMEOUT_S)]
       : ["up", "-d"];
-    const up = await this.compose(binary, upArgs, UP_TIMEOUT_MS, signal);
+    await writePrivateFile(path.join(this.deps.stackDir, STACK_WEB_URL_FILE), this.currentWebUrl);
+    let up = await this.compose(binary, upArgs, UP_TIMEOUT_MS, signal);
+    for (
+      let retry = 0;
+      retry < 2 && !interrupted(signal, up) && up.code !== 0 && failureKind(up) === "port-in-use";
+      retry += 1
+    ) {
+      const port = await (this.deps.allocatePort ?? allocateLoopbackPort)();
+      if (signal.aborted) break;
+      this.currentWebUrl = `http://127.0.0.1:${port}`;
+      await writePrivateFile(path.join(this.deps.stackDir, STACK_WEB_URL_FILE), this.currentWebUrl);
+      up = await this.compose(binary, upArgs, UP_TIMEOUT_MS, signal);
+    }
     if (interrupted(signal, up)) return this.push({ type: "failed", message: START_INTERRUPTED });
     if (up.code !== 0) {
       // Best effort: recent service logs usually name the failing service.
@@ -445,9 +521,7 @@ export class LocalStackController {
     const sleep = this.deps.sleep ?? defaultSleep;
     const deadline = Date.now() + (this.deps.healthTimeoutMs ?? STACK_HEALTH_TIMEOUT_MS);
     while (!signal.aborted) {
-      if (
-        (await this.deps.probe(this.deps.localWebUrl, signal, stackToken)) === this.deps.imageTag
-      ) {
+      if ((await this.deps.probe(this.currentWebUrl, signal, stackToken)) === this.deps.imageTag) {
         this.push({ type: "ready" });
         return;
       }
@@ -471,6 +545,12 @@ export class LocalStackController {
         ...(this.currentStackToken === null
           ? {}
           : { CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN: this.currentStackToken }),
+        CORTEXAI_AGENT_HUB_WEB_PORT: new URL(this.currentWebUrl).port || "80",
+        // Only web needs a stable host address. Docker allocates the API host port.
+        CORTEXAI_AGENT_HUB_API_PORT: "0",
+        BETTER_AUTH_URL: this.currentWebUrl,
+        WEB_ORIGIN: this.currentWebUrl,
+        API_URL: this.currentWebUrl,
         COMPOSE_PROGRESS: "plain",
       }),
       timeoutMs,

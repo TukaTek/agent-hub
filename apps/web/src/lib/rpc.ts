@@ -1,7 +1,9 @@
 import type { AppContract } from "@cortexai-agent-hub/contracts";
+import { LOCAL_SETTINGS_PAGE, LOCAL_SETTINGS_RPC } from "@cortexai-agent-hub/contracts";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
+import { desktopBridge } from "./desktop";
 
 const SPACE_STORAGE_KEY = "cortexai-agent-hub:space-id";
 
@@ -51,9 +53,20 @@ export function withSpaceHeaders(
 
 const link = new RPCLink<RpcClientContext>({
   url: () =>
-    typeof window === "undefined" ? "http://127.0.0.1:5173/rpc" : `${window.location.origin}/rpc`,
-  fetch: (input, init, options) => {
+    typeof window === "undefined"
+      ? "http://127.0.0.1:5173/rpc"
+      : `${window.location.origin}${window.location.pathname === LOCAL_SETTINGS_PAGE ? LOCAL_SETTINGS_RPC : "/rpc"}`,
+  fetch: async (input, init, options) => {
     const request = new Request(input, init);
+    if (typeof window !== "undefined" && window.location.pathname === LOCAL_SETTINGS_PAGE) {
+      const bridge = desktopBridge()?.localSettings;
+      if (!bridge) throw new Error("Local settings require the desktop app");
+      const result = await bridge.request(new URL(request.url).pathname, await request.text());
+      return new Response(result.body, {
+        status: result.status,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const spaceId =
       options.context.spaceId === undefined ? selectedSpaceId() : options.context.spaceId;
     return fetch(request, {

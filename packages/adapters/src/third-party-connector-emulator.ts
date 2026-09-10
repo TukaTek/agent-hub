@@ -2,9 +2,19 @@ import type { ResolveHostname } from "./remote-mcp.js";
 
 type EmulatorRecord =
   | { provider: "pipedream"; operation: string; app?: string }
-  | { provider: "mcp"; operation: string; host: string; args?: Record<string, unknown> }
+  | { provider: "catalog"; operation: "search"; query: string }
+  | {
+      provider: "mcp";
+      operation: string;
+      host: string;
+      authenticated?: boolean;
+      args?: Record<string, unknown>;
+    }
   | { provider: "openapi"; operation: string; path: string; authenticated: boolean }
   | { provider: "graphql"; operation: string; authenticated: boolean };
+
+/** Expected Executor test bearer. Compared at the boundary; never written into records. */
+const EXPECTED_EXECUTOR_BEARER = "Bearer fake-executor-credential-value";
 
 const PIPEDREAM_APPS = [
   { id: "app-linear", name_slug: "linear", name: "Linear" },
@@ -26,11 +36,47 @@ export class ThirdPartyConnectorEmulator {
     if (url.hostname === "remote.mcp.pipedream.net" || url.hostname === "treg.to") {
       return this.mcp(url, init);
     }
-    if (url.hostname === "mcp.example.test") return this.mcp(url, init);
+    if (url.hostname === "mcp.example.test" || url.hostname === "executor.example.test") {
+      return this.mcp(url, init);
+    }
     if (url.hostname === "api.example.test") return this.openapi(url, init);
     if (url.hostname === "graphql.example.test") return this.graphql(url, init);
+    if (url.hostname === "catalog.example.test") return this.catalog(url);
     throw new Error(`Third-party connector emulator received unexpected URL ${url}`);
   };
+
+  private async catalog(url: URL): Promise<Response> {
+    if (url.pathname !== "/api/search") return new Response(null, { status: 404 });
+    const query = url.searchParams.get("q") ?? "";
+    this.records.push({ provider: "catalog", operation: "search", query });
+    if (!query.toLowerCase().includes("github")) return Response.json({ results: [] });
+    return Response.json({
+      results: [
+        {
+          domain: "github.com",
+          name: "GitHub",
+          description: "Repository automation surfaces",
+          url: "https://integrations.example.test/github.com/",
+          surfaces: [
+            {
+              kind: "mcp",
+              slug: "github-mcp",
+              url: "https://mcp.example.test/mcp",
+              auth: { kind: "token", header: "Authorization: Bearer {token}" },
+            },
+            {
+              kind: "openapi",
+              slug: "github-openapi",
+              url: "https://api.example.test/openapi.json",
+              auth: { kind: "token", header: "Authorization: Bearer {token}" },
+            },
+            { kind: "graphql", slug: "github-graphql", url: "https://api.github.test/graphql" },
+            { kind: "cli", slug: "github-cli" },
+          ],
+        },
+      ],
+    });
+  }
 
   private async pipedream(url: URL, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
@@ -93,6 +139,12 @@ export class ThirdPartyConnectorEmulator {
     const id = request.id;
     const headers = new Headers(init?.headers);
     const app = headers.get("x-pd-app-slug") ?? undefined;
+    const authorization = headers.get("authorization");
+    // Validate bearer at the boundary; persist only the boolean, never the secret.
+    const authenticated =
+      url.hostname === "executor.example.test"
+        ? authorization === EXPECTED_EXECUTOR_BEARER
+        : Boolean(authorization?.startsWith("Bearer ") && authorization.length > "Bearer ".length);
     if (method === "notifications/initialized") return new Response(null, { status: 202 });
     if (method === "initialize") {
       return jsonRpc(id, {
@@ -104,7 +156,12 @@ export class ThirdPartyConnectorEmulator {
       });
     }
     if (method === "tools/list") {
-      this.records.push({ provider: "mcp", operation: "tools/list", host: url.hostname });
+      this.records.push({
+        provider: "mcp",
+        operation: "tools/list",
+        host: url.hostname,
+        authenticated,
+      });
       return jsonRpc(id, {
         tools: [
           {
@@ -126,6 +183,7 @@ export class ThirdPartyConnectorEmulator {
         provider: "mcp",
         operation: String(params.name ?? "unknown"),
         host: url.hostname,
+        authenticated,
         args,
       });
       const result = { ok: true, app, text: args.text ?? null };

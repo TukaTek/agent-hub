@@ -143,13 +143,19 @@ export function reduceUpdateState(
         phase: "ready",
         availableVersion: event.version,
         percent: 100,
-        message: "Restart CortexAI Agent Hub to finish the update.",
+        message: null,
       };
     case "failed": {
       // electron-updater can emit late errors after a verified download; keep installable
-      // state unless this failure came from quitAndInstall itself.
+      // state. A synchronous install failure can retry the same verified download.
       if (state.phase === "ready" && event.installFailed !== true) return state;
       const failure = classifyUpdaterFailure(event.error);
+      if (state.phase === "ready" && event.installFailed === true) {
+        return {
+          ...state,
+          message: failure.message ?? "The update could not be completed. Try again later.",
+        };
+      }
       if (failure.kind === "no-releases" && state.phase === "checking") {
         return {
           ...state,
@@ -253,6 +259,7 @@ export class DesktopUpdateController {
     private readonly environment: UpdaterEnvironment,
     private readonly loadUpdater: () => Promise<ElectronAutoUpdater>,
     private readonly clock: UpdateClock = systemClock,
+    private readonly onInstallFailure?: () => void,
   ) {
     this.current = initialUpdateState(environment);
   }
@@ -310,9 +317,7 @@ export class DesktopUpdateController {
             });
           }
         });
-        updater.on("error", (error) =>
-          this.push({ type: "failed", error, userInitiated: this.checkWasRequested }),
-        );
+        updater.on("error", (error) => this.fail(error));
         return updater;
       })
       .catch((error: unknown) => {
@@ -392,6 +397,18 @@ export class DesktopUpdateController {
     return this.current;
   }
 
+  private fail(error: unknown) {
+    const installFailed = this.installStarted;
+    if (installFailed) this.installStarted = false;
+    this.push({
+      type: "failed",
+      error,
+      userInitiated: this.checkWasRequested || installFailed,
+      installFailed,
+    });
+    if (installFailed) this.onInstallFailure?.();
+  }
+
   async install() {
     if (this.installStarted || this.current.phase !== "ready") return this.current;
     const updater = await this.updater();
@@ -399,11 +416,11 @@ export class DesktopUpdateController {
       return this.current;
     }
     this.installStarted = true;
+    this.current = { ...this.current, message: null };
     try {
       updater.quitAndInstall();
     } catch (error) {
-      this.installStarted = false;
-      this.push({ type: "failed", error, userInitiated: true, installFailed: true });
+      this.fail(error);
     }
     return this.current;
   }

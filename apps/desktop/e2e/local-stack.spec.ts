@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type RequestListener, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type ElectronApplication, _electron as electron, expect, test } from "@playwright/test";
@@ -10,7 +10,13 @@ const STACK_PROBE_PATH = "/.well-known/cortexai-agent-hub-desktop-stack";
 const STACK_TOKEN_HEADER = "x-cortexai-agent-hub-desktop-stack-token";
 const COMPOSE_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "infra", "compose");
 
-type FakeDockerMode = "ok" | "daemon-down" | "pull-fails";
+type FakeDockerMode =
+  | "ok"
+  | "daemon-down"
+  | "pull-fails"
+  | "pool-exhausted"
+  | "port-conflict"
+  | "ports-exhausted";
 
 let server: Server;
 let serverUrl: string;
@@ -32,6 +38,19 @@ test.beforeAll(async () => {
       }
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ ok: true, imageTag: IMAGE_TAG }));
+      return;
+    }
+    if (request.url === "/api/desktop-settings/rpc/integrationSetup/get") {
+      const expected = await readFile(path.join(userData, "stack", ".desktop-stack-token"), "utf8");
+      if (
+        request.headers["x-cortexai-agent-hub-local-settings-token"] !== expected.trim() ||
+        request.headers.cookie
+      ) {
+        response.writeHead(401).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ json: { canConfigure: true } }));
       return;
     }
     if (request.url === "/rpc/health" && request.method === "POST") {
@@ -80,6 +99,14 @@ function fakeDockerLog() {
  */
 async function writeFakeDocker(mode: FakeDockerMode) {
   const script = path.join(userData, "fake-docker.sh");
+  let up = '  up) echo "Container cortexai-agent-hub-web-1 Started"; exit 0 ;;';
+  if (mode === "pool-exhausted") {
+    up = '  up) echo "all predefined address pools have been fully subnetted" >&2; exit 1 ;;';
+  } else if (mode === "ports-exhausted") {
+    up = '  up) echo "port is already allocated" >&2; exit 1 ;;';
+  } else if (mode === "port-conflict") {
+    up = `  up) if [ ! -f '${path.join(userData, "port-conflict")}' ]; then touch '${path.join(userData, "port-conflict")}'; echo "port is already allocated" >&2; exit 1; fi; echo "Container cortexai-agent-hub-web-1 Started"; exit 0 ;;`;
+  }
   const lines = [
     "#!/bin/sh",
     `printf '%s | %s | %s\\n' "$PWD" "$CORTEXAI_AGENT_HUB_IMAGE_TAG" "$*" >> '${fakeDockerLog()}'`,
@@ -95,8 +122,8 @@ async function writeFakeDocker(mode: FakeDockerMode) {
     "  pull)",
     mode === "pull-fails"
       ? '    echo "Error response from daemon: manifest unknown" >&2; exit 1 ;;'
-      : '    echo "app Pulled"; sleep 2; echo "computer Pulled"; exit 0 ;;',
-    '  up) echo "Container cortexai-agent-hub-web-1 Started"; exit 0 ;;',
+      : '    echo " a235d761c5d1 Downloading 59.47MB"; echo " a235d761c5d1 Downloading 412.3MB"; echo "app Pulled"; sleep 2; echo "computer Pulled"; exit 0 ;;',
+    up,
     '  logs) echo "web-1 | listening"; exit 0 ;;',
     "esac",
     "exit 0",
@@ -107,7 +134,10 @@ async function writeFakeDocker(mode: FakeDockerMode) {
 }
 
 async function launch(mode: FakeDockerMode | "missing") {
-  const env = { ...process.env, CORTEXAI_AGENT_HUB_PERFORMANCE_USER_DATA: userData };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CORTEXAI_AGENT_HUB_PERFORMANCE_USER_DATA: userData,
+  };
   // A stale CORTEXAI_AGENT_HUB_WEB_URL from the developer's shell would bypass setup entirely.
   delete env.CORTEXAI_AGENT_HUB_WEB_URL;
   return electron.launch({
@@ -152,12 +182,19 @@ test("This computer installs and starts the stack, then opens the app", async ()
 
   const appWindowPromise = app.waitForEvent("window");
   await setup.getByRole("button", { name: "Continue" }).click();
-  await expect(setup.locator("#stack-phase")).toHaveText("Downloading CortexAI Agent Hub images…");
-  await expect(setup.locator("#stack-output")).toContainText("app Pulled");
+  await expect(setup.locator("#stack-phase")).toHaveText("Downloading CortexAI Agent Hub…");
   await expect(setup.getByRole("button", { name: "Continue" })).toBeDisabled();
+  // Docker output stays behind the details toggle; the phase, the bar, and the size show by default.
+  await expect(setup.locator("#stack-detail")).toHaveText("412 MB downloaded");
+  await expect(setup.locator("#stack-progress")).toBeVisible();
+  await expect(setup.locator("#stack-output")).toBeHidden();
   await setup.screenshot({
     path: path.join(import.meta.dirname, "screenshots", "06-setup-installing.png"),
+    // Fast-forward the bar's width transition so the artifact shows the value, not a frame of it.
+    animations: "disabled",
   });
+  await setup.getByRole("button", { name: "Technical details" }).click();
+  await expect(setup.locator("#stack-output")).toContainText("app Pulled");
 
   const appWindow = await appWindowPromise;
   await expect(appWindow.getByText(APP_MARKER)).toBeVisible();
@@ -217,7 +254,7 @@ test("switching to Existing instance while the stack starts keeps that choice", 
   const setup = await app.firstWindow();
 
   await setup.getByRole("button", { name: "Continue" }).click();
-  await expect(setup.locator("#stack-phase")).toHaveText("Downloading CortexAI Agent Hub images…");
+  await expect(setup.locator("#stack-phase")).toHaveText("Downloading CortexAI Agent Hub…");
 
   // Fake docker sleeps during pull; leave This computer before ready so followStack must not save.
   await setup.getByRole("radio", { name: /Existing instance/ }).check();
@@ -378,4 +415,105 @@ test("an existing stack .env is never rewritten", async () => {
   await expect(appWindow.getByText(APP_MARKER)).toBeVisible();
 
   await expect(readFile(path.join(stackDir, ".env"), "utf8")).resolves.toBe(sentinel);
+});
+
+test("exhausted address pools explain recovery", async () => {
+  app = await launch("pool-exhausted");
+  const setup = await app.firstWindow();
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.locator("#stack-phase")).toHaveText(
+    "Docker has no free network address pools. Remove unused Docker networks or expand Docker’s address pools, then retry.",
+  );
+  await expect(setup.getByRole("button", { name: "Retry" })).toBeEnabled();
+  await setup.screenshot({
+    path: path.join(import.meta.dirname, "screenshots", "09-setup-address-pool-exhausted.png"),
+  });
+});
+
+test("a port conflict opens and saves the replacement managed origin", async () => {
+  app = await launch("port-conflict");
+  const setup = await app.firstWindow();
+  const appWindowPromise = app.waitForEvent("window");
+  await setup.getByRole("button", { name: "Continue" }).click();
+  const urlFile = path.join(userData, "stack", ".desktop-web-url");
+  let replacementUrl = "";
+  await expect
+    .poll(async () => {
+      replacementUrl = await readFile(urlFile, "utf8").catch(() => "");
+      return replacementUrl !== "" && replacementUrl !== serverUrl;
+    })
+    .toBe(true);
+  // Stand in for the web container Docker would bind to the selected port.
+  const replacement = createServer(server.listeners("request")[0] as RequestListener);
+  await new Promise<void>((resolve) =>
+    replacement.listen(Number(new URL(replacementUrl).port), "127.0.0.1", resolve),
+  );
+  try {
+    const appWindow = await appWindowPromise;
+    await expect(appWindow.getByText(APP_MARKER)).toBeVisible();
+    await expect.poll(savedSetup).toEqual({ mode: "new", serverUrl: replacementUrl });
+    expect((await readLog()).filter((line) => line.includes(" up -d"))).toHaveLength(2);
+  } finally {
+    replacement.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      replacement.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("repeated port conflicts stop with a retry action", async () => {
+  app = await launch("ports-exhausted");
+  const setup = await app.firstWindow();
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.locator("#stack-phase")).toHaveText(
+    "Could not bind a local port after retrying. Retry to choose another port.",
+  );
+  await expect(setup.getByRole("button", { name: "Retry" })).toBeEnabled();
+  expect((await readLog()).filter((line) => line.includes(" up -d"))).toHaveLength(3);
+  await setup.screenshot({
+    path: path.join(import.meta.dirname, "screenshots", "10-setup-ports-unavailable.png"),
+  });
+});
+
+test("the native settings menu opens an isolated logged-out settings capability", async () => {
+  app = await launch("ok");
+  const setup = await app.firstWindow();
+  const nextWindow = app.waitForEvent("window");
+  await setup.getByRole("button", { name: "Continue", exact: true }).click();
+  const main = await nextWindow;
+  await expect(main.getByText(APP_MARKER)).toBeVisible();
+  await expect.poll(savedSetup).toEqual({ mode: "new", serverUrl });
+  const denied = await main.evaluate(async () => {
+    try {
+      (await window.cortexai) -
+        agent -
+        hubDesktop?.localSettings?.request("/api/desktop-settings/rpc/integrationSetup/get", "{}");
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  expect(denied).toBe(true);
+  const settingsOpened = app.waitForEvent("window");
+  await app.evaluate(({ Menu }) => {
+    const item = Menu.getApplicationMenu()?.getMenuItemById("local-server-settings");
+    if (!item) throw new Error("Missing settings menu");
+    item.click();
+  });
+  const settings = await settingsOpened;
+  await expect(settings).toHaveURL(`${serverUrl}/desktop-settings`);
+  const result = await settings.evaluate(
+    () =>
+      window.cortexai -
+      agent -
+      hubDesktop?.localSettings?.request("/api/desktop-settings/rpc/integrationSetup/get", "{}"),
+  );
+  expect(result?.status).toBe(200);
+  expect(JSON.parse(result!.body)).toEqual({ json: { canConfigure: true } });
+  await app.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()?.getMenuItemById("local-server-settings")?.click(),
+  );
+  expect(app.windows()).toHaveLength(2);
+  await settings.close();
+  await expect(main.getByText(APP_MARKER)).toBeVisible();
 });

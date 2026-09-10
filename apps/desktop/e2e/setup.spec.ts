@@ -67,8 +67,10 @@ function launch(extraEnv: Record<string, string> = {}) {
   const env = { ...process.env, CORTEXAI_AGENT_HUB_PERFORMANCE_USER_DATA: userData };
   // A stale CORTEXAI_AGENT_HUB_WEB_URL from the developer's shell would bypass setup entirely.
   delete env.CORTEXAI_AGENT_HUB_WEB_URL;
+  const executablePath = process.env.CORTEXAI_AGENT_HUB_E2E_EXECUTABLE;
   return electron.launch({
-    args: ["."],
+    ...(executablePath ? { executablePath: path.resolve(executablePath) } : {}),
+    args: executablePath ? [] : ["."],
     cwd: path.resolve(import.meta.dirname, ".."),
     env: { ...env, ...extraEnv },
   });
@@ -76,6 +78,9 @@ function launch(extraEnv: Record<string, string> = {}) {
 
 test("first run asks whether to use a local or existing instance", async () => {
   app = await launch();
+  if (process.env.CORTEXAI_AGENT_HUB_E2E_EXECUTABLE) {
+    expect(await app.evaluate(({ app }) => app.isPackaged)).toBe(true);
+  }
   const setup = await app.firstWindow();
 
   await expect(setup.getByRole("heading", { name: "Welcome to CortexAI Agent Hub" })).toBeVisible();
@@ -103,6 +108,12 @@ test("first run asks whether to use a local or existing instance", async () => {
   await expect(setup.locator(".titlebar")).toHaveCSS("padding-left", "88px");
   expect((await setup.locator(".titlebar-name").boundingBox())?.x).toBeGreaterThanOrEqual(88);
   if (process.platform === "darwin") {
+    if (process.env.CI) {
+      await execFileAsync("screencapture", [
+        "-x",
+        path.join(import.meta.dirname, "screenshots", "09-macos-dock.png"),
+      ]);
+    }
     await app.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows()[0];
       if (window === undefined) throw new Error("Setup window is unavailable");
@@ -274,53 +285,69 @@ test("a session-pending shell skeleton is not accepted as a ready app", async ()
   }
 });
 
-test("a post-session ready app mount is accepted", async () => {
-  const readyHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>CortexAI Agent Hub</title>
-<script>performance.mark("cortexai-agent-hub:renderer:session-committed");performance.mark("cortexai-agent-hub:renderer:shell-ready");</script>
+for (const { name, surface } of [
+  {
+    name: "bootstrapped workspace",
+    surface: '<div data-testid="shell-root" data-ready="true">Workspace</div>',
+  },
+  {
+    name: "logged-out welcome",
+    surface: '<div data-cortexai-agent-hub-surface="welcome"><button>Sign up</button></div>',
+  },
+  {
+    name: "translated logged-out welcome",
+    surface:
+      '<div data-cortexai-agent-hub-surface="welcome"><button>Créer un compte</button></div>',
+  },
+]) {
+  test(`a post-session ${name} mount is accepted`, async () => {
+    const readyHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>CortexAI Agent Hub</title>
 </head>
-<body><div id="root"><div data-cortexai-agent-hub-app-state="ready"><div data-testid="shell-root" data-ready="true">Workspace</div></div></div></body></html>`;
-  const ready = createServer((request, response) => {
-    if (request.url === "/rpc/health" && request.method === "POST") {
-      response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ json: { ok: true, version: "0.1.0" } }));
-      return;
-    }
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(readyHtml);
-  });
-  await new Promise<void>((resolve) => ready.listen(0, "127.0.0.1", resolve));
-  const address = ready.address();
-  if (address === null || typeof address === "string") throw new Error("ready server has no port");
-
-  try {
-    app = await launch();
-    const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
-    await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
-    const appWindow = await Promise.all([
-      app.waitForEvent("window"),
-      setup.getByRole("button", { name: "Continue" }).click(),
-    ]).then(([window]) => window);
-
-    await expect(appWindow.getByTestId("shell-root")).toBeVisible();
-    await expect
-      .poll(async () => {
-        try {
-          return JSON.parse(await readFile(path.join(userData, "setup.json"), "utf8"));
-        } catch {
-          return null;
-        }
-      })
-      .toEqual({
-        mode: "existing",
-        serverUrl: `http://127.0.0.1:${address.port}`,
-      });
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      ready.close((error) => (error ? reject(error) : resolve()));
+<body><div id="root"><div data-cortexai-agent-hub-app-state="ready">${surface}</div></div></body></html>`;
+    const ready = createServer((request, response) => {
+      if (request.url === "/rpc/health" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        response.end(JSON.stringify({ json: { ok: true, version: "0.1.0" } }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(readyHtml);
     });
-  }
-});
+    await new Promise<void>((resolve) => ready.listen(0, "127.0.0.1", resolve));
+    const address = ready.address();
+    if (address === null || typeof address === "string")
+      throw new Error("ready server has no port");
+
+    try {
+      app = await launch();
+      const setup = await app.firstWindow();
+      await setup.getByRole("radio", { name: /Existing instance/ }).check();
+      await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
+      const appWindow = await Promise.all([
+        app.waitForEvent("window"),
+        setup.getByRole("button", { name: "Continue" }).click(),
+      ]).then(([window]) => window);
+
+      await expect(appWindow.locator('[data-cortexai-agent-hub-app-state="ready"]')).toBeVisible();
+      await expect
+        .poll(async () => {
+          try {
+            return JSON.parse(await readFile(path.join(userData, "setup.json"), "utf8"));
+          } catch {
+            return null;
+          }
+        })
+        .toEqual({
+          mode: "existing",
+          serverUrl: `http://127.0.0.1:${address.port}`,
+        });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        ready.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+}
 
 test("a shell mount before workspace bootstrap is not accepted", async () => {
   const preBootstrapHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>CortexAI Agent Hub</title></head>

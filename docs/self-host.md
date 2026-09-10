@@ -4,12 +4,16 @@ The signed-in product is a long-running API, a Graphile Worker, Postgres, and a 
 
 ## Local (source checkout)
 
-Same as the README quick start: `.env` from `.env.example`, Postgres via Compose, `pnpm sandbox:build`, `pnpm dev`, then [http://127.0.0.1:5173](http://127.0.0.1:5173). Electron: `pnpm --filter @cortexai-agent-hub/desktop dev` while that stack is up, choosing **Existing instance** with that address. The desktop app's **This computer** option instead installs and runs the published images itself with Docker Compose (see [Published images](#published-images-no-checkout)), which clashes with `pnpm dev` on port 5173.
+Same as the README quick start: `.env` from `.env.example`, Postgres via Compose, `pnpm sandbox:build`, `pnpm dev`, then [http://127.0.0.1:5173](http://127.0.0.1:5173) (or `http://localhost:5173` — both loopback hosts are trusted). Electron: `pnpm --filter @cortexai-agent-hub/desktop dev` while that stack is up, choosing **Existing instance** with that address. The desktop app's **This computer** option instead installs and runs the published images itself with Docker Compose (see [Published images](#published-images-no-checkout)), using port 45173 by default so it can run alongside `pnpm dev`. If that port is occupied, the app selects and remembers another loopback port. The managed API gets a Docker-assigned loopback port; all desktop traffic uses the web origin.
+
+For source development in WSL, keep the checkout and `data` directory in the Linux filesystem (for example, `~/cortexai-agent-hub`), and run `pnpm dev` as your normal user. The host-run supervisor matches bot container UID/GID to that user. If Docker Desktop container IPs are unreachable, set `SANDBOX_CONTROL_VIA_LOOPBACK=true` in `.env`; this publishes the token-protected control service on a random loopback port. Leave this unset for the Compose-hosted supervisor.
+
+Compose bot homes mount only their own subdirectory of the application volume using Docker volume semantics. Docker's internal volume paths are never used as host bind mounts.
 
 ## Published images (no checkout)
 
 Pull Postgres and `ghcr.io/tukatek/agent-hub/app` into any empty folder. No clone or image build.
-Requires Docker Engine, the Compose plugin, curl, and OpenSSL.
+Requires Docker Engine 26+ (API 1.45+ for bot home volume subpaths), the Compose plugin, curl, and OpenSSL.
 
 ```bash
 mkdir -p cortexai-agent-hub && cd cortexai-agent-hub &&
@@ -59,6 +63,21 @@ instead of this host proxy.
 
 If the installer, Compose downloads, or image pulls are blocked, use the
 [restricted-network guide](./self-host-restricted-network.md) for mirror settings and local files.
+
+### Bot computer resource ceilings
+
+Each Docker computer runs Xvfb, a window manager and a full Chromium driven by an agent that
+decides for itself what to open, so it is capped. These defaults provide a starting point for the
+Docker computer topology:
+
+| Variable | Default | Accepts |
+| --- | --- | --- |
+| `CORTEXAI_AGENT_HUB_COMPUTER_MEMORY` | `2g` | `2g`, `1536m`, a byte count. Minimum `6m`, Docker's own floor. Also caps swap, so the ceiling holds. |
+| `CORTEXAI_AGENT_HUB_COMPUTER_CPUS` | `2` | Whole or fractional cores, e.g. `1.5` |
+| `CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT` | `2048` | A positive integer |
+
+Set any of them to `0`, `none` or `unlimited` to remove that ceiling. A malformed value fails the
+supervisor at startup naming the variable, rather than surfacing later as a failed bot.
 
 ## Docker Compose (single machine)
 
@@ -164,25 +183,27 @@ To use an operator-controlled OpenAI-compatible server such as Ollama, LM Studio
 MLX, list its model IDs and an endpoint that both the API and worker processes can reach:
 
 ```env
-CORTEXAI_AGENT_HUB_LOCAL_MODELS=qwen3:4b,llama3.1:8b
+CORTEXAI_AGENT_HUB_LOCAL_MODELS=qwen3:4b,llama3.1:8b,qwen3-vl
 CORTEXAI_AGENT_HUB_LOCAL_MODELS_URL=http://127.0.0.1:11434/v1
 CORTEXAI_AGENT_HUB_LOCAL_CONTEXT_WINDOW=32768
 CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS=4096
+# Optional: model ids on this endpoint that accept images (screenshot computer tools).
+CORTEXAI_AGENT_HUB_LOCAL_VISION_MODELS=qwen3-vl
 ```
 
-The loopback default is suitable when running CortexAI Agent Hub from a source checkout. In Docker Compose,
-use the model server's Compose service name or another address reachable from the containers.
+The loopback default is suitable when running CortexAI Agent Hub from a source checkout. From containers,
+prefer a stable LAN RFC1918 address (not Compose service DNS alone). On Docker Desktop,
+`host.docker.internal` also works.
 Only configure an endpoint you control: prompts, attachments, and tool results sent to that model
 leave CortexAI Agent Hub through this URL. Leave `CORTEXAI_AGENT_HUB_LOCAL_MODELS` blank to disable the provider.
 
 Each user can also connect their own OpenAI-compatible endpoint from **Connect a model** /
 **Settings → Models** on web and mobile. Choose **OpenAI-compatible**, enter the server base URL
-(for example `http://127.0.0.1:8000/v1` for Rapid-MLX, Ollama, LM Studio, llama.cpp, or vLLM),
-the exact model id from that server, and an optional API key. By default CortexAI Agent Hub only allows
-loopback, RFC1918, and `host.docker.internal` targets. To permit public hostnames, set
-`CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC=1` in the deployment environment. Public hostnames must resolve
-only to public addresses; redirects and DNS answers that reach private or link-local networks are
-rejected.
+(for example `http://127.0.0.1:8000/v1`), the exact model id, and an optional API key.
+Public hosts and ordinary hostnames need `CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC=1` and HTTPS.
+Literal private IP, loopback, and `host.docker.internal` targets do not. To mark user-connected
+openai-compatible model ids as vision-capable (so screenshot computer tools stay available), set
+`CORTEXAI_AGENT_HUB_OPENAI_COMPATIBLE_VISION_MODELS=gpt4o-vision,llava`.
 
 For servers that accept standard `reasoning_effort`, enable **Supports thinking** under
 **Advanced** when connecting. The setting is saved on the connection (no env var or restart).
@@ -216,9 +237,9 @@ The Electron desktop app is a client of the same API. Docker and E2B still apply
   `DAYTONA_API_KEY` and optionally `DAYTONA_API_URL` / `DAYTONA_TARGET`.
 - **Box by ASCII** provides a managed Linux desktop through `BOX_API_KEY` and optionally
   `BOX_API_URL`. CortexAI Agent Hub always creates or resumes boxes with `noEnv: true`, keeps the portable
-  workspace under `/home/user/cortexai-agent-hub-home`, and refreshes a two-hour TTL. A Box currently exposes one
-  shared desktop, so concurrent Team bots can still use shell and files but only one can use
-  graphical tools at a time.
+  workspace under `/home/user/cortexai-agent-hub-home`, and refreshes a two-hour TTL. Box uses the shared Linux
+  desktop runtime and protected port routes for concurrent bot desktops. Each bot has its own
+  persistent Chrome profile; logins are not shared between bots.
 - **Desktop provider** / **This Mac** runs commands on the API/worker host. Docker stays the default.
   The Electron app asks once; if you choose This Mac, bots can use working directories under your home
   folder. Do not enable it on a public or shared service. macOS does not show its own permission
@@ -526,6 +547,29 @@ not automatically put it in a container's environment, so the production file ex
 `CORTEXAI_AGENT_HUB_COMPOSE_PROJECT_NAME`; the final fallback is `cortexai-agent-hub-prod`. Without that propagation, a
 stack started with `-p something-else` would be left alone while a second project with a new empty
 Postgres volume came up beside it.
+
+### Deployments that layer a Compose overlay
+
+`CORTEXAI_AGENT_HUB_COMPOSE_FILE` takes a list, separated the way Compose's own `COMPOSE_FILE` is
+(`:` by default, or whatever `COMPOSE_PATH_SEPARATOR` says). Each entry becomes its own `--file`,
+in the order given, so the updater reconciles the same stack the operator runs by hand:
+
+```
+CORTEXAI_AGENT_HUB_COMPOSE_FILE=infra/compose/docker-compose.prod.yml:ops/compose/overlay.yml
+```
+
+Every entry is validated separately and must stay inside `CORTEXAI_AGENT_HUB_DEPLOY_DIR`.
+
+If the overlay adds a service built from the application image, name it in
+`CORTEXAI_AGENT_HUB_UPDATE_SERVICES` (comma separated) so it is pulled, recreated and rolled back with the
+rest. Otherwise an update leaves that service running the previous code:
+
+```
+CORTEXAI_AGENT_HUB_UPDATE_SERVICES=supervisor
+```
+
+These names are appended to the built-in `api`, `worker`, `web`, never substituted for them, so no
+value here can drop a core service from an update.
 
 The value therefore has to be the path **the daemon** sees, which is not always the path your shell
 sees:

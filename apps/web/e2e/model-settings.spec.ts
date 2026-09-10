@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, openUserSettings, rpc, signup } from "./helpers";
 
 const LOCAL_MODEL_ID = "cortexai-agent-hub-e2e-local";
 const LOCAL_MODEL_REPLY = "OpenAI-compatible endpoint verified end to end.";
@@ -13,8 +13,7 @@ test("custom connections persist reasoning support and bot thinking", async ({
   const userName = `Reasoning ${stamp}`;
   await signup(page, `reasoning-model-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
-  await page.getByRole("button", { name: new RegExp(userName) }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await openUserSettings(page, "models");
   await page.getByPlaceholder("Search providers").fill("openai-compatible");
   await page.getByRole("button", { name: /OpenAI-compatible/ }).click();
   await page.getByLabel("OpenAI-compatible server URL").fill("http://127.0.0.1:8090/v1");
@@ -32,8 +31,7 @@ test("custom connections persist reasoning support and bot thinking", async ({
   );
   expect(credentials.find((entry) => entry.modelId === "arbitrary-model")?.reasoning).toBe(true);
   await page.reload();
-  await page.getByRole("button", { name: new RegExp(userName) }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await openUserSettings(page, "models");
   await page.getByText("Advanced", { exact: true }).click();
   await expect(page.getByRole("checkbox", { name: "Supports thinking" })).toBeChecked();
   await page.getByRole("button", { name: "Close model settings" }).click();
@@ -129,8 +127,7 @@ test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page },
     await signup(page, `local-model-${stamp}@cortexai-agent-hub.test`, "password12", userName);
     await completeOnboarding(page);
 
-    await page.getByRole("button", { name: new RegExp(userName) }).click();
-    await page.getByRole("button", { name: "Models", exact: true }).click();
+    await openUserSettings(page, "models");
     const providerSearch = page.getByPlaceholder("Search providers");
     await providerSearch.fill("openai-compatible");
     await page.getByRole("button", { name: /OpenAI-compatible/ }).click();
@@ -193,11 +190,9 @@ test("model settings connect, replace, and cancel provider authentication", asyn
   const stamp = Date.now();
   const userName = `Models ${stamp}`;
   await signup(page, `models-${stamp}@cortexai-agent-hub.test`, "password12", userName);
-  await expect(page.getByLabel("API key")).toHaveAttribute("autocomplete", "new-password");
   await completeOnboarding(page);
 
-  await page.getByRole("button", { name: new RegExp(userName) }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await openUserSettings(page, "models");
   await expect(page.getByRole("button", { name: "Close model settings" })).toBeVisible();
 
   const providerSearch = page.getByPlaceholder("Search providers");

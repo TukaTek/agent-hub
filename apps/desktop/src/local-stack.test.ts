@@ -200,6 +200,25 @@ describe("reduceStackState", () => {
     expect(state.phase).toBe("ready");
   });
 
+  it("sums the largest size each layer reports and clears it for the next attempt", () => {
+    let state = reduceStackState(start, { type: "check-start" });
+    state = reduceStackState(state, { type: "pull-start" });
+    for (const line of [
+      " a235d761c5d1 Downloading 59.47MB",
+      " a235d761c5d1 Downloading 1.02GB",
+      // Out-of-order and repeated lines must never walk the total backwards.
+      " a235d761c5d1 Downloading 900MB",
+      " 37d39b5cad9d Downloading 491.5kB",
+      " 37d39b5cad9d Extracting 491.5kB",
+      " app Pulled",
+    ]) {
+      state = reduceStackState(state, { type: "output", line });
+    }
+    expect(state.layerBytes).toEqual({ a235d761c5d1: 1.02e9, "37d39b5cad9d": 491_500 });
+
+    expect(reduceStackState(state, { type: "check-start" }).layerBytes).toEqual({});
+  });
+
   it("keeps only the last lines of output", () => {
     let state = reduceStackState(start, { type: "check-start" });
     state = reduceStackState(state, { type: "pull-start" });
@@ -243,7 +262,7 @@ describe("stackFailureMessage", () => {
   });
 
   it("points at the ports for a port clash", () => {
-    expect(stackFailureMessage("port-in-use", "starting", "edge")).toContain("5173 or 3100");
+    expect(stackFailureMessage("port-in-use", "starting", "edge")).toContain("local port");
   });
 
   it("explains the docker group for socket permission errors", () => {
@@ -307,6 +326,7 @@ describe("LocalStackController", () => {
       platform: "linux",
       env: { PATH: "/usr/bin", HOME: "/home/me", OPENROUTER_API_KEY: "sk-secret" },
       exists: (file) => file === "/usr/bin/docker",
+      allocatePort: async () => 45174,
       stackDir: path.join(root, "stack"),
       resourceDir: COMPOSE_DIR,
       localWebUrl: "http://127.0.0.1:5173",
@@ -328,6 +348,24 @@ describe("LocalStackController", () => {
     const stack = new LocalStackController(deps);
     return stack;
   }
+
+  it("pushes every state change so the setup window is never left waiting on a poll", async () => {
+    const pushed: string[] = [];
+    const stack = controller({ onState: (state) => pushed.push(state.phase) });
+
+    await stack.start();
+    expect(pushed).toEqual([
+      "checking-docker",
+      "preparing",
+      "pulling",
+      "pulling",
+      "pulling",
+      "starting",
+      "starting",
+      "waiting-healthy",
+      "ready",
+    ]);
+  });
 
   it("installs the compose project and walks every phase to ready", async () => {
     const stack = controller();
@@ -402,7 +440,14 @@ describe("LocalStackController", () => {
     const commands = calls.filter(
       (call) => call.args[0] === "compose" && call.args[1] !== "version",
     );
-    expect(commands.map((call) => call.args[7])).toEqual(["pull", "up", "logs", "stop"]);
+    expect(commands.map((call) => call.args[7])).toEqual([
+      "pull",
+      "up",
+      "up",
+      "up",
+      "logs",
+      "stop",
+    ]);
     for (const call of commands) {
       expect(call.args.slice(5, 7)).toEqual(["--project-name", "cortexai-agent-hub-desktop"]);
       expect(call.env).not.toHaveProperty("COMPOSE_PROJECT_NAME");
@@ -527,17 +572,68 @@ describe("LocalStackController", () => {
     });
   });
 
+  it("retries port conflicts on a new origin and uses it for auth, health, and saved launches", async () => {
+    let starts = 0;
+    const probed: string[] = [];
+    const stack = controller(
+      {
+        probe: async (url) => {
+          probed.push(url);
+          return "v1.2.3";
+        },
+      },
+      (args) => {
+        if (args[7] === "up" && starts++ === 0)
+          return { code: 1, stderr: "port is already allocated" };
+        return ok(args);
+      },
+    );
+    expect((await stack.start()).phase).toBe("ready");
+    expect(starts).toBe(2);
+    expect(probed).toEqual(["http://127.0.0.1:45174"]);
+    expect(stack.webUrl()).toBe("http://127.0.0.1:45174");
+    expect(calls.filter((call) => call.args[7] === "pull")).toHaveLength(1);
+    expect(
+      calls
+        .filter((call) => call.args[7] === "up")
+        .map((call) => call.env.CORTEXAI_AGENT_HUB_WEB_PORT),
+    ).toEqual(["5173", "45174"]);
+    expect(calls.at(-1)?.env).toMatchObject({
+      CORTEXAI_AGENT_HUB_API_PORT: "0",
+      WEB_ORIGIN: stack.webUrl(),
+      BETTER_AUTH_URL: stack.webUrl(),
+      API_URL: stack.webUrl(),
+    });
+    expect(await readFile(path.join(root, "stack", ".desktop-web-url"), "utf8")).toBe(
+      stack.webUrl(),
+    );
+    expect(await stack.matchesDesiredStack()).toBe(true);
+    expect(probed.at(-1)).toBe(stack.webUrl());
+  });
+
+  it("bounds retries when another process repeatedly takes the selected port", async () => {
+    const stack = controller({}, (args) =>
+      args[7] === "up" ? { code: 1, stderr: "port is already allocated" } : ok(args),
+    );
+    expect(await stack.start()).toMatchObject({
+      phase: "failed",
+      message: expect.stringContaining("local port"),
+    });
+    expect(calls.filter((call) => call.args[7] === "up")).toHaveLength(3);
+    expect(phases).not.toContain("waiting-healthy");
+  });
+
   it("collects service logs when up fails", async () => {
     const stack = controller({}, (args) => {
       if (args[7] === "up") {
-        return { code: 1, stderr: "port is already allocated", lines: ["web Error"] };
+        return { code: 1, stderr: "service exited", lines: ["web Error"] };
       }
       if (args[7] === "logs") return { lines: ["web-1 | EADDRINUSE"] };
       return ok(args);
     });
     const state = await stack.start();
     expect(state.phase).toBe("failed");
-    expect(state.message).toContain("5173 or 3100");
+    expect(state.message).toContain("did not start");
     expect(state.output).toEqual([
       "app Pulled",
       "computer Pulled",
@@ -546,6 +642,34 @@ describe("LocalStackController", () => {
     ]);
     expect(calls.at(-1)?.args.slice(7)).toEqual(["logs", "--tail", "30", "--no-color"]);
   });
+
+  it.each(["stdout", "stderr"] as const)(
+    "explains exhausted address pools from %s and can retry after recovery",
+    async (stream) => {
+      let exhausted = true;
+      const stack = controller({}, (args) => {
+        if (args[7] === "up" && exhausted) {
+          return {
+            code: 1,
+            [stream]:
+              "failed to create network cortexai-agent-hub-desktop_data: Error response from daemon: all predefined address pools have been fully subnetted",
+          };
+        }
+        return ok(args);
+      });
+      expect(await stack.start()).toMatchObject({
+        phase: "failed",
+        message:
+          "Docker has no free network address pools. Remove unused Docker networks or expand Docker’s address pools, then retry.",
+      });
+      expect(phases).not.toContain("waiting-healthy");
+      expect(calls.every((call) => call.args[0] === "compose" || call.args[0] === "info")).toBe(
+        true,
+      );
+      exhausted = false;
+      expect(await stack.start()).toMatchObject({ phase: "ready", message: null });
+    },
+  );
 
   it("fails when the web app never answers after up", async () => {
     let probes = 0;

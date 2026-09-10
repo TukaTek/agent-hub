@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import type {
+  AgentRuntime,
   JobPublisher,
   ManagedConnectorProvider,
   MessagingSurface,
@@ -11,6 +12,7 @@ import type {
 import {
   applyMessagingOutboundStatus,
   ChatSdkMessagingSurface,
+  ComposioConnector,
   type ComposioProvider,
   type ConnectorRegistry,
   createBackgroundJobHandlers,
@@ -18,6 +20,7 @@ import {
   createConnectorStack,
   createJobReconciler,
   createMessagingContextLoader,
+  createMessagingTeamChatSender,
   createRunExecutor,
   createRunSandbox,
   createRunSecretWriter,
@@ -31,6 +34,7 @@ import {
   InMemoryJobQueue,
   InMemoryRealtimeFanout,
   InstalledConnectorProvider,
+  IntegrationProviderSettings,
   isComposioEnabled,
   isMessagingSurfaceEnabled,
   isPipedreamEnabled,
@@ -44,12 +48,16 @@ import {
   PipedreamConnector,
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
+  piSessionsRoot,
   pushTokenPath,
   type RemoteConnectorDependencies,
   reconcileCloudAgents,
+  reconcileComputerUpdates,
+  removePiUserSessions,
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
+  toTeamChatInbound,
 } from "@cortexai-agent-hub/adapters";
 import { blockedAuthPaths, createAuth, createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
 import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
@@ -75,9 +83,24 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
-import { createMessagingInboundHandler } from "./messaging-inbound.js";
+import { mountLocalSettings } from "./local-settings.js";
+import {
+  createMessagingInboundHandler,
+  teamChatSenderCanWakeMessageRoutines,
+  wakeMessageRoutines,
+} from "./messaging-inbound.js";
 import { mountMessagingWebhookRoutes } from "./messaging-webhook.js";
+import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
+import { mountScreenTarget } from "./screen-proxy.js";
+import { isDeferredReservationLost, TeamChatBridge } from "./team-chat-bridge.js";
+import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
+import {
+  PendingTeamChatInbound,
+  prefersTeamChatSurface,
+  settleWithTimeout,
+  TEAM_CHAT_STARTUP_SHUTDOWN_MS,
+} from "./team-chat-startup.js";
 import { mountVoiceHttpRoutes } from "./voice.js";
 import { mountWebhookHttpRoutes } from "./webhook.js";
 
@@ -92,6 +115,7 @@ export interface AppHandles {
   messaging?: MessagingSurface;
   email?: TransactionalEmailProvider;
   executor: ReturnType<typeof createRunExecutor>;
+  runtime: AgentRuntime;
   stop: () => Promise<void>;
 }
 
@@ -99,6 +123,7 @@ export async function createApp(
   overrides: Partial<AppEnv> & {
     prisma?: PrismaClient;
     realtime?: RealtimeFanout;
+    sandbox?: SandboxProvider;
     composio?: ComposioProvider;
     pipedream?: ManagedConnectorProvider;
     messaging?: MessagingSurface;
@@ -110,6 +135,7 @@ export async function createApp(
   const {
     prisma: prismaOverride,
     realtime: realtimeOverride,
+    sandbox: sandboxOverride,
     composio: composioOverride,
     pipedream: pipedreamOverride,
     messaging: messagingOverride,
@@ -166,18 +192,20 @@ export async function createApp(
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
   const jobs = inMemoryJobs ?? new GraphileJobPublisher(env.databaseUrl);
-  const sandbox: SandboxProvider = createRunSandbox(env.sandboxProvider, {
-    supervisorUrl: env.sandboxSupervisorUrl,
-    supervisorToken: env.sandboxSupervisorToken,
-    e2bApiKey: env.e2bApiKey,
-    daytonaApiKey: env.daytonaApiKey,
-    daytonaApiUrl: env.daytonaApiUrl,
-    daytonaTarget: env.daytonaTarget,
-    boxApiKey: env.boxApiKey,
-    boxApiUrl: env.boxApiUrl,
-    dataDir: env.dataDir,
-    prisma,
-  });
+  const sandbox: SandboxProvider =
+    sandboxOverride ??
+    createRunSandbox(env.sandboxProvider, {
+      supervisorUrl: env.sandboxSupervisorUrl,
+      supervisorToken: env.sandboxSupervisorToken,
+      e2bApiKey: env.e2bApiKey,
+      daytonaApiKey: env.daytonaApiKey,
+      daytonaApiUrl: env.daytonaApiUrl,
+      daytonaTarget: env.daytonaTarget,
+      boxApiKey: env.boxApiKey,
+      boxApiUrl: env.boxApiUrl,
+      dataDir: env.dataDir,
+      prisma,
+    });
   const mcpOAuth = new McpOAuthBroker(prisma, secrets, remoteConnectors);
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const oauthLogins = new PiOAuthLogins();
@@ -198,7 +226,11 @@ export async function createApp(
   const pipedream =
     pipedreamOverride ??
     (isPipedreamEnabled(pipedreamConfig) ? new PipedreamConnector(pipedreamConfig) : undefined);
-  const messagingPlatforms = messagingPlatformsFromEnv(env);
+  // This process registers the inbound sink (messaging.onInbound below),
+  // so it's the one that must hold Telegram's live getUpdates connection —
+  // see messagingPlatformsFromEnv's docstring for why a second poller
+  // elsewhere (e.g. the worker) would actively break this.
+  const messagingPlatforms = messagingPlatformsFromEnv(env, { pollInboundMessages: true });
   const messaging =
     messagingOverride ??
     (isMessagingSurfaceEnabled(messagingPlatforms, {
@@ -224,17 +256,30 @@ export async function createApp(
       ? new SmtpEmailProvider({ url: env.smtpUrl, from: env.emailFrom ?? "" })
       : localEmailEmulator);
   const installed = new InstalledConnectorProvider(prisma, secrets, remoteConnectors);
-  const stack = createConnectorStack(isComposioEnabled(env.composioApiKey), composioOverride, [
+  const integrationSettings = new IntegrationProviderSettings(prisma, secrets, env.encryptionKey, {
+    composio:
+      composioOverride ??
+      (isComposioEnabled(env.composioApiKey)
+        ? new ComposioConnector(env.composioApiKey)
+        : undefined),
+    pipedream,
+  });
+  const stack = createConnectorStack(false, composioOverride, [
     installed,
-    ...(pipedream ? [pipedream] : []),
+    ...integrationSettings
+      .providers()
+      .filter((provider) => !composioOverride || provider.describe().id !== "composio"),
     mcp,
   ]);
   const connector = stack.destination;
   await connector.start();
-  void stack.composio?.warmDirectory().catch(() => undefined);
-  void pipedream?.warmDirectory?.().catch(() => undefined);
+  integrationSettings.warmDirectories();
   const runtime =
-    env.agentRuntime === "scripted" ? new ScriptedAgentRuntime() : new PiAgentRuntime();
+    env.agentRuntime === "scripted"
+      ? new ScriptedAgentRuntime()
+      : new PiAgentRuntime({
+          sessionRoot: env.piSessionRecording ? piSessionsRoot(env.dataDir) : undefined,
+        });
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
     hub: env.hubAuth,
@@ -258,7 +303,7 @@ export async function createApp(
     beforeDeleteUser: async (userId) => {
       const bots = await prisma.bot.findMany({
         where: { userId },
-        select: { id: true, spaceId: true, name: true, archivedAt: true },
+        select: { id: true, userId: true, spaceId: true, name: true, archivedAt: true },
       });
       await Promise.all(
         bots.map((bot) =>
@@ -277,6 +322,7 @@ export async function createApp(
           ),
         ),
       );
+      await removePiUserSessions(env.dataDir, userId);
       await rm(pushTokenPath(env.dataDir, userId), { force: true }).catch(() => undefined);
     },
   });
@@ -286,6 +332,7 @@ export async function createApp(
     CURSOR_API_KEY: env.cursorApiKey,
     CLOUD_AGENT_SPACE_ID: env.cloudAgentSpaceId,
   });
+  const shutdown = new AbortController();
   const executor = createRunExecutor({
     authorizeUserWork: createUserWorkAuthorizer(prisma, env.hubAuth, env.encryptionKey),
     prisma,
@@ -297,7 +344,17 @@ export async function createApp(
     artifacts,
     connector: stack.connector,
     connectors: stack.connector,
-    listConnectedPluginSlugs: stack.composio?.listConnectedSlugs.bind(stack.composio),
+    listConnectedPluginSlugs: async (userId) => {
+      const provider = await integrationSettings.resolve("composio");
+      if (!provider) return [];
+      return provider.listConnectedExternalIds({
+        userId,
+        spaceId: "",
+        operationId: "connections.sync",
+        traceId: "connections.sync",
+        signal: AbortSignal.timeout(15_000),
+      });
+    },
     secrets: [
       env.deploymentModelKey ?? "",
       env.composioApiKey ?? "",
@@ -313,6 +370,7 @@ export async function createApp(
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
+    shutdownSignal: shutdown.signal,
   });
 
   const jobHandlers = createBackgroundJobHandlers({
@@ -338,6 +396,7 @@ export async function createApp(
         prisma,
         jobs,
         reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
+        reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
       })
     : undefined;
   reconciler?.start();
@@ -353,6 +412,7 @@ export async function createApp(
     home,
     secrets,
     oauthLogins,
+    integrationSettings,
     mcpOAuth,
     composio: stack.composio,
     connectors: stack.connector,
@@ -376,6 +436,7 @@ export async function createApp(
       updaterUrl: env.updaterUrl,
       updaterToken: env.updaterToken,
       imageTag: env.imageTag,
+      integrationsCatalogUrl: env.integrationsCatalogUrl,
     },
   });
   const rpc = new RPCHandler(router, {
@@ -409,6 +470,8 @@ export async function createApp(
         }),
     );
   }
+  mountApiRequestBodyLimits(app);
+  mountScreenTarget(app, prisma, env.screenProxySecret);
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");
     if (blockedAuthPaths.some((blocked) => path.startsWith(blocked))) {
@@ -416,6 +479,7 @@ export async function createApp(
     }
     return auth.handler(c.req.raw);
   });
+  mountLocalSettings(app, { token: env.desktopStackToken, prisma, rpc });
   app.use("/rpc/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
     const requestedSpaceId = c.req.header("x-cortexai-agent-hub-space-id");
@@ -454,9 +518,19 @@ export async function createApp(
     return actor;
   });
   mountWebhookHttpRoutes(app, { prisma, secrets, events, jobs });
+  // Shared with stop so a shutdown during retry delays does not restart polling.
+  let messagingStopped = false;
+  let clearMessagingRetryDelay: (() => void) | undefined;
+  let messagingInitTask: Promise<void> | undefined;
+  let clearTeamChatRetryDelay: (() => void) | undefined;
+  let teamChatInitTask: Promise<void> | undefined;
   // Messaging webhooks only exist when the surface is enabled.
+  let teamChatBridge: TeamChatBridge | undefined;
+  /** Constructed even before start() succeeds so stop() can cancel in-flight startup. */
+  let teamChatBridgeInstance: TeamChatBridge | undefined;
+  const pendingTeamChatInbound = new PendingTeamChatInbound();
   if (messaging) {
-    const inbound = createMessagingInboundHandler({
+    const inboundDeps = {
       prisma,
       events,
       jobs,
@@ -481,12 +555,235 @@ export async function createApp(
           signal: AbortSignal.timeout(2000),
         });
       },
-    });
+    } satisfies Parameters<typeof createMessagingInboundHandler>[0];
+    const inbound = createMessagingInboundHandler(inboundDeps);
+    const handleTeamChatInbound = async (
+      bridge: TeamChatBridge,
+      event: Parameters<typeof wakeMessageRoutines>[2],
+    ) => {
+      const mapped = toTeamChatInbound(event);
+      if (!mapped) {
+        await inbound(event);
+        return;
+      }
+      const canWake = await teamChatSenderCanWakeMessageRoutines(inboundDeps, event);
+      if (!canWake) {
+        await bridge.receive(mapped);
+        return;
+      }
+
+      // Persist a non-reconcilable row until routine routing owns or releases
+      // the message, so the timer cannot start a second TeamChat run.
+      const target = await bridge.receive(mapped, { queueAgent: false });
+      if (!target.deferred) return;
+      const leaseHeartbeat = await bridge.startDeferredReservationHeartbeat(
+        target.externalMessageId,
+      );
+      let woken = false;
+      bridge.markRoutineWakeInFlight(target.externalMessageId);
+      try {
+        const wakePromise = wakeMessageRoutines(inboundDeps, target, event, {
+          // Must match TeamChatBridge ExternalConversation / recovery provider.
+          deliveryProvider: bridge.providerId,
+          externalMessageId: target.externalMessageId,
+        });
+        try {
+          woken = await Promise.race([wakePromise, leaseHeartbeat.lost]);
+        } catch (error) {
+          if (isDeferredReservationLost(error)) {
+            // Lease loss must not start a fallback agent beside an in-flight
+            // wake: re-hold exclusive ownership while awaiting that wake, then
+            // resolve from its settled result.
+            let hold: { stop: () => void } | undefined;
+            try {
+              hold = await bridge.startDeferredReservationHeartbeat(target.externalMessageId);
+            } catch {
+              // Row already left deferred; wake CAS / resolve decide the winner.
+            }
+            try {
+              try {
+                woken = await wakePromise;
+              } catch (wakeError) {
+                const released = await bridge.resolveDeferredMessage(
+                  target.externalMessageId,
+                  "agent",
+                  mapped.kind,
+                );
+                if (!released) {
+                  throw new Error("Team chat deferred message ownership conflict", {
+                    cause: wakeError,
+                  });
+                }
+                await bridge.reconcileOnce();
+                getLogger().error(
+                  "team chat routine wake failed after deferred lease loss",
+                  wakeError,
+                );
+                return;
+              }
+            } finally {
+              hold?.stop();
+            }
+          } else {
+            await bridge.resolveDeferredMessage(target.externalMessageId, "agent", mapped.kind);
+            await bridge.reconcileOnce();
+            throw error;
+          }
+        }
+        const resolved = await bridge.resolveDeferredMessage(
+          target.externalMessageId,
+          woken ? "routine" : "agent",
+          mapped.kind,
+        );
+        if (!resolved) {
+          throw new Error("Team chat deferred message ownership conflict");
+        }
+        if (!woken) await bridge.reconcileOnce();
+      } finally {
+        bridge.clearRoutineWakeInFlight(target.externalMessageId);
+        leaseHeartbeat.stop();
+      }
+    };
+    const flushPendingTeamChatInbound = (bridge: TeamChatBridge) => {
+      pendingTeamChatInbound.flush((event) => handleTeamChatInbound(bridge, event));
+    };
+    if (env.teamChatBotId) {
+      const judge =
+        env.teamChatJudgeProvider && env.teamChatJudgeModel
+          ? new ModelTeamChatEngagementJudge({
+              prisma,
+              runtime,
+              secrets,
+              deploymentProvider: env.defaultProvider,
+              deploymentModel: env.defaultModel,
+              deploymentModelKey: env.deploymentModelKey,
+              providerOverride: env.teamChatJudgeProvider,
+              modelOverride: env.teamChatJudgeModel,
+            })
+          : new ModelTeamChatEngagementJudge({
+              prisma,
+              runtime,
+              secrets,
+              deploymentProvider: env.defaultProvider,
+              deploymentModel: env.defaultModel,
+              deploymentModelKey: env.deploymentModelKey,
+            });
+      const bridge = new TeamChatBridge({
+        prisma,
+        events,
+        jobs,
+        send: createMessagingTeamChatSender(messaging),
+        providerId: "slack",
+        botId: env.teamChatBotId,
+        judge,
+      });
+      teamChatBridgeInstance = bridge;
+      try {
+        await bridge.start();
+        teamChatBridge = bridge;
+      } catch (error) {
+        getLogger().error("team chat bridge failed to start; retrying", error);
+        teamChatInitTask = (async () => {
+          let delayMs = 2_000;
+          while (!messagingStopped) {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, delayMs);
+              clearTeamChatRetryDelay = () => {
+                clearTimeout(timer);
+                clearTeamChatRetryDelay = undefined;
+                resolve();
+              };
+            });
+            clearTeamChatRetryDelay = undefined;
+            if (messagingStopped) return;
+            try {
+              await bridge.start();
+              if (messagingStopped) {
+                await bridge.stop();
+                return;
+              }
+              teamChatBridge = bridge;
+              flushPendingTeamChatInbound(bridge);
+              return;
+            } catch (retryError) {
+              if (
+                retryError instanceof Error &&
+                retryError.message === "Team chat bridge start cancelled"
+              ) {
+                return;
+              }
+              getLogger().error("team chat bridge failed to start; retrying", retryError);
+              delayMs = Math.min(delayMs * 5, 30_000);
+            }
+          }
+        })();
+      }
+    }
     messaging.onInbound(async (event) => {
-      if (event.type === "message") await inbound(event);
-      else await applyMessagingOutboundStatus(prisma, event);
+      if (event.type !== "message") {
+        await applyMessagingOutboundStatus(prisma, event);
+        return;
+      }
+      if (prefersTeamChatSurface(event, env.teamChatBotId)) {
+        const bridge = teamChatBridge;
+        if (bridge) {
+          await handleTeamChatInbound(bridge, event);
+          return;
+        }
+        // Bridge is still starting (or retrying). Do not fall through to the
+        // personal-line inbound path — that bypasses externalMessage ownership
+        // and can wake routines for unlinked TeamChat senders.
+        if (teamChatInitTask) {
+          const pending = pendingTeamChatInbound.enqueue(event);
+          if (!pending) {
+            throw new Error("Team chat inbound buffer is full");
+          }
+          await pending;
+          return;
+        }
+        throw new Error("Team chat bridge is unavailable");
+      }
+      await inbound(event);
     });
     mountMessagingWebhookRoutes(app, { messaging });
+    // Start polling-mode adapters (e.g. Telegram with no public webhook URL
+    // registered) immediately rather than waiting for the first webhook
+    // POST or outbound send to lazily trigger it. This is the process that
+    // owns the inbound sink registered just above, so it must be the one
+    // holding the live connection — a second poller elsewhere (e.g. the
+    // worker) would only fight this one for Telegram's single getUpdates
+    // slot without ever seeing the messages itself.
+    // Bounded retries cover transient Telegram startup failures; polling-only
+    // bots otherwise stay dark until an unrelated outbound send re-inits.
+    messagingInitTask = (async () => {
+      const delayMs = [0, 2_000, 10_000];
+      for (let attempt = 0; attempt < delayMs.length; attempt += 1) {
+        if (messagingStopped) return;
+        if (delayMs[attempt]! > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, delayMs[attempt]);
+            clearMessagingRetryDelay = () => {
+              clearTimeout(timer);
+              clearMessagingRetryDelay = undefined;
+              resolve();
+            };
+          });
+          clearMessagingRetryDelay = undefined;
+        }
+        if (messagingStopped) return;
+        try {
+          await messaging.initialize?.();
+          return;
+        } catch (error) {
+          getLogger().error(
+            attempt === delayMs.length - 1
+              ? "messaging surface initialize failed"
+              : "messaging surface initialize failed; retrying",
+            error,
+          );
+        }
+      }
+    })();
   }
 
   app.get("/health", (c) =>
@@ -515,8 +812,26 @@ export async function createApp(
     messaging,
     email,
     executor,
+    runtime,
     stop: async () => {
+      // Abort in-flight continueRun boot waits before draining jobs so stop() cannot sit
+      // on waitForComputerReady for the full boot-wait window during shared Postgres journeys.
+      shutdown.abort();
       oauthLogins.abortAll();
+      messagingStopped = true;
+      clearMessagingRetryDelay?.();
+      clearTeamChatRetryDelay?.();
+      pendingTeamChatInbound.reject(new Error("Team chat bridge stopped before startup"));
+      // Cancel in-flight start() before awaiting the retry task so stop() cannot
+      // sit on DB/reconcile work that bridge.start() is still running.
+      await settleWithTimeout(
+        teamChatBridgeInstance ? teamChatBridgeInstance.stop().catch(() => undefined) : undefined,
+        TEAM_CHAT_STARTUP_SHUTDOWN_MS,
+      );
+      await messagingInitTask?.catch(() => undefined);
+      await settleWithTimeout(teamChatInitTask, TEAM_CHAT_STARTUP_SHUTDOWN_MS);
+      await messaging?.shutdown?.();
+      await teamChatBridge?.stop();
       await email?.drain?.();
       await reconciler?.stop();
       await jobs.close();

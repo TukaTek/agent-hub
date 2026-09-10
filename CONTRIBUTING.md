@@ -16,11 +16,33 @@ required secrets, and startup commands.
 | `pnpm test:e2e` | Playwright against the emulated API. Needs Docker. |
 | `pnpm test:topology` | Local product-path smoke: Docker computer + Graphile worker recovery. Needs Docker. Not PR CI. |
 | `pnpm test:canary` | Live provider canaries. Needs keys. Not PR CI. |
+| `pnpm test:pi` | Real Pi against a local HTTP model fixture: streaming, tool round trips, failures and cancellation. No keys. |
+| `pnpm test:computer-replay` | Real Pi and Docker Chromium against a local model fixture. Needs the computer image; no keys or Electron windows. |
+| `pnpm test:evals --list` | List agent-quality cases. Add `--live` and a model connection to measure repeated real-model task success. |
 | `pnpm test:computer` | Real vision model + E2B desktop. Needs keys; see [computer verification](docs/computer-runtime.md#verification). Not PR CI. |
 | `pnpm check` | TypeScript (`tsc`) across the monorepo. |
 | `pnpm lint` | Biome lint and format check. |
 
 CI runs `pnpm lint`, `pnpm check`, production builds (including Electron preload smoke), `pnpm test`, `pnpm test:integration`, and `pnpm test:e2e` on every PR.
+
+## Adding a UI language
+
+The web and Electron-hosted UI use Lingui catalogs. To add a locale, register it in
+`apps/web/lingui.config.ts`, `apps/web/src/lib/ui-locale.ts`, and
+`apps/web/src/lib/i18n.ts`, then run `pnpm --filter @cortexai-agent-hub/web intl:extract`, fill the new
+`apps/web/src/locales/<locale>/messages.po` catalog, and validate it with
+`pnpm --filter @cortexai-agent-hub/web intl:compile`. Keep message IDs, placeholders, JSX markers, and
+ICU plural branches intact; do not commit generated `*.js`/`*.mjs` catalog files.
+
+Expo mobile has its own catalog and locale registry. Add the locale to
+`apps/mobile/lib/ui-locale.ts`, add `apps/mobile/lib/locales/<locale>.ts`, and register the
+catalog in `apps/mobile/lib/i18n.ts`. Web PO entries do not translate mobile automatically.
+Update the locale unit tests and a UI E2E scenario for each supported surface. The marketing
+homepage in `apps/www` and the native Electron setup window have separate localization paths;
+scope and test those changes explicitly instead of assuming the web catalog covers them.
+
+See [agent verification](docs/agent-verification.md) for the distinction between
+deterministic execution tests, computer replay, and real-model quality evals.
 
 ## Optional live-provider checks
 

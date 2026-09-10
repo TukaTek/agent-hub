@@ -10,26 +10,48 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import type Docker from "dockerode";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  assertVolumeSubpathSupport,
   COMPUTER_IMAGE,
+  computerHomeStorage,
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
   containerCreateOptions,
   containerNameFor,
   controlPortPublicationMatches,
+  homeVolumeMatches,
   hostComputerUser,
   legacyNetworkOwnedSolelyBy,
+  parseMemoryBytes,
   publishedLoopbackControlHostPort,
   resolveComputerControlEndpoint,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
+  resolveTeamScreenLimit,
   screenPorts,
   screenUrlFor,
+  screenUrlWithToken,
   xdotoolCommand,
 } from "./computer-spec.js";
 
 describe("graphical computer spec", () => {
+  it("binds the embed WebSocket path to the current screen capability", () => {
+    const url = new URL(screenUrlWithToken("http://screen.test:6080/embed.html", "current-token"));
+    expect(url.pathname).toBe("/embed.html");
+    expect(url.searchParams.get("path")).toBe("websockify?token=current-token");
+  });
+
+  it("has no small default cap and accepts optional operator limits", () => {
+    expect(resolveTeamScreenLimit(undefined)).toBeGreaterThan(1000);
+    expect(resolveTeamScreenLimit("0")).toBe(resolveTeamScreenLimit(undefined));
+    expect(resolveTeamScreenLimit("1000")).toBe(1000);
+    expect(resolveTeamScreenLimit("4")).toBe(4);
+    for (const value of ["-1", "1.5", "not-a-number"])
+      expect(() => resolveTeamScreenLimit(value)).toThrow(/positive integer/);
+  });
+
   it("creates a VNC desktop, not an alpine sleep fallback", () => {
     const options = containerCreateOptions({
       name: "cortexai-agent-hub-bot-abc",
@@ -51,37 +73,20 @@ describe("graphical computer spec", () => {
     );
     expect(options.Env).toContain("NPM_CONFIG_PREFIX=/home/cortexai-agent-hub/.local");
     expect(options.Env?.join("\n")).not.toMatch(/AXIOM_|LOG_LEVEL|LOG_FORMAT/);
-    expect(options.ExposedPorts).toMatchObject({
-      "6080/tcp": {},
-      "6081/tcp": {},
-      "6082/tcp": {},
-      "6083/tcp": {},
-      "6084/tcp": {},
-      "6085/tcp": {},
-      "6086/tcp": {},
-      "6087/tcp": {},
-      "6088/tcp": {},
-      "6089/tcp": {},
-      "6090/tcp": {},
-      "6091/tcp": {},
-      "6092/tcp": {},
-      "6093/tcp": {},
-      "6094/tcp": {},
-      "6095/tcp": {},
-    });
+    expect(options.ExposedPorts).toEqual({ "6080/tcp": {} });
     // Browser debugging stays inside the computer trust boundary.
-    for (let display = 1; display <= 8; display += 1) {
-      const cdpPort = `${9221 + display}/tcp`;
+    for (let index = 0; index < 1000; index += 1) {
+      const cdpPort = `${screenPorts(index).debugPort}/tcp`;
       expect(options.ExposedPorts).not.toHaveProperty(cdpPort);
       expect(options.HostConfig.PortBindings).not.toHaveProperty(cdpPort);
     }
     expect(options.ExposedPorts).not.toHaveProperty("7070/tcp");
     expect(options.HostConfig.PortBindings).not.toHaveProperty("7070/tcp");
     expect(options.HostConfig.PortBindings["6080/tcp"]?.[0]?.HostIp).toBe("127.0.0.1");
-    expect(options.HostConfig.PortBindings["6081/tcp"]?.[0]?.HostIp).toBe("127.0.0.1");
-    expect(options.HostConfig.PortBindings["6082/tcp"]?.[0]?.HostIp).toBe("127.0.0.1");
-    expect(screenPorts(0)).toMatchObject({ display: ":1", viewPort: "6080", controlPort: "6081" });
-    expect(screenPorts(1)).toMatchObject({ display: ":2", viewPort: "6082", controlPort: "6083" });
+    expect(options.HostConfig.PortBindings).not.toHaveProperty("6081/tcp");
+    expect(options.HostConfig.PortBindings).not.toHaveProperty("6082/tcp");
+    expect(screenPorts(0)).toMatchObject({ display: ":1", viewPort: "6080", controlPort: "6080" });
+    expect(screenPorts(1)).toMatchObject({ display: ":2", viewPort: "6080", controlPort: "6080" });
     expect(options.HostConfig.ShmSize).toBeGreaterThanOrEqual(256 * 1024 * 1024);
     expect(options.User).toBe("1000:1000");
     expect(options.HostConfig.CapDrop).toEqual(["ALL"]);
@@ -141,7 +146,7 @@ describe("graphical computer spec", () => {
     expect(dockerfile).toMatch(/USER 1000:1000/);
     expect(start).toMatch(/cortexai-agent-hub-computer-control/);
     expect(start).toMatch(/cortexai-agent-hub-browser/);
-    expect(start).toMatch(/SingletonLock/);
+    expect(start).not.toMatch(/browser\.log/);
     expect(start).toMatch(/xdg-mime default cortexai-agent-hub-browser\.desktop/);
     expect(start).toMatch(/register_browser_handler x-scheme-handler\/http/);
     expect(start).toMatch(/register_browser_handler x-scheme-handler\/https/);
@@ -155,8 +160,9 @@ describe("graphical computer spec", () => {
     expect(start).not.toMatch(/xdg-mime default cortexai-agent-hub-browser\.desktop .*\|\| true/);
     expect(start).toMatch(/x11vnc .* -viewonly /);
     expect(browser).toMatch(/\.browser-profiles\/chromium/);
-    expect(browser).toMatch(/chromium-screen-\$\{DISPLAY/);
+    expect(browser).toMatch(/chromium-screen-\$DISPLAY_NUM/);
     expect(browser).toMatch(/USER_DATA_DIR_SET/);
+    expect(browser).toMatch(/CORTEXAI_AGENT_HUB_BROWSER_PROFILE/);
     expect(desktop).toMatch(/Exec=\/usr\/local\/bin\/cortexai-agent-hub-browser %U/);
     expect(dockerfile).toMatch(/cortexai-agent-hub-page-browser/);
     expect(browser).toMatch(/remote-debugging-port/);
@@ -179,7 +185,7 @@ describe("graphical computer spec", () => {
       chmodSync(chromium, 0o755);
 
       const run = (display: string, args: string[] = []) => {
-        const result = spawnSync("bash", [path.join(root, "cortexai-agent-hub-browser"), ...args], {
+        const result = spawnSync("sh", [path.join(root, "cortexai-agent-hub-browser"), ...args], {
           env: {
             ...process.env,
             DISPLAY: display,
@@ -198,6 +204,13 @@ describe("graphical computer spec", () => {
         expect(run(":1").some((arg) => arg.startsWith("--remote-debugging-port="))).toBe(true);
         expect(run(":2")).toContain(`--user-data-dir=${home}/.browser-profiles/chromium-screen-2`);
         expect(run(":2")).toContain("--remote-debugging-port=9223");
+        for (const display of [8, 9]) {
+          const args = run(`:0${display}.0`);
+          expect(args).toContain(`--remote-debugging-port=${9221 + display}`);
+          expect(args).toContain(
+            `--user-data-dir=${home}/.browser-profiles/chromium-screen-${display}`,
+          );
+        }
         const explicit = run(":3", [`--user-data-dir=${home}/custom-profile`]);
         expect(explicit).toContain(`--user-data-dir=${home}/custom-profile`);
         expect(explicit).not.toContain(
@@ -606,5 +619,185 @@ describe("graphical computer spec", () => {
       "click",
       "1",
     ]);
+  });
+});
+
+describe("computer resource limits", () => {
+  const KEYS = [
+    "CORTEXAI_AGENT_HUB_COMPUTER_MEMORY",
+    "CORTEXAI_AGENT_HUB_COMPUTER_CPUS",
+    "CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT",
+  ] as const;
+  const saved = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    for (const k of KEYS) {
+      saved.set(k, process.env[k]);
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  const createInput = {
+    name: "cortexai-agent-hub-bot-x",
+    image: "cortexai-agent-hub/computer:local",
+    botId: "bot-x",
+    spaceId: "ws",
+    homePath: "/var/cortexai-agent-hub/homes/bot-x",
+  };
+
+  it("caps memory and cpu by default and keeps #343's pids ceiling", () => {
+    const { HostConfig } = containerCreateOptions(createInput);
+    expect(HostConfig.Memory).toBe(2 * 1024 ** 3);
+    expect(HostConfig.MemorySwap).toBe(HostConfig.Memory);
+    expect(HostConfig.NanoCpus).toBe(2 * 1e9);
+    expect(HostConfig.PidsLimit).toBe(2048);
+  });
+
+  it("pins MemorySwap to Memory so the ceiling cannot be swapped past", () => {
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = "1536m";
+    const { HostConfig } = containerCreateOptions(createInput);
+    expect(HostConfig.Memory).toBe(1536 * 1024 ** 2);
+    expect(HostConfig.MemorySwap).toBe(1536 * 1024 ** 2);
+  });
+
+  it("accepts fractional CPUs", () => {
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_CPUS = "1.5";
+    expect(containerCreateOptions(createInput).HostConfig.NanoCpus).toBe(1_500_000_000);
+  });
+
+  it("lets an operator opt out explicitly", () => {
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = "unlimited";
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_CPUS = "0";
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT = "none";
+    const { HostConfig } = containerCreateOptions(createInput);
+    expect(HostConfig.Memory).toBe(0);
+    expect(HostConfig.NanoCpus).toBe(0);
+    expect(HostConfig.PidsLimit).toBe(0);
+  });
+
+  it("rejects a malformed size instead of silently falling back", () => {
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = "2 gigs";
+    expect(() => containerCreateOptions(createInput)).toThrow(/CORTEXAI_AGENT_HUB_COMPUTER_MEMORY/);
+  });
+
+  it("rejects a negative cpu count", () => {
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_CPUS = "-1";
+    expect(() => containerCreateOptions(createInput)).toThrow(/CORTEXAI_AGENT_HUB_COMPUTER_CPUS/);
+  });
+
+  it("rejects a pids limit that is not a positive integer", () => {
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT = "12.5";
+    expect(() => containerCreateOptions(createInput)).toThrow(
+      /CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT/,
+    );
+  });
+
+  it("rejects a memory limit below Docker's 6 MiB minimum", () => {
+    // The daemon refuses these at container creation, so accepting them here would turn a typo
+    // into a 500 on the first bot rather than a startup failure naming the variable.
+    for (const value of ["1", "1m", "5m", "5242880"]) {
+      process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = value;
+      expect(() => containerCreateOptions(createInput)).toThrow(
+        /CORTEXAI_AGENT_HUB_COMPUTER_MEMORY/,
+      );
+    }
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = "6m";
+    expect(containerCreateOptions(createInput).HostConfig.Memory).toBe(6 * 1024 ** 2);
+  });
+
+  it("rejects a CPU count that would floor to Docker's unlimited", () => {
+    // Math.floor(1e-10 * 1e9) is 0, and 0 NanoCpus means uncapped. An accepted value must never
+    // turn a ceiling into no ceiling.
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_CPUS = "0.0000000001";
+    expect(() => containerCreateOptions(createInput)).toThrow(/CORTEXAI_AGENT_HUB_COMPUTER_CPUS/);
+  });
+
+  it("rejects a CPU count that leaves the safe-integer NanoCpus range", () => {
+    // 1e300 is finite, but Math.floor(1e300 * 1e9) is Infinity. 1e7 CPUs yields a non-safe
+    // integer. Both must fail closed rather than reach HostConfig.NanoCpus.
+    for (const value of ["1e300", "10000000"]) {
+      process.env.CORTEXAI_AGENT_HUB_COMPUTER_CPUS = value;
+      expect(() => containerCreateOptions(createInput)).toThrow(/CORTEXAI_AGENT_HUB_COMPUTER_CPUS/);
+    }
+  });
+
+  it("parses byte counts without a unit suffix", () => {
+    expect(parseMemoryBytes("X", "1073741824")).toBe(1024 ** 3);
+  });
+});
+
+describe("computer home storage", () => {
+  const runtime = (mount: object) => ({ Mounts: [mount] }) as Docker.ContainerInspectInfo;
+  it("keeps named volumes native and exposes only the bot subdirectory", () => {
+    const storage = computerHomeStorage(
+      "/data/homes/bot",
+      "/data",
+      runtime({
+        Type: "volume",
+        Name: "example_appdata",
+        Source: "/var/lib/docker/volumes/example_appdata/_data",
+        Destination: "/data",
+      }),
+    );
+    const options = containerCreateOptions({
+      name: "bot",
+      image: "computer",
+      botId: "bot",
+      spaceId: "space",
+      ...storage,
+    });
+    expect(options.HostConfig.Binds).toBeUndefined();
+    expect(options.HostConfig.Mounts).toEqual([
+      {
+        Type: "volume",
+        Source: "example_appdata",
+        Target: "/home/cortexai-agent-hub",
+        VolumeOptions: { NoCopy: true, Subpath: "homes/bot" },
+      },
+    ]);
+    expect(homeVolumeMatches(options.HostConfig.Mounts, storage.homeVolume!)).toBe(true);
+    expect(homeVolumeMatches(undefined, storage.homeVolume!)).toBe(false);
+    expect(
+      homeVolumeMatches(options.HostConfig.Mounts, {
+        name: "example_appdata",
+        subpath: "homes/other",
+      }),
+    ).toBe(false);
+  });
+  it("preserves native host paths and translates supervisor bind mounts", () => {
+    expect(computerHomeStorage("/data/homes/bot", "/data", undefined)).toEqual({
+      homePath: "/data/homes/bot",
+    });
+    expect(
+      computerHomeStorage(
+        "/data/homes/bot",
+        "/data",
+        runtime({ Type: "bind", Source: "/srv/data", Destination: "/data" }),
+      ),
+    ).toEqual({ homePath: "/srv/data/homes/bot" });
+  });
+  it("rejects paths outside the volume and missing volume names", () => {
+    for (const home of ["/data", "/other", "/data/../other"])
+      expect(() => computerHomeStorage(home, "/data", undefined)).toThrow();
+    expect(() =>
+      computerHomeStorage(
+        "/data/homes/bot",
+        "/data",
+        runtime({ Type: "volume", Destination: "/data" }),
+      ),
+    ).toThrow(/no name/);
+  });
+  it("fails closed on daemons that could ignore volume subpaths", () => {
+    for (const version of ["1.44", "", "invalid", "0.99"])
+      expect(() => assertVolumeSubpathSupport(version)).toThrow(/Docker Engine 26/);
+    for (const version of ["1.45", "1.46", "2.0"])
+      expect(() => assertVolumeSubpathSupport(version)).not.toThrow();
   });
 });

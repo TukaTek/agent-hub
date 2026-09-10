@@ -18,7 +18,6 @@ import {
   subagentBlockFromPayload,
   takeLiveMessage,
   updateCloudAgentMessages,
-  updateMessageReaction,
   upsertMessageById,
 } from "@cortexai-agent-hub/core";
 
@@ -248,6 +247,7 @@ export function isThreadSnapshotEvent(event: ProductEvent): boolean {
     event.type === "thread.subagent" ||
     event.type === "thread.cloud_agent" ||
     event.type === "agent.tool.called" ||
+    event.type === "agent.tool.completed" ||
     event.type === "thread.message.created" ||
     event.type === "thread.message.updated" ||
     event.type === "thread.message.reaction" ||
@@ -302,11 +302,18 @@ export function reduceThreadSnapshot(
   }
   if (event.type === "run.waiting_input" || event.type === "computer.takeover.requested") {
     const status = event.type === "run.waiting_input" ? "waiting_input" : "waiting_takeover";
-    const runChanged = Boolean(
-      prev.run && prev.run.id === event.runId && prev.run.status !== status,
+    const runId = event.runId;
+    const knownInRun = Boolean(runId && prev.run?.id === runId);
+    const knownInActive = Boolean(
+      runId && prev.activeRuns?.some((candidate) => candidate.id === runId),
     );
-    const activeRunChanged = prev.activeRuns?.some(
-      (candidate) => candidate.id === event.runId && candidate.status !== status,
+    // Peer bot_message runs are omitted from snapshots while busy; the first wait
+    // event is how an open thread learns they need ask/takeover UI.
+    const needsInsert = Boolean(runId) && !knownInRun && !knownInActive;
+    const runChanged = Boolean(knownInRun && prev.run && prev.run.status !== status);
+    const activeRunChanged = Boolean(
+      knownInActive &&
+        prev.activeRuns?.some((candidate) => candidate.id === runId && candidate.status !== status),
     );
     const members = updateMemberStatus(prev.members, event.botId, status);
     // Ask pauses delete progress events server-side; drop the live bubble so a missed
@@ -319,10 +326,41 @@ export function reduceThreadSnapshot(
     if (
       !runChanged &&
       !activeRunChanged &&
+      !needsInsert &&
       members === prev.members &&
       messages === prev.messages
     ) {
       return prev;
+    }
+    if (needsInsert && runId) {
+      const waitingRun: Run = {
+        id: runId,
+        botId: event.botId,
+        threadId: event.threadId,
+        taskId: runId,
+        status,
+        trigger: "bot_message",
+        routineId: null,
+        modelProvider: null,
+        modelId: null,
+        error: null,
+        startedAt: event.createdAt,
+        completedAt: null,
+        createdAt: event.createdAt,
+      };
+      const baseActive = prev.activeRuns ?? (prev.run ? [prev.run] : []);
+      const activeRuns = [...baseActive.filter((candidate) => candidate.id !== runId), waitingRun];
+      const promoteWaiting =
+        !prev.run ||
+        (prev.run.status !== "waiting_input" && prev.run.status !== "waiting_takeover");
+      return {
+        ...prev,
+        cursor: event.seq,
+        members,
+        messages,
+        run: promoteWaiting ? waitingRun : prev.run,
+        activeRuns,
+      };
     }
     return {
       ...prev,
@@ -332,7 +370,7 @@ export function reduceThreadSnapshot(
       run: runChanged && prev.run ? { ...prev.run, status } : prev.run,
       activeRuns: activeRunChanged
         ? prev.activeRuns?.map((candidate) =>
-            candidate.id === event.runId ? { ...candidate, status } : candidate,
+            candidate.id === runId ? { ...candidate, status } : candidate,
           )
         : prev.activeRuns,
     };
@@ -400,6 +438,9 @@ export function reduceThreadSnapshot(
     };
     return { ...prev, cursor: event.seq, messages: [...remaining, next] };
   }
+  if (event.type === "agent.tool.completed") {
+    return { ...prev, cursor: event.seq };
+  }
   if (event.type === "thread.subagent") {
     const block = subagentBlockFromPayload(event.payload);
     const next: ThreadMessage = {
@@ -432,13 +473,6 @@ export function reduceThreadSnapshot(
       messages: updateCloudAgentMessages(prev.messages, event.payload ?? {}),
     };
   }
-  if (event.type === "thread.message.reaction") {
-    return {
-      ...prev,
-      cursor: event.seq,
-      messages: updateMessageReaction(prev.messages, event.payload ?? {}),
-    };
-  }
   if (event.type === "thread.message.created" || event.type === "thread.message.updated") {
     const role = (event.payload.role as ThreadMessage["role"]) ?? "bot";
     const blocks = (event.payload.blocks as ThreadMessage["blocks"]) ?? [];
@@ -450,7 +484,10 @@ export function reduceThreadSnapshot(
       blocks,
       botId: event.botId,
       runId: event.runId,
-      thumbsUp: event.payload.thumbsUp === true,
+      replyToMessageId:
+        typeof event.payload.replyToMessageId === "string"
+          ? event.payload.replyToMessageId
+          : undefined,
       createdAt: event.createdAt,
     };
     const replacedSubagentIds = new Set(

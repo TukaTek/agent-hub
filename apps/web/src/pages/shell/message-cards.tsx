@@ -131,6 +131,7 @@ export function AppConnectCard({
     setError(null);
     try {
       const started = await rpc.connections.begin({
+        connectorId: block.connectorId,
         provider: block.provider,
         displayName: block.name,
       });
@@ -150,7 +151,7 @@ export function AppConnectCard({
           if (controller.signal.aborted) return;
           setLocalStatus("connected");
           await rpc.onboarding
-            .appConnected({ botId, provider: block.provider })
+            .appConnected({ botId, provider: block.provider, connectorId: block.connectorId })
             .catch(() => undefined);
           return;
         }
@@ -356,7 +357,7 @@ export function McpApprovalCard({
         <>
           <p className="mt-2 text-[13px] leading-[1.5] text-foreground/75">
             {needsOAuth
-              ? t`This server uses browser sign-in. Authorize it to let your agents use its tools. A popup will open.`
+              ? t`Authorize this server so agents can use its tools. A popup opens.`
               : t`Approve this server to let your agent use its tools.`}
           </p>
           {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}

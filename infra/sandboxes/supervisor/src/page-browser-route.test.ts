@@ -69,6 +69,7 @@ it("resolves the owned display and refuses an older fence before running the hel
   expect(mock.exec.mock.calls.at(-1)?.[0]).toMatchObject({
     Env: [
       "DISPLAY=:2",
+      "CORTEXAI_AGENT_HUB_CDP_PORT=9223",
       "HOME=/home/cortexai-agent-hub",
       "CORTEXAI_AGENT_HUB_BROWSER_WATCH_STDIN=1",
     ],

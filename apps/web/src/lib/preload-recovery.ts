@@ -1,4 +1,4 @@
-const PRELOAD_RECOVERY_KEY = "rk:preload-recovery";
+const PRELOAD_RECOVERY_KEY = "cortexai-agent-hub:preload-recovery";
 const PRELOAD_RECOVERY_COOLDOWN_MS = 30_000;
 
 type PreloadRecoveryWindow = Pick<

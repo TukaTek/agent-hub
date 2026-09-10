@@ -5,7 +5,7 @@ import type {
   JobPublisher,
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { PrismaClient } from "@cortexai-agent-hub/db";
+import type { createRepos, PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   archiveBot,
@@ -93,6 +93,56 @@ describe("spawned bot creation", () => {
       threadId: "thread-1",
     });
     expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("passes computerMode through to createBot", async () => {
+    const createBot = vi.fn().mockResolvedValue({
+      id: "child-2",
+      name: "Painter",
+      title: "",
+      threadId: "thread-2",
+    });
+    const createReposSpy = vi
+      .spyOn(await import("@cortexai-agent-hub/db"), "createRepos")
+      .mockReturnValue({
+        createBot,
+      } as unknown as ReturnType<typeof createRepos>);
+
+    const result = await spawnBot(
+      {
+        prisma: {} as PrismaClient,
+        jobs: { enqueue: vi.fn() } as unknown as JobPublisher,
+      },
+      {
+        spawnedBy: {
+          id: "parent-1",
+          name: "Chief",
+          spaceId: "workspace-1",
+          userId: "user-1",
+        },
+        runId: "run-1",
+        spawnKey: "tool-call-2",
+        name: "Painter",
+        computerMode: "dedicated",
+      },
+    );
+
+    expect(createBot).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-1", spaceId: "workspace-1" }),
+      expect.objectContaining({
+        name: "Painter",
+        computerMode: "dedicated",
+        parentBotId: "parent-1",
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      botId: "child-2",
+      name: "Painter",
+      title: "",
+      threadId: "thread-2",
+    });
+    createReposSpy.mockRestore();
   });
 });
 describe("spawned bot archival", () => {
@@ -426,7 +476,13 @@ describe("destroyBot", () => {
           jobs: { cancel: vi.fn() } as unknown as JobPublisher,
           dataDir: "/tmp/cortexai-agent-hub-destroy-bot-test",
         },
-        { id: "bot-1", spaceId: "workspace-1", name: "Researcher", archivedAt: null },
+        {
+          id: "bot-1",
+          userId: "user-1",
+          spaceId: "workspace-1",
+          name: "Researcher",
+          archivedAt: null,
+        },
         context,
         { deleteMemories: true },
       ),

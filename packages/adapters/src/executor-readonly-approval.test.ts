@@ -7,18 +7,20 @@ import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
 import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isApprovalPausedResult } from "./approval-effect.js";
+import type * as AutoReviewModule from "./auto-review.js";
 import { runAutoReviewJudge } from "./auto-review.js";
+import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
 import { createRunExecutor } from "./executor.js";
 import { catalogEntries, resolveCatalogCall } from "./lazy-tool-catalog.js";
 
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./computer-lifecycle.js")>()),
+  ...(await importOriginal<typeof ComputerLifecycleModule>()),
   acquireComputerExecutionLease: async () => null,
   provisionComputer: async () => ({ id: "computer-1", kind: "desktop" }),
 }));
 
 vi.mock("./auto-review.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./auto-review.js")>()),
+  ...(await importOriginal<typeof AutoReviewModule>()),
   resolveAutoReviewChecker: () => ({ provider: "scripted", model: "checker" }),
   isAutoReviewCheckerConfigured: () => true,
   runAutoReviewJudge: vi.fn(),
@@ -39,6 +41,7 @@ function fixture({
   catalog = false,
   rules = [] as ActionApprovalRule[],
   autoReview = false,
+  trigger = "user",
 } = {}) {
   const tool: ConnectorTool = {
     name,
@@ -61,7 +64,7 @@ function fixture({
     spaceId: "space-1",
     userId: "user-1",
     status: "queued",
-    trigger: "user",
+    trigger,
     leaseFence: 0,
   };
   const externalEffect = {
@@ -129,6 +132,7 @@ function fixture({
       })),
     },
     taughtSkill: { findMany: vi.fn(async () => []) },
+    agentSecret: { findMany: vi.fn(async () => []) },
     agentSkill: { findMany: vi.fn(async () => []) },
     scratchpadItem: { findMany: vi.fn(async () => []) },
     actionApprovalRule: { findMany: vi.fn(async () => rules) },
@@ -204,6 +208,21 @@ describe("connector read-only metadata and approval enforcement", () => {
   beforeEach(() => {
     vi.mocked(runAutoReviewJudge).mockReset();
   });
+
+  it.each(["shell", "write_file"])(
+    "forces owner approval for webhook-triggered %s despite an allow rule",
+    async (name) => {
+      const f = fixture({
+        name,
+        trigger: "webhook",
+        rules: [{ effect: "always_allow", matchKind: "tool", matchValue: name }],
+      });
+      await f.run();
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+      expect(isApprovalPausedResult(f.results[0])).toBe(true);
+      expect(runAutoReviewJudge).not.toHaveBeenCalled();
+    },
+  );
 
   describe.each([false, true])("catalog = %s", (catalog) => {
     it.each(["tool", "connector"] as const)(
@@ -316,6 +335,20 @@ describe("connector read-only metadata and approval enforcement", () => {
       await f.run();
       expect(f.execute).toHaveBeenCalledOnce();
       expect(f.pauseRunForInput).not.toHaveBeenCalled();
+      expect(runAutoReviewJudge).not.toHaveBeenCalled();
+    });
+
+    it("forces owner approval for webhook-triggered writes despite an allow rule", async () => {
+      const f = fixture({
+        catalog,
+        name: "demo_send_message",
+        trigger: "webhook",
+        rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "demo_send_message" }],
+      });
+      await f.run();
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+      expect(isApprovalPausedResult(f.results[0])).toBe(true);
       expect(runAutoReviewJudge).not.toHaveBeenCalled();
     });
 

@@ -1,3 +1,4 @@
+import type { IntegrationSetupState } from "@cortexai-agent-hub/contracts";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -27,6 +28,7 @@ import {
   probeApiBase,
   requestPasswordReset,
   resetApiBase,
+  rpc,
   saveApiBase,
   signIn,
   signUp,
@@ -126,7 +128,11 @@ export default function SignIn() {
       } else {
         await signIn(email.trim(), password, reset?.mode === "hub");
       }
-      router.replace("/");
+      const setup =
+        mode === "up"
+          ? await rpc<IntegrationSetupState>("integrationSetup/get").catch(() => null)
+          : null;
+      router.replace(setup?.needsSetup ? "/integration-setup" : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("Could not continue"));
     } finally {

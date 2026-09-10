@@ -13,9 +13,11 @@ import {
   type CDPSession,
   type ElectronApplication,
   _electron as electron,
+  expect,
   type Page,
 } from "@playwright/test";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
+import type { createApp } from "../../../../apps/api/src/app.ts";
 import {
   type NumericSummary,
   PERFORMANCE_REPORT_SCHEMA_VERSION,
@@ -55,9 +57,7 @@ const temporaryRoot = await mkdtemp(
 const container = await new PostgreSqlContainer("postgres:16-alpine").start();
 let preview: ChildProcess | undefined;
 let server: ReturnType<typeof serve> | undefined;
-let handles:
-  | Awaited<ReturnType<typeof import("../../../../apps/api/src/app.ts")["createApp"]>>
-  | undefined;
+let handles: Awaited<ReturnType<typeof createApp>> | undefined;
 
 try {
   const databaseUrl = container.getConnectionUri();
@@ -282,20 +282,14 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
         );
       });
     const connectHeading = page.getByRole("heading", { name: "Connect a model" });
-    const createHeading = page.getByRole("heading", { name: "Create your first bot" });
-    const benchmarkBot = page.getByText("Benchmark", { exact: true }).first();
-    await connectHeading.or(createHeading).or(benchmarkBot).waitFor({ timeout: 20_000 });
+    const composer = page.getByRole("combobox", { name: "Message Chief" });
+    await connectHeading.or(composer).waitFor({ timeout: 20_000 });
     if (await connectHeading.isVisible().catch(() => false)) {
-      await page.getByRole("button", { name: "Skip for now" }).click();
-      await createHeading.or(benchmarkBot).waitFor({ timeout: 20_000 });
+      throw new Error(
+        "Benchmark sign-up requires a default model; connect-model is unsupported here",
+      );
     }
-    if (await createHeading.isVisible().catch(() => false)) {
-      await page.locator("label:has-text('Name') input").fill("Benchmark");
-      await page.getByRole("button", { name: "Continue" }).click();
-      await page.getByText("A bit of everything", { exact: true }).click();
-      await page.getByText("Clear and tight", { exact: true }).click();
-      await page.getByRole("button", { name: "Open CortexAI Agent Hub" }).click();
-    }
+    await expect(composer).toBeVisible({ timeout: 20_000 });
     await waitForShell(page);
   } finally {
     await app.close();
@@ -304,7 +298,7 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
 
 async function seedBenchmarkThread(prisma: PrismaClient) {
   const bot = await prisma.bot.findFirst({
-    where: { name: "Benchmark" },
+    where: { name: "Chief" },
     select: { thread: { select: { id: true } } },
   });
   const threadId = bot?.thread?.id;
@@ -521,7 +515,7 @@ async function measureInteractions(app: ElectronApplication, page: Page) {
   await page.waitForTimeout(200);
 
   const typingBefore = await cdpMetrics(session);
-  const composer = page.getByPlaceholder(/Message Benchmark/);
+  const composer = page.getByPlaceholder(/Message Chief/);
   await composer.fill("");
   await composer.focus();
   const characterCount = 40;

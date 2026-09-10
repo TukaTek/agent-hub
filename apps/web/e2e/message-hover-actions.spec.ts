@@ -1,9 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
 import { captureScreenshot, completeOnboarding, signup } from "./helpers";
 
-async function revealHoverRail(
-  row: import("@playwright/test").Locator,
-): Promise<import("@playwright/test").Locator> {
+async function revealHoverRail(row: Locator): Promise<Locator> {
   const rail = row.getByTestId("message-hover-rail");
   await expect
     .poll(async () => {
@@ -20,10 +18,7 @@ async function revealHoverRail(
 }
 
 /** Park the pointer outside the message and blur focus so the rail returns to opacity-0. */
-async function expectRailAtRest(
-  page: import("@playwright/test").Page,
-  row: import("@playwright/test").Locator,
-) {
+async function expectRailAtRest(page: Page, row: Locator) {
   const rail = row.getByTestId("message-hover-rail");
   const box = await row.boundingBox();
   if (box) {
@@ -36,6 +31,7 @@ async function expectRailAtRest(
   });
   await expect(rail).toHaveCSS("opacity", "0");
   await expect(rail).toHaveCSS("pointer-events", "none");
+  await expect(row.getByTestId("message-hover-time")).toHaveCSS("opacity", "0");
 }
 
 test("message hover shows beside-bubble actions; reply links to parent", async ({
@@ -53,14 +49,31 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
 
   const transcript = page.getByTestId("transcript");
 
-  // Bot welcome (left bubble): rail hidden at rest, then beside on hover.
-  const botRow = transcript.locator(`[data-message-id]`).first();
+  // Empty start: no Fresh-start greeting. Answer the focus card so a plain
+  // bot text bubble exists for hover layout checks.
+  await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByRole("button", { name: /Day-to-day work/ }).click();
+  const botText = page.getByText(/Got it\./);
+  await expect(botText).toBeVisible({ timeout: 20_000 });
+  const botRow = transcript.locator(`[data-message-id]`).filter({ has: botText }).first();
   await expect(botRow).toBeVisible();
   await expectRailAtRest(page, botRow);
   await captureScreenshot(page, testInfo, "message-actions-rest-desktop");
 
   const botRail = await revealHoverRail(botRow);
   const botToolbar = botRow.getByTestId("message-hover-actions");
+  const botTime = botRow.getByTestId("message-hover-time");
+  await expect(botTime).toHaveCSS("opacity", "1");
+  const botTimeBox = await botTime.boundingBox();
+  const botRowBox = await botRow.boundingBox();
+  expect(botTimeBox).not.toBeNull();
+  expect(botRowBox).not.toBeNull();
+  expect(
+    Math.abs(botTimeBox!.x + botTimeBox!.width - botRowBox!.x - botRowBox!.width),
+  ).toBeLessThan(2);
+
   await expect(botToolbar.getByRole("button", { name: "Reply" })).toBeVisible();
   await expect(botToolbar.getByRole("button", { name: "More" })).toBeVisible();
   // Measure a unique visible bubble, so an oversized wrapper cannot hide a gap.
@@ -97,15 +110,15 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   const toolbar = parentRow.getByTestId("message-hover-actions");
   await expect(toolbar.getByRole("button", { name: "Reply" })).toBeVisible();
   await expect(toolbar.getByRole("button", { name: "More" })).toBeVisible();
-  const thumbsUp = toolbar.getByRole("button", { name: "Add thumbs-up" });
-  await expect(thumbsUp).toBeVisible();
+  const react = toolbar.getByRole("button", { name: "React" });
+  await expect(react).toBeVisible();
   // Default reaction matches Reply/More: muted control color, not yellow.
   await expect
     .poll(async () => {
       const mutedColor = await toolbar
         .getByRole("button", { name: "More" })
         .evaluate((el) => getComputedStyle(el).color);
-      const reactionColor = await thumbsUp.evaluate((el) => getComputedStyle(el).color);
+      const reactionColor = await react.evaluate((el) => getComputedStyle(el).color);
       return reactionColor === mutedColor;
     })
     .toBe(true);
@@ -155,13 +168,18 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
     })
     .toBeLessThan(8);
 
-  // Time is only visible after opening More.
-  await expect(page.getByTestId("message-hover-time")).toHaveCount(0);
+  // Time appears at the opposite row edge on hover, outside More.
   await revealHoverRail(parentRow);
+  const rowTime = parentRow.getByTestId("message-hover-time");
+  await expect(rowTime).toHaveCSS("opacity", "1");
+  await expect(rowTime).toHaveText(/\d/);
+  const timeBox = await rowTime.boundingBox();
+  const rowBox = await parentRow.boundingBox();
+  expect(timeBox).not.toBeNull();
+  expect(rowBox).not.toBeNull();
+  expect(Math.abs(timeBox!.x - rowBox!.x)).toBeLessThan(2);
   await toolbar.getByRole("button", { name: "More" }).click();
-  const moreTime = page.getByTestId("message-hover-time");
-  await expect(moreTime).toBeVisible();
-  await expect(moreTime).toHaveText(/\d/);
+  await expect(page.getByRole("menu").locator("time")).toHaveCount(0);
   // Escape closes More and restores focus to the trigger so the rail stays up.
   await page.keyboard.press("Escape");
   await expect(toolbar.getByRole("button", { name: "More" })).toBeFocused();
@@ -195,12 +213,25 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   });
   await testInfo.attach("message-hover-toolbar", { contentType: "image/png", path: hoverPath });
 
-  await thumbsUp.click();
-  const reactionChip = parentRow
-    .getByRole("button", { name: "Remove thumbs-up" })
-    .filter({ hasText: "👍" });
-  await expect(reactionChip).toBeVisible();
-  await captureScreenshot(page, testInfo, "message-thumbs-up");
+  await react.click();
+  for (const emoji of ["👍", "👎", "❤️", "😂", "🎉", "😮"]) {
+    await expect(page.getByRole("button", { name: emoji, exact: true })).toBeVisible();
+  }
+  await captureScreenshot(page, testInfo, "message-reaction-picker");
+  await page.getByRole("button", { name: "❤️", exact: true }).click();
+  await expect(parentRow.getByTestId("message-reactions")).toHaveText("❤️");
+  await parentRow.hover();
+  await react.click();
+  await page.getByRole("button", { name: "👍", exact: true }).click();
+  await expect(parentRow.getByTestId("message-reactions")).toContainText("👍");
+  await parentRow.hover();
+  await react.click();
+  await page.getByRole("button", { name: "❤️", exact: true }).click();
+  await expect(parentRow.getByTestId("message-reactions")).toContainText("❤️ 2");
+  await captureScreenshot(page, testInfo, "message-multiple-reactions");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(parentRow.getByTestId("message-reactions")).toContainText("❤️ 2");
+  await expect(parentRow.getByTestId("message-reactions")).toContainText("👍");
 
   await parentRow.hover();
   await toolbar.getByRole("button", { name: "More" }).click();
@@ -287,26 +318,26 @@ test("reply preview jumps to parent outside the loaded page", async ({ page }) =
     }
   };
 
-  await page.route("**/rpc/bootstrap", async (route) => {
-    const response = await route.fetch();
-    const body = (await response.json()) as Parameters<typeof stripParent>[0];
-    stripParent(body);
-    await route.fulfill({
-      status: response.status(),
-      headers: response.headers(),
-      body: JSON.stringify(body),
-    });
-  });
-  await page.route("**/rpc/threads/get", async (route) => {
-    const response = await route.fetch();
-    const body = (await response.json()) as Parameters<typeof stripParent>[0];
-    stripParent(body);
-    await route.fulfill({
-      status: response.status(),
-      headers: response.headers(),
-      body: JSON.stringify(body),
-    });
-  });
+  // One handler for both hydrate RPCs avoids overlapping globs racing on reload
+  // (Playwright "Route is already handled" when fulfill runs twice).
+  const hydrateRpc = /\/rpc\/(bootstrap|threads\/get)(?:\?|$)/;
+  const stripHydrate = async (route: Route) => {
+    try {
+      const response = await route.fetch();
+      const body = (await response.json()) as Parameters<typeof stripParent>[0];
+      stripParent(body);
+      await route.fulfill({
+        status: response.status(),
+        headers: response.headers(),
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      // Reload can cancel an in-flight intercepted request after fetch returns.
+      if (/already handled|Target closed|Request context disposed/i.test(String(error))) return;
+      throw error;
+    }
+  };
+  await page.route(hydrateRpc, stripHydrate);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByRole("combobox", { name: /^Message/ })).toBeVisible({ timeout: 20_000 });
@@ -318,8 +349,7 @@ test("reply preview jumps to parent outside the loaded page", async ({ page }) =
   await expect(offlinePreview).toBeVisible();
   await expect(offlinePreview).toHaveText("Earlier message");
 
-  await page.unroute("**/rpc/bootstrap");
-  await page.unroute("**/rpc/threads/get");
+  await page.unroute(hydrateRpc, stripHydrate);
   await offlinePreview.click();
   await expect(page.locator(`[data-message-id="${parentId}"]`)).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(`[data-message-id="${parentId}"]`)).toContainText(parentText);
@@ -339,13 +369,33 @@ test.describe("touch message actions", () => {
     expect(
       await page.evaluate(() => matchMedia("(hover: hover) and (pointer: fine)").matches),
     ).toBe(false);
-    const row = page.getByTestId("transcript").locator("[data-message-id]").first();
+    await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await page.getByRole("button", { name: /Day-to-day work/ }).click();
+    const botText = page.getByText(/Got it\./);
+    await expect(botText).toBeVisible({ timeout: 20_000 });
+    const row = page
+      .getByTestId("transcript")
+      .locator("[data-message-id]")
+      .filter({ has: botText })
+      .first();
     const rail = row.getByTestId("message-hover-rail");
     await expect(rail).toHaveCSS("opacity", "1");
     await expect(rail.getByRole("button", { name: "Reply", exact: true })).toBeHidden();
+    await rail.getByRole("button", { name: "React", exact: true }).tap();
+    await expect(page.getByRole("button", { name: "🎉", exact: true })).toBeVisible();
+    await captureScreenshot(page, testInfo, "message-reaction-picker-touch");
+    await page.getByRole("button", { name: "🎉", exact: true }).tap();
+    await expect(row.getByTestId("message-reactions")).toHaveText("🎉");
+    await rail.getByRole("button", { name: "React", exact: true }).tap();
+    await page.getByRole("button", { name: "🎉", exact: true }).tap();
+    await expect(row.getByTestId("message-reactions")).toHaveText("🎉 2");
     await rail.getByRole("button", { name: "More" }).tap();
     await expect(page.getByRole("menuitem", { name: "Copy" })).toBeVisible();
-    await expect(page.getByTestId("message-hover-time")).toBeVisible();
+    await expect(row.getByTestId("message-hover-time")).toHaveCSS("opacity", "1");
+    await expect(row.getByTestId("message-hover-time")).toHaveText(/\d/);
+    await expect(page.getByRole("menu").locator("time")).toHaveCount(0);
     await captureScreenshot(page, testInfo, "message-actions-touch-menu");
     await page.getByRole("menuitem", { name: "Reply", exact: true }).tap();
     await expect(page.getByRole("button", { name: "Cancel reply" })).toBeVisible();

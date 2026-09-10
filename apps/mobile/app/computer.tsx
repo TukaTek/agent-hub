@@ -159,10 +159,12 @@ export default function Computer() {
     if (!botId || !refreshController.isActive()) return;
     const action = refreshController.beginAction();
     try {
-      await rpc("computer/release", { botId, reason }).catch(() => undefined);
+      await rpc("computer/release", { botId, reason });
       if (!action.isActive()) return;
       setComputerOpen(false);
       await action.refresh().catch(() => undefined);
+    } catch {
+      if (action.isActive()) setScreenError(t("Could not continue"));
     } finally {
       action.finish();
     }
@@ -271,9 +273,7 @@ export default function Computer() {
           </Pressable>
         )}
       </View>
-      {computer?.state === "error" ||
-      computer?.state === "stopped" ||
-      (computer?.state === "running" && !embeddedScreenUrl) ? (
+      {computer ? (
         <ComputerMaintenanceActions
           botId={botId ?? ""}
           computer={computer}
