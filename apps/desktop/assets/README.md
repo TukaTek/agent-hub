@@ -1,10 +1,7 @@
 # Desktop icons
 
-The shared editable source and export notes are in
-[`packages/ui-tokens/assets`](../../../packages/ui-tokens/assets/README.md).
+The source images are in [`brand`](../../../brand). Run `pnpm brand:generate`
+from the repository root to refresh the platform assets.
 
-Mac packaging requires Xcode 26 or newer. Electron builder compiles `CortexAI Agent Hub.icon`
-into `Assets.car` for Tahoe and generates `icon.icns` for older macOS versions.
-`icon-macos.png` is the matching development export with Dock margins.
-
-`icon.png` and `icon.ico` remain the Linux and Windows assets.
+macOS packaging uses `icon.icns`; development launches use `icon-macos.png`.
+`icon.png` and `icon.ico` are the Linux and Windows assets.
