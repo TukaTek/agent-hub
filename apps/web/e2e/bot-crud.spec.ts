@@ -38,7 +38,7 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
   await expect(page.getByTestId("create-bot-error")).toBeVisible();
   expect(createFailed).toBe(true);
   await page.unroute("**/rpc/bots/create");
-  await page.getByRole("button", { name: "Cancel new bot" }).click();
+  await page.getByRole("button", { name: "Cancel new Assistant" }).click();
   await expect(page.getByTestId("side-panel")).toHaveAttribute("data-panel", "closed");
 
   let failedPostCreateRefresh = false;
