@@ -136,7 +136,13 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode }) {
         return;
       }
       clearSpaceSelection();
-      navigate(mode === "up" ? "/onboarding" : "/app");
+      navigate(
+        mode === "up"
+          ? "/onboarding"
+          : searchParams.get("next") === "/integrations/setup"
+            ? "/integrations/setup"
+            : "/app",
+      );
     } catch {
       setError(t`Could not reach the server`);
     } finally {

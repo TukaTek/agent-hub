@@ -1,6 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  adoptDeletedSpaceFallback,
   applyMobileThreadEvent,
   authHeaders,
   blockText,
@@ -722,6 +723,623 @@ describe("mobile API authentication", () => {
     await resetApiBase();
   });
 
+  it("recovers a deleted-space fallback over a stale saved selection after restart", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_id") throw new Error("device locked");
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    await expect(selectSpace("space-personal")).resolves.toBe(false);
+    await expect(adoptDeletedSpaceFallback("space-personal")).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-personal");
+    // Stale deleted id is cleared even while the replacement write stays locked.
+    expect(storage.has("cortexai-agent-hub.space_id")).toBe(false);
+    expect(storage.get("cortexai-agent-hub.space_rollback")).toBe(
+      JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
+    );
+
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    vi.resetModules();
+    const restartedApi = await import("./api.js");
+    await restartedApi.loadApiBase();
+    expect(restartedApi.selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-personal");
+    expect(storage.has("cortexai-agent-hub.space_rollback")).toBe(false);
+  });
+
+  it("clears a deleted selection when every SecureStore write fails after delete", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    await loadApiBase();
+
+    await expect(selectSpace("space-personal")).resolves.toBe(false);
+    await expect(adoptDeletedSpaceFallback("space-personal")).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-personal");
+    expect(storage.has("cortexai-agent-hub.space_id")).toBe(false);
+    expect(storage.has("cortexai-agent-hub.space_rollback")).toBe(false);
+
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    vi.resetModules();
+    const restartedApi = await import("./api.js");
+    await restartedApi.loadApiBase();
+    // Cleared selection lets startup fall through to the server default.
+    expect(restartedApi.selectedSpaceId()).toBeNull();
+    await expect(restartedApi.selectInitialSpace("space-personal")).resolves.toBe(true);
+    expect(restartedApi.selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-personal");
+  });
+
+  it("drops a stale deleted selection when rollback recovery cannot rewrite SPACE_KEY", async () => {
+    const storage = new Map<string, string>([
+      ["cortexai-agent-hub.space_id", "space-deleted"],
+      [
+        "cortexai-agent-hub.space_rollback",
+        JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
+      ],
+    ]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    vi.resetModules();
+    const restartedApi = await import("./api.js");
+    await restartedApi.loadApiBase();
+
+    expect(restartedApi.selectedSpaceId()).toBe("space-personal");
+    expect(storage.has("cortexai-agent-hub.space_id")).toBe(false);
+    expect(storage.get("cortexai-agent-hub.space_rollback")).toBe(
+      JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
+    );
+  });
+
+  it("recovers after restart when SecureStore could neither write nor clear after delete", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    await loadApiBase();
+
+    await expect(selectSpace("space-personal")).resolves.toBe(false);
+    await expect(adoptDeletedSpaceFallback("space-personal")).resolves.toBe(false);
+    expect(selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-deleted");
+
+    vi.resetModules();
+    const restartedApi = await import("./api.js");
+    await restartedApi.loadApiBase();
+    expect(restartedApi.selectedSpaceId()).toBe("space-deleted");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(restartedApi.rpc("spaces/list")).resolves.toEqual({ spaces: [] });
+    expect(restartedApi.selectedSpaceId()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![1].headers["x-cortexai-agent-hub-space-id"]).toBe(
+      "space-deleted",
+    );
+    expect(fetchMock.mock.calls[1]![1].headers["x-cortexai-agent-hub-space-id"]).toBeUndefined();
+  });
+
+  it("does not let a stale rollback override a saved deleted-space fallback", async () => {
+    const apiBase = "http://127.0.0.1:3100";
+    const storage = new Map<string, string>([
+      ["cortexai-agent-hub.space_id", "space-deleted"],
+      ["cortexai-agent-hub.space_rollback", JSON.stringify({ apiBase, spaceId: "space-old" })],
+    ]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.space_rollback") throw new Error("device locked");
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      // clearStoredValue falls back to writing ""; keep that failing for rollback
+      // so only an overwrite of the rollback payload can neutralize it.
+      if (key === "cortexai-agent-hub.space_rollback" && value === "")
+        throw new Error("device locked");
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    await expect(adoptDeletedSpaceFallback("space-personal")).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-personal");
+    // Neutralization overwrote the stale rollback; best-effort clear may leave
+    // the matching recovery payload when delete/empty writes stay locked.
+    expect(storage.get("cortexai-agent-hub.space_rollback")).toBe(
+      JSON.stringify({ apiBase, spaceId: "space-personal" }),
+    );
+
+    vi.resetModules();
+    const restartedApi = await import("./api.js");
+    await restartedApi.loadApiBase();
+    expect(restartedApi.selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-personal");
+  });
+
+  it("does not write SPACE_KEY beside a stale rollback when neutralization fails", async () => {
+    const apiBase = "http://127.0.0.1:3100";
+    const storage = new Map<string, string>([
+      ["cortexai-agent-hub.space_id", "space-deleted"],
+      ["cortexai-agent-hub.space_rollback", JSON.stringify({ apiBase, spaceId: "space-old" })],
+    ]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_rollback") throw new Error("device locked");
+      // Block recoverSpaceRollback during loadApiBase, and block SPACE_KEY clears.
+      // Writes of the new fallback id would succeed — the bug was doing that write
+      // before neutralization, then failing to undo it.
+      if (key === "cortexai-agent-hub.space_id" && (value === "" || value === "space-old")) {
+        throw new Error("device locked");
+      }
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    await expect(adoptDeletedSpaceFallback("space-personal")).resolves.toBe(false);
+    expect(selectedSpaceId()).toBe("space-personal");
+    // Must not leave the new selection durable beside the stale rollback.
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-deleted");
+    expect(storage.get("cortexai-agent-hub.space_rollback")).toBe(
+      JSON.stringify({ apiBase, spaceId: "space-old" }),
+    );
+
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_rollback") throw new Error("device locked");
+      storage.set(key, value);
+    });
+    vi.resetModules();
+    const restartedApi = await import("./api.js");
+    await restartedApi.loadApiBase();
+    // Restart may still recover the old rollback target, but must not have
+    // replaced a newer SPACE_KEY fallback with it.
+    expect(restartedApi.selectedSpaceId()).toBe("space-old");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-old");
+  });
+
+  it("keeps the Space selection when unauthorized is a session failure", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.session_token") return "expired-token";
+      return storage.get(key) ?? null;
+    });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+    expect(selectedSpaceId()).toBe("space-support");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(rpc("spaces/list")).rejects.toThrow("Unauthorized");
+    expect(selectedSpaceId()).toBe("space-support");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-support");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![1].headers["x-cortexai-agent-hub-space-id"]).toBe(
+      "space-support",
+    );
+    expect(fetchMock.mock.calls[1]![1].headers["x-cortexai-agent-hub-space-id"]).toBeUndefined();
+  });
+
+  it("keeps a Space selected during unauthorized recovery when the retry succeeds", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    let resolveRetry!: (value: Response) => void;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRetry = resolve;
+          }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = rpc("spaces/list");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await expect(selectSpace("space-new")).resolves.toBe(true);
+    resolveRetry(jsonResponse({ json: { spaces: [] } }));
+
+    await expect(pending).resolves.toEqual({ spaces: [] });
+    expect(selectedSpaceId()).toBe("space-new");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-new");
+  });
+
+  it("keeps a Space selected during unauthorized recovery when the retry fails", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    let resolveRetry!: (value: Response) => void;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRetry = resolve;
+          }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = rpc("spaces/list");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await expect(selectSpace("space-new")).resolves.toBe(true);
+    resolveRetry(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+
+    await expect(pending).rejects.toThrow("Unauthorized");
+    expect(selectedSpaceId()).toBe("space-new");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-new");
+  });
+
+  it("ignores a 401 from a request sent before the user switched Spaces", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-a"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+    expect(selectedSpaceId()).toBe("space-a");
+
+    let resolveStale!: (value: Response) => void;
+    const fetchMock = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveStale = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stale = rpc("bots/list");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![1].headers["x-cortexai-agent-hub-space-id"]).toBe("space-a");
+    await expect(selectSpace("space-b")).resolves.toBe(true);
+    resolveStale(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+
+    // The stale request fails without probing or touching the new selection;
+    // Space B's own requests run recovery if B is itself inaccessible.
+    await expect(stale).rejects.toThrow("Unauthorized");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectedSpaceId()).toBe("space-b");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-b");
+  });
+
+  it("ignores a stale 401 after switching away and back to the same Space", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-a"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+    expect(selectedSpaceId()).toBe("space-a");
+
+    let resolveStale!: (value: Response) => void;
+    const fetchMock = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveStale = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stale = rpc("bots/list");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![1].headers["x-cortexai-agent-hub-space-id"]).toBe("space-a");
+    await expect(selectSpace("space-b")).resolves.toBe(true);
+    await expect(selectSpace("space-a")).resolves.toBe(true);
+    resolveStale(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+
+    // ID-only matching would treat this obsolete Space A response as current
+    // after A → B → A; the selection epoch must keep recovery from clearing
+    // the newer Space A selection.
+    await expect(stale).rejects.toThrow("Unauthorized");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectedSpaceId()).toBe("space-a");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-a");
+  });
+
+  it("heals durable divergence when persisting a new Space fails", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    await loadApiBase();
+    await expect(selectSpace("space-support")).resolves.toBe(true);
+    // A concurrent recovery persisted the claimed id, then the selection
+    // write below fails and rolls the claim back.
+    storage.set("cortexai-agent-hub.space_id", "space-new");
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_id" && value === "space-new") {
+        throw new Error("device locked");
+      }
+      storage.set(key, value);
+    });
+
+    await expect(selectSpace("space-new")).resolves.toBe(false);
+    expect(selectedSpaceId()).toBe("space-support");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-support");
+  });
+
+  it("keeps a newer overlapping selection when an older persist fails", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    let rejectA!: (reason: Error) => void;
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
+        await new Promise<never>((_, reject) => {
+          rejectA = reject;
+        });
+      }
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const pendingA = selectSpace("space-a");
+    await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-a"));
+    await expect(selectSpace("space-b")).resolves.toBe(true);
+    rejectA(new Error("device locked"));
+
+    await expect(pendingA).resolves.toBe(false);
+    expect(selectedSpaceId()).toBe("space-b");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-b");
+  });
+
+  it("converges durable state to the latest overlapping selection", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    let resolveA!: () => void;
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
+        await new Promise<void>((resolve) => {
+          resolveA = resolve;
+        });
+      }
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const pendingA = selectSpace("space-a");
+    await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-a"));
+    await expect(selectSpace("space-b")).resolves.toBe(true);
+    // The older write lands stale after the newer one completed.
+    resolveA();
+
+    await expect(pendingA).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-b");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-b");
+  });
+
+  it("keeps a later A claim when an earlier A→B→A persist fails", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    let firstAWriteCount = 0;
+    let rejectFirstA!: (reason: Error) => void;
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
+        firstAWriteCount += 1;
+        if (firstAWriteCount === 1) {
+          await new Promise<never>((_, reject) => {
+            rejectFirstA = reject;
+          });
+        }
+      }
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const pendingFirstA = selectSpace("space-a");
+    await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-a"));
+    await expect(selectSpace("space-b")).resolves.toBe(true);
+    await expect(selectSpace("space-a")).resolves.toBe(true);
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-a");
+    rejectFirstA(new Error("device locked"));
+
+    await expect(pendingFirstA).resolves.toBe(false);
+    expect(selectedSpaceId()).toBe("space-a");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-a");
+  });
+
+  it("does not let auth cleanup overwrite a newer selection with a stale snapshot", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    let injected = false;
+    let holdCleanupReconcile = false;
+    let releaseCleanupWrite!: () => void;
+    const cleanupWriteHeld = new Promise<void>((resolve) => {
+      releaseCleanupWrite = resolve;
+    });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.space_id" && !injected) {
+        injected = true;
+        // Finish selecting B before cleanup snapshots it for reconcile.
+        await expect(selectSpace("space-b")).resolves.toBe(true);
+        holdCleanupReconcile = true;
+      }
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "cortexai-agent-hub.space_id" && value === "space-b" && holdCleanupReconcile) {
+        holdCleanupReconcile = false;
+        // Hold only the post-clear reconcile write of the B snapshot.
+        await cleanupWriteHeld;
+      }
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pendingRpc = rpc("spaces/list");
+    await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-b"));
+    await expect(selectSpace("space-c")).resolves.toBe(true);
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-c");
+    releaseCleanupWrite();
+
+    await expect(pendingRpc).resolves.toEqual({ spaces: [] });
+    expect(selectedSpaceId()).toBe("space-c");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-c");
+  });
+
+  it("re-persists a Space selected while recovery cleanup is in flight", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    let injected = false;
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.space_id" && !injected) {
+        injected = true;
+        await expect(selectSpace("space-new")).resolves.toBe(true);
+      }
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(rpc("spaces/list")).resolves.toEqual({ spaces: [] });
+    expect(injected).toBe(true);
+    expect(selectedSpaceId()).toBe("space-new");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-new");
+  });
+
+  it("does not retry a mutating RPC against the default Space after Space auth failure", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(rpc("bots/create", { name: "Wrong space bot" })).rejects.toThrow("Unauthorized");
+    expect(selectedSpaceId()).toBeNull();
+    expect(storage.has("cortexai-agent-hub.space_id")).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/rpc/bots/create");
+    expect(fetchMock.mock.calls[0]![1].headers["x-cortexai-agent-hub-space-id"]).toBe(
+      "space-deleted",
+    );
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("/rpc/spaces/list");
+    expect(fetchMock.mock.calls[1]![1].headers["x-cortexai-agent-hub-space-id"]).toBeUndefined();
+  });
+
+  it("keeps the Space selection when a mutating RPC unauthorized is a session failure", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.session_token") return "expired-token";
+      return storage.get(key) ?? null;
+    });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(rpc("bots/create", { name: "Should not land" })).rejects.toThrow("Unauthorized");
+    expect(selectedSpaceId()).toBe("space-support");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-support");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/rpc/bots/create");
+    expect(fetchMock.mock.calls[0]![1].headers["x-cortexai-agent-hub-space-id"]).toBe(
+      "space-support",
+    );
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("/rpc/spaces/list");
+    expect(fetchMock.mock.calls[1]![1].headers["x-cortexai-agent-hub-space-id"]).toBeUndefined();
+  });
+
   it("recovers the active space after rollback persistence fails", async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
     await loadApiBase();
@@ -915,16 +1533,25 @@ describe("mobile thread refresh targeting", () => {
 });
 
 describe("mobile thread event reduction", () => {
-  it("applies a persisted thumbs-up event to its message", () => {
+  it("appends an emoji reply with its exact target", () => {
     const initial = snapshot([mobileMessage("message-1", [{ kind: "text", text: "Done" }])]);
 
     const next = applyMobileThreadEvent(initial, {
-      type: "thread.message.reaction",
+      type: "thread.message.created",
       seq: 4,
-      payload: { messageId: "message-1", thumbsUp: true },
+      payload: {
+        messageId: "reaction-1",
+        role: "user",
+        blocks: [{ kind: "text", text: "❤️" }],
+        replyToMessageId: "message-1",
+      },
     });
 
-    expect(next?.messages[0]?.thumbsUp).toBe(true);
+    expect(next?.messages.find((message) => message.id === "reaction-1")).toMatchObject({
+      role: "user",
+      blocks: [{ kind: "text", text: "❤️" }],
+      replyToMessageId: "message-1",
+    });
     expect(next?.cursor).toBe(4);
   });
 
@@ -1187,6 +1814,60 @@ describe("mobile thread event reduction", () => {
     });
     expect(repeated?.cursor).toBe(9);
     expect(repeated?.run).toBe(waiting?.run);
+  });
+
+  it("applies computer takeover requests as waiting_takeover", () => {
+    const progress = mobileMessage("progress:run-1", [{ kind: "progress", text: "working…" }], 1);
+    const initial: MobileSnapshot = {
+      ...snapshot([progress]),
+      run: { id: "run-1", status: "running" },
+      activeRuns: [{ id: "run-1", status: "running" }],
+    };
+    const waiting = applyMobileThreadEvent(initial, {
+      type: "computer.takeover.requested",
+      runId: "run-1",
+      seq: 10,
+    });
+
+    expect(waiting?.run?.status).toBe("waiting_takeover");
+    expect(waiting?.activeRuns?.[0]?.status).toBe("waiting_takeover");
+    expect(waiting?.messages.some((message) => message.id.startsWith("progress:"))).toBe(false);
+    expect(waiting?.cursor).toBe(10);
+  });
+
+  it("inserts a peer takeover run that was absent from the open snapshot", () => {
+    const progress = mobileMessage(
+      "progress:run-peer",
+      [{ kind: "progress", text: "working…" }],
+      1,
+    );
+    const initial: MobileSnapshot = {
+      ...snapshot([progress]),
+      run: { id: "run-user", status: "running" },
+      activeRuns: [{ id: "run-user", status: "running" }],
+      computer: {
+        state: "running",
+        controlHolder: "bot",
+        screenAvailable: true,
+        mode: "team",
+        busyBotName: "Peer",
+      },
+    };
+
+    const waiting = applyMobileThreadEvent(initial, {
+      type: "computer.takeover.requested",
+      runId: "run-peer",
+      botId: "bot-peer",
+      seq: 12,
+    });
+
+    expect(waiting?.run).toEqual({ id: "run-peer", botId: "bot-peer", status: "waiting_takeover" });
+    expect(waiting?.activeRuns).toEqual([
+      { id: "run-user", status: "running" },
+      { id: "run-peer", botId: "bot-peer", status: "waiting_takeover" },
+    ]);
+    expect(waiting?.messages.some((message) => message.id.startsWith("progress:"))).toBe(false);
+    expect(waiting?.computer?.busyBotName).toBeNull();
   });
 
   it("advances the cursor for durable message events", () => {

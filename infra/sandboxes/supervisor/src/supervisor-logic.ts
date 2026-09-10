@@ -1,13 +1,26 @@
+import {
+  BROWSER_APPLICATIONS as DOCKER_BROWSER_ALIASES,
+  MAX_DESKTOP_DISPLAY,
+  resetDesktopRuntimeCommand,
+  shellQuote,
+  stopBrowserCommand,
+  stopExtraScreenCommand,
+} from "@cortexai-agent-hub/core/node/desktop-runtime";
+
+export {
+  browserProfilePathForScreen,
+  ensureScreenCommand,
+  interactiveScreenCommand,
+  prepareBrowserProfileCommand,
+  stopBrowserCommand,
+  stopExtraScreenCommand,
+} from "@cortexai-agent-hub/core/node/desktop-runtime";
+
 import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { canReleaseScreenLease, canTakeScreenLease } from "@cortexai-agent-hub/core";
 import { z } from "zod";
-import {
-  type SandboxInput,
-  screenPorts,
-  TEAM_SCREEN_LIMIT,
-  xdotoolCommand,
-} from "./computer-spec.js";
+import { type SandboxInput, xdotoolCommand } from "./computer-spec.js";
 
 export const computerActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("key"), key: z.string(), modifiers: z.array(z.string()).optional() }),
@@ -29,16 +42,7 @@ export const computerActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("launch"), application: z.string(), uri: z.string().optional() }),
 ]);
 
-export const DOCKER_BROWSER_ALIASES = new Set([
-  "browser",
-  "chrome",
-  "chromium",
-  "chromium-browser",
-  "firefox",
-  "google-chrome",
-  "google-chrome-stable",
-  "cortexai-agent-hub-browser",
-]);
+export { BROWSER_APPLICATIONS as DOCKER_BROWSER_ALIASES } from "@cortexai-agent-hub/core/node/desktop-runtime";
 
 export function assertRequestIdentity(
   botId: string | undefined,
@@ -185,7 +189,7 @@ export function nextScreenIndex(
   assigned: Map<string, ScreenAssignment>,
   screenId: string,
   leaseId?: string,
-  limit = TEAM_SCREEN_LIMIT,
+  limit = MAX_DESKTOP_DISPLAY,
 ): number {
   const existing = assigned.get(screenId);
   if (existing) {
@@ -220,9 +224,10 @@ export function releaseAssignedScreen(
   leaseId?: string,
 ): number | undefined {
   const slot = assigned.get(screenId);
-  if (!slot || slot.releasing || (leaseId && !canReleaseScreenLease(slot.leaseId, leaseId))) {
+  if (!slot || (leaseId && !canReleaseScreenLease(slot.leaseId, leaseId))) {
     return undefined;
   }
+  if (slot.releasing) return slot.index;
   slot.releasing = true;
   return slot.index;
 }
@@ -236,10 +241,22 @@ export function completeReleasedScreen(
   if (slot?.releasing && slot.index === index) assigned.delete(screenId);
 }
 
+export async function teardownReleasedScreen(
+  assigned: Map<string, ScreenAssignment>,
+  screenId: string,
+  index: number,
+  teardown: () => Promise<{ code: number; stderr: string }>,
+) {
+  const result = await teardown();
+  if (result.code !== 0) throw new Error(result.stderr || "computer screen failed to stop");
+  completeReleasedScreen(assigned, screenId, index);
+}
+
 export interface ScreenAssignment {
   index: number;
   leaseId?: string;
   releasing?: boolean;
+  viewToken?: string;
 }
 
 export function clearComputerScreenRegistry(
@@ -249,84 +266,68 @@ export function clearComputerScreenRegistry(
   registry.delete(containerId);
 }
 
-export function stopPrimaryBrowserCommand() {
-  const profile = `/home/cortexai-agent-hub/.browser-profiles/chromium`;
-  return [
-    `pkill -TERM -f -- '--user-data-dir=${profile}$' || true`,
-    `pkill -TERM -f -- '--user-data-dir=${profile} ' || true`,
-    "sleep 0.2",
-    `pkill -KILL -f -- '--user-data-dir=${profile}$' || true`,
-    `pkill -KILL -f -- '--user-data-dir=${profile} ' || true`,
-    `rm -f ${profile}/SingletonLock ${profile}/SingletonCookie ${profile}/SingletonSocket`,
-  ].join("; ");
-}
-
 /** Choose the stop command for DELETE /screen cancel/release.
  * Callers must hold the per-computer screen lock across this decision and any stop. */
 export function screenReleaseStopCommand(
   index: number | undefined,
-  options: { hasRegistry: boolean; cancelRunWork: boolean },
+  options: {
+    hasRegistry: boolean;
+    cancelRunWork: boolean;
+    screenId: string;
+  },
 ): string {
   if (index !== undefined) {
-    return stopExtraScreenCommand(index, { cancelRunWork: options.cancelRunWork });
+    return stopExtraScreenCommand(index, options.screenId);
   }
-  // Missing registry (supervisor restart): cancel still tears down primary Chromium.
+  // Missing registry after a supervisor restart: cancel still tears down the
+  // matching bot's orphaned Chromium process without touching another bot.
   // Present registry + rejected release: newer fence owns the screen — do not kill.
-  if (!options.hasRegistry && options.cancelRunWork) return stopPrimaryBrowserCommand();
+  if (!options.hasRegistry && options.cancelRunWork) {
+    return stopBrowserCommand(options.screenId);
+  }
   return "";
 }
 
-export function stopExtraScreenCommand(index: number, options: { cancelRunWork?: boolean } = {}) {
-  if (index <= 0) {
-    return options.cancelRunWork ? stopPrimaryBrowserCommand() : "";
-  }
-  const layout = screenPorts(index);
-  const fluxHome = `/tmp/fluxbox-home-${layout.displayNumber}`;
-  const profile = `/home/cortexai-agent-hub/.browser-profiles/chromium-screen-${layout.displayNumber}`;
-  const tokenFile = `/tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`;
+export function stopScreensCommand(screens: Array<{ screenId: string; index: number }>) {
   return [
-    `pkill -f 'Xvfb ${layout.display} -screen' || true`,
-    `pkill -f 'HOME=${fluxHome} DISPLAY=${layout.display} fluxbox' || true`,
-    `pkill -f -- '--user-data-dir=${profile}' || true`,
-    `pkill -f '^x11vnc .* -rfbport ${layout.viewVncPort}' || true`,
-    `pkill -f '^x11vnc .* -rfbport ${layout.controlVncPort}' || true`,
-    `pkill -f '^/usr/bin/python3 .*websockify.*${layout.viewPort}' || true`,
-    `pkill -f '^/usr/bin/python3 .*websockify.*${layout.controlPort}' || true`,
-    `rm -f /tmp/.X${layout.displayNumber}-lock /tmp/.X11-unix/X${layout.displayNumber} ${tokenFile}`,
-  ].join("; ");
+    "set -eu",
+    "failed=0",
+    ...screens.map(
+      ({ screenId }) => `bash -eu -c ${shellQuote(stopBrowserCommand(screenId))} || failed=1`,
+    ),
+    '[ "$failed" -eq 0 ] || { echo "computer browser failed to stop" >&2; exit 1; }',
+  ].join("\n");
 }
 
-export function ensureScreenCommand(index: number) {
-  const layout = screenPorts(index);
-  if (index === 0) {
-    return `for i in $(seq 1 100); do xdpyinfo -display ${layout.display} >/dev/null 2>&1 && exit 0; sleep 0.1; done; exit 1`;
+export function resetManagedScreensCommand() {
+  return resetDesktopRuntimeCommand();
+}
+
+export async function withKeyedLock<T>(
+  locks: Map<string, Promise<unknown>>,
+  key: string,
+  operation: () => Promise<T>,
+) {
+  const previous = locks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const current = previous.catch(() => undefined).then(() => gate);
+  locks.set(key, current);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (locks.get(key) === current) locks.delete(key);
   }
-  const fluxHome = `/tmp/fluxbox-home-${layout.displayNumber}`;
-  const log = `/tmp/cortexai-agent-hub/screen-${layout.displayNumber}`;
-  const profile = `/home/cortexai-agent-hub/.browser-profiles/chromium-screen-${layout.displayNumber}`;
-  return [
-    `xdpyinfo -display ${layout.display} >/dev/null 2>&1 && exit 0 || true`,
-    `mkdir -p /tmp/cortexai-agent-hub ${fluxHome}/.fluxbox /tmp/.X11-unix ${profile}`,
-    `rm -f /tmp/.X${layout.displayNumber}-lock /tmp/.X11-unix/X${layout.displayNumber}`,
-    `Xvfb ${layout.display} -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >${log}-xvfb.log 2>&1 &`,
-    `for i in $(seq 1 100); do xdpyinfo -display ${layout.display} >/dev/null 2>&1 && break; sleep 0.1; done`,
-    `xdpyinfo -display ${layout.display} >/dev/null 2>&1 || exit 1`,
-    `cp /etc/cortexai-agent-hub/fluxbox/init ${fluxHome}/.fluxbox/init`,
-    `cp /etc/cortexai-agent-hub/fluxbox/apps ${fluxHome}/.fluxbox/apps 2>/dev/null || true`,
-    `cp /etc/cortexai-agent-hub/fluxbox/menu ${fluxHome}/.fluxbox/menu 2>/dev/null || true`,
-    `HOME=${fluxHome} DISPLAY=${layout.display} fluxbox -rc ${fluxHome}/.fluxbox/init >${log}-fluxbox.log 2>&1 &`,
-    `if [ -d /home/cortexai-agent-hub/.browser-profiles/chromium ]; then cp -a /home/cortexai-agent-hub/.browser-profiles/chromium/. ${profile}/; rm -f ${profile}/SingletonLock ${profile}/SingletonCookie ${profile}/SingletonSocket; fi`,
-    `DISPLAY=${layout.display} HOME=/home/cortexai-agent-hub cortexai-agent-hub-browser --user-data-dir=${profile} >${log}-browser.log 2>&1 &`,
-    `x11vnc -display ${layout.display} -forever -shared -viewonly -nopw -listen 127.0.0.1 -rfbport ${layout.viewVncPort} -xkb -ncache 0 >${log}-x11vnc.log 2>&1 &`,
-    `websockify --heartbeat=30 --web=/usr/share/novnc 0.0.0.0:${layout.viewPort} 127.0.0.1:${layout.viewVncPort} >${log}-novnc.log 2>&1 &`,
-    `for i in $(seq 1 50); do (echo >/dev/tcp/127.0.0.1/${layout.viewPort}) >/dev/null 2>&1 && exit 0; sleep 0.1; done`,
-    "exit 1",
-  ].join("\n");
 }
 
 export function containerActionStep(
   action: z.infer<typeof computerActionSchema>,
   display = ":1",
+  browserProfile?: string,
 ): { argv: string[] } | { waitMs: number } {
   if (action.kind === "wait") {
     return { waitMs: Math.min(Math.max(action.ms, 0), 5_000) };
@@ -348,12 +349,24 @@ export function containerActionStep(
     const target = /^https?:\/\//i.test(action.path)
       ? action.path
       : workspaceTarget(normalizeWorkspaceRelative(action.path));
-    argv = ["env", `DISPLAY=${display}`, "xdg-open", target];
+    argv = [
+      "env",
+      `DISPLAY=${display}`,
+      ...(browserProfile ? [`CORTEXAI_AGENT_HUB_BROWSER_PROFILE=${browserProfile}`] : []),
+      "xdg-open",
+      target,
+    ];
   } else {
-    const application = DOCKER_BROWSER_ALIASES.has(action.application.toLowerCase())
-      ? "cortexai-agent-hub-browser"
-      : action.application;
-    argv = ["env", `DISPLAY=${display}`, application, ...(action.uri ? [action.uri] : [])];
+    const browser = DOCKER_BROWSER_ALIASES.has(action.application.toLowerCase());
+    argv = [
+      "env",
+      `DISPLAY=${display}`,
+      ...(browser && browserProfile
+        ? [`CORTEXAI_AGENT_HUB_BROWSER_PROFILE=${browserProfile}`]
+        : []),
+      browser ? "cortexai-agent-hub-browser" : action.application,
+      ...(action.uri ? [action.uri] : []),
+    ];
   }
   return { argv };
 }
@@ -361,8 +374,9 @@ export function containerActionStep(
 export function containerActionSteps(
   actions: Array<z.infer<typeof computerActionSchema>>,
   display = ":1",
+  browserProfile?: string,
 ) {
-  return actions.map((action) => containerActionStep(action, display));
+  return actions.map((action) => containerActionStep(action, display, browserProfile));
 }
 
 export function normalizeWorkspaceRelative(value: string) {
@@ -395,40 +409,6 @@ export function sandboxTimeoutCommand(argv: string[], timeoutMs: number, complet
 
 export function sandboxCommandTimedOut(exitCode: number, completedWithExit124: boolean) {
   return exitCode === 124 && !completedWithExit124;
-}
-
-export function interactiveScreenCommand(
-  interactive: boolean,
-  controlToken?: string,
-  layout = screenPorts(0),
-) {
-  const tokenFile =
-    layout.displayNumber === 1
-      ? "/tmp/cortexai-agent-hub/control-token"
-      : `/tmp/cortexai-agent-hub/control-token-${layout.displayNumber}`;
-  const stopProcesses =
-    `pkill -f '^x11vnc .* -rfbport ${layout.controlVncPort}' || true; ` +
-    `pkill -f '^/usr/bin/python3 .*websockify.*${layout.controlPort}' || true; ` +
-    `rm -f ${tokenFile}`;
-  const stop = controlToken
-    ? `[ -f ${tokenFile} ] && [ "$(cat ${tokenFile})" != ${shellQuote(controlToken)} ] || { ${stopProcesses}; }`
-    : stopProcesses;
-  if (!interactive) return stop;
-  if (!controlToken) throw new Error("interactive screen requires a control token");
-  return [
-    `[ -f ${tokenFile} ] && [ "$(cat ${tokenFile})" = ${shellQuote(controlToken)} ] && pgrep -f '^x11vnc .* -rfbport ${layout.controlVncPort}' >/dev/null && pgrep -f '^/usr/bin/python3 .*websockify.*${layout.controlPort}' >/dev/null && exit 0 || true`,
-    stopProcesses,
-    `printf %s ${shellQuote(controlToken)} > ${tokenFile}`,
-    `export DISPLAY=${layout.display}`,
-    `(x11vnc -display ${layout.display} -forever -shared -nopw -listen 127.0.0.1 -rfbport ${layout.controlVncPort} -xkb -ncache 0 >/tmp/cortexai-agent-hub/x11vnc-control-${layout.displayNumber}.log 2>&1 &)`,
-    `(websockify --heartbeat=30 --web=/usr/share/novnc 0.0.0.0:${layout.controlPort} 127.0.0.1:${layout.controlVncPort} >/tmp/cortexai-agent-hub/novnc-control-${layout.displayNumber}.log 2>&1 &)`,
-    `for i in $(seq 1 50); do (echo >/dev/tcp/127.0.0.1/${layout.controlPort}) >/dev/null 2>&1 && exit 0; sleep 0.1; done`,
-    "exit 1",
-  ].join("; ");
-}
-
-function shellQuote(value: string) {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 export function parseObservation(output: string) {

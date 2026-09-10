@@ -36,7 +36,7 @@ describe("preload recovery", () => {
   });
 
   it("does not suppress a new failure after the recovery reload", () => {
-    const store = new Map([["rk:preload-recovery", "1"]]);
+    const store = new Map([["cortexai-agent-hub:preload-recovery", "1"]]);
     const { listener, reload } = createTarget(store);
     const nextPageFailure = new Event("vite:preloadError", { cancelable: true });
 

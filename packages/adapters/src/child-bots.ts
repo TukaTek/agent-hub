@@ -7,7 +7,12 @@ import type {
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import { routineJobKey, runContinueJob, runJobKey } from "@cortexai-agent-hub/adapter-kit";
-import { type Actor, type Bot, GROUP_MEMBER_MIN } from "@cortexai-agent-hub/contracts";
+import {
+  type Actor,
+  type Bot,
+  type ComputerMode,
+  GROUP_MEMBER_MIN,
+} from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import {
   cancelRunsInTransaction,
@@ -23,6 +28,7 @@ import { getLogger } from "@cortexai-agent-hub/logging";
 import { toComputerRef } from "./computer-support.js";
 import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { resolveAgentHomePath } from "./home.js";
+import { removePiBotSessions } from "./pi-session.js";
 
 export function confirmSpawnedBotName(confirmName: string, botName: string) {
   if (confirmName !== botName) {
@@ -52,6 +58,7 @@ export async function spawnBot(
     title?: string;
     instructions?: string;
     prompt?: string;
+    computerMode?: ComputerMode;
   },
 ) {
   const name = input.name.trim();
@@ -74,6 +81,7 @@ export async function spawnBot(
       notifyOnFinish: true,
       parentBotId: input.spawnedBy.id,
       spawnKey: input.spawnKey,
+      computerMode: input.computerMode,
       initialMessage: {
         role: "system",
         blocks: [{ kind: "meta", text: `Created by ${input.spawnedBy.name}` }],
@@ -200,6 +208,7 @@ type LifecycleBot = {
   id: string;
   spaceId: string;
   name: string;
+  userId?: string;
   archivedAt: Date | null;
   computerId?: string | null;
   webhookSecretId?: string | null;
@@ -358,6 +367,8 @@ export async function destroyBot(
   if (dedicated?.providerRef) {
     await deps.sandbox.destroy(toComputerRef(dedicated), context).catch(() => undefined);
   }
+  // Keep the bot deletion transaction from committing if raw transcript cleanup fails.
+  await removePiBotSessions(deps.dataDir, bot.userId, bot.id);
   const deletion = await withTransactionRetry(() =>
     deps.prisma.$transaction(async (tx) => {
       const locked = await tx.$queryRaw<Array<{ id: string; webhookSecretId: string | null }>>`

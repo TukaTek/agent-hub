@@ -1,4 +1,5 @@
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
+import { ComposioConnector, IntegrationProviderSettings } from "@cortexai-agent-hub/adapters";
 import { createUserWorkAuthorizer, hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
@@ -36,7 +37,9 @@ import {
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
   reconcileCloudAgents,
+  reconcileComputerUpdates,
   resolveDeploymentModel,
+  resolvePiSessionRoot,
   resolveSandboxProvider,
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
@@ -61,9 +64,11 @@ async function main() {
   const events = createThreadEvents(prisma, realtime, {
     runSecretWriter: createRunSecretWriter(secrets),
   });
-  const runtime =
-    process.env.AGENT_RUNTIME === "scripted" ? new ScriptedAgentRuntime() : new PiAgentRuntime();
   const dataDir = process.env.DATA_DIR ?? "./data";
+  const runtime =
+    process.env.AGENT_RUNTIME === "scripted"
+      ? new ScriptedAgentRuntime()
+      : new PiAgentRuntime({ sessionRoot: resolvePiSessionRoot(dataDir) });
   // Same resolver the API uses, so both processes agree on provider, model and key.
   const { key: deploymentModelKey } = resolveDeploymentModel();
   const sandboxProvider = resolveSandboxProvider(process.env);
@@ -102,6 +107,10 @@ async function main() {
   const pipedream = isPipedreamEnabled(pipedreamConfig)
     ? new PipedreamConnector(pipedreamConfig)
     : undefined;
+  // pollInboundMessages stays false (the default) here: this process
+  // only ever sends outbound (messaging.deliver jobs). It must never poll
+  // Telegram — that would steal the single getUpdates slot away from the
+  // API process, which is the one with the inbound sink actually wired up.
   const messagingPlatforms = messagingPlatformsFromEnv(messagingEnvFromProcess(process.env));
   const messaging = isMessagingSurfaceEnabled(messagingPlatforms, {
     deploymentModelKey,
@@ -109,13 +118,25 @@ async function main() {
   })
     ? new ChatSdkMessagingSurface(messagingPlatforms)
     : undefined;
-  const stack = createConnectorStack(isComposioEnabled(process.env.COMPOSIO_API_KEY), undefined, [
+  const integrationSettings = new IntegrationProviderSettings(
+    prisma,
+    secrets,
+    resolveEncryptionKey(process.env),
+    {
+      composio: isComposioEnabled(process.env.COMPOSIO_API_KEY)
+        ? new ComposioConnector(process.env.COMPOSIO_API_KEY)
+        : undefined,
+      pipedream,
+    },
+  );
+  const stack = createConnectorStack(false, undefined, [
     new InstalledConnectorProvider(prisma, secrets),
-    ...(pipedream ? [pipedream] : []),
+    ...integrationSettings.providers(),
     mcp,
   ]);
   const connector = stack.destination;
   await connector.start();
+  integrationSettings.warmDirectories();
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const home = new LocalAgentHomeStore(dataDir);
   const artifacts = new LocalArtifactStore(dataDir);
@@ -139,7 +160,17 @@ async function main() {
     artifacts,
     connector: stack.connector,
     connectors: stack.connector,
-    listConnectedPluginSlugs: stack.composio?.listConnectedSlugs.bind(stack.composio),
+    listConnectedPluginSlugs: async (userId) => {
+      const provider = await integrationSettings.resolve("composio");
+      if (!provider) return [];
+      return provider.listConnectedExternalIds({
+        userId,
+        spaceId: "",
+        operationId: "connections.sync",
+        traceId: "connections.sync",
+        signal: AbortSignal.timeout(15_000),
+      });
+    },
     secrets: [
       deploymentModelKey ?? "",
       process.env.COMPOSIO_API_KEY ?? "",
@@ -178,6 +209,7 @@ async function main() {
     events,
     leadership: createPostgresReconciliationLeadership(pool),
     reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
+    reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
   });
   reconciler.start();
 

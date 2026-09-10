@@ -9,9 +9,11 @@ import type {
 import { messagingDeliverJob } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import type { CloudAgentConnection } from "./cloud-agent-factory.js";
 import { pollCloudAgent } from "./cloud-agent-poll.js";
 import { expireComputerControl } from "./computer-control.js";
 import { scheduleComputerSleep, sleepComputerIfIdle } from "./computer-idle.js";
+import { performComputerUpdate } from "./computer-update.js";
 import type { createRunExecutor } from "./executor.js";
 import { compactHistory } from "./history-compaction.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
@@ -32,7 +34,7 @@ export function createBackgroundJobHandlers(deps: {
   memoryProviders: MemoryProviderResolver;
   deploymentModelKey?: string;
   messaging?: MessagingSurface;
-  cloudAgent?: import("./cloud-agent-factory.js").CloudAgentConnection | null;
+  cloudAgent?: CloudAgentConnection | null;
 }): BackgroundJobHandlers {
   const deliverMessaging = async (runId?: string) => {
     if (!deps.messaging) return;
@@ -70,6 +72,9 @@ export function createBackgroundJobHandlers(deps: {
     },
     "routine.wakeup": async (payload) => {
       await deps.executor.wakeRoutine(payload.routineId, payload.scheduledFor);
+    },
+    "computer.update": async ({ updateId }) => {
+      await performComputerUpdate(deps, updateId);
     },
     "computer.sleep": async (payload) => {
       await sleepComputerIfIdle(deps, payload.computerId);

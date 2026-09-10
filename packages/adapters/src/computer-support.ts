@@ -141,6 +141,4 @@ function stripVirtualWorkspaceRoot(value: string): string | null {
   return portable.startsWith("/") ? portable.slice(1) : null;
 }
 
-export function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
+export { shellQuote } from "@cortexai-agent-hub/core/node/desktop-runtime";

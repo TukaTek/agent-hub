@@ -212,14 +212,15 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "message_user",
     description:
-      "Post a short progress update to the user in this chat immediately. Does not end your turn. Use sparingly during long work for high-signal beats (what you are checking, then a result). Do not dump tool logs, thinking, or a play-by-play of every call. Put the final answer in your normal reply.",
+      "Post a short progress update to the user in this chat immediately. Does not end your turn. Use sparingly during long work for high-signal beats (what you are checking, then a result). Do not dump tool logs, thinking, or a play-by-play of every call. HARD LIMIT: cut off silently at 500 characters, so never put your final answer, a report, or any long-form content here \u2014 it will arrive mangled and the user will never see the rest. Always write your complete final answer in your normal reply, not here.",
     inputSchema: {
       type: "object",
       properties: {
         message: {
           type: "string",
           maxLength: 500,
-          description: "Short user-visible update.",
+          description:
+            "Short user-visible update, not the final answer \u2014 longer text is silently truncated.",
         },
       },
       required: ["message"],
@@ -689,6 +690,14 @@ export const builtinAgentTools: ConnectorTool[] = [
           type: "string",
           description: "Optional extra system instructions for the helper.",
         },
+        model_provider: {
+          type: "string",
+          description: "Optional connected model provider. Set together with model_id.",
+        },
+        model_id: {
+          type: "string",
+          description: "Optional connected model ID. Set together with model_provider.",
+        },
       },
       required: ["name", "task"],
     },
@@ -724,8 +733,36 @@ export const builtinAgentTools: ConnectorTool[] = [
           type: "string",
           description: "Optional first task to run in the new bot's thread.",
         },
+        computer_mode: {
+          type: "string",
+          enum: ["team", "dedicated"],
+          description:
+            "Optional. team shares one screen with other Team bots; dedicated (Private) gets its own. Defaults to team.",
+        },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "update_bot",
+    description:
+      "Update this bot's own profile fields that the user sees in chat: name (header and list label), title (short role line), and description. Call this when the user asks you to rename yourself or change your title/description. Do not claim you updated the profile without calling this tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Display name shown in the chat header and bot list.",
+        },
+        title: {
+          type: "string",
+          description: "Short role or headline shown in bot settings.",
+        },
+        description: {
+          type: "string",
+          description: "Longer blurb describing what this bot does.",
+        },
+      },
     },
   },
   {
@@ -748,7 +785,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "message_bot",
     description:
-      "Send a useful update, question, or result to another of the user's bots. Delivery is async and does not end your turn. Continue independent work; do not poll or send ack-only messages. Later updates only if they add something new.",
+      'Send a useful update, question, or result to another of the user\'s bots. You must call this tool to actually deliver it — writing the message in your own reply text (e.g. "[to Comms] ...") does not send anything and the recipient never sees it. Delivery is async and does not end your turn. Continue independent work; do not poll or send ack-only messages. Later updates only if they add something new.',
     inputSchema: {
       type: "object",
       properties: {

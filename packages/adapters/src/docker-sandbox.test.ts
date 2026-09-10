@@ -53,9 +53,10 @@ describe("Docker sandbox", () => {
       { type: "stderr", data: "command timed out after 75 ms\n" },
       { type: "exit", code: 124 },
     ]);
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty(
-      "x-cortexai-agent-hub-screen-id",
-    );
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "x-cortexai-agent-hub-bot-id": "bot",
+      "x-cortexai-agent-hub-screen-id": "bot",
+    });
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       "x-request-id": expect.any(String),
       traceparent: expect.stringMatching(/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/),
@@ -151,6 +152,7 @@ describe("Docker sandbox", () => {
         headers: expect.objectContaining({
           authorization: "Bearer test-token",
           "x-cortexai-agent-hub-bot-id": "home-bot",
+          "x-cortexai-agent-hub-screen-id": "bot",
           "x-cortexai-agent-hub-screen-lease-id": "run-1:1",
           "x-cortexai-agent-hub-space-id": "workspace",
         }),

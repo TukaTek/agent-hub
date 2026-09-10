@@ -19,7 +19,8 @@ describe("resolveUpdaterConfig", () => {
     const config = resolveUpdaterConfig({ ...base });
     expect(config).toMatchObject({
       deployDir: "/srv/cortexai-agent-hub",
-      composeFile: `/srv/cortexai-agent-hub/${DEFAULT_COMPOSE_FILE}`,
+      composeFiles: [`/srv/cortexai-agent-hub/${DEFAULT_COMPOSE_FILE}`],
+      updateServices: ["api", "worker", "web"],
       envFile: "/srv/cortexai-agent-hub/.env",
       projectName: DEFAULT_COMPOSE_PROJECT_NAME,
       token: base.CORTEXAI_AGENT_HUB_UPDATER_TOKEN,
@@ -64,6 +65,82 @@ describe("resolveUpdaterConfig", () => {
       expect(() =>
         resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_COMPOSE_FILE: composeFile }),
       ).toThrow(/CORTEXAI_AGENT_HUB_COMPOSE_FILE/);
+    }
+  });
+
+  it("resolves a Compose file list in order, against the deployment directory", () => {
+    expect(
+      resolveUpdaterConfig({
+        ...base,
+        CORTEXAI_AGENT_HUB_COMPOSE_FILE: "infra/compose/docker-compose.prod.yml:ops/overlay.yml",
+      }).composeFiles,
+    ).toEqual([
+      "/srv/cortexai-agent-hub/infra/compose/docker-compose.prod.yml",
+      "/srv/cortexai-agent-hub/ops/overlay.yml",
+    ]);
+  });
+
+  it("honours COMPOSE_PATH_SEPARATOR the way Compose does", () => {
+    expect(
+      resolveUpdaterConfig({
+        ...base,
+        COMPOSE_PATH_SEPARATOR: ",",
+        CORTEXAI_AGENT_HUB_COMPOSE_FILE: "a.yml,b.yml",
+      }).composeFiles,
+    ).toEqual(["/srv/cortexai-agent-hub/a.yml", "/srv/cortexai-agent-hub/b.yml"]);
+  });
+
+  it("checks every entry in a list, not just the first", () => {
+    expect(() =>
+      resolveUpdaterConfig({
+        ...base,
+        CORTEXAI_AGENT_HUB_COMPOSE_FILE:
+          "infra/compose/docker-compose.prod.yml:../../etc/compose.yml",
+      }),
+    ).toThrow(/CORTEXAI_AGENT_HUB_COMPOSE_FILE/);
+    expect(() =>
+      resolveUpdaterConfig({
+        ...base,
+        CORTEXAI_AGENT_HUB_COMPOSE_FILE: "infra/compose/docker-compose.prod.yml:/etc/compose.yml",
+      }),
+    ).toThrow(/CORTEXAI_AGENT_HUB_COMPOSE_FILE/);
+  });
+
+  it("refuses a Compose file list that names nothing", () => {
+    expect(() =>
+      resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_COMPOSE_FILE: ":  :" }),
+    ).toThrow(/CORTEXAI_AGENT_HUB_COMPOSE_FILE/);
+  });
+
+  it("appends the deployment's extra services to the built-in set", () => {
+    expect(
+      resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_UPDATE_SERVICES: "supervisor, caddy" })
+        .updateServices,
+    ).toEqual(["api", "worker", "web", "supervisor", "caddy"]);
+  });
+
+  it("cannot drop a built-in service, however CORTEXAI_AGENT_HUB_UPDATE_SERVICES is written", () => {
+    const services = resolveUpdaterConfig({
+      ...base,
+      CORTEXAI_AGENT_HUB_UPDATE_SERVICES: "web,supervisor",
+    }).updateServices;
+    expect(services).toEqual(["api", "worker", "web", "supervisor"]);
+  });
+
+  it("refuses to recreate the updater, which would kill the run mid-flight", () => {
+    expect(() =>
+      resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_UPDATE_SERVICES: "supervisor,updater" }),
+    ).toThrow(/updater/);
+  });
+
+  it("refuses a service name it would not hand to compose as one argument", () => {
+    for (const service of ["--build", "a b", "-f", "api;rm"]) {
+      expect(() =>
+        resolveUpdaterConfig({
+          ...base,
+          CORTEXAI_AGENT_HUB_UPDATE_SERVICES: `supervisor,${service}`,
+        }),
+      ).toThrow(/CORTEXAI_AGENT_HUB_UPDATE_SERVICES/);
     }
   });
 
