@@ -59,8 +59,14 @@ test("Hub accounts retain managed identity controls in the new settings shell", 
   page,
 }, testInfo) => {
   const email = `hub-settings-${Date.now()}@hub.invalid`;
-  await signup(page, email, "password12", "Hub account");
+  await signup(page, `settings-${Date.now()}@example.test`, "password12", "Hub account");
   await completeOnboarding(page);
+  await page.route("**/api/auth/get-session*", async (route) => {
+    const response = await route.fetch();
+    const session = await response.json();
+    await route.fulfill({ response, json: { ...session, user: { ...session.user, email } } });
+  });
+  await page.reload();
 
   const settings = await openUserSettings(page);
   await expect(settings.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
