@@ -1,0 +1,44 @@
+{
+  "contractVersion": 1,
+  "product": {
+    "slug": "cortexai-agent-hub",
+    "code": "CAIA",
+    "defaultAudience": "cortexai:caia",
+    "accessScope": "caia:access"
+  },
+  "oauth": {
+    "authorizePath": "/api/oauth/authorize",
+    "completePath": "/api/oauth/complete",
+    "tokenPath": "/api/oauth/token",
+    "jwksPath": "/api/auth/.well-known/jwks.json",
+    "requestedScope": "openid profile",
+    "accessTokenLifetimeSeconds": 900
+  },
+  "jwtHeader": { "alg": "RS256", "typ": "JWT", "kid": "fixture-signing-key" },
+  "jwtPayload": {
+    "sub": "fixture-user-1",
+    "aud": ["cortexai:caia", "cortexai-hub"],
+    "iat": 1800000000,
+    "exp": 1800000900,
+    "kid": "fixture-signing-key",
+    "tenant_id": "fixture-tenant-1",
+    "product": "CAIA",
+    "client_id": "fixture-agent-hub-client",
+    "scopes": ["openid", "profile", "caia:access"]
+  },
+  "denial": {
+    "tokenStatus": 400,
+    "tokenError": "invalid_grant",
+    "completionStatus": 403,
+    "completionError": "access_denied"
+  },
+  "verification": {
+    "identityClaims": ["tenant_id", "sub"],
+    "requiredProduct": "CAIA",
+    "requiredScope": "caia:access",
+    "issuerClaim": null,
+    "trustSource": "Explicitly configured Hub HTTPS origin and its JWKS; no iss claim is currently emitted",
+    "legacyAudienceAloneIsSufficient": false,
+    "existingAccessTokensRemainValidUntilExpiry": true
+  }
+}
