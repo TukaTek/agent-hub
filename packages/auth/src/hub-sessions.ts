@@ -124,9 +124,10 @@ export function createUserWorkAuthorizer(
   config: HubAuthConfig | undefined,
   encryptionKey: string,
   options: HubSessionAuthorizerConfig = {},
+  client?: ReturnType<typeof createHubClient>,
 ) {
   const authorize = config
-    ? createHubSessionAuthorizer(prisma, config, encryptionKey, undefined, options)
+    ? createHubSessionAuthorizer(prisma, config, encryptionKey, client, options)
     : undefined;
   return async (userId: string): Promise<boolean> => {
     if (!authorize) return !userId.startsWith("hub_");

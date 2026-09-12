@@ -531,10 +531,16 @@ describe("Hub session authorizer with verify cache", () => {
         });
 
         const { createUserWorkAuthorizer } = await import("./hub-sessions.js");
-        const authorize = createUserWorkAuthorizer(db.prisma, config, key, {
-          verifyCacheEnabled: false,
-          verifyCacheTtlMs: 30_000,
-        });
+        const authorize = createUserWorkAuthorizer(
+          db.prisma,
+          config,
+          key,
+          {
+            verifyCacheEnabled: false,
+            verifyCacheTtlMs: 30_000,
+          },
+          client,
+        );
 
         // First call: verify
         expect(await authorize(userId)).toBe(true);
@@ -593,10 +599,16 @@ describe("Hub session authorizer with verify cache", () => {
         });
 
         const { createUserWorkAuthorizer } = await import("./hub-sessions.js");
-        const authorize = createUserWorkAuthorizer(db.prisma, config, key, {
-          verifyCacheEnabled: true,
-          verifyCacheTtlMs: 0,
-        });
+        const authorize = createUserWorkAuthorizer(
+          db.prisma,
+          config,
+          key,
+          {
+            verifyCacheEnabled: true,
+            verifyCacheTtlMs: 0,
+          },
+          client,
+        );
 
         // First call: verify (but zero TTL means no caching due to 1s minimum)
         expect(await authorize(userId)).toBe(true);
@@ -651,10 +663,16 @@ describe("Hub session authorizer with verify cache", () => {
         });
 
         const { createUserWorkAuthorizer } = await import("./hub-sessions.js");
-        const authorize = createUserWorkAuthorizer(db.prisma, config, key, {
-          verifyCacheEnabled: true,
-          verifyCacheTtlMs: 2_000, // 2 second TTL
-        });
+        const authorize = createUserWorkAuthorizer(
+          db.prisma,
+          config,
+          key,
+          {
+            verifyCacheEnabled: true,
+            verifyCacheTtlMs: 2_000, // 2 second TTL
+          },
+          client,
+        );
 
         // First call: verify and cache
         expect(await authorize(userId)).toBe(true);
