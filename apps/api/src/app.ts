@@ -334,7 +334,17 @@ export async function createApp(
   });
   const shutdown = new AbortController();
   const executor = createRunExecutor({
-    authorizeUserWork: createUserWorkAuthorizer(prisma, env.hubAuth, env.encryptionKey),
+    authorizeUserWork: createUserWorkAuthorizer(
+      prisma,
+      env.hubAuth,
+      env.encryptionKey,
+      env.hubAuth
+        ? {
+            verifyCacheTtlMs: env.hubAuth.verifyCacheTtlMs,
+            verifyCacheEnabled: env.hubAuth.verifyCacheEnabled,
+          }
+        : {},
+    ),
     prisma,
     runtime,
     sandbox,

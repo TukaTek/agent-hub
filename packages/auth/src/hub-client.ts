@@ -25,11 +25,18 @@ export function hubAuthFromEnv(source: NodeJS.ProcessEnv): HubAuthConfig | undef
   ) {
     throw new Error("HUB_AUTH_ORIGIN must be an HTTPS origin");
   }
-  const cacheTtlMs = source.HUB_VERIFY_CACHE_TTL_MS
-    ? parseInt(source.HUB_VERIFY_CACHE_TTL_MS, 10)
-    : undefined;
-  if (cacheTtlMs !== undefined && (Number.isNaN(cacheTtlMs) || cacheTtlMs < 0)) {
-    throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative integer");
+  let cacheTtlMs: number | undefined;
+  if (source.HUB_VERIFY_CACHE_TTL_MS) {
+    const raw = source.HUB_VERIFY_CACHE_TTL_MS.trim();
+    // Reject malformed values like "30000junk" by checking the raw string matches /^\d+$/
+    if (!/^\d+$/.test(raw)) {
+      throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative integer");
+    }
+    cacheTtlMs = parseInt(raw, 10);
+    // Reject Infinity and values outside safe integer range
+    if (!Number.isSafeInteger(cacheTtlMs) || cacheTtlMs < 0) {
+      throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative safe integer");
+    }
   }
 
   const cacheEnabled =

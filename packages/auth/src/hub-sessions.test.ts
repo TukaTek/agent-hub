@@ -261,8 +261,8 @@ describe("Hub session authorizer with verify cache", () => {
                   create: {
                     accessToken: await symmetricEncrypt({ key, data: "old-access-token" }),
                     refreshToken: await symmetricEncrypt({ key, data: "old-refresh-token" }),
-                    // Set access to expire soon to trigger refresh
-                    accessUntil: new Date(Date.now() + 1_000),
+                    // Set access to expire after first verify but before second call
+                    accessUntil: new Date(Date.now() + 5_000),
                   },
                 },
               },
@@ -278,17 +278,17 @@ describe("Hub session authorizer with verify cache", () => {
           { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
         );
 
-        // First call: verify and cache
+        // First call: verify and cache (token still valid)
         expect(await authorizer(sessionId, userId)).toBe(true);
         expect(verify).toHaveBeenCalledTimes(1);
 
-        // Advance time to trigger token refresh
-        vi.advanceTimersByTime(2_000);
+        // Advance time past token expiry to trigger refresh on next call
+        vi.advanceTimersByTime(6_000);
 
-        // Second call: should refresh and invalidate old token cache
+        // Second call: should refresh (token expired) and invalidate old token cache
         expect(await authorizer(sessionId, userId)).toBe(true);
         expect(refresh).toHaveBeenCalledTimes(1);
-        // Old cache entry should be invalidated
+        // Old cache entry should be invalidated when new token is cached
         expect(authorizer._cache.getMetrics().evictions).toBeGreaterThanOrEqual(1);
       } finally {
         await db.prisma.session.deleteMany({ where: { id: sessionId } });
@@ -436,9 +436,10 @@ describe("Hub session authorizer with verify cache", () => {
       const key = "test-encryption-key-at-least-32-characters";
       const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
 
-      // Simulate slow Hub verify
+      // Simulate slow Hub verify - use real timers for this test
+      vi.useRealTimers();
       const verify = vi.fn(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       });
       const client = createHubClient(config, vi.fn());
       client.verify = verify;
@@ -483,6 +484,192 @@ describe("Hub session authorizer with verify cache", () => {
         const metrics = authorizer._cache.getMetrics();
         expect(metrics.verifyLatencyMs).toHaveLength(1);
         expect(metrics.verifyLatencyMs[0]).toBeGreaterThan(0);
+      } finally {
+        vi.useFakeTimers(); // Restore fake timers for other tests
+        await db.prisma.session.deleteMany({ where: { id: sessionId } });
+        await db.prisma.user.deleteMany({ where: { id: userId } });
+        await db.prisma.$disconnect();
+        await db.pool.end();
+      }
+    });
+
+    it("background work authorizer respects cache disable", async () => {
+      const db = createDb(process.env.DATABASE_URL!);
+      const userId = `hub-test-${randomUUID()}`;
+      const sessionId = randomUUID();
+      const key = "test-encryption-key-at-least-32-characters";
+      const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
+
+      const verify = vi.fn(async () => undefined);
+      const client = createHubClient(config, vi.fn());
+      client.verify = verify;
+
+      try {
+        await db.prisma.user.create({
+          data: {
+            id: userId,
+            name: "Test User",
+            email: `${userId}@hub.invalid`,
+            hubIdentity: {
+              create: { origin: config.origin, tenant: config.tenantId, subject: userId },
+            },
+            sessions: {
+              create: {
+                id: sessionId,
+                token: "test-token",
+                expiresAt: new Date(Date.now() + 3_600_000),
+                hubSession: {
+                  create: {
+                    accessToken: await symmetricEncrypt({ key, data: "test-access-token" }),
+                    refreshToken: await symmetricEncrypt({ key, data: "test-refresh-token" }),
+                    accessUntil: new Date(Date.now() + 300_000),
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const { createUserWorkAuthorizer } = await import("./hub-sessions.js");
+        const authorize = createUserWorkAuthorizer(db.prisma, config, key, {
+          verifyCacheEnabled: false,
+          verifyCacheTtlMs: 30_000,
+        });
+
+        // First call: verify
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(1);
+
+        // Second call: should verify again (cache disabled)
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(2);
+
+        // Third call: still verifies every time
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(3);
+      } finally {
+        await db.prisma.session.deleteMany({ where: { id: sessionId } });
+        await db.prisma.user.deleteMany({ where: { id: userId } });
+        await db.prisma.$disconnect();
+        await db.pool.end();
+      }
+    });
+
+    it("background work authorizer respects zero TTL", async () => {
+      const db = createDb(process.env.DATABASE_URL!);
+      const userId = `hub-test-${randomUUID()}`;
+      const sessionId = randomUUID();
+      const key = "test-encryption-key-at-least-32-characters";
+      const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
+
+      const verify = vi.fn(async () => undefined);
+      const client = createHubClient(config, vi.fn());
+      client.verify = verify;
+
+      try {
+        await db.prisma.user.create({
+          data: {
+            id: userId,
+            name: "Test User",
+            email: `${userId}@hub.invalid`,
+            hubIdentity: {
+              create: { origin: config.origin, tenant: config.tenantId, subject: userId },
+            },
+            sessions: {
+              create: {
+                id: sessionId,
+                token: "test-token",
+                expiresAt: new Date(Date.now() + 3_600_000),
+                hubSession: {
+                  create: {
+                    accessToken: await symmetricEncrypt({ key, data: "test-access-token" }),
+                    refreshToken: await symmetricEncrypt({ key, data: "test-refresh-token" }),
+                    accessUntil: new Date(Date.now() + 300_000),
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const { createUserWorkAuthorizer } = await import("./hub-sessions.js");
+        const authorize = createUserWorkAuthorizer(db.prisma, config, key, {
+          verifyCacheEnabled: true,
+          verifyCacheTtlMs: 0,
+        });
+
+        // First call: verify (but zero TTL means no caching due to 1s minimum)
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(1);
+
+        // Second call: should verify again (zero TTL doesn't cache)
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(2);
+      } finally {
+        await db.prisma.session.deleteMany({ where: { id: sessionId } });
+        await db.prisma.user.deleteMany({ where: { id: userId } });
+        await db.prisma.$disconnect();
+        await db.pool.end();
+      }
+    });
+
+    it("background work authorizer respects short TTL", async () => {
+      const db = createDb(process.env.DATABASE_URL!);
+      const userId = `hub-test-${randomUUID()}`;
+      const sessionId = randomUUID();
+      const key = "test-encryption-key-at-least-32-characters";
+      const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
+
+      const verify = vi.fn(async () => undefined);
+      const client = createHubClient(config, vi.fn());
+      client.verify = verify;
+
+      try {
+        await db.prisma.user.create({
+          data: {
+            id: userId,
+            name: "Test User",
+            email: `${userId}@hub.invalid`,
+            hubIdentity: {
+              create: { origin: config.origin, tenant: config.tenantId, subject: userId },
+            },
+            sessions: {
+              create: {
+                id: sessionId,
+                token: "test-token",
+                expiresAt: new Date(Date.now() + 3_600_000),
+                hubSession: {
+                  create: {
+                    accessToken: await symmetricEncrypt({ key, data: "test-access-token" }),
+                    refreshToken: await symmetricEncrypt({ key, data: "test-refresh-token" }),
+                    accessUntil: new Date(Date.now() + 300_000),
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const { createUserWorkAuthorizer } = await import("./hub-sessions.js");
+        const authorize = createUserWorkAuthorizer(db.prisma, config, key, {
+          verifyCacheEnabled: true,
+          verifyCacheTtlMs: 2_000, // 2 second TTL
+        });
+
+        // First call: verify and cache
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(1);
+
+        // Second call within TTL: cache hit
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(1); // Still 1
+
+        // Advance past the short TTL
+        vi.advanceTimersByTime(3_000);
+
+        // Third call: re-verify after TTL expires
+        expect(await authorize(userId)).toBe(true);
+        expect(verify).toHaveBeenCalledTimes(2);
       } finally {
         await db.prisma.session.deleteMany({ where: { id: sessionId } });
         await db.prisma.user.deleteMany({ where: { id: userId } });
