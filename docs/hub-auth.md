@@ -8,7 +8,21 @@ The v2 contract fixture is `packages/auth/src/fixtures/agent-hub-auth.v2.json`. 
 
 Opaque Hub access and refresh tokens are encrypted in server-side `hub_session` rows. Web clients use Agent Hub's own HTTP-only session cookie; mobile stores its own app session in secure storage. Hub configuration may contain provider credentials and is consumed only server-side for authorization. It is never returned as login state.
 
-Every protected session/work authorization checks current identity and `/api/tenant-auth/config?product=cortexai-agent-hub`, even before token expiry. Failures deny access. Expired tokens refresh through `/api/tenant-auth/refresh` under a database row lock; refresh must preserve user and tenant identity. Session deletion attempts `/api/tenant-auth/revoke` and always removes the local session. Hub access tokens currently last 24 hours and rotating refresh tokens 30 days; these lifetimes do not grant cached permission.
+Every protected session/work authorization checks current identity and `/api/tenant-auth/config?product=cortexai-agent-hub`. Successful verifications are cached for a short TTL (default 30 seconds, configurable via `HUB_VERIFY_CACHE_TTL_MS`) to avoid Hub round-trips on every protected RPC while preserving fail-closed semantics. The cache keys by access token and respects both the configured TTL and the token's actual expiry time. Cache entries are invalidated when tokens are refreshed or rotated. Failures always deny access and are never cached. Expired tokens refresh through `/api/tenant-auth/refresh` under a database row lock; refresh must preserve user and tenant identity. Session deletion attempts `/api/tenant-auth/revoke` and always removes the local session. Hub access tokens currently last 24 hours and rotating refresh tokens 30 days.
+
+## Verification cache and revoke semantics
+
+**Worst-case revoke detection lag = cache TTL + one request round-trip.**
+
+The verification cache reduces Hub API load and improves perceived latency for authenticated requests. When a user's Hub entitlement is revoked or their session is disabled on Hub, Agent Hub will detect the change after the cache TTL expires on the next request that requires verification. For the default 30-second TTL, this means a revoked user can continue accessing Agent Hub for up to 30 seconds plus one additional request (~0.5–2s depending on Hub latency) before being denied.
+
+This is an intentional trade-off:
+- **Without cache**: Every protected RPC hits Hub twice, adding 0.4–2.4s of non-LLM latency to the hot path
+- **With cache**: Protected RPCs within the TTL window skip Hub verification, making the UI feel snappy; revokes are noticed within TTL + one request
+
+The cache can be disabled by setting `HUB_VERIFY_CACHE_ENABLED=false` to restore immediate revoke detection at the cost of higher latency and Hub load. The TTL can be tuned via `HUB_VERIFY_CACHE_TTL_MS` (milliseconds) to balance latency vs revoke detection speed. Lower TTLs (e.g., 10–15 seconds) provide faster revoke detection; higher TTLs (e.g., 60 seconds) reduce Hub load further but extend the revoke lag.
+
+Cache metrics (hits, misses, evictions, verify latency p50/p95) are logged every 5 minutes for observability.
 
 ## Migrating the earlier OAuth implementation
 

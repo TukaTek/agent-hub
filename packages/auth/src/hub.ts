@@ -22,6 +22,10 @@ export function createHubAuth(
     config,
     env.tokenEncryptionKey,
     client,
+    {
+      verifyCacheTtlMs: config.verifyCacheTtlMs,
+      verifyCacheEnabled: config.verifyCacheEnabled,
+    },
   );
   const plugin = {
     id: "cortexai-hub",

@@ -17,7 +17,11 @@ import { createHubAuth, rejectHubAccountMutation } from "./hub.js";
 import type { HubAuthConfig } from "./hub-client.js";
 
 export { type HubAuthConfig, hubAuthFromEnv } from "./hub-client.js";
-export { createUserWorkAuthorizer } from "./hub-sessions.js";
+export {
+  createUserWorkAuthorizer,
+  type HubSessionAuthorizerConfig,
+} from "./hub-sessions.js";
+export { createHubVerifyCache, type HubVerifyCache } from "./hub-verify-cache.js";
 
 export interface AuthEnv {
   secret: string;

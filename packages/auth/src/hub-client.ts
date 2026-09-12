@@ -5,6 +5,10 @@ export interface HubAuthConfig {
   origin: string;
   /** Optional deployment restriction. Tenant identity is discovered at login. */
   tenantId?: string;
+  /** Cache TTL in milliseconds for Hub session verification. Default: 30000 (30s) */
+  verifyCacheTtlMs?: number;
+  /** Whether to enable Hub session verification caching. Default: true */
+  verifyCacheEnabled?: boolean;
 }
 export function hubAuthFromEnv(source: NodeJS.ProcessEnv): HubAuthConfig | undefined {
   const mode = source.AUTH_MODE ?? "local";
@@ -21,9 +25,30 @@ export function hubAuthFromEnv(source: NodeJS.ProcessEnv): HubAuthConfig | undef
   ) {
     throw new Error("HUB_AUTH_ORIGIN must be an HTTPS origin");
   }
+  let cacheTtlMs: number | undefined;
+  if (source.HUB_VERIFY_CACHE_TTL_MS) {
+    const raw = source.HUB_VERIFY_CACHE_TTL_MS.trim();
+    // Reject malformed values like "30000junk" by checking the raw string matches /^\d+$/
+    if (!/^\d+$/.test(raw)) {
+      throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative integer");
+    }
+    cacheTtlMs = parseInt(raw, 10);
+    // Reject Infinity and values outside safe integer range
+    if (!Number.isSafeInteger(cacheTtlMs) || cacheTtlMs < 0) {
+      throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative safe integer");
+    }
+  }
+
+  const cacheEnabled =
+    source.HUB_VERIFY_CACHE_ENABLED === undefined
+      ? undefined
+      : source.HUB_VERIFY_CACHE_ENABLED !== "false";
+
   return {
     origin: url.origin,
     ...(source.HUB_AUTH_TENANT_ID?.trim() ? { tenantId: source.HUB_AUTH_TENANT_ID.trim() } : {}),
+    ...(cacheTtlMs !== undefined ? { verifyCacheTtlMs: cacheTtlMs } : {}),
+    ...(cacheEnabled !== undefined ? { verifyCacheEnabled: cacheEnabled } : {}),
   };
 }
 export class HubUnsupportedIdpError extends Error {

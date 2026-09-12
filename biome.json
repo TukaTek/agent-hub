@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -96,7 +96,11 @@
       }
     },
     {
-      "includes": ["packages/logging/src/console-sink.ts", "packages/logging/src/sink-guard.ts"],
+      "includes": [
+        "packages/logging/src/console-sink.ts",
+        "packages/logging/src/sink-guard.ts",
+        "packages/auth/src/hub-verify-cache.ts"
+      ],
       "linter": {
         "rules": {
           "suspicious": {

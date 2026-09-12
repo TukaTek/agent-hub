@@ -145,11 +145,18 @@ async function main() {
   const jobHost: JobWorkerHost = inMemoryJobs ?? new GraphileJobWorkerHost(databaseUrl);
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
+  const hubConfig = hubAuthFromEnv(process.env);
   const executor = createRunExecutor({
     authorizeUserWork: createUserWorkAuthorizer(
       prisma,
-      hubAuthFromEnv(process.env),
+      hubConfig,
       resolveEncryptionKey(process.env),
+      hubConfig
+        ? {
+            verifyCacheTtlMs: hubConfig.verifyCacheTtlMs,
+            verifyCacheEnabled: hubConfig.verifyCacheEnabled,
+          }
+        : {},
     ),
     prisma,
     runtime,
