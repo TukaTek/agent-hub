@@ -96,7 +96,11 @@
       }
     },
     {
-      "includes": ["packages/logging/src/console-sink.ts", "packages/logging/src/sink-guard.ts"],
+      "includes": [
+        "packages/logging/src/console-sink.ts",
+        "packages/logging/src/sink-guard.ts",
+        "packages/auth/src/hub-verify-cache.ts"
+      ],
       "linter": {
         "rules": {
           "suspicious": {
