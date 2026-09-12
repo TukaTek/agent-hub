@@ -23,28 +23,28 @@ export interface HubVerifyCacheMetrics {
 
 /**
  * Process-local in-memory cache for Hub session verification results.
- * 
+ *
  * Caches successful `client.verify()` outcomes keyed by access token hash,
  * respecting both the configured TTL and the token's actual expiry time.
- * 
+ *
  * ## Design decisions
- * 
+ *
  * - **Process-local**: acceptable for v1; TTL bounds worst-case revoke lag per replica
  * - **Fail-closed**: only successful verifications are cached; failures always re-verify
  * - **Token-keyed**: cache key is a hash of the decrypted access token
  * - **Bounded expiry**: cache expiry = min(now + TTL, token expiry)
  * - **Auto-cleanup**: expired entries are lazily removed on access and periodically swept
- * 
+ *
  * ## Revoke semantics
- * 
+ *
  * Worst-case revoke detection lag = TTL + one request round-trip.
  * After TTL expires, the next request re-verifies with Hub and observes the revoke/disable.
- * 
+ *
  * @example
  * ```ts
  * const cache = createHubVerifyCache({ ttlMs: 30_000, enabled: true });
  * const tokenHash = cache.hashToken(decryptedAccessToken);
- * 
+ *
  * if (cache.get(tokenHash, tokenExpiresAtMs)) {
  *   // Cache hit: skip Hub verify
  * } else {
@@ -96,7 +96,7 @@ export function createHubVerifyCache(config: HubVerifyCacheConfig) {
 
   /**
    * Get a cached verification result if still valid.
-   * 
+   *
    * @param tokenHash - Hash of the access token
    * @param tokenExpiresAt - Token expiry timestamp (ms since epoch)
    * @returns true if cached and valid, false otherwise
@@ -138,7 +138,7 @@ export function createHubVerifyCache(config: HubVerifyCacheConfig) {
 
   /**
    * Cache a successful verification result.
-   * 
+   *
    * @param tokenHash - Hash of the access token
    * @param tokenExpiresAt - Token expiry timestamp (ms since epoch)
    */

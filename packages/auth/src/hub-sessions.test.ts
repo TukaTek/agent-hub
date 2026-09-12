@@ -55,13 +55,10 @@ describe("Hub session authorizer with verify cache", () => {
           },
         });
 
-        const authorizer = createHubSessionAuthorizer(
-          db.prisma,
-          config,
-          key,
-          client,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
-        );
+        const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
+          verifyCacheTtlMs: 30_000,
+          verifyCacheEnabled: true,
+        });
 
         // First call: cache miss, should verify
         expect(await authorizer(sessionId, userId)).toBe(true);
@@ -124,13 +121,10 @@ describe("Hub session authorizer with verify cache", () => {
           },
         });
 
-        const authorizer = createHubSessionAuthorizer(
-          db.prisma,
-          config,
-          key,
-          client,
-          { verifyCacheTtlMs: 10_000, verifyCacheEnabled: true },
-        );
+        const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
+          verifyCacheTtlMs: 10_000,
+          verifyCacheEnabled: true,
+        });
 
         // First call: verify
         expect(await authorizer(sessionId, userId)).toBe(true);
@@ -194,13 +188,10 @@ describe("Hub session authorizer with verify cache", () => {
           },
         });
 
-        const authorizer = createHubSessionAuthorizer(
-          db.prisma,
-          config,
-          key,
-          client,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
-        );
+        const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
+          verifyCacheTtlMs: 30_000,
+          verifyCacheEnabled: true,
+        });
 
         // First call: succeeds and caches
         expect(await authorizer(sessionId, userId)).toBe(true);
@@ -270,13 +261,10 @@ describe("Hub session authorizer with verify cache", () => {
           },
         });
 
-        const authorizer = createHubSessionAuthorizer(
-          db.prisma,
-          config,
-          key,
-          client,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
-        );
+        const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
+          verifyCacheTtlMs: 30_000,
+          verifyCacheEnabled: true,
+        });
 
         // First call: verify and cache (token still valid)
         expect(await authorizer(sessionId, userId)).toBe(true);
@@ -470,13 +458,10 @@ describe("Hub session authorizer with verify cache", () => {
           },
         });
 
-        const authorizer = createHubSessionAuthorizer(
-          db.prisma,
-          config,
-          key,
-          client,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
-        );
+        const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
+          verifyCacheTtlMs: 30_000,
+          verifyCacheEnabled: true,
+        });
 
         // First call: should record latency
         await authorizer(sessionId, userId);
