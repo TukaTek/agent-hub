@@ -59,8 +59,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
           client,
+          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
         );
 
         // First call: cache miss, should verify
@@ -128,8 +128,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 10_000, verifyCacheEnabled: true },
           client,
+          { verifyCacheTtlMs: 10_000, verifyCacheEnabled: true },
         );
 
         // First call: verify
@@ -198,8 +198,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
           client,
+          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
         );
 
         // First call: succeeds and caches
@@ -274,8 +274,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
           client,
+          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
         );
 
         // First call: verify and cache
@@ -340,8 +340,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 60_000, verifyCacheEnabled: true }, // Long TTL
           client,
+          { verifyCacheTtlMs: 60_000, verifyCacheEnabled: true }, // Long TTL
         );
 
         // First call: verify and cache
@@ -405,8 +405,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: false }, // Disabled
           client,
+          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: false }, // Disabled
         );
 
         // First call: verify
@@ -474,8 +474,8 @@ describe("Hub session authorizer with verify cache", () => {
           db.prisma,
           config,
           key,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
           client,
+          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: true },
         );
 
         // First call: should record latency

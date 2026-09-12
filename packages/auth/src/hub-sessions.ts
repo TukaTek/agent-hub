@@ -18,8 +18,8 @@ export function createHubSessionAuthorizer(
   prisma: PrismaClient,
   config: HubAuthConfig,
   encryptionKey: string,
-  options: HubSessionAuthorizerConfig = {},
   client = createHubClient(config),
+  options: HubSessionAuthorizerConfig = {},
 ) {
   const verifyCache = createHubVerifyCache({
     ttlMs: options.verifyCacheTtlMs ?? 30_000,

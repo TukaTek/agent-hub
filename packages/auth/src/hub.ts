@@ -21,11 +21,11 @@ export function createHubAuth(
     prisma,
     config,
     env.tokenEncryptionKey,
+    client,
     {
       verifyCacheTtlMs: config.verifyCacheTtlMs,
       verifyCacheEnabled: config.verifyCacheEnabled,
     },
-    client,
   );
   const plugin = {
     id: "cortexai-hub",
