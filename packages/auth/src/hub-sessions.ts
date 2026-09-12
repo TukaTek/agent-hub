@@ -1,14 +1,36 @@
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { createHubClient, type HubAuthConfig } from "./hub-client.js";
+import {
+  createHubVerifyCache,
+  logCacheMetrics,
+  type HubVerifyCache,
+} from "./hub-verify-cache.js";
+
+export interface HubSessionAuthorizerConfig {
+  /** Cache TTL in milliseconds. Default: 30000 (30s) */
+  verifyCacheTtlMs?: number;
+  /** Whether to enable verification caching. Default: true */
+  verifyCacheEnabled?: boolean;
+}
 
 export function createHubSessionAuthorizer(
   prisma: PrismaClient,
   config: HubAuthConfig,
   encryptionKey: string,
+  options: HubSessionAuthorizerConfig = {},
   client = createHubClient(config),
 ) {
-  return async (sessionId: string, userId: string): Promise<boolean> => {
+  const verifyCache = createHubVerifyCache({
+    ttlMs: options.verifyCacheTtlMs ?? 30_000,
+    enabled: options.verifyCacheEnabled ?? true,
+  });
+
+  // Log cache metrics every 5 minutes for observability
+  const metricsTimer = setInterval(() => logCacheMetrics(verifyCache), 5 * 60_000);
+  metricsTimer.unref();
+
+  const authorize = async (sessionId: string, userId: string): Promise<boolean> => {
     try {
       return await prisma.$transaction(
         async (tx) => {
@@ -30,10 +52,25 @@ export function createHubSessionAuthorizer(
             return false;
           try {
             if (grantSession.accessUntil.getTime() > Date.now()) {
-              await client.verify(
-                await symmetricDecrypt({ key: encryptionKey, data: grantSession.accessToken }),
-                identity,
-              );
+              const accessToken = await symmetricDecrypt({
+                key: encryptionKey,
+                data: grantSession.accessToken,
+              });
+              const tokenHash = verifyCache.hashToken(accessToken);
+              const tokenExpiresAt = grantSession.accessUntil.getTime();
+
+              // Check cache first
+              if (verifyCache.get(tokenHash, tokenExpiresAt)) {
+                return true;
+              }
+
+              // Cache miss: verify with Hub and measure latency
+              const verifyStart = Date.now();
+              await client.verify(accessToken, identity);
+              verifyCache.recordVerifyLatency(Date.now() - verifyStart);
+
+              // Cache the successful verification
+              verifyCache.set(tokenHash, tokenExpiresAt);
               return true;
             }
             const refresh = await symmetricDecrypt({
@@ -43,6 +80,14 @@ export function createHubSessionAuthorizer(
             const grant = await client.refresh(refresh);
             if (grant.subject !== identity.subject || grant.tenant !== identity.tenant)
               throw new Error("Hub identity changed");
+
+            // Invalidate old access token cache entry before updating to new token
+            const oldAccessToken = await symmetricDecrypt({
+              key: encryptionKey,
+              data: grantSession.accessToken,
+            });
+            verifyCache.invalidate(verifyCache.hashToken(oldAccessToken));
+
             await tx.hubSession.update({
               where: { sessionId },
               data: {
@@ -70,6 +115,11 @@ export function createHubSessionAuthorizer(
       return false;
     }
   };
+
+  return Object.assign(authorize, {
+    /** Access to the verify cache for testing and observability */
+    _cache: verifyCache,
+  });
 }
 
 /** Background work uses the same expiring Hub grant as interactive requests. */

@@ -21,6 +21,10 @@ export function createHubAuth(
     prisma,
     config,
     env.tokenEncryptionKey,
+    {
+      verifyCacheTtlMs: config.verifyCacheTtlMs,
+      verifyCacheEnabled: config.verifyCacheEnabled,
+    },
     client,
   );
   const plugin = {
