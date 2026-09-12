@@ -109,11 +109,17 @@ describe("the images compose file", () => {
   it("passes optional HTTP(S)_PROXY / NO_PROXY into api and worker", () => {
     for (const name of ["api", "worker"] as const) {
       const env = compose.services[name]?.environment ?? {};
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
       expect(env.HTTP_PROXY).toBe("${HTTP_PROXY:-${http_proxy:-}}");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
       expect(env.HTTPS_PROXY).toBe("${HTTPS_PROXY:-${https_proxy:-}}");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
       expect(env.NO_PROXY).toBe("${NO_PROXY:-${no_proxy:-}}");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
       expect(env.http_proxy).toBe("${http_proxy:-${HTTP_PROXY:-}}");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
       expect(env.https_proxy).toBe("${https_proxy:-${HTTPS_PROXY:-}}");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
       expect(env.no_proxy).toBe("${no_proxy:-${NO_PROXY:-}}");
     }
   });
@@ -165,9 +171,11 @@ describe("the images compose file", () => {
   });
 
   it("publishes the web UI on loopback only", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
     expect(compose.services.web?.ports).toEqual([
       "127.0.0.1:${CORTEXAI_AGENT_HUB_WEB_PORT:-5173}:5173",
     ]);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
     expect(compose.services.api?.ports).toEqual([
       "127.0.0.1:${CORTEXAI_AGENT_HUB_API_PORT:-3100}:3100",
     ]);

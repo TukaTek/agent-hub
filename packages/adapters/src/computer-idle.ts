@@ -29,8 +29,10 @@ export const CANCEL_COMPUTER_RUN_WORK = [
   'computerId="$1"',
   'runId="$2"',
   '[ -n "$computerId" ] && [ -n "$runId" ] || exit 0',
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell variable expression
   `prefix="${BACKGROUND_WORK_MARKER_PREFIX}$computerId-$runId-"`,
   // Match the timeout wrapper cmdline (still contains the launch tag after exec into the user command).
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell variable expression
   'pkill -TERM -f "cortexai-agent-hub-background-launch ${computerId} ${runId} " 2>/dev/null || true',
   "if [ -d /proc ]; then",
   "  for fd in /proc/[0-9]*/fd/*; do",

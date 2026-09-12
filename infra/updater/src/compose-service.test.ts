@@ -125,15 +125,15 @@ describe("the updater compose service", () => {
   });
 
   it("injects the actual Compose project name into the updater container", () => {
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: this is the literal Compose expression
-    expect(updater.environment?.COMPOSE_PROJECT_NAME).toBe(
-      "${COMPOSE_PROJECT_NAME:-cortexai-agent-hub-prod}",
-    );
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
+    const expected = "${COMPOSE_PROJECT_NAME:-cortexai-agent-hub-prod}";
+    expect(updater.environment?.COMPOSE_PROJECT_NAME).toBe(expected);
   });
 
   it("does not load the application env_file into the root-equivalent process", () => {
     expect(updater.env_file).toBeUndefined();
     // biome-ignore lint/suspicious/noTemplateCurlyInString: this is the literal Compose expression
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
     expect(updater.environment?.CORTEXAI_AGENT_HUB_UPDATER_TOKEN).toBe(
       "${CORTEXAI_AGENT_HUB_UPDATER_TOKEN:-}",
     );
