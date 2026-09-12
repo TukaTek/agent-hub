@@ -480,7 +480,7 @@ describe("Hub session authorizer with verify cache", () => {
 
     it("background work authorizer respects cache disable", async () => {
       const db = createDb(process.env.DATABASE_URL!);
-      const userId = `hub-test-${randomUUID()}`;
+      const userId = `hub_test_${randomUUID()}`;
       const sessionId = randomUUID();
       const key = "test-encryption-key-at-least-32-characters";
       const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
@@ -548,7 +548,7 @@ describe("Hub session authorizer with verify cache", () => {
 
     it("background work authorizer respects zero TTL", async () => {
       const db = createDb(process.env.DATABASE_URL!);
-      const userId = `hub-test-${randomUUID()}`;
+      const userId = `hub_test_${randomUUID()}`;
       const sessionId = randomUUID();
       const key = "test-encryption-key-at-least-32-characters";
       const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
@@ -612,7 +612,7 @@ describe("Hub session authorizer with verify cache", () => {
 
     it("background work authorizer respects short TTL", async () => {
       const db = createDb(process.env.DATABASE_URL!);
-      const userId = `hub-test-${randomUUID()}`;
+      const userId = `hub_test_${randomUUID()}`;
       const sessionId = randomUUID();
       const key = "test-encryption-key-at-least-32-characters";
       const config = { origin: "https://hub.example.test", tenantId: "test-tenant" };
