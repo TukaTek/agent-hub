@@ -377,19 +377,16 @@ describe("Hub verification cache", () => {
       cache.destroy();
     });
 
-    it("allows zero TTL (cache immediately expires)", () => {
+    it("does not cache with zero TTL (below 1s minimum)", () => {
       const cache = createHubVerifyCache({ ttlMs: 0, enabled: true });
       const tokenHash = cache.hashToken("test-token");
       const tokenExpiresAt = Date.now() + 60_000;
 
       cache.set(tokenHash, tokenExpiresAt);
 
-      // Even with zero TTL, entry should exist momentarily
-      expect(cache.get(tokenHash, tokenExpiresAt)).toBe(true);
-
-      // But expire immediately on next tick
-      vi.advanceTimersByTime(1);
+      // Zero TTL is below the 1s minimum expiry guard, so nothing is cached
       expect(cache.get(tokenHash, tokenExpiresAt)).toBe(false);
+      expect(cache.getMetrics().cacheSize).toBe(0);
 
       cache.destroy();
     });
