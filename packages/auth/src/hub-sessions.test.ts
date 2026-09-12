@@ -281,7 +281,6 @@ describe("Hub session authorizer with verify cache", () => {
         // First call: verify and cache
         expect(await authorizer(sessionId, userId)).toBe(true);
         expect(verify).toHaveBeenCalledTimes(1);
-        const oldCacheSize = authorizer._cache.getMetrics().cacheSize;
 
         // Advance time to trigger token refresh
         vi.advanceTimersByTime(2_000);

@@ -29,7 +29,6 @@ export const CANCEL_COMPUTER_RUN_WORK = [
   'computerId="$1"',
   'runId="$2"',
   '[ -n "$computerId" ] && [ -n "$runId" ] || exit 0',
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell variable expression
   `prefix="${BACKGROUND_WORK_MARKER_PREFIX}$computerId-$runId-"`,
   // Match the timeout wrapper cmdline (still contains the launch tag after exec into the user command).
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell variable expression

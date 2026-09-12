@@ -1,11 +1,7 @@
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { createHubClient, type HubAuthConfig } from "./hub-client.js";
-import {
-  createHubVerifyCache,
-  logCacheMetrics,
-  type HubVerifyCache,
-} from "./hub-verify-cache.js";
+import { createHubVerifyCache, logCacheMetrics } from "./hub-verify-cache.js";
 
 export interface HubSessionAuthorizerConfig {
   /** Cache TTL in milliseconds. Default: 30000 (30s) */
