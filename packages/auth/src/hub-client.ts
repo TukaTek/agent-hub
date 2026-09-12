@@ -28,7 +28,7 @@ export function hubAuthFromEnv(source: NodeJS.ProcessEnv): HubAuthConfig | undef
   const cacheTtlMs = source.HUB_VERIFY_CACHE_TTL_MS
     ? parseInt(source.HUB_VERIFY_CACHE_TTL_MS, 10)
     : undefined;
-  if (cacheTtlMs !== undefined && (isNaN(cacheTtlMs) || cacheTtlMs < 0)) {
+  if (cacheTtlMs !== undefined && (Number.isNaN(cacheTtlMs) || cacheTtlMs < 0)) {
     throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative integer");
   }
 

@@ -16,11 +16,17 @@ function loadCompose(rel: string) {
 }
 
 function expectProxyPassthrough(env: Record<string, unknown> | undefined) {
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
   expect(env?.HTTP_PROXY).toBe("${HTTP_PROXY:-${http_proxy:-}}");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
   expect(env?.HTTPS_PROXY).toBe("${HTTPS_PROXY:-${https_proxy:-}}");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
   expect(env?.NO_PROXY).toBe("${NO_PROXY:-${no_proxy:-}}");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
   expect(env?.http_proxy).toBe("${http_proxy:-${HTTP_PROXY:-}}");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
   expect(env?.https_proxy).toBe("${https_proxy:-${HTTPS_PROXY:-}}");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expressions
   expect(env?.no_proxy).toBe("${no_proxy:-${NO_PROXY:-}}");
 }
 

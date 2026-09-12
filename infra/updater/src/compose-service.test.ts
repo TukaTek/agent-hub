@@ -132,8 +132,8 @@ describe("the updater compose service", () => {
 
   it("does not load the application env_file into the root-equivalent process", () => {
     expect(updater.env_file).toBeUndefined();
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
     expect(updater.environment?.CORTEXAI_AGENT_HUB_UPDATER_TOKEN).toBe(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
       "${CORTEXAI_AGENT_HUB_UPDATER_TOKEN:-}",
     );
   });
