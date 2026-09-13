@@ -35,6 +35,7 @@ import {
   BotSecretName,
   BotSecretSubmission,
   isAttachmentImageMimeType,
+  OPENAI_COMPATIBLE_PROVIDER_ID,
 } from "@cortexai-agent-hub/contracts";
 import {
   type ActionApprovalRule,
@@ -223,6 +224,7 @@ import {
   IMAGE_RETURNING_COMPUTER_TOOLS,
   MODEL_CANNOT_SEE_MESSAGE,
   modelAcceptsImageInput,
+  modelIdSupportsImages,
 } from "./model-vision.js";
 import { toOAuthCredential } from "./pi-credentials.js";
 import {
@@ -610,7 +612,7 @@ async function loadLivePluginSlugs(
   }
 }
 
-async function persistLivePluginConnections(
+export async function persistLivePluginConnections(
   prisma: PrismaClient,
   owner: { userId: string; spaceId: string },
   rows: PluginConnectionRow[],
@@ -626,6 +628,9 @@ async function persistLivePluginConnections(
       },
       data: { status: "connected" },
     });
+    for (const row of rows) {
+      if (sync.connectIds.includes(row.id)) row.status = "connected";
+    }
   }
   if (sync.revokeIds.length > 0) {
     await prisma.connection.updateMany({
@@ -636,6 +641,9 @@ async function persistLivePluginConnections(
       },
       data: { status: "revoked" },
     });
+    for (const row of rows) {
+      if (sync.revokeIds.includes(row.id)) row.status = "revoked";
+    }
   }
 }
 
@@ -742,6 +750,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
       scope.spaceId,
       credential,
       provider,
+      modelId,
       registerSecrets,
     );
     return {
@@ -750,7 +759,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
       apiKey: resolved.oauth ? undefined : resolved.apiKey,
       baseUrl: resolved.baseUrl,
       reasoning: resolved.reasoning,
-      thinkingLevel: null,
+      maxTokens: resolved.maxTokens,
+      contextWindow: resolved.contextWindow,
+      acceptsImages: resolved.acceptsImages,
+      maxImagesPerPrompt: resolved.maxImagesPerPrompt,
+      thinkingLevel: resolved.thinkingLevel ?? null,
       oauth: resolved.oauth
         ? { credential: resolved.oauth, persist: resolved.persistOAuth }
         : undefined,
@@ -803,6 +816,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         scope.spaceId,
         credential,
         provider,
+        id,
       );
       return {
         provider,
@@ -810,7 +824,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         apiKey: resolved.oauth ? undefined : resolved.apiKey,
         baseUrl: resolved.baseUrl,
         reasoning: resolved.reasoning,
-        thinkingLevel,
+        maxTokens: resolved.maxTokens,
+        contextWindow: resolved.contextWindow,
+        acceptsImages: resolved.acceptsImages,
+        maxImagesPerPrompt: resolved.maxImagesPerPrompt,
+        thinkingLevel: thinkingLevel ?? resolved.thinkingLevel ?? null,
         oauth: resolved.oauth
           ? { credential: resolved.oauth, persist: resolved.persistOAuth }
           : undefined,
@@ -1159,13 +1177,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
         }
         const connectedComposio = mergeConnectedPlugins(composioRows, liveSlugs);
-        const activeKeys = new Set(
-          connectedComposio.map((connection) => `composio:${connection.provider}`),
-        );
-        const connectedPlugins = storedConnections.filter(
-          (connection) =>
-            connection.status === "connected" ||
-            activeKeys.has(`${connection.connectorId}:${connection.provider}`),
+        const connectedPlugins = selectRunConnections(
+          storedConnections,
+          connectedComposio.map((connection) => connection.provider),
         );
         const context = {
           operationId: runId,
@@ -1360,6 +1374,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           run.spaceId,
           credential,
           runModelProvider,
+          runModelId,
           (values) => runSecrets.push(...values),
         );
         runSecrets.push(...resolved.redact);
@@ -1402,7 +1417,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         // vision-capable default was gated as "scripted" and lost its screenshot tools.
         const acceptsImages =
           deps.runtime.describe().capabilities.scripted ||
-          modelAcceptsImageInput(runModelProvider, runModelId);
+          modelAcceptsImageInput(runModelProvider, runModelId, resolved.acceptsImages);
         const groupContext = thread.groupId
           ? await loadGroupContext(deps.prisma, thread.groupId, { id: bot.id, name: bot.name })
           : undefined;
@@ -1872,6 +1887,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 run.spaceId,
                 reviewCredential,
                 checker.provider,
+                checker.model,
                 (values) => runSecrets.push(...values),
               );
               const judge = await runAutoReviewJudge({
@@ -2738,6 +2754,27 @@ export function createRunExecutor(deps: ExecutorDeps) {
               ),
             );
           }
+          if (name === "forget_memory") {
+            if (!semanticMemory?.forget) {
+              return finish({
+                error: "This memory provider does not support forgetting individual facts.",
+              });
+            }
+            return finish(
+              await semanticMemory.forget(
+                {
+                  id: String(args.id ?? ""),
+                  ...(typeof args.entity === "string" && args.entity.trim()
+                    ? { entity: args.entity.trim() }
+                    : {}),
+                  ...(typeof args.reason === "string" && args.reason.trim()
+                    ? { reason: args.reason.trim() }
+                    : {}),
+                },
+                context,
+              ),
+            );
+          }
           if (name === "list_secrets") return listBotSecrets(deps.prisma, run);
           if (name === "forget_secret") {
             const parsed = BotSecretName.safeParse(args.name);
@@ -3425,7 +3462,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 apiKey: resolved.oauth ? undefined : resolved.apiKey,
                 baseUrl: resolved.baseUrl,
                 reasoning: resolved.reasoning,
-                thinkingLevel,
+                maxTokens: resolved.maxTokens,
+                contextWindow: resolved.contextWindow,
+                acceptsImages: resolved.acceptsImages,
+                maxImagesPerPrompt: resolved.maxImagesPerPrompt,
+                thinkingLevel: thinkingLevel ?? resolved.thinkingLevel ?? null,
                 oauth: resolved.oauth
                   ? { credential: resolved.oauth, persist: resolved.persistOAuth }
                   : undefined,
@@ -4178,7 +4219,7 @@ export function selectBuiltinToolsForRun(options: {
   ).filter(
     (tool) =>
       !options.messagingChannelRun ||
-      (!["remember", "save_memory", "recall_memory"].includes(tool.name) &&
+      (!["remember", "save_memory", "recall_memory", "forget_memory"].includes(tool.name) &&
         !tool.name.startsWith("scratchpad_")),
   );
 }
@@ -4492,13 +4533,24 @@ async function resolveModelKey(
   deps: ExecutorDeps,
   userId: string,
   spaceId: string,
-  credential: { secretId: string; provider: string } | null,
+  credential: {
+    secretId: string;
+    provider: string;
+    defaultModel?: string | null;
+    supportsImages?: boolean;
+  } | null,
   provider: string,
+  modelId: string,
   registerSecrets?: (values: string[]) => void,
 ): Promise<{
   apiKey?: string;
   baseUrl?: string;
   reasoning?: boolean;
+  maxTokens?: number;
+  contextWindow?: number;
+  thinkingLevel?: AgentRunRequest["model"]["thinkingLevel"];
+  acceptsImages?: boolean;
+  maxImagesPerPrompt?: number;
   oauth?: AgentModelOAuthCredential;
   persistOAuth?: (credential: AgentModelOAuthCredential) => Promise<void>;
   redact: string[];
@@ -4534,11 +4586,31 @@ async function resolveModelKey(
       const oauth = resolved.secret.kind === "oauth" ? resolved.secret.credential : undefined;
       const baseUrl =
         resolved.secret.kind === "openai_compatible" ? resolved.secret.baseUrl : undefined;
+      const acceptsImages =
+        credential.provider === OPENAI_COMPATIBLE_PROVIDER_ID &&
+        resolved.secret.kind === "openai_compatible" &&
+        (modelIdSupportsImages(resolved.secret.visionModelIds, modelId) ||
+          // Legacy secrets have no per-model list, so keep their existing
+          // capability scoped to the model saved in the space preference.
+          (resolved.secret.visionModelIds === undefined &&
+            credential.supportsImages === true &&
+            credential.defaultModel?.trim() === modelId.trim()));
       return {
         apiKey: resolved.apiKey,
         baseUrl,
         reasoning:
           resolved.secret.kind === "openai_compatible" ? resolved.secret.reasoning : undefined,
+        maxTokens:
+          resolved.secret.kind === "openai_compatible" ? resolved.secret.maxTokens : undefined,
+        contextWindow:
+          resolved.secret.kind === "openai_compatible" ? resolved.secret.contextWindow : undefined,
+        thinkingLevel:
+          resolved.secret.kind === "openai_compatible" ? resolved.secret.thinkingLevel : undefined,
+        acceptsImages,
+        maxImagesPerPrompt:
+          resolved.secret.kind === "openai_compatible"
+            ? resolved.secret.maxImagesPerPrompt
+            : undefined,
         oauth,
         persistOAuth: oauth
           ? async (next) => {
@@ -4593,6 +4665,17 @@ async function withModelCredentialLock<T>(key: string, fn: () => Promise<T>): Pr
     release();
     if (modelCredentialLocks.get(key) === current) modelCredentialLocks.delete(key);
   }
+}
+
+export function selectRunConnections<
+  T extends { connectorId: string; provider: string; status: string },
+>(rows: T[], connectedComposioProviders: string[]): T[] {
+  const activeKeys = new Set(connectedComposioProviders.map((provider) => `composio:${provider}`));
+  return rows.filter(
+    (row) =>
+      row.status !== "revoked" &&
+      (row.status === "connected" || activeKeys.has(`${row.connectorId}:${row.provider}`)),
+  );
 }
 
 export async function loadCurrentTurnImages(

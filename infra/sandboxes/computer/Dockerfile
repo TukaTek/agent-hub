@@ -57,6 +57,7 @@ COPY --chmod=644 fluxbox.apps /etc/cortexai-agent-hub/fluxbox/apps
 COPY --chmod=644 fluxbox.menu /etc/cortexai-agent-hub/fluxbox/menu
 COPY --chmod=644 embed.html /usr/share/novnc/embed.html
 COPY --chmod=644 clipboard-bridge.js /usr/share/novnc/clipboard-bridge.js
+COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
   && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-page-browser \

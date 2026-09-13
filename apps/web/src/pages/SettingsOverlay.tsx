@@ -7,16 +7,7 @@ import {
   DialogTitle,
 } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
-import {
-  CloudDownload,
-  Cpu,
-  Diamond,
-  Gauge,
-  Monitor,
-  Settings,
-  Volume2,
-  XIcon,
-} from "lucide-react";
+import { Brain, CloudDownload, Cpu, Gauge, Monitor, Settings, Volume2, XIcon } from "lucide-react";
 import { type ComponentType, useEffect, useRef, useState } from "react";
 import { computersAreUnavailable } from "../components/ComputersUnavailableHint";
 import {
@@ -97,7 +88,7 @@ export function SettingsOverlay({
   const navItems: NavItem[] = [
     { id: "general", label: t`General`, icon: Settings },
     { id: "models", label: t`Models`, icon: Cpu },
-    { id: "memory", label: t`Memory`, icon: Diamond },
+    { id: "memory", label: t`Memory`, icon: Brain },
     { id: "voice", label: t`Voice`, icon: Volume2 },
     { id: "usage", label: t`Usage`, icon: Gauge },
     ...(showComputer ? [{ id: "computer" as const, label: t`Computer`, icon: Monitor }] : []),

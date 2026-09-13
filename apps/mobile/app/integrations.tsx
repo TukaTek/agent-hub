@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Pressable,
   ScrollView,
@@ -34,8 +35,47 @@ import { native, useThemedStyles } from "../lib/native";
 type SourceKind = "treg" | "executor" | "mcp" | "api" | "graphql";
 type ConnectionTool = { name: string; description: string };
 
+const LOGO_SIZE = 32;
+
 function itemKey(item: Pick<ConnectionCatalogItem, "connectorId" | "slug">) {
   return `${item.connectorId}:${item.slug}`;
+}
+
+function ConnectorLogo({
+  logo,
+  label,
+  styles,
+}: {
+  logo?: string | null;
+  label: string;
+  styles: ReturnType<typeof createIntegrationsStyles>;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [logo]);
+  const initial = (label.trim()[0] || "?").toUpperCase();
+  if (!logo || failed) {
+    return (
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={styles.logoFallback}
+      >
+        <Text style={styles.logoInitial}>{initial}</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      accessibilityIgnoresInvertColors
+      accessible={false}
+      onError={() => setFailed(true)}
+      resizeMode="contain"
+      source={{ uri: logo }}
+      style={styles.logo}
+    />
+  );
 }
 
 export default function Integrations() {
@@ -397,6 +437,7 @@ export default function Integrations() {
     const connected = itemConnected(item);
     const body = (
       <>
+        <ConnectorLogo logo={item.logo} label={label} styles={styles} />
         <View style={styles.grow}>
           <Text numberOfLines={1} style={styles.title}>
             {label}
@@ -444,6 +485,7 @@ export default function Integrations() {
             >
               <Text style={styles.link}>{t("Back")}</Text>
             </Pressable>
+            <ConnectorLogo logo={item.logo} label={item.name} styles={styles} />
             <Text numberOfLines={1} style={styles.detailTitle}>
               {item.name}
             </Text>
@@ -579,6 +621,7 @@ export default function Integrations() {
                             disabled ? { opacity: 0.7 } : null,
                           ]}
                         >
+                          <ConnectorLogo label={tile.label} styles={styles} />
                           <View style={styles.grow}>
                             <Text numberOfLines={1} style={styles.title}>
                               {tile.label}
@@ -817,6 +860,25 @@ function createIntegrationsStyles() {
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
+    },
+    logo: {
+      width: LOGO_SIZE,
+      height: LOGO_SIZE,
+      borderRadius: 10,
+      backgroundColor: native.fillPressed,
+    },
+    logoFallback: {
+      width: LOGO_SIZE,
+      height: LOGO_SIZE,
+      borderRadius: 10,
+      backgroundColor: native.fillPressed,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    logoInitial: {
+      color: native.label,
+      fontSize: 14,
+      fontWeight: "600",
     },
     grow: { flex: 1, gap: 3, minWidth: 0 },
     title: { color: native.label, fontSize: 15, fontWeight: "600" },
