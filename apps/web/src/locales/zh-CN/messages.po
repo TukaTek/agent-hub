@@ -141,8 +141,8 @@ msgstr "{workingBotName} 正在工作"
 msgid "@{0}"
 msgstr "@{0}"
 
-#: src/pages/shell/dialogs.tsx:140
-msgid "A separate, private workspace with its own bots and groups. Use spaces to keep contexts apart, such as work and personal."
+#: src/pages/shell/dialogs.tsx:137
+msgid "Private workspace with its own bots and groups."
 msgstr ""
 
 #: src/pages/shell/bot-picker.tsx:105
@@ -2505,7 +2505,7 @@ msgid "on the 1st at {0}"
 msgstr "每月 1 日 {0}"
 
 #: src/pages/shell/dialogs.tsx:135
-msgid "One conversation with 2–6 of your bots in a shared thread. Name the group, pick its members, and they all reply in the same chat."
+msgid "Shared chat with 2-6 bots. They all reply in the same thread."
 msgstr ""
 
 #: src/pages/Shell.tsx:3681
@@ -2677,8 +2677,8 @@ msgid "Queued"
 msgstr "排队中"
 
 #: src/pages/PluginsOverlay.tsx:1075
-msgid "CortexAI Agent Hub verifies the source before saving it. Credentials are encrypted and are never returned to clients or exposed to the model."
-msgstr "CortexAI Agent Hub 会在保存前校验来源。凭据已加密，不会返回给客户端，也不会暴露给模型。"
+msgid "Credentials are encrypted and never sent to the model."
+msgstr "凭据已加密，不会发送给模型。"
 
 #: src/pages/shell/bot-panel.tsx:478
 msgid "Read replies aloud"
@@ -3782,3 +3782,23 @@ msgstr "请输入 1 到 1000 之间的整数作为图像限制。"
 #: src/pages/Onboarding.tsx:529
 msgid "Maximum images per request"
 msgstr "每次请求的最大图像数"
+
+#: apps/web/src/pages/memory-providers/SerenitySettingsForm.tsx
+msgid "MCP endpoint"
+msgstr ""
+
+#: apps/web/src/pages/memory-providers/SerenitySettingsForm.tsx
+msgid "Brain label"
+msgstr ""
+
+#: apps/web/src/pages/memory-providers/SerenitySettingsForm.tsx
+msgid "Allow writing"
+msgstr ""
+
+#: apps/web/src/pages/memory-providers/SerenitySettingsForm.tsx
+msgid "Recall only"
+msgstr ""
+
+#: apps/web/src/pages/memory-providers/SerenitySettingsForm.tsx
+msgid "Recall and write"
+msgstr ""

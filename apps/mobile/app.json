@@ -3,7 +3,7 @@
     "name": "CortexAI Agent Hub",
     "slug": "cortexai-agent-hub",
     "scheme": "cortexai-agent-hub",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",

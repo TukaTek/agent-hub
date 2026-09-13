@@ -205,6 +205,10 @@ CORTEXAI_AGENT_HUB_LOCAL_VISION_MODELS=qwen3-vl
 The loopback default is suitable when running CortexAI Agent Hub from a source checkout. From containers,
 prefer a stable LAN RFC1918 address (not Compose service DNS alone). On Docker Desktop,
 `host.docker.internal` also works.
+On Docker Desktop, a bot computer shell can often reach services bound to host `127.0.0.1`
+through that same hostname. Do not run sensitive unauthenticated services on loopback while
+bots run, or firewall / block that path. Linux does not get `host.docker.internal` the same
+way by default.
 Only configure an endpoint you control: prompts, attachments, and tool results sent to that model
 leave CortexAI Agent Hub through this URL. Leave `CORTEXAI_AGENT_HUB_LOCAL_MODELS` blank to disable the provider.
 

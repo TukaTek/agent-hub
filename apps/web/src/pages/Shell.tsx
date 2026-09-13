@@ -94,6 +94,7 @@ import {
   Monitor,
   MoreHorizontal,
   PanelLeftClose,
+  PanelLeftOpen,
   Paperclip,
   Plus,
   Puzzle,
@@ -152,6 +153,7 @@ import {
   shouldNotifyBrowser,
 } from "../lib/browser-notifications";
 import { loadComputerScreen } from "../lib/computer-screen";
+import { desktopBridge } from "../lib/desktop";
 import { scheduleFocusPrompt } from "../lib/focus-prompt";
 import { localTimezone } from "../lib/local-timezone";
 import { copyableMessageText } from "../lib/message-text";
@@ -274,6 +276,8 @@ const FALLBACK_BOT_COLOR = "#85858A";
 const THREAD_SNAPSHOT_TIMEOUT_MS = 2_000;
 /** Bound Settings leave so a hung voice status refresh cannot block dismissal. */
 const VOICE_STATUS_REFRESH_TIMEOUT_MS = 10_000;
+const MOBILE_SIDEBAR_SWIPE_EDGE_PX = 32;
+const MOBILE_SIDEBAR_SWIPE_DISTANCE_PX = 56;
 
 function threadSnapshotSignal(parent: AbortSignal): AbortSignal {
   return AbortSignal.any([parent, AbortSignal.timeout(THREAD_SNAPSHOT_TIMEOUT_MS)]);
@@ -437,6 +441,7 @@ export function ShellPage() {
     useState<ReadonlySet<string>>(readSeenRunErrorIds);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const mobileSidebarSwipeRef = useRef<{ startX: number; startY: number } | null>(null);
   const [draggedBotId, setDraggedBotId] = useState<string | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [botsSidebarCollapsed, setBotsSidebarCollapsed] = useState(false);
@@ -2440,6 +2445,47 @@ export function ShellPage() {
       data-testid="shell-root"
       data-ready={shellReady}
       className="relative flex h-full min-w-0 overflow-hidden bg-background text-foreground/90"
+      onTouchStartCapture={(event) => {
+        if (
+          mobileSidebarOpen ||
+          event.touches.length !== 1 ||
+          window.matchMedia("(min-width: 768px)").matches
+        ) {
+          mobileSidebarSwipeRef.current = null;
+          return;
+        }
+        const touch = event.touches[0];
+        if (!touch) return;
+        const rtl = document.documentElement.getAttribute("dir") === "rtl";
+        const startsAtEdge = rtl
+          ? touch.clientX >= window.innerWidth - MOBILE_SIDEBAR_SWIPE_EDGE_PX
+          : touch.clientX <= MOBILE_SIDEBAR_SWIPE_EDGE_PX;
+        mobileSidebarSwipeRef.current = startsAtEdge
+          ? { startX: touch.clientX, startY: touch.clientY }
+          : null;
+      }}
+      onTouchEndCapture={(event) => {
+        const swipe = mobileSidebarSwipeRef.current;
+        mobileSidebarSwipeRef.current = null;
+        const touch = event.changedTouches[0];
+        if (
+          !swipe ||
+          !touch ||
+          mobileSidebarOpen ||
+          window.matchMedia("(min-width: 768px)").matches
+        ) {
+          return;
+        }
+        const rtl = document.documentElement.getAttribute("dir") === "rtl";
+        const horizontal = rtl ? swipe.startX - touch.clientX : touch.clientX - swipe.startX;
+        const vertical = Math.abs(touch.clientY - swipe.startY);
+        if (horizontal >= MOBILE_SIDEBAR_SWIPE_DISTANCE_PX && horizontal > vertical * 1.25) {
+          setMobileSidebarOpen(true);
+        }
+      }}
+      onTouchCancelCapture={() => {
+        mobileSidebarSwipeRef.current = null;
+      }}
     >
       <ComputerUpdateProgress
         onCompleted={() => {
@@ -2455,6 +2501,13 @@ export function ShellPage() {
           aria-label={t`Close navigation`}
           onClick={() => setMobileSidebarOpen(false)}
           className="absolute inset-y-0 end-0 start-[min(calc(100%-48px),316px)] z-30 bg-overlay md:hidden"
+        />
+      ) : null}
+      {!mobileSidebarOpen ? (
+        <div
+          data-testid="mobile-sidebar-swipe-edge"
+          aria-hidden="true"
+          className="absolute bottom-20 start-0 top-16 z-20 w-8 touch-none md:hidden"
         />
       ) : null}
       <aside
@@ -3055,6 +3108,8 @@ export function ShellPage() {
       >
         <div className="app-drag flex items-center justify-between border-b border-sidebar-border px-3 py-[17px] md:px-[22px]">
           <div className="flex min-w-0 items-center gap-2">
+            {/* Collapsed bots sidebar: this header is the leading edge for window chrome. */}
+            {botsSidebarCollapsed && desktopBridge() ? <WindowChrome /> : null}
             <button
               type="button"
               aria-label={t`Open navigation`}
@@ -3063,6 +3118,18 @@ export function ShellPage() {
             >
               <Menu size={19} strokeWidth={1.7} />
             </button>
+            {botsSidebarCollapsed ? (
+              <button
+                type="button"
+                data-testid="restore-bots-sidebar"
+                aria-label={t`Show bots`}
+                title={t`Show bots`}
+                onClick={() => setBotsSidebarCollapsedPref(false)}
+                className="app-no-drag hidden h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground/75 hover:bg-accent md:grid"
+              >
+                <PanelLeftOpen size={19} strokeWidth={1.7} aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               type="button"
               data-testid="bot-settings-trigger"
