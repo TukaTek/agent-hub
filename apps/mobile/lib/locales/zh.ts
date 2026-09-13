@@ -498,6 +498,18 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Add a voice provider in Voice settings.": "请先在语音设置中添加语音提供商。",
   Advanced: "高级",
   "Supports thinking": "支持思考",
+  "Reasoning effort": "推理强度",
+  Default: "默认",
+  "Maximum output tokens": "最大输出 token 数",
+  "Context limit": "上下文限制",
+  "Enter a whole number from 1 to {max} for maximum output tokens.":
+    "请输入 1 到 {max} 之间的整数作为最大输出 token 数。",
+  "Enter a whole number from 1 to {max} for the context limit.":
+    "请输入 1 到 {max} 之间的整数作为上下文限制。",
+  "Supports images": "支持图像",
+  "Maximum images per request": "每次请求的最大图像数",
+  "Enter a whole number from 1 to 1000 for the image limit.":
+    "请输入 1 到 1000 之间的整数作为图像限制。",
   Agent: "智能体",
   archived: "已归档",
   Attachment: "附件",

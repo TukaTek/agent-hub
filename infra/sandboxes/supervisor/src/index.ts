@@ -847,6 +847,7 @@ async function ensureComputerImage() {
             "cortexai-agent-hub-browser.desktop",
             "embed.html",
             "clipboard-bridge.js",
+            "mobile-keyboard.js",
             "fluxbox.init",
             "fluxbox.apps",
             "fluxbox.menu",

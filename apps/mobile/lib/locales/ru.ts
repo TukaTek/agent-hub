@@ -519,6 +519,18 @@ export const RU_MESSAGES: Record<string, string> = {
     "Добавьте провайдера голосовой связи в настройках голоса.",
   Advanced: "Расширенные",
   "Supports thinking": "Поддерживает рассуждения",
+  "Reasoning effort": "Уровень рассуждений",
+  Default: "По умолчанию",
+  "Maximum output tokens": "Максимум выходных токенов",
+  "Context limit": "Лимит контекста",
+  "Enter a whole number from 1 to {max} for maximum output tokens.":
+    "Введите целое число от 1 до {max} для максимума выходных токенов.",
+  "Enter a whole number from 1 to {max} for the context limit.":
+    "Введите целое число от 1 до {max} для лимита контекста.",
+  "Supports images": "Поддерживает изображения",
+  "Maximum images per request": "Максимум изображений в запросе",
+  "Enter a whole number from 1 to 1000 for the image limit.":
+    "Введите целое число от 1 до 1000 для лимита изображений.",
   Agent: "Агент",
   archived: "в архиве",
   Attachment: "Вложение",

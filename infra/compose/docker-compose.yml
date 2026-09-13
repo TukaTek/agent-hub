@@ -2,15 +2,16 @@ services:
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:16}
     environment:
-      POSTGRES_USER: cortexai-agent-hub
-      POSTGRES_PASSWORD: cortexai-agent-hub
-      POSTGRES_DB: cortexai-agent-hub
-    ports:
-      - "127.0.0.1:5433:5432"
+      # USER/PASSWORD/DB apply only on first pgdata init. Keep existing values in
+      # .env, or ALTER ROLE / rename in place. Recreate pgdata only after backup
+      # (or when the volume is disposable); down -v deletes all DB state.
+      POSTGRES_USER: ${POSTGRES_USER:-cortexai-agent-hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-cortexai-agent-hub}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cortexai-agent-hub"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cortexai-agent-hub} -d ${POSTGRES_DB:-cortexai-agent-hub}"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -67,7 +68,7 @@ services:
     env_file:
       - ../../.env
     environment:
-      DATABASE_URL: postgres://cortexai-agent-hub:cortexai-agent-hub@postgres:5432/cortexai-agent-hub
+      DATABASE_URL: postgres://${POSTGRES_USER:-cortexai-agent-hub}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cortexai-agent-hub}
       API_HOST: "0.0.0.0"
       DATA_DIR: /data
       SANDBOX_SUPERVISOR_URL: http://supervisor:7091
@@ -103,7 +104,7 @@ services:
       - ../../.env
     environment:
       BETTER_AUTH_SECRET: ""
-      DATABASE_URL: postgres://cortexai-agent-hub:cortexai-agent-hub@postgres:5432/cortexai-agent-hub
+      DATABASE_URL: postgres://${POSTGRES_USER:-cortexai-agent-hub}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cortexai-agent-hub}
       DATA_DIR: /data
       SANDBOX_SUPERVISOR_URL: http://supervisor:7091
       WAKEUP_DRIVER: graphile
