@@ -49,6 +49,13 @@ export const PRIVACY_MARKDOWN = `# CortexAI Agent Hub privacy
 
 CortexAI Agent Hub can process account details, user-provided assistant content, connection information, and the technical records needed to operate and secure a deployment. Information is sent to model providers and connected apps only as needed to perform work the user requests. The deployment operator controls the service and its privacy practices.
 
+Before submitting content or starting AI work, the CortexAI Agent Hub mobile app names the configured recipients, explains the data and purpose, and asks permission. Messages, relevant history, instructions, memories, attachments, screenshots, and connected-app content may be sent to model services for responses and tasks, including scheduled tasks. Recorded audio may be sent for transcription and text for speech generation. Conversation summaries, memories, queries, and bot and Space identifiers may be sent to a configured memory service.
+
+Supported connections include OpenAI, Anthropic, Google, OpenRouter, Vercel AI Gateway, Cursor, custom model servers, ElevenLabs, Cartesia, Fish Audio, and Supermemory. The mobile disclosure identifies the configured services. Gateways forward requests to model providers according to their routing settings and provider agreements. The mobile permission flow does not modify provider routing or promise zero retention.
+
+Permission records include the recipient, Space, disclosure version, and time. Choose Not now to decline, or withdraw permission in Account → AI data sharing for new mobile actions. Stop existing runs and disable routines separately. Withdrawal cannot recall data already sent. Web, desktop, and self-hosted server workflows do not use this mobile permission flow.
+
+
 Users can delete their account and associated personal Space data from the Account screen. For CortexAI privacy inquiries, [contact CortexAI](https://www.tukasolutions.com/contact).
 
 Read the [CortexAI product page](https://www.tukasolutions.com/cortexaiagenthub).

@@ -1,5 +1,6 @@
 export * from "./agent-connections.js";
 export * from "./agent-environment.js";
+export * from "./ai-consent.js";
 export * from "./artifacts.js";
 export * from "./auto-review.js";
 export * from "./background-job-handlers.js";
@@ -33,6 +34,7 @@ export * from "./computer-support.js";
 export * from "./computer-tools.js";
 export * from "./computer-update.js";
 export * from "./computer-workspace.js";
+export * from "./current-time.js";
 export * from "./cursor-cloud-agent.js";
 export * from "./daytona-emulator.js";
 export * from "./daytona-sandbox.js";
