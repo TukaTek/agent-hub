@@ -3,6 +3,7 @@ import {
   ComputerScreenUnavailableError,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { REPLY_QUOTE_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
 import { openScreenCapability } from "@cortexai-agent-hub/core/node/screen-capability";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
@@ -239,6 +240,45 @@ describe("model setup gate", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       json: expect.objectContaining({ needsModel: true }),
+    });
+  });
+
+  it("rejects a reply quote without a reply target", async () => {
+    const { actor, handler } = modelGateDeps({ agentRuntime: "scripted" });
+
+    const response = await call(handler, actor, "threads/send", {
+      botId: "bot-1",
+      text: "hello",
+      replyQuote: "just this span",
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      json: expect.objectContaining({
+        data: expect.objectContaining({
+          issues: expect.arrayContaining([expect.objectContaining({ path: ["replyQuote"] })]),
+        }),
+      }),
+    });
+  });
+
+  it("rejects an over-length reply quote", async () => {
+    const { actor, handler } = modelGateDeps({ agentRuntime: "scripted" });
+
+    const response = await call(handler, actor, "threads/send", {
+      botId: "bot-1",
+      text: "hello",
+      replyToMessageId: "parent-1",
+      replyQuote: "x".repeat(REPLY_QUOTE_MAX_LENGTH + 1),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      json: expect.objectContaining({
+        data: expect.objectContaining({
+          issues: expect.arrayContaining([expect.objectContaining({ path: ["replyQuote"] })]),
+        }),
+      }),
     });
   });
 });

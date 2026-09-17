@@ -1,6 +1,7 @@
 import type { AgentModelOAuthCredential, AgentRuntime } from "@cortexai-agent-hub/adapter-kit";
 import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
 import { type AutoReviewJudgeDecision, redactSecrets } from "@cortexai-agent-hub/core";
+import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import { LOCAL_PROVIDER_ID } from "./pi-local-provider.js";
 
@@ -240,8 +241,10 @@ export async function runAutoReviewJudge(input: {
         threadId: input.threadId,
         runId: `${input.runId}:auto-review`,
         prompt: input.prompt,
-        instructions:
+        instructions: [
+          formatCurrentTimeInstruction(),
           "You are a fast safety checker. Output strict JSON only. No tools. No markdown.",
+        ].join(" "),
         history: [],
         tools: [],
         model: {

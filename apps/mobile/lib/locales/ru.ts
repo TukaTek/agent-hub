@@ -9,6 +9,8 @@ export const RU_MESSAGES: Record<string, string> = {
   "This permanently deletes your account, Assistants, conversations, memories, files, and saved connections. This cannot be undone.":
     "Ваш аккаунт, ассистенты, беседы, воспоминания, файлы и сохранённые подключения будут удалены навсегда. Это действие нельзя отменить.",
 
+  "Update your server to use AI data sharing in this mobile version.":
+    "Обновите сервер, чтобы использовать обмен данными с ИИ в этой версии мобильного приложения.",
   "Ask the server owner to configure this provider.":
     "Попросите владельца сервера настроить этого провайдера.",
   "Client ID": "ID клиента",
@@ -189,6 +191,7 @@ export const RU_MESSAGES: Record<string, string> = {
   "Could not connect": "Не удалось подключиться",
   "Could not connect this provider": "Не удалось подключить этого провайдера",
   "Could not continue": "Не удалось продолжить",
+  "Could not disconnect": "Не удалось отключить",
   "Could not create bot": "Не удалось создать бота",
   "Could not create group": "Не удалось создать группу",
   "Could not create space": "Не удалось создать пространство",
@@ -265,6 +268,8 @@ export const RU_MESSAGES: Record<string, string> = {
   "Describe what this bot does": "Опишите, что делает этот бот",
   "Don’t have an account?": "Нет аккаунта?",
   Done: "Готово",
+  Disconnect: "Отключить",
+  "Disconnecting…": "Отключение…",
   Email: "Электронная почта",
   Embedded: "Встроенная",
   "{channel} · {id}": "{channel} · {id}",
@@ -348,6 +353,8 @@ export const RU_MESSAGES: Record<string, string> = {
   "New bot": "Новый бот",
   "New group": "Новая группа",
   "New section": "Новый раздел",
+  "Rename section": "Переименовать раздел",
+  "Save section name": "Сохранить название раздела",
   "New space": "Новое пространство",
   "No apps match your search.": "Нет приложений, соответствующих вашему запросу.",
   "No tools available.": "Нет доступных инструментов.",
