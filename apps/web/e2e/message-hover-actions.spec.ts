@@ -186,6 +186,7 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   expect(rowBox).not.toBeNull();
   expect(Math.abs(timeBox!.x - rowBox!.x)).toBeLessThan(2);
   await toolbar.getByRole("button", { name: "More" }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
   await expect(page.getByRole("menu").locator("time")).toHaveCount(0);
   // Escape closes More and restores focus to the trigger so the rail stays up.
   await page.keyboard.press("Escape");
