@@ -8,7 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Pending agent questions can be answered directly in chat; approvals and secrets retain their dedicated controls.
+- Bots can update their profile pictures and completion notification preference when asked.
 - Optional CortexAI Hub sign-in across web, desktop, and mobile, using tenant discovery and live product-access checks.
+
+### Fixed
+
+- Improved computer startup, stopped-container recovery, mobile streaming, and touch clipboard paste.
+
+- The Needs you computer card in a thread now includes Open, which opens that bot's computer the same way the computer panel does, including from a group member bot.
+- Bots with more than 20 MCP tools failed on every Claude model behind a Claude Pro/Max/Team sign-in with "You're out of extra usage": Anthropic rejects Claude Code OAuth requests that carry a tool named `mcp_*`. The lazy catalog wrappers are now `connectors_search_tools`, `connectors_load_tool` and `connectors_execute_tool`.
 
 ### Changed
 

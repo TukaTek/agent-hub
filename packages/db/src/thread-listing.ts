@@ -1,4 +1,4 @@
-import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
+import { ACTIVE_RUN_STATUSES, plainTextFromMarkdown } from "@cortexai-agent-hub/core";
 
 export const activeRunStatuses = [...ACTIVE_RUN_STATUSES];
 
@@ -18,7 +18,7 @@ export function previewFromBlocks(blocks: unknown): string {
       "text" in block &&
       typeof (block as { text?: unknown }).text === "string"
     ) {
-      return (block as { text: string }).text;
+      return plainTextFromMarkdown((block as { text: string }).text);
     }
   }
   return "";
