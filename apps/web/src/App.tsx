@@ -26,9 +26,6 @@ const PasswordResetPage = lazy(() =>
 const OnboardingPage = lazy(() =>
   import("./pages/Onboarding").then((module) => ({ default: module.OnboardingPage })),
 );
-const WelcomePage = lazy(() =>
-  import("./pages/Welcome").then((module) => ({ default: module.WelcomePage })),
-);
 
 export function App() {
   if (window.location.pathname === LOCAL_SETTINGS_PAGE) return <LocalSettingsPage />;
@@ -72,7 +69,10 @@ function SessionApp() {
     <div className="h-full" data-cortexai-agent-hub-app-state="ready">
       <Suspense fallback={<div className="h-full bg-background" />}>
         <Routes>
-          <Route path="/" element={user ? <Navigate to="/app" replace /> : <WelcomePage />} />
+          <Route
+            path="/"
+            element={user ? <Navigate to="/app" replace /> : <AuthPage key="entry" mode="entry" />}
+          />
           <Route
             path="/sign-in"
             element={

@@ -7,8 +7,12 @@ for (const desktop of [false, true]) {
     await page.route("**/api/auth/capabilities", (route) =>
       route.fulfill({ json: { mode: "hub", passwordReset: false, resetUrl: null } }),
     );
-    for (const path of ["/sign-in", "/sign-up", "/forgot-password"]) {
+    for (const path of ["/", "/sign-in", "/sign-up", "/forgot-password"]) {
       await page.goto(path);
+      if (path === "/") await expect(page).toHaveURL(/\/sign-in$/);
+      await expect(
+        page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" }),
+      ).toBeVisible();
       await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
       await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
       await expect(page.getByRole("link", { name: "Sign up", exact: true })).toHaveCount(0);
@@ -49,4 +53,24 @@ test("capability network failure blocks authentication", async ({ page }) => {
   await page.goto("/sign-in");
   await expect(page.getByRole("alert")).toHaveText("Could not reach the server");
   await expect(page.getByRole("button", { name: "Continue with email" })).toHaveCount(0);
+});
+
+test("local installations retain the welcome and signup flow", async ({ page }) => {
+  await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
+  await page.route("**/api/auth/capabilities", (route) =>
+    route.fulfill({ json: { mode: "local", passwordReset: false, resetUrl: null } }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: /Sign up/ }).click();
+  await expect(page).toHaveURL(/\/sign-up$/);
+  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
+});
+
+test("tenant entry does not offer signup when capabilities are unavailable", async ({ page }) => {
+  await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
+  await page.route("**/api/auth/capabilities", (route) => route.abort("failed"));
+  await page.goto("/");
+  await expect(page.getByRole("alert")).toHaveText("Could not reach the server");
+  await expect(page.getByRole("button", { name: /Sign up/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Sign up", exact: true })).toHaveCount(0);
 });
