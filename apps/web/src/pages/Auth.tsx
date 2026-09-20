@@ -3,9 +3,10 @@ import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth";
 import { clearSpaceSelection } from "../lib/rpc";
+import { WelcomePage } from "./Welcome";
 
 type AuthMode = "in" | "up" | "forgot";
 type PasswordResetCapabilities = {
@@ -21,7 +22,7 @@ const submitClass =
 const AUTH_CAPABILITIES_TIMEOUT_MS = 8_000;
 const MAX_AUTH_CAPABILITIES_RESPONSE_BYTES = 64 * 1024;
 
-export function AuthPage({ mode: requestedMode }: { mode: AuthMode }) {
+export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) {
   const { t } = useLingui();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -35,7 +36,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode }) {
   // Signup triggers a session refresh that remounts the anonymous auth page.
   const sent = resetSent || searchParams.get("verify") === "email";
   const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
-  const mode = reset?.mode === "hub" ? "in" : requestedMode;
+  const mode = reset?.mode === "hub" || requestedMode === "entry" ? "in" : requestedMode;
   const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
   const title = sent ? (
@@ -148,6 +149,10 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode }) {
     } finally {
       setPending(false);
     }
+  }
+
+  if (requestedMode === "entry" && reset) {
+    return reset.mode === "hub" ? <Navigate to="/sign-in" replace /> : <WelcomePage />;
   }
 
   if (!reset) {
