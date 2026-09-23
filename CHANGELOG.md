@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- GPT-6 Luna, GPT-6 Sol, and Claude Opus 5.5 model support; optional TypeSafe Jev Auto Review verification.
+- Free on-device mobile voice playback and scheduled routines that can finish without sending a chat reply.
+
 - Pending agent questions can be answered directly in chat; approvals and secrets retain their dedicated controls.
 - Bots can update their profile pictures and completion notification preference when asked.
 - Optional CortexAI Hub sign-in across web, desktop, and mobile, using tenant discovery and live product-access checks.
@@ -15,7 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Improved computer startup, stopped-container recovery, mobile streaming, and touch clipboard paste.
-
+- Every turn failed on Claude models through Amazon Bedrock with "input_schema does not support oneOf, allOf, or anyOf at the top level": `request_secret` declares its two destinations as a root `oneOf`, and Anthropic rejects the whole request for it. Root unions in tool schemas, including ones from MCP servers, are now merged into a single object schema before they reach a provider; the executor still enforces credential or `connectionId`, not both.
+- Pipedream exposed every tool of every connected app at once, so a handful of apps could fill a run's tool list. Above 20 tools the connector now offers the same lazy catalog the MCP connector uses (`pipedream_search_tools`, `pipedream_load_tool`, and `pipedream_execute_tool`), with names grouped by app.
 - The Needs you computer card in a thread now includes Open, which opens that bot's computer the same way the computer panel does, including from a group member bot.
 - Bots with more than 20 MCP tools failed on every Claude model behind a Claude Pro/Max/Team sign-in with "You're out of extra usage": Anthropic rejects Claude Code OAuth requests that carry a tool named `mcp_*`. The lazy catalog wrappers are now `connectors_search_tools`, `connectors_load_tool` and `connectors_execute_tool`.
 

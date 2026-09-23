@@ -162,6 +162,7 @@ export const SpaceBotSchema = BotSchema.pick({
   pinned: true,
   sectionId: true,
   unread: true,
+  parentBotId: true,
   preview: true,
   status: true,
   updatedAt: true,
@@ -901,6 +902,17 @@ export function parseModelContextWindow(value: string): number | undefined {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_MODEL_CONTEXT_WINDOW
     ? parsed
     : undefined;
+}
+
+/**
+ * JS null/undefined stringifies to the literals "null" / "undefined". Those
+ * are not catalog ids; treat them (and blank values) as unset.
+ */
+export function usableModelId(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined") return null;
+  return trimmed;
 }
 
 export const ModelCredentialSchema = z.object({

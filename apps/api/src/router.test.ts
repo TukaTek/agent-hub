@@ -405,6 +405,88 @@ describe("MCP server deletion", () => {
   });
 });
 
+describe("connections.begin", () => {
+  it("reuses a revoked row for the same provider instead of inserting a duplicate", async () => {
+    const begin = vi.fn().mockResolvedValue({ state: "gmail-state", authorizationUrl: null });
+    const update = vi.fn().mockResolvedValue({
+      id: "conn-old",
+      connectorId: "composio",
+      provider: "gmail",
+      displayName: "Gmail",
+      status: "pending",
+      createdAt: new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const create = vi.fn();
+    const prisma = {
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
+          connection: {
+            findMany: vi.fn().mockResolvedValue([{ id: "conn-old", status: "revoked" }]),
+            update,
+            updateMany,
+            create,
+          },
+        };
+        return fn(tx);
+      }),
+    } as unknown as PrismaClient;
+    const deps = {
+      prisma,
+      connectors: {
+        managed: vi.fn(() => ({ begin })),
+      },
+      env: {
+        defaultProvider: "fake",
+        defaultModel: "fake-model",
+        webOrigin: "http://127.0.0.1:5173",
+        screenProxySecret: "fake-test-secret",
+        sandboxProvider: "fake",
+      },
+      dataDir: "/tmp/cortexai-agent-hub-router-test",
+    } as unknown as RouterDeps;
+    const actor = {
+      spaceId: "workspace-1",
+      userId: "user-1",
+      email: "user@cortexai-agent-hub.test",
+      isDeploymentOwner: true,
+    } satisfies Actor;
+    const handler = new RPCHandler(createRouter(deps));
+
+    const { matched, response } = await handler.handle(
+      new Request("http://127.0.0.1/rpc/connections/begin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          json: {
+            connectorId: "composio",
+            provider: "gmail",
+            displayName: "Gmail",
+          },
+        }),
+      }),
+      { prefix: "/rpc", context: { actor } },
+    );
+
+    expect(matched).toBe(true);
+    expect(response.status).toBe(200);
+    expect(create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "conn-old" },
+      data: {
+        displayName: "Gmail",
+        status: "pending",
+        providerRef: null,
+        metadata: {},
+      },
+    });
+    await expect(response.json()).resolves.toMatchObject({
+      json: { connectionId: "conn-old" },
+    });
+  });
+});
+
 describe("connections.complete", () => {
   it("forwards an optional code to the managed connector", async () => {
     const complete = vi.fn().mockResolvedValue({ connectionRef: "gmail" });
@@ -881,5 +963,122 @@ describe("interrupted computer reservation release", () => {
       data: { maintenanceId: null, state: "error" },
     });
     expect(order).toEqual(["operation", "computer"]);
+  });
+});
+
+describe("model credential persistence", () => {
+  const actor = {
+    spaceId: "workspace-1",
+    userId: "user-1",
+    email: "user@cortexai-agent-hub.test",
+    isDeploymentOwner: true,
+  } satisfies Actor;
+
+  function persistDeps(options?: { envDefaultModel?: string }) {
+    const upsert = vi.fn().mockResolvedValue({ id: "preference" });
+    const finish = vi.fn();
+    const tx = {
+      userModelCredential: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation(async ({ data }: { data: { provider: string } }) => ({
+          id: "cred-1",
+          userId: actor.userId,
+          provider: data.provider,
+          label: data.provider,
+          secretId: "secret-1",
+          supportsImages: false,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        })),
+      },
+      secret: { create: vi.fn().mockResolvedValue({}) },
+      spaceModelPreference: {
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        upsert,
+      },
+    };
+    const deps = {
+      prisma: { $transaction: vi.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)) },
+      secrets: {
+        put: vi.fn().mockResolvedValue({ id: "secret-1", ciphertext: "cipher" }),
+      },
+      oauthLogins: {
+        finish,
+      },
+      env: {
+        defaultProvider: "openrouter",
+        defaultModel: options?.envDefaultModel ?? "openai/gpt-5.6-luna",
+        webOrigin: "http://127.0.0.1:5173",
+        screenProxySecret: "fake-test-secret",
+        sandboxProvider: "fake",
+        agentRuntime: "pi",
+      },
+    } as unknown as RouterDeps;
+    return { upsert, finish, deps, handler: new RPCHandler(createRouter(deps)) };
+  }
+
+  async function call(handler: RPCHandler<never>, path: string, body: unknown): Promise<Response> {
+    const { response } = await handler.handle(
+      new Request(`http://127.0.0.1/rpc/${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ json: body }),
+      }),
+      { prefix: "/rpc", context: { actor } },
+    );
+    return response;
+  }
+
+  it("does not persist a stringified null model id from subscription sign-in", async () => {
+    const { upsert, finish, handler } = persistDeps();
+    finish.mockImplementation(async (_loginId, _actor, persist) => ({
+      status: "connected" as const,
+      value: await persist({
+        status: "connected",
+        provider: "anthropic",
+        modelId: "null",
+        label: "Anthropic",
+        credential: {
+          type: "oauth",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+        },
+        signal: new AbortController().signal,
+      }),
+    }));
+
+    const response = await call(handler, "models/finishOAuth", { loginId: "login-1" });
+    expect(response.status).toBe(200);
+    const persisted = upsert.mock.calls[0]?.[0] as {
+      create: { modelId: string | null };
+      update: { modelId: string | null };
+    };
+    expect(persisted.create.modelId).not.toBe("null");
+    expect(persisted.create.modelId).toBeTruthy();
+    expect(persisted.update.modelId).toBe(persisted.create.modelId);
+    await expect(response.json()).resolves.toEqual({
+      json: expect.objectContaining({
+        provider: "anthropic",
+        modelId: persisted.create.modelId,
+      }),
+    });
+  });
+
+  it("does not persist a missing model id as the string null", async () => {
+    const { upsert, handler } = persistDeps({ envDefaultModel: "null" });
+
+    const response = await call(handler, "models/connect", {
+      provider: "test-provider",
+      apiKey: "sk-test-key-123",
+      modelId: undefined,
+    });
+    expect(response.status).toBe(200);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ modelId: null }),
+        update: expect.objectContaining({ modelId: null }),
+      }),
+    );
   });
 });

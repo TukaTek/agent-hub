@@ -31,8 +31,7 @@ export const CANCEL_COMPUTER_RUN_WORK = [
   '[ -n "$computerId" ] && [ -n "$runId" ] || exit 0',
   `prefix="${BACKGROUND_WORK_MARKER_PREFIX}$computerId-$runId-"`,
   // Match the timeout wrapper cmdline (still contains the launch tag after exec into the user command).
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell variable expression
-  'pkill -TERM -f "cortexai-agent-hub-background-launch ${computerId} ${runId} " 2>/dev/null || true',
+  `pkill -TERM -f "cortexai-agent-hub-background-launch $computerId $runId " 2>/dev/null || true`,
   "if [ -d /proc ]; then",
   "  for fd in /proc/[0-9]*/fd/*; do",
   '    target="$(readlink "$fd" 2>/dev/null)" || continue',
@@ -56,8 +55,7 @@ export const CANCEL_COMPUTER_RUN_WORK = [
   "  done",
   "fi",
   "sleep 0.2",
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: shell variable in pkill pattern
-  'pkill -KILL -f "cortexai-agent-hub-background-launch ${computerId} ${runId} " 2>/dev/null || true',
+  `pkill -KILL -f "cortexai-agent-hub-background-launch $computerId $runId " 2>/dev/null || true`,
   "if [ -d /proc ]; then",
   "  for fd in /proc/[0-9]*/fd/*; do",
   '    target="$(readlink "$fd" 2>/dev/null)" || continue',
