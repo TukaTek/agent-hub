@@ -673,6 +673,17 @@ describe("computer resource limits", () => {
     expect(HostConfig.PidsLimit).toBe(2048);
   });
 
+  it("falls back to the defaults when a variable is blank", () => {
+    // .env.example ships these keys blank; a blank value must read as "unset".
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = "";
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_CPUS = "  ";
+    process.env.CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT = "";
+    const { HostConfig } = containerCreateOptions(createInput);
+    expect(HostConfig.Memory).toBe(2 * 1024 ** 3);
+    expect(HostConfig.NanoCpus).toBe(2e9);
+    expect(HostConfig.PidsLimit).toBe(2048);
+  });
+
   it("pins MemorySwap to Memory so the ceiling cannot be swapped past", () => {
     process.env.CORTEXAI_AGENT_HUB_COMPUTER_MEMORY = "1536m";
     const { HostConfig } = containerCreateOptions(createInput);

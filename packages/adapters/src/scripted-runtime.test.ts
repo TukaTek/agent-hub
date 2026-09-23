@@ -49,6 +49,14 @@ describe("inferScript message_bot", () => {
   });
 });
 
+describe("inferScript quote markdown fixture", () => {
+  it("returns the markdown fixture including the caller marker", () => {
+    expect(inferScript("quote markdown fixture md-stamp")[0]?.assistant).toContain(
+      "md-stamp\n1. list-a",
+    );
+  });
+});
+
 describe("inferScript request_secret", () => {
   it("opens a masked api key card via request_secret", () => {
     expect(inferScript("show a secret card for a masked api key")).toEqual([
@@ -69,6 +77,21 @@ describe("inferScript request_secret", () => {
           },
         ],
       },
+    ]);
+  });
+});
+
+describe("inferScript write_file", () => {
+  it("posts the reply after the tool so a routine run still has a durable final", () => {
+    expect(
+      inferScript("write a file in your home called notes/result.txt that says routine-ok"),
+    ).toEqual([
+      {
+        toolCalls: [
+          { name: "write_file", args: { path: "notes/result.txt", content: "routine-ok\n" } },
+        ],
+      },
+      { assistant: "writing that into my home now.", complete: true },
     ]);
   });
 });

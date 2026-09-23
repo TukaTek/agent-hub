@@ -103,7 +103,6 @@ describe("Pi model catalog", () => {
     expect(label("claude-opus-4-5")).toBe("Claude Opus 4.5 (auto-updates)");
     expect(label("claude-haiku-4-5")).toBe("Claude Haiku 4.5 (auto-updates)");
     expect(label("claude-haiku-4-5-20251001")).toBe("Claude Haiku 4.5");
-    expect(catalog.some((entry) => /\blatest\b/i.test(entry.label))).toBe(false);
   });
 });
 

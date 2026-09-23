@@ -1,4 +1,4 @@
-import type { ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import type { AgentToolCompletion, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fakeAgentState = vi.hoisted(() => ({
@@ -254,6 +254,7 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
+import { toolCompletionAuditPayload } from "./executor.js";
 import { maxToolCallsPerTurn, PiAgentRuntime } from "./pi-runtime.js";
 import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 
@@ -697,6 +698,40 @@ describe("Pi connector tool dispatch", () => {
     }
   });
 
+  it("audits a returned connector error after Pi wraps it without changing the model result", async () => {
+    const result = { error: "destination rejected the record" };
+    const audits: Record<string, unknown>[] = [];
+    const onToolCompleted = vi.fn((completion: AgentToolCompletion) => {
+      audits.push(toolCompletionAuditPayload(completion));
+    });
+    for await (const _event of new PiAgentRuntime().run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: "returned-error",
+        prompt: "send the update",
+        instructions: "Use the destination tool.",
+        history: [],
+        tools: [destinationTool],
+        model: { provider: "test", id: "dispatch-test-model" },
+        executeTool: vi.fn(async () => result),
+        onToolCompleted,
+      },
+      { signal: new AbortController().signal },
+    )) {
+      // Exhaust the fake agent's runtime event stream; no provider or database is used.
+    }
+    expect(onToolCompleted).toHaveBeenCalledOnce();
+    expect(fakeAgentState.toolResult).toMatchObject({ details: result });
+    expect(audits).toEqual([
+      expect.objectContaining({
+        name: "destination.write",
+        outcome: "error",
+        error: result.error,
+      }),
+    ]);
+  });
+
   it("makes an unfinished tool turn visible instead of completing silently", async () => {
     fakeAgentState.mode = "silent-continuation";
     fakeAgentState.emitFinalAfterFollowUp = false;
@@ -734,6 +769,51 @@ describe("Pi connector tool dispatch", () => {
       type: "done",
       text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
     });
+  });
+
+  it("allows a silent empty completion after tools when allowSilentEmpty is set", async () => {
+    fakeAgentState.mode = "silent-continuation";
+    fakeAgentState.emitFinalAfterFollowUp = false;
+    const runtime = new PiAgentRuntime();
+    const events: unknown[] = [];
+
+    for await (const event of runtime.run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: "routine-silent-tools",
+        prompt: "If nothing to report, produce no message.",
+        instructions: "Stay silent when the inbox is empty.",
+        history: [],
+        tools: [destinationTool],
+        model: { provider: "test", id: "dispatch-test-model" },
+        allowSilentEmpty: true,
+        executeTool: vi.fn(async () => ({ ok: true })),
+      },
+      {
+        operationId: "routine-silent-tools",
+        traceId: "routine-silent-tools",
+        spaceId: "w",
+        userId: "u",
+        signal: new AbortController().signal,
+      },
+    )) {
+      events.push(event);
+    }
+
+    const followUp = fakeAgentState.followUpMessages[0] as { role: string; content: string };
+    expect(followUp).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("stay silent"),
+      }),
+    );
+    expect(followUp.content).not.toContain("NO_RESPONSE");
+    expect(events).not.toContainEqual({
+      type: "text",
+      text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
+    });
+    expect(events.at(-1)).toEqual({ type: "done" });
   });
 
   it("keeps FYI bot-message wakes silent when the model produces nothing", async () => {
