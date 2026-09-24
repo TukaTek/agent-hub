@@ -4234,6 +4234,7 @@ export function ShellPage() {
               data-testid="computer-chrome"
               className="flex items-center justify-between gap-4 border-b border-sidebar-border px-[18px] py-3.5"
             >
+              {desktopBridge() ? <WindowChrome /> : null}
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <BotAvatar
                   color={computerBot.color}
