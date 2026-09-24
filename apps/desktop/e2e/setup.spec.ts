@@ -85,11 +85,13 @@ test("first run asks whether to use a local or existing instance", async () => {
 
   await expect(setup.getByRole("heading", { name: "Welcome to CortexAI Agent Hub" })).toBeVisible();
   await expect(setup.getByRole("img", { name: "CortexAI logo" })).toBeVisible();
-  await expect(
-    setup
-      .getByRole("img", { name: "CortexAI logo" })
-      .evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      setup
+        .getByRole("img", { name: "CortexAI logo" })
+        .evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
+    )
+    .toBe(true);
   await expect(setup.getByText("Choose which server this app should use.")).toBeVisible();
   await expect(setup.getByText("This computer")).toBeVisible();
   await expect(setup.getByText("Existing instance")).toBeVisible();
