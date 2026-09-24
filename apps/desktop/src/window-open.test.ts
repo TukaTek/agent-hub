@@ -18,11 +18,20 @@ describe("desktop child windows", () => {
     "cortexai-agent-hub-model-oauth",
     "cortexai-agent-hub-mcp-oauth",
     "cortexai-agent-hub-app-connect",
-    "cortexai-agent-hub-plugin-connect",
   ])("keeps the intentional %s flow in an Electron popup", (frameName) => {
     expect(
       shouldOpenInAppPopup(appOrigin, "https://provider.example.com/authorize", frameName),
     ).toBe(true);
+  });
+
+  it("opens hosted integration sign-in in the system browser", () => {
+    expect(
+      shouldOpenInAppPopup(
+        appOrigin,
+        "https://connect.composio.dev/link/ln_example",
+        "cortexai-agent-hub-plugin-connect",
+      ),
+    ).toBe(false);
   });
 
   it("rejects malformed URLs and non-HTTPS third-party targets", () => {

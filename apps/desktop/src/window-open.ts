@@ -1,8 +1,9 @@
+// Hosted integration Connect Links are excluded: provider sign-in pages can fail
+// to render in Electron, and the app polls their completion after browser auth.
 const OAUTH_POPUP_NAMES = new Set([
   "cortexai-agent-hub-app-connect",
   "cortexai-agent-hub-mcp-oauth",
   "cortexai-agent-hub-model-oauth",
-  "cortexai-agent-hub-plugin-connect",
 ]);
 
 export function shouldOpenInAppPopup(

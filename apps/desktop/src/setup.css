@@ -9,8 +9,8 @@ body {
 
 body {
   margin: 0;
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--brand-surface);
+  color: var(--brand-surface-foreground);
   font-family:
     "Segoe UI", -apple-system, BlinkMacSystemFont, Inter, Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
@@ -35,9 +35,15 @@ body {
   -webkit-app-region: drag;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 10px 14px;
   flex: none;
+}
+
+.titlebar-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 html[data-platform="darwin"] .titlebar {
@@ -53,6 +59,7 @@ html[data-platform="darwin"] .titlebar {
 
 .titlebar-quit {
   -webkit-app-region: no-drag;
+  margin-left: auto;
   background: none;
   border: 0;
   color: var(--muted-foreground);
@@ -77,6 +84,13 @@ html[data-platform="darwin"] .titlebar {
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+
+.setup-logo {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  margin-bottom: 20px;
 }
 
 .heading {
@@ -115,7 +129,7 @@ html[data-platform="darwin"] .titlebar {
 }
 
 .choice:has(input:checked) {
-  border-color: var(--primary);
+  border-color: var(--brand);
   background: var(--accent);
 }
 
@@ -126,7 +140,7 @@ html[data-platform="darwin"] .titlebar {
 
 .choice input {
   margin: 0;
-  accent-color: var(--primary);
+  accent-color: var(--brand);
   flex: none;
 }
 
@@ -347,12 +361,12 @@ html[data-platform="darwin"] .titlebar {
 }
 
 .button-primary {
-  background: var(--primary);
-  color: var(--primary-foreground);
+  background: var(--brand);
+  color: var(--brand-foreground);
 }
 
 .button-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--primary) 88%, var(--foreground));
+  background: color-mix(in srgb, var(--brand) 88%, var(--foreground));
 }
 
 .button-secondary {
