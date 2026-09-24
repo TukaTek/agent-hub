@@ -9,6 +9,10 @@ const TOKENS_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../packages/ui-tokens/src/tokens.css",
 );
+const BRAND_ICON = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../web/public/brand/cortexai-icon.png",
+);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
@@ -17,4 +21,5 @@ await mkdir(dist, { recursive: true });
 await Promise.all([
   ...STATIC_FILES.map((file) => copyFile(path.join(root, "src", file), path.join(dist, file))),
   copyFile(TOKENS_FILE, path.join(dist, "tokens.css")),
+  copyFile(BRAND_ICON, path.join(dist, "cortexai-icon.png")),
 ]);
