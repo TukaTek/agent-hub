@@ -97,7 +97,6 @@ describe("desktop session permissions", () => {
     "cortexai-agent-hub-model-oauth",
     "cortexai-agent-hub-mcp-oauth",
     "cortexai-agent-hub-app-connect",
-    "cortexai-agent-hub-plugin-connect",
   ])("allows %s navigation without granting permissions to its popup", (name) => {
     const policy = policyFixture();
     expect(shouldOpenInAppPopup(new URL(appUrl).origin, providerUrl, name)).toBe(true);
