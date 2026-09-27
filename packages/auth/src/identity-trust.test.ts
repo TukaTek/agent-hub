@@ -228,6 +228,25 @@ describe("identity trust through auth endpoints", () => {
     expect(f.messages).toHaveLength(2);
   });
 
+  it("routes every local email to the password step without revealing accounts", async () => {
+    const f = fixture({ delivery: false });
+    expect((await f.signup()).status).toBe(200);
+    const bodies = new Set<string>();
+    for (const email of ["approved@example.test", "missing@example.test"]) {
+      const response = await f.request("/hub/sign-in/continue", { email });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      bodies.add(await response.text());
+    }
+    expect([...bodies]).toEqual(['{"next":"password"}']);
+    expect((await f.signin()).status).toBe(200);
+    const untrusted = fixture({ delivery: false, requestOrigin: "https://untrusted.example.test" });
+    expect(
+      (await untrusted.request("/hub/sign-in/continue", { email: "approved@example.test" }))
+        .status,
+    ).toBe(403);
+  });
+
   it("reserves internal messaging emails across registration, recovery and email changes", async () => {
     const f = fixture();
     for (const email of [

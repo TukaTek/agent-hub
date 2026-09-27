@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
-import { createHubClient, hubAuthFromEnv, hubUserId } from "./hub-client.js";
+import {
+  createHubClient,
+  HubUnsupportedIdpError,
+  hubAuthFromEnv,
+  hubUserId,
+} from "./hub-client.js";
 
 const origin = "https://hub.example.test";
 function setup(overrides: Record<string, unknown> = {}) {
@@ -57,6 +62,29 @@ describe("Hub Workbench-style tenant authentication", () => {
     { config: new Response("denied", { status: 403 }) },
   ])("fails closed for invalid identity or entitlement: %j", async (overrides) => {
     await expect(setup(overrides).client.login("user@example.test", "password")).rejects.toThrow();
+  });
+  it("looks up the sign-in method without calling login", async () => {
+    const native = setup();
+    await expect(native.client.lookup(" user@example.test ")).resolves.toEqual({
+      tenant: "fixture-tenant",
+      native: true,
+    });
+    expect(native.fetcher).toHaveBeenCalledOnce();
+    expect(JSON.parse(native.fetcher.mock.calls[0]![1].body)).toEqual({
+      email: "user@example.test",
+    });
+    const entra = setup({ lookup: { tenantId: "fixture-tenant", idpType: "entra" } });
+    await expect(entra.client.lookup("user@example.test")).resolves.toEqual({
+      tenant: "fixture-tenant",
+      native: false,
+    });
+    await expect(entra.client.login("user@example.test", "password")).rejects.toThrow(
+      HubUnsupportedIdpError,
+    );
+    const pinned = createHubClient({ origin, tenantId: "other" }, setup().fetcher);
+    await expect(pinned.lookup("user@example.test")).rejects.toThrow();
+    const unknown = setup({ lookup: new Response("not found", { status: 404 }) });
+    await expect(unknown.client.lookup("missing@example.test")).rejects.toThrow();
   });
   it("refreshes and revokes using native endpoints", async () => {
     const { client, fetcher } = setup();
