@@ -242,8 +242,7 @@ describe("identity trust through auth endpoints", () => {
     expect((await f.signin()).status).toBe(200);
     const untrusted = fixture({ delivery: false, requestOrigin: "https://untrusted.example.test" });
     expect(
-      (await untrusted.request("/hub/sign-in/continue", { email: "approved@example.test" }))
-        .status,
+      (await untrusted.request("/hub/sign-in/continue", { email: "approved@example.test" })).status,
     ).toBe(403);
   });
 
