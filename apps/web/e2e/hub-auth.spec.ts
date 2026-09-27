@@ -14,7 +14,8 @@ for (const desktop of [false, true]) {
         page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" }),
       ).toBeVisible();
       await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
-      await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+      await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Sign up", exact: true })).toHaveCount(0);
     }
     if (desktop)
@@ -24,6 +25,13 @@ for (const desktop of [false, true]) {
           throw new Error("Hub login must not open a popup");
         };
       });
+    const email = page.getByLabel("Email", { exact: true });
+    const password = page.getByLabel("Password", { exact: true });
+    await page.route("**/api/auth/hub/sign-in/continue", (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toEqual({ email: "user@example.test" });
+      return route.fulfill({ json: { next: "password" } });
+    });
     await page.route("**/api/auth/hub/sign-in", (route) => {
       expect(route.request().method()).toBe("POST");
       expect(route.request().postDataJSON()).toEqual({
@@ -32,18 +40,39 @@ for (const desktop of [false, true]) {
       });
       return route.fulfill({ status: 401, json: { message: "Access denied" } });
     });
-    await page.getByLabel("Email", { exact: true }).fill("user@example.test");
-    await page.getByLabel("Password", { exact: true }).fill("test-password");
-    await page.getByRole("button", { name: "Continue with email" }).click();
+    await email.fill("user@example.test");
+    await captureScreenshot(page, testInfo, "hub-sign-in-email-step");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(password).toBeFocused();
+    await expect(email).toHaveValue("user@example.test");
+    await expect(email).not.toBeEditable();
+    await captureScreenshot(page, testInfo, "hub-sign-in-password-step");
+    await password.fill("test-password");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("alert")).toHaveText("Could not sign in through CortexAI Hub");
     await page.route("**/api/auth/hub/sign-in", (route) =>
       route.fulfill({ status: 400, json: { code: "HUB_IDP_UNSUPPORTED" } }),
     );
-    await page.getByRole("button", { name: "Continue with email" }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("alert")).toHaveText(
       "This organization’s sign-in method is not supported yet",
     );
     await captureScreenshot(page, testInfo, "hub-native-sign-in");
+
+    await page.getByRole("button", { name: "Use a different email" }).click();
+    await expect(password).toHaveCount(0);
+    await expect(email).toBeFocused();
+    await page.route("**/api/auth/hub/sign-in/continue", (route) =>
+      route.fulfill({ json: { next: "sso_unavailable" } }),
+    );
+    await email.fill("entra@example.test");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText(
+      "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.",
+    );
+    await expect(password).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
+    await captureScreenshot(page, testInfo, "hub-sign-in-sso-unavailable");
   });
 }
 
@@ -52,7 +81,7 @@ test("capability network failure blocks authentication", async ({ page }) => {
   await page.route("**/api/auth/capabilities", (route) => route.abort("failed"));
   await page.goto("/sign-in");
   await expect(page.getByRole("alert")).toHaveText("Could not reach the server");
-  await expect(page.getByRole("button", { name: "Continue with email" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
 });
 
 test("local installations retain the welcome and signup flow", async ({ page }) => {

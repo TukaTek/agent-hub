@@ -370,7 +370,7 @@ msgstr ""
 msgid "Allowed once"
 msgstr "Bir kez izin verildi"
 
-#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:350
 msgid "Already have an account?"
 msgstr "Zaten hesabın var mı?"
 
@@ -577,9 +577,9 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
-#: src/pages/Auth.tsx:179
-#: src/pages/Auth.tsx:289
-#: src/pages/Auth.tsx:375
+#: src/pages/Auth.tsx:220
+#: src/pages/Auth.tsx:357
+#: src/pages/Auth.tsx:443
 msgid "Back to sign in"
 msgstr "Oturum açmaya geri dön"
 
@@ -718,7 +718,7 @@ msgstr ""
 msgid "Check in."
 msgstr "Durum bildir."
 
-#: src/pages/Auth.tsx:43
+#: src/pages/Auth.tsx:52
 msgid "Check your email"
 msgstr "E-postanızı kontrol edin"
 
@@ -735,7 +735,7 @@ msgstr ""
 msgid "Choose a bot shape, color, or upload an image"
 msgstr "Bir bot şekli ve rengi seçin veya görüntü yükleyin"
 
-#: src/pages/Auth.tsx:336
+#: src/pages/Auth.tsx:404
 msgid "Choose a new password"
 msgstr "Yeni bir parola seçin"
 
@@ -919,7 +919,7 @@ msgid "Confirm delete"
 msgstr "Silmeyi onayla"
 
 #: src/pages/AccountSettingsOverlay.tsx:316
-#: src/pages/Auth.tsx:356
+#: src/pages/Auth.tsx:424
 msgid "Confirm password"
 msgstr "Parolayı doğrulayın"
 
@@ -1013,6 +1013,7 @@ msgid "Context limit"
 msgstr "Bağlam sınırı"
 
 #: src/components/integrations/IntegrationSetup.tsx:364
+#: src/pages/Auth.tsx:329
 #: src/pages/Onboarding.tsx:669
 msgid "Continue"
 msgstr "Devam"
@@ -1020,10 +1021,6 @@ msgstr "Devam"
 #: src/components/ComputerUpdateProgress.tsx:194
 msgid "Continue in Background"
 msgstr ""
-
-#: src/pages/Auth.tsx:264
-msgid "Continue with email"
-msgstr "E-posta ile devam et"
 
 #: src/pages/Shell.tsx:5691
 msgid "Copy"
@@ -1095,7 +1092,8 @@ msgstr "Bu ses sağlayıcısı bağlanamadı"
 msgid "Could not connect to the computer screen"
 msgstr ""
 
-#: src/pages/Auth.tsx:132
+#: src/pages/Auth.tsx:122
+#: src/pages/Auth.tsx:173
 #: src/pages/Shell.tsx:2522
 msgid "Could not continue"
 msgstr "Devam edilemedi"
@@ -1233,9 +1231,9 @@ msgid "Could not play a test clip"
 msgstr "Deneme sesi çalınamadı"
 
 #: src/pages/AccountSettingsOverlay.tsx:281
-#: src/pages/Auth.tsx:148
-#: src/pages/Auth.tsx:163
-#: src/pages/Auth.tsx:329
+#: src/pages/Auth.tsx:189
+#: src/pages/Auth.tsx:204
+#: src/pages/Auth.tsx:397
 msgid "Could not reach the server"
 msgstr "Sunucuya ulaşılamadı"
 
@@ -1272,7 +1270,7 @@ msgstr "Bölüm yeniden adlandırılamadı"
 msgid "Could not render chart"
 msgstr "Grafik çizilemedi"
 
-#: src/pages/Auth.tsx:324
+#: src/pages/Auth.tsx:392
 msgid "Could not reset password"
 msgstr "Parola sıfırlanamadı"
 
@@ -1331,7 +1329,7 @@ msgstr "Bu seçim kaydedilemedi"
 msgid "Could not search catalog"
 msgstr ""
 
-#: src/pages/Auth.tsx:117
+#: src/pages/Auth.tsx:158
 msgid "Could not send reset email"
 msgstr "Sıfırlama e-postası gönderilemedi"
 
@@ -1339,7 +1337,7 @@ msgstr "Sıfırlama e-postası gönderilemedi"
 msgid "Could not send that"
 msgstr "Gönderilemedi"
 
-#: src/pages/Auth.tsx:99
+#: src/pages/Auth.tsx:140
 msgid "Could not sign in through CortexAI Hub"
 msgstr "CortexAI Hub üzerinden oturum açılamadı"
 
@@ -1402,7 +1400,7 @@ msgstr "Oluştur"
 msgid "Create a section and move {0} into it."
 msgstr "Bir bölüm oluştur ve {0} botunu içine taşı."
 
-#: src/pages/Auth.tsx:268
+#: src/pages/Auth.tsx:335
 msgid "Create account"
 msgstr "Hesap oluştur"
 
@@ -1433,7 +1431,7 @@ msgstr ""
 msgid "Create space"
 msgstr ""
 
-#: src/pages/Auth.tsx:47
+#: src/pages/Auth.tsx:56
 msgid "Create your CortexAI Agent Hub"
 msgstr "CortexAI Agent Hub hesabını oluştur"
 
@@ -1638,7 +1636,7 @@ msgstr "Docker"
 msgid "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
 msgstr "Docker, ek güvenlik için bilgisayarına erişimi sınırlar. {hostLabel} kullanıldığında botlar yerel dosyaların ve araçlarınla çalışabilir."
 
-#: src/pages/Auth.tsx:275
+#: src/pages/Auth.tsx:343
 msgid "Don’t have an account?"
 msgstr "Hesabın yok mu?"
 
@@ -1698,7 +1696,7 @@ msgstr "Önce düzenle"
 msgid "Edit Profile"
 msgstr "Profili Düzenle"
 
-#: src/pages/Auth.tsx:202
+#: src/pages/Auth.tsx:243
 msgid "Email"
 msgstr "E-posta"
 
@@ -1855,7 +1853,7 @@ msgstr "MCP bağlantısı tamamlanıyor…"
 msgid "Flag unexpected actions"
 msgstr ""
 
-#: src/pages/Auth.tsx:249
+#: src/pages/Auth.tsx:313
 msgid "Forgot password?"
 msgstr "Parolanızı mı unuttunuz?"
 
@@ -1946,7 +1944,7 @@ msgstr "Merhaba, yanıtları sesli okuduğumda böyle duyulacağım."
 msgid "Hide bots"
 msgstr ""
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Hide password"
 msgstr ""
 
@@ -2152,7 +2150,7 @@ msgid "Loading voice providers…"
 msgstr "Ses sağlayıcıları yükleniyor…"
 
 #: src/App.tsx:62
-#: src/pages/Auth.tsx:167
+#: src/pages/Auth.tsx:208
 #: src/pages/IntegrationSetup.tsx:72
 #: src/pages/Onboarding.tsx:379
 #: src/pages/PeerMessagesOverlay.tsx:105
@@ -2316,6 +2314,10 @@ msgstr ""
 msgid "Microphone failed"
 msgstr "Mikrofon hatası"
 
+#: src/pages/Auth.tsx:273
+msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx:568
 #: src/pages/Onboarding.tsx:508
 #: src/pages/shell/bot-panel.tsx:645
@@ -2402,7 +2404,7 @@ msgid "Move to"
 msgstr "Taşı"
 
 #: src/components/teach/SkillDraftCard.tsx:79
-#: src/pages/Auth.tsx:187
+#: src/pages/Auth.tsx:228
 #: src/pages/GroupPanel.tsx:124
 #: src/pages/GroupPanel.tsx:217
 #: src/pages/RoutineEditor.tsx:310
@@ -2451,7 +2453,7 @@ msgid "New open-work item"
 msgstr "Yeni açık iş öğesi"
 
 #: src/pages/AccountSettingsOverlay.tsx:310
-#: src/pages/Auth.tsx:350
+#: src/pages/Auth.tsx:418
 msgid "New password"
 msgstr "Yeni parola"
 
@@ -2718,22 +2720,22 @@ msgstr "Beklet"
 
 #: src/components/AskCard.tsx:47
 #: src/pages/AccountSettingsOverlay.tsx:290
-#: src/pages/Auth.tsx:219
-#: src/pages/Auth.tsx:228
+#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:292
 msgid "Password"
 msgstr "Parola"
 
-#: src/pages/Auth.tsx:109
+#: src/pages/Auth.tsx:150
 msgid "Password recovery is not configured for this server"
 msgstr "Bu sunucu için parola kurtarma yapılandırılmamış"
 
 #: src/pages/AccountSettingsOverlay.tsx:335
-#: src/pages/Auth.tsx:340
+#: src/pages/Auth.tsx:408
 msgid "Password updated"
 msgstr "Parola güncellendi"
 
 #: src/pages/AccountSettingsOverlay.tsx:260
-#: src/pages/Auth.tsx:316
+#: src/pages/Auth.tsx:384
 msgid "Passwords do not match"
 msgstr "Parolalar eşleşmiyor"
 
@@ -3023,11 +3025,11 @@ msgstr ""
 msgid "Reset computer?"
 msgstr ""
 
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:440
 msgid "Reset password"
 msgstr "Parolayı sıfırla"
 
-#: src/pages/Auth.tsx:49
+#: src/pages/Auth.tsx:58
 msgid "Reset your password"
 msgstr "Parolanızı sıfırlayın"
 
@@ -3252,7 +3254,7 @@ msgstr "Yanıtı gönder"
 msgid "Send it"
 msgstr "Gönder"
 
-#: src/pages/Auth.tsx:266
+#: src/pages/Auth.tsx:333
 msgid "Send reset link"
 msgstr "Sıfırlama bağlantısı gönder"
 
@@ -3337,7 +3339,7 @@ msgstr ""
 msgid "Show more"
 msgstr "Daha fazla göster"
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Show password"
 msgstr ""
 
@@ -3346,18 +3348,19 @@ msgid "Show settings"
 msgstr "Ayarları göster"
 
 #: src/lib/localized-provider-hint.ts:7
-#: src/pages/Auth.tsx:284
-#: src/pages/Auth.tsx:343
+#: src/pages/Auth.tsx:331
+#: src/pages/Auth.tsx:352
+#: src/pages/Auth.tsx:411
 #: src/pages/ModelSettingsOverlay.tsx:733
 #: src/pages/Onboarding.tsx:187
 msgid "Sign in"
 msgstr "Oturum aç"
 
-#: src/pages/Auth.tsx:45
+#: src/pages/Auth.tsx:54
 msgid "Sign in to CortexAI Agent Hub"
 msgstr "CortexAI Agent Hub'da oturum aç"
 
-#: src/pages/Auth.tsx:277
+#: src/pages/Auth.tsx:345
 #: src/pages/Welcome.tsx:39
 msgid "Sign up"
 msgstr "Kaydol"
@@ -3591,7 +3594,7 @@ msgstr "Bu dosya geçerli bir UTF-8 Markdown değil."
 msgid "this Mac"
 msgstr "bu Mac"
 
-#: src/pages/Auth.tsx:98
+#: src/pages/Auth.tsx:139
 msgid "This organization’s sign-in method is not supported yet"
 msgstr ""
 
@@ -3599,7 +3602,7 @@ msgstr ""
 msgid "This permanently removes every message and stops current work. The chat remains available."
 msgstr ""
 
-#: src/pages/Auth.tsx:308
+#: src/pages/Auth.tsx:376
 msgid "This reset link is invalid or expired"
 msgstr "Bu sıfırlama bağlantısı geçersiz veya süresi dolmuş"
 
@@ -3750,6 +3753,10 @@ msgstr "Kullanım"
 msgid "Use {hostLabel}"
 msgstr "{hostLabel} kullan"
 
+#: src/pages/Auth.tsx:266
+msgid "Use a different email"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx:546
 #: src/pages/Onboarding.tsx:491
 msgid "Use a found model"
@@ -3847,8 +3854,8 @@ msgstr "Ne zaman kullanılır"
 msgid "Where should bots run?"
 msgstr "Botlar nerede çalışsın?"
 
-#: src/pages/Auth.tsx:262
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:327
+#: src/pages/Auth.tsx:440
 #: src/pages/CallView.tsx:262
 msgid "Working…"
 msgstr "Çalışıyor…"
@@ -3874,11 +3881,11 @@ msgstr "Bu pencereyi kapatabilirsin."
 msgid "You have control"
 msgstr "Kontrol sende"
 
-#: src/pages/Auth.tsx:210
+#: src/pages/Auth.tsx:252
 msgid "Your email address"
 msgstr "E-posta adresin"
 
-#: src/pages/Auth.tsx:195
+#: src/pages/Auth.tsx:236
 msgid "Your name"
 msgstr "Adın"
 

@@ -370,7 +370,7 @@ msgstr ""
 msgid "Allowed once"
 msgstr "Разрешено один раз"
 
-#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:350
 msgid "Already have an account?"
 msgstr "У вас уже есть аккаунт?"
 
@@ -577,9 +577,9 @@ msgstr "Аватары"
 msgid "Back"
 msgstr "Назад"
 
-#: src/pages/Auth.tsx:179
-#: src/pages/Auth.tsx:289
-#: src/pages/Auth.tsx:375
+#: src/pages/Auth.tsx:220
+#: src/pages/Auth.tsx:357
+#: src/pages/Auth.tsx:443
 msgid "Back to sign in"
 msgstr "Вернуться ко входу"
 
@@ -718,7 +718,7 @@ msgstr "Проверьте наличие обновлений"
 msgid "Check in."
 msgstr "Проверить."
 
-#: src/pages/Auth.tsx:43
+#: src/pages/Auth.tsx:52
 msgid "Check your email"
 msgstr "Проверьте свою электронную почту"
 
@@ -735,7 +735,7 @@ msgstr "В checkout есть локальные изменения. Очисти
 msgid "Choose a bot shape, color, or upload an image"
 msgstr "Выберите форму и цвет бота или загрузите изображение"
 
-#: src/pages/Auth.tsx:336
+#: src/pages/Auth.tsx:404
 msgid "Choose a new password"
 msgstr "Выберите новый пароль"
 
@@ -919,7 +919,7 @@ msgid "Confirm delete"
 msgstr "Подтвердить удаление"
 
 #: src/pages/AccountSettingsOverlay.tsx:316
-#: src/pages/Auth.tsx:356
+#: src/pages/Auth.tsx:424
 msgid "Confirm password"
 msgstr "Подтвердите пароль"
 
@@ -1013,6 +1013,7 @@ msgid "Context limit"
 msgstr ""
 
 #: src/components/integrations/IntegrationSetup.tsx:364
+#: src/pages/Auth.tsx:329
 #: src/pages/Onboarding.tsx:669
 msgid "Continue"
 msgstr "Продолжить"
@@ -1020,10 +1021,6 @@ msgstr "Продолжить"
 #: src/components/ComputerUpdateProgress.tsx:194
 msgid "Continue in Background"
 msgstr "Продолжить в фоне"
-
-#: src/pages/Auth.tsx:264
-msgid "Continue with email"
-msgstr "Продолжить по электронной почте"
 
 #: src/pages/Shell.tsx:5691
 msgid "Copy"
@@ -1095,7 +1092,8 @@ msgstr "Не удалось подключить этого голосового
 msgid "Could not connect to the computer screen"
 msgstr "Не удалось подключиться к экрану компьютера"
 
-#: src/pages/Auth.tsx:132
+#: src/pages/Auth.tsx:122
+#: src/pages/Auth.tsx:173
 #: src/pages/Shell.tsx:2522
 msgid "Could not continue"
 msgstr "Не удалось продолжить"
@@ -1233,9 +1231,9 @@ msgid "Could not play a test clip"
 msgstr "Не удалось воспроизвести тестовый клип."
 
 #: src/pages/AccountSettingsOverlay.tsx:281
-#: src/pages/Auth.tsx:148
-#: src/pages/Auth.tsx:163
-#: src/pages/Auth.tsx:329
+#: src/pages/Auth.tsx:189
+#: src/pages/Auth.tsx:204
+#: src/pages/Auth.tsx:397
 msgid "Could not reach the server"
 msgstr "Не удалось связаться с сервером"
 
@@ -1272,7 +1270,7 @@ msgstr "Не удалось переименовать раздел"
 msgid "Could not render chart"
 msgstr "Не удалось отобразить диаграмму"
 
-#: src/pages/Auth.tsx:324
+#: src/pages/Auth.tsx:392
 msgid "Could not reset password"
 msgstr "Не удалось сбросить пароль"
 
@@ -1331,7 +1329,7 @@ msgstr "Не удалось сохранить этот выбор."
 msgid "Could not search catalog"
 msgstr "Не удалось выполнить поиск по каталогу"
 
-#: src/pages/Auth.tsx:117
+#: src/pages/Auth.tsx:158
 msgid "Could not send reset email"
 msgstr "Не удалось отправить электронное письмо для сброса"
 
@@ -1339,7 +1337,7 @@ msgstr "Не удалось отправить электронное письм
 msgid "Could not send that"
 msgstr "Не удалось отправить это"
 
-#: src/pages/Auth.tsx:99
+#: src/pages/Auth.tsx:140
 msgid "Could not sign in through CortexAI Hub"
 msgstr ""
 
@@ -1402,7 +1400,7 @@ msgstr "Создать"
 msgid "Create a section and move {0} into it."
 msgstr "Создайте раздел и переместите в него {0}."
 
-#: src/pages/Auth.tsx:268
+#: src/pages/Auth.tsx:335
 msgid "Create account"
 msgstr "Зарегистрироваться"
 
@@ -1433,7 +1431,7 @@ msgstr "Создать задачу"
 msgid "Create space"
 msgstr "Создайте пространство"
 
-#: src/pages/Auth.tsx:47
+#: src/pages/Auth.tsx:56
 msgid "Create your CortexAI Agent Hub"
 msgstr "Создайте свой CortexAI Agent Hub"
 
@@ -1638,7 +1636,7 @@ msgstr "Docker"
 msgid "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
 msgstr "Docker ограничивает доступ к вашему компьютеру для дополнительной безопасности. С помощью {hostLabel} боты могут работать с локальными файлами и инструментами."
 
-#: src/pages/Auth.tsx:275
+#: src/pages/Auth.tsx:343
 msgid "Don’t have an account?"
 msgstr "У вас нет учетной записи?"
 
@@ -1698,7 +1696,7 @@ msgstr "Сначала отредактируйте"
 msgid "Edit Profile"
 msgstr "Редактировать профиль"
 
-#: src/pages/Auth.tsx:202
+#: src/pages/Auth.tsx:243
 msgid "Email"
 msgstr "Электронная почта"
 
@@ -1855,7 +1853,7 @@ msgstr "Завершение подключения MCP…"
 msgid "Flag unexpected actions"
 msgstr "Пометить неожиданные действия"
 
-#: src/pages/Auth.tsx:249
+#: src/pages/Auth.tsx:313
 msgid "Forgot password?"
 msgstr "Забыли пароль?"
 
@@ -1946,7 +1944,7 @@ msgstr "Привет, вот как я буду звучать, когда бу�
 msgid "Hide bots"
 msgstr "Скрыть ботов"
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Hide password"
 msgstr "Скрыть пароль"
 
@@ -2152,7 +2150,7 @@ msgid "Loading voice providers…"
 msgstr "Загрузка поставщиков голосовой связи…"
 
 #: src/App.tsx:62
-#: src/pages/Auth.tsx:167
+#: src/pages/Auth.tsx:208
 #: src/pages/IntegrationSetup.tsx:72
 #: src/pages/Onboarding.tsx:379
 #: src/pages/PeerMessagesOverlay.tsx:105
@@ -2316,6 +2314,10 @@ msgstr "Обмен сообщениями"
 msgid "Microphone failed"
 msgstr "Ошибка микрофона"
 
+#: src/pages/Auth.tsx:273
+msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx:568
 #: src/pages/Onboarding.tsx:508
 #: src/pages/shell/bot-panel.tsx:645
@@ -2402,7 +2404,7 @@ msgid "Move to"
 msgstr "Переместить в"
 
 #: src/components/teach/SkillDraftCard.tsx:79
-#: src/pages/Auth.tsx:187
+#: src/pages/Auth.tsx:228
 #: src/pages/GroupPanel.tsx:124
 #: src/pages/GroupPanel.tsx:217
 #: src/pages/RoutineEditor.tsx:310
@@ -2451,7 +2453,7 @@ msgid "New open-work item"
 msgstr "Новая задача"
 
 #: src/pages/AccountSettingsOverlay.tsx:310
-#: src/pages/Auth.tsx:350
+#: src/pages/Auth.tsx:418
 msgid "New password"
 msgstr "Новый пароль"
 
@@ -2718,22 +2720,22 @@ msgstr "Приостановить"
 
 #: src/components/AskCard.tsx:47
 #: src/pages/AccountSettingsOverlay.tsx:290
-#: src/pages/Auth.tsx:219
-#: src/pages/Auth.tsx:228
+#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:292
 msgid "Password"
 msgstr "Пароль"
 
-#: src/pages/Auth.tsx:109
+#: src/pages/Auth.tsx:150
 msgid "Password recovery is not configured for this server"
 msgstr "Восстановление пароля не настроено для этого сервера"
 
 #: src/pages/AccountSettingsOverlay.tsx:335
-#: src/pages/Auth.tsx:340
+#: src/pages/Auth.tsx:408
 msgid "Password updated"
 msgstr "Пароль обновлён"
 
 #: src/pages/AccountSettingsOverlay.tsx:260
-#: src/pages/Auth.tsx:316
+#: src/pages/Auth.tsx:384
 msgid "Passwords do not match"
 msgstr "Пароли не совпадают"
 
@@ -3023,11 +3025,11 @@ msgstr "Сбросить компьютер"
 msgid "Reset computer?"
 msgstr "Сбросить компьютер?"
 
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:440
 msgid "Reset password"
 msgstr "Сбросить пароль"
 
-#: src/pages/Auth.tsx:49
+#: src/pages/Auth.tsx:58
 msgid "Reset your password"
 msgstr "Сбросить пароль"
 
@@ -3252,7 +3254,7 @@ msgstr "Отправить ответ"
 msgid "Send it"
 msgstr "Отправить"
 
-#: src/pages/Auth.tsx:266
+#: src/pages/Auth.tsx:333
 msgid "Send reset link"
 msgstr "Отправить ссылку для сброса"
 
@@ -3337,7 +3339,7 @@ msgstr ""
 msgid "Show more"
 msgstr "Показать ещё"
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Show password"
 msgstr "Показать пароль"
 
@@ -3346,18 +3348,19 @@ msgid "Show settings"
 msgstr "Показать настройки"
 
 #: src/lib/localized-provider-hint.ts:7
-#: src/pages/Auth.tsx:284
-#: src/pages/Auth.tsx:343
+#: src/pages/Auth.tsx:331
+#: src/pages/Auth.tsx:352
+#: src/pages/Auth.tsx:411
 #: src/pages/ModelSettingsOverlay.tsx:733
 #: src/pages/Onboarding.tsx:187
 msgid "Sign in"
 msgstr "Войти"
 
-#: src/pages/Auth.tsx:45
+#: src/pages/Auth.tsx:54
 msgid "Sign in to CortexAI Agent Hub"
 msgstr "Войти в CortexAI Agent Hub"
 
-#: src/pages/Auth.tsx:277
+#: src/pages/Auth.tsx:345
 #: src/pages/Welcome.tsx:39
 msgid "Sign up"
 msgstr "Зарегистрироваться"
@@ -3591,7 +3594,7 @@ msgstr "Этот файл недействителен в формате UTF-8 M
 msgid "this Mac"
 msgstr "этот Mac"
 
-#: src/pages/Auth.tsx:98
+#: src/pages/Auth.tsx:139
 msgid "This organization’s sign-in method is not supported yet"
 msgstr ""
 
@@ -3599,7 +3602,7 @@ msgstr ""
 msgid "This permanently removes every message and stops current work. The chat remains available."
 msgstr "Это навсегда удалит все сообщения и остановит текущую работу. Чат останется доступным."
 
-#: src/pages/Auth.tsx:308
+#: src/pages/Auth.tsx:376
 msgid "This reset link is invalid or expired"
 msgstr "Эта ссылка для сброса недействительна или срок ее действия истек."
 
@@ -3750,6 +3753,10 @@ msgstr "Использование"
 msgid "Use {hostLabel}"
 msgstr "Используйте {hostLabel}"
 
+#: src/pages/Auth.tsx:266
+msgid "Use a different email"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx:546
 #: src/pages/Onboarding.tsx:491
 msgid "Use a found model"
@@ -3847,8 +3854,8 @@ msgstr "Когда использовать"
 msgid "Where should bots run?"
 msgstr "Где должны работать боты?"
 
-#: src/pages/Auth.tsx:262
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:327
+#: src/pages/Auth.tsx:440
 #: src/pages/CallView.tsx:262
 msgid "Working…"
 msgstr "Выполняется…"
@@ -3874,11 +3881,11 @@ msgstr "Вы можете закрыть это окно."
 msgid "You have control"
 msgstr "Вы управляете"
 
-#: src/pages/Auth.tsx:210
+#: src/pages/Auth.tsx:252
 msgid "Your email address"
 msgstr "Ваш адрес электронной почты"
 
-#: src/pages/Auth.tsx:195
+#: src/pages/Auth.tsx:236
 msgid "Your name"
 msgstr "Ваше имя"
 

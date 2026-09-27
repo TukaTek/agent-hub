@@ -370,7 +370,7 @@ msgstr "Allow writing"
 msgid "Allowed once"
 msgstr "Allowed once"
 
-#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:350
 msgid "Already have an account?"
 msgstr "Already have an account?"
 
@@ -577,9 +577,9 @@ msgstr "Avatars"
 msgid "Back"
 msgstr "Back"
 
-#: src/pages/Auth.tsx:179
-#: src/pages/Auth.tsx:289
-#: src/pages/Auth.tsx:375
+#: src/pages/Auth.tsx:220
+#: src/pages/Auth.tsx:357
+#: src/pages/Auth.tsx:443
 msgid "Back to sign in"
 msgstr "Back to sign in"
 
@@ -718,7 +718,7 @@ msgstr "Check for updates"
 msgid "Check in."
 msgstr "Check in."
 
-#: src/pages/Auth.tsx:43
+#: src/pages/Auth.tsx:52
 msgid "Check your email"
 msgstr "Check your email"
 
@@ -735,7 +735,7 @@ msgstr "Checkout has local changes. Clean it before updating."
 msgid "Choose a bot shape, color, or upload an image"
 msgstr "Choose a bot shape, color, or upload an image"
 
-#: src/pages/Auth.tsx:336
+#: src/pages/Auth.tsx:404
 msgid "Choose a new password"
 msgstr "Choose a new password"
 
@@ -919,7 +919,7 @@ msgid "Confirm delete"
 msgstr "Confirm delete"
 
 #: src/pages/AccountSettingsOverlay.tsx:316
-#: src/pages/Auth.tsx:356
+#: src/pages/Auth.tsx:424
 msgid "Confirm password"
 msgstr "Confirm password"
 
@@ -1013,6 +1013,7 @@ msgid "Context limit"
 msgstr "Context limit"
 
 #: src/components/integrations/IntegrationSetup.tsx:364
+#: src/pages/Auth.tsx:329
 #: src/pages/Onboarding.tsx:669
 msgid "Continue"
 msgstr "Continue"
@@ -1020,10 +1021,6 @@ msgstr "Continue"
 #: src/components/ComputerUpdateProgress.tsx:194
 msgid "Continue in Background"
 msgstr "Continue in Background"
-
-#: src/pages/Auth.tsx:264
-msgid "Continue with email"
-msgstr "Continue with email"
 
 #: src/pages/Shell.tsx:5691
 msgid "Copy"
@@ -1095,7 +1092,8 @@ msgstr "Could not connect this voice provider"
 msgid "Could not connect to the computer screen"
 msgstr "Could not connect to the computer screen"
 
-#: src/pages/Auth.tsx:132
+#: src/pages/Auth.tsx:122
+#: src/pages/Auth.tsx:173
 #: src/pages/Shell.tsx:2522
 msgid "Could not continue"
 msgstr "Could not continue"
@@ -1233,9 +1231,9 @@ msgid "Could not play a test clip"
 msgstr "Could not play a test clip"
 
 #: src/pages/AccountSettingsOverlay.tsx:281
-#: src/pages/Auth.tsx:148
-#: src/pages/Auth.tsx:163
-#: src/pages/Auth.tsx:329
+#: src/pages/Auth.tsx:189
+#: src/pages/Auth.tsx:204
+#: src/pages/Auth.tsx:397
 msgid "Could not reach the server"
 msgstr "Could not reach the server"
 
@@ -1272,7 +1270,7 @@ msgstr "Could not rename section"
 msgid "Could not render chart"
 msgstr "Could not render chart"
 
-#: src/pages/Auth.tsx:324
+#: src/pages/Auth.tsx:392
 msgid "Could not reset password"
 msgstr "Could not reset password"
 
@@ -1331,7 +1329,7 @@ msgstr "Could not save this choice"
 msgid "Could not search catalog"
 msgstr "Could not search catalog"
 
-#: src/pages/Auth.tsx:117
+#: src/pages/Auth.tsx:158
 msgid "Could not send reset email"
 msgstr "Could not send reset email"
 
@@ -1339,7 +1337,7 @@ msgstr "Could not send reset email"
 msgid "Could not send that"
 msgstr "Could not send that"
 
-#: src/pages/Auth.tsx:99
+#: src/pages/Auth.tsx:140
 msgid "Could not sign in through CortexAI Hub"
 msgstr "Could not sign in through CortexAI Hub"
 
@@ -1402,7 +1400,7 @@ msgstr "Create"
 msgid "Create a section and move {0} into it."
 msgstr "Create a section and move {0} into it."
 
-#: src/pages/Auth.tsx:268
+#: src/pages/Auth.tsx:335
 msgid "Create account"
 msgstr "Create account"
 
@@ -1433,7 +1431,7 @@ msgstr "Create Routine"
 msgid "Create space"
 msgstr "Create space"
 
-#: src/pages/Auth.tsx:47
+#: src/pages/Auth.tsx:56
 msgid "Create your CortexAI Agent Hub"
 msgstr "Create your CortexAI Agent Hub"
 
@@ -1638,7 +1636,7 @@ msgstr "Docker"
 msgid "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
 msgstr "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
 
-#: src/pages/Auth.tsx:275
+#: src/pages/Auth.tsx:343
 msgid "Don’t have an account?"
 msgstr "Don’t have an account?"
 
@@ -1698,7 +1696,7 @@ msgstr "Edit first"
 msgid "Edit Profile"
 msgstr "Edit Profile"
 
-#: src/pages/Auth.tsx:202
+#: src/pages/Auth.tsx:243
 msgid "Email"
 msgstr "Email"
 
@@ -1855,7 +1853,7 @@ msgstr "Finishing MCP connection…"
 msgid "Flag unexpected actions"
 msgstr "Flag unexpected actions"
 
-#: src/pages/Auth.tsx:249
+#: src/pages/Auth.tsx:313
 msgid "Forgot password?"
 msgstr "Forgot password?"
 
@@ -1946,7 +1944,7 @@ msgstr "Hi, this is how I'll sound when I read replies out loud."
 msgid "Hide bots"
 msgstr "Hide bots"
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Hide password"
 msgstr "Hide password"
 
@@ -2152,7 +2150,7 @@ msgid "Loading voice providers…"
 msgstr "Loading voice providers…"
 
 #: src/App.tsx:62
-#: src/pages/Auth.tsx:167
+#: src/pages/Auth.tsx:208
 #: src/pages/IntegrationSetup.tsx:72
 #: src/pages/Onboarding.tsx:379
 #: src/pages/PeerMessagesOverlay.tsx:105
@@ -2316,6 +2314,10 @@ msgstr "Messaging"
 msgid "Microphone failed"
 msgstr "Microphone failed"
 
+#: src/pages/Auth.tsx:273
+msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+
 #: src/pages/ModelSettingsOverlay.tsx:568
 #: src/pages/Onboarding.tsx:508
 #: src/pages/shell/bot-panel.tsx:645
@@ -2402,7 +2404,7 @@ msgid "Move to"
 msgstr "Move to"
 
 #: src/components/teach/SkillDraftCard.tsx:79
-#: src/pages/Auth.tsx:187
+#: src/pages/Auth.tsx:228
 #: src/pages/GroupPanel.tsx:124
 #: src/pages/GroupPanel.tsx:217
 #: src/pages/RoutineEditor.tsx:310
@@ -2451,7 +2453,7 @@ msgid "New open-work item"
 msgstr "New open-work item"
 
 #: src/pages/AccountSettingsOverlay.tsx:310
-#: src/pages/Auth.tsx:350
+#: src/pages/Auth.tsx:418
 msgid "New password"
 msgstr "New password"
 
@@ -2718,22 +2720,22 @@ msgstr "Park"
 
 #: src/components/AskCard.tsx:47
 #: src/pages/AccountSettingsOverlay.tsx:290
-#: src/pages/Auth.tsx:219
-#: src/pages/Auth.tsx:228
+#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:292
 msgid "Password"
 msgstr "Password"
 
-#: src/pages/Auth.tsx:109
+#: src/pages/Auth.tsx:150
 msgid "Password recovery is not configured for this server"
 msgstr "Password recovery is not configured for this server"
 
 #: src/pages/AccountSettingsOverlay.tsx:335
-#: src/pages/Auth.tsx:340
+#: src/pages/Auth.tsx:408
 msgid "Password updated"
 msgstr "Password updated"
 
 #: src/pages/AccountSettingsOverlay.tsx:260
-#: src/pages/Auth.tsx:316
+#: src/pages/Auth.tsx:384
 msgid "Passwords do not match"
 msgstr "Passwords do not match"
 
@@ -3023,11 +3025,11 @@ msgstr "Reset computer"
 msgid "Reset computer?"
 msgstr "Reset computer?"
 
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:440
 msgid "Reset password"
 msgstr "Reset password"
 
-#: src/pages/Auth.tsx:49
+#: src/pages/Auth.tsx:58
 msgid "Reset your password"
 msgstr "Reset your password"
 
@@ -3252,7 +3254,7 @@ msgstr "Send answer"
 msgid "Send it"
 msgstr "Send it"
 
-#: src/pages/Auth.tsx:266
+#: src/pages/Auth.tsx:333
 msgid "Send reset link"
 msgstr "Send reset link"
 
@@ -3337,7 +3339,7 @@ msgstr "Show computer"
 msgid "Show more"
 msgstr "Show more"
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Show password"
 msgstr "Show password"
 
@@ -3346,18 +3348,19 @@ msgid "Show settings"
 msgstr "Show settings"
 
 #: src/lib/localized-provider-hint.ts:7
-#: src/pages/Auth.tsx:284
-#: src/pages/Auth.tsx:343
+#: src/pages/Auth.tsx:331
+#: src/pages/Auth.tsx:352
+#: src/pages/Auth.tsx:411
 #: src/pages/ModelSettingsOverlay.tsx:733
 #: src/pages/Onboarding.tsx:187
 msgid "Sign in"
 msgstr "Sign in"
 
-#: src/pages/Auth.tsx:45
+#: src/pages/Auth.tsx:54
 msgid "Sign in to CortexAI Agent Hub"
 msgstr "Sign in to CortexAI Agent Hub"
 
-#: src/pages/Auth.tsx:277
+#: src/pages/Auth.tsx:345
 #: src/pages/Welcome.tsx:39
 msgid "Sign up"
 msgstr "Sign up"
@@ -3591,7 +3594,7 @@ msgstr "This file is not valid UTF-8 Markdown."
 msgid "this Mac"
 msgstr "this Mac"
 
-#: src/pages/Auth.tsx:98
+#: src/pages/Auth.tsx:139
 msgid "This organization’s sign-in method is not supported yet"
 msgstr ""
 
@@ -3599,7 +3602,7 @@ msgstr ""
 msgid "This permanently removes every message and stops current work. The chat remains available."
 msgstr "This permanently removes every message and stops current work. The chat remains available."
 
-#: src/pages/Auth.tsx:308
+#: src/pages/Auth.tsx:376
 msgid "This reset link is invalid or expired"
 msgstr "This reset link is invalid or expired"
 
@@ -3750,6 +3753,10 @@ msgstr "Usage"
 msgid "Use {hostLabel}"
 msgstr "Use {hostLabel}"
 
+#: src/pages/Auth.tsx:266
+msgid "Use a different email"
+msgstr "Use a different email"
+
 #: src/pages/ModelSettingsOverlay.tsx:546
 #: src/pages/Onboarding.tsx:491
 msgid "Use a found model"
@@ -3847,8 +3854,8 @@ msgstr "When to use"
 msgid "Where should bots run?"
 msgstr "Where should bots run?"
 
-#: src/pages/Auth.tsx:262
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:327
+#: src/pages/Auth.tsx:440
 #: src/pages/CallView.tsx:262
 msgid "Working…"
 msgstr "Working…"
@@ -3874,11 +3881,11 @@ msgstr "You can close this window."
 msgid "You have control"
 msgstr "You have control"
 
-#: src/pages/Auth.tsx:210
+#: src/pages/Auth.tsx:252
 msgid "Your email address"
 msgstr "Your email address"
 
-#: src/pages/Auth.tsx:195
+#: src/pages/Auth.tsx:236
 msgid "Your name"
 msgstr "Your name"
 

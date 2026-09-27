@@ -370,7 +370,7 @@ msgstr ""
 msgid "Allowed once"
 msgstr "已允许一次"
 
-#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:350
 msgid "Already have an account?"
 msgstr "已有账户？"
 
@@ -577,9 +577,9 @@ msgstr "头像"
 msgid "Back"
 msgstr "返回"
 
-#: src/pages/Auth.tsx:179
-#: src/pages/Auth.tsx:289
-#: src/pages/Auth.tsx:375
+#: src/pages/Auth.tsx:220
+#: src/pages/Auth.tsx:357
+#: src/pages/Auth.tsx:443
 msgid "Back to sign in"
 msgstr "返回登录"
 
@@ -718,7 +718,7 @@ msgstr "检查更新"
 msgid "Check in."
 msgstr "报到。"
 
-#: src/pages/Auth.tsx:43
+#: src/pages/Auth.tsx:52
 msgid "Check your email"
 msgstr "请查看邮箱"
 
@@ -735,7 +735,7 @@ msgstr "工作副本有本地更改。请先清理再更新。"
 msgid "Choose a bot shape, color, or upload an image"
 msgstr "选择机器人形状和颜色，或上传图片"
 
-#: src/pages/Auth.tsx:336
+#: src/pages/Auth.tsx:404
 msgid "Choose a new password"
 msgstr "设置新密码"
 
@@ -919,7 +919,7 @@ msgid "Confirm delete"
 msgstr "确认删除"
 
 #: src/pages/AccountSettingsOverlay.tsx:316
-#: src/pages/Auth.tsx:356
+#: src/pages/Auth.tsx:424
 msgid "Confirm password"
 msgstr "确认密码"
 
@@ -1013,6 +1013,7 @@ msgid "Context limit"
 msgstr "上下文限制"
 
 #: src/components/integrations/IntegrationSetup.tsx:364
+#: src/pages/Auth.tsx:329
 #: src/pages/Onboarding.tsx:669
 msgid "Continue"
 msgstr "继续"
@@ -1020,10 +1021,6 @@ msgstr "继续"
 #: src/components/ComputerUpdateProgress.tsx:194
 msgid "Continue in Background"
 msgstr ""
-
-#: src/pages/Auth.tsx:264
-msgid "Continue with email"
-msgstr "使用邮箱继续"
 
 #: src/pages/Shell.tsx:5691
 msgid "Copy"
@@ -1095,7 +1092,8 @@ msgstr "无法连接此语音提供方"
 msgid "Could not connect to the computer screen"
 msgstr ""
 
-#: src/pages/Auth.tsx:132
+#: src/pages/Auth.tsx:122
+#: src/pages/Auth.tsx:173
 #: src/pages/Shell.tsx:2522
 msgid "Could not continue"
 msgstr "无法继续"
@@ -1233,9 +1231,9 @@ msgid "Could not play a test clip"
 msgstr "无法播放测试片段"
 
 #: src/pages/AccountSettingsOverlay.tsx:281
-#: src/pages/Auth.tsx:148
-#: src/pages/Auth.tsx:163
-#: src/pages/Auth.tsx:329
+#: src/pages/Auth.tsx:189
+#: src/pages/Auth.tsx:204
+#: src/pages/Auth.tsx:397
 msgid "Could not reach the server"
 msgstr "无法连接服务器"
 
@@ -1272,7 +1270,7 @@ msgstr "无法重命名分组"
 msgid "Could not render chart"
 msgstr "无法渲染图表"
 
-#: src/pages/Auth.tsx:324
+#: src/pages/Auth.tsx:392
 msgid "Could not reset password"
 msgstr "无法重置密码"
 
@@ -1331,7 +1329,7 @@ msgstr "无法保存此选择"
 msgid "Could not search catalog"
 msgstr ""
 
-#: src/pages/Auth.tsx:117
+#: src/pages/Auth.tsx:158
 msgid "Could not send reset email"
 msgstr "无法发送重置邮件"
 
@@ -1339,7 +1337,7 @@ msgstr "无法发送重置邮件"
 msgid "Could not send that"
 msgstr "无法发送"
 
-#: src/pages/Auth.tsx:99
+#: src/pages/Auth.tsx:140
 msgid "Could not sign in through CortexAI Hub"
 msgstr "无法通过 CortexAI Hub 登录"
 
@@ -1402,7 +1400,7 @@ msgstr "创建"
 msgid "Create a section and move {0} into it."
 msgstr "创建分组并把 {0} 移入。"
 
-#: src/pages/Auth.tsx:268
+#: src/pages/Auth.tsx:335
 msgid "Create account"
 msgstr "创建账户"
 
@@ -1433,7 +1431,7 @@ msgstr ""
 msgid "Create space"
 msgstr "创建工作区"
 
-#: src/pages/Auth.tsx:47
+#: src/pages/Auth.tsx:56
 msgid "Create your CortexAI Agent Hub"
 msgstr "创建你的 CortexAI Agent Hub"
 
@@ -1638,7 +1636,7 @@ msgstr "Docker"
 msgid "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
 msgstr "Docker 限制对你电脑的访问，以提高安全性。使用{hostLabel}时，Bot 可以处理你的本地文件并使用本地工具。"
 
-#: src/pages/Auth.tsx:275
+#: src/pages/Auth.tsx:343
 msgid "Don’t have an account?"
 msgstr "还没有账户？"
 
@@ -1698,7 +1696,7 @@ msgstr "先编辑"
 msgid "Edit Profile"
 msgstr "编辑资料"
 
-#: src/pages/Auth.tsx:202
+#: src/pages/Auth.tsx:243
 msgid "Email"
 msgstr "邮箱"
 
@@ -1855,7 +1853,7 @@ msgstr "正在完成 MCP 连接…"
 msgid "Flag unexpected actions"
 msgstr "标记异常操作"
 
-#: src/pages/Auth.tsx:249
+#: src/pages/Auth.tsx:313
 msgid "Forgot password?"
 msgstr "忘记密码？"
 
@@ -1946,7 +1944,7 @@ msgstr "你好，这是我朗读回复时的声音。"
 msgid "Hide bots"
 msgstr ""
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Hide password"
 msgstr "隐藏密码"
 
@@ -2152,7 +2150,7 @@ msgid "Loading voice providers…"
 msgstr "正在加载语音提供方…"
 
 #: src/App.tsx:62
-#: src/pages/Auth.tsx:167
+#: src/pages/Auth.tsx:208
 #: src/pages/IntegrationSetup.tsx:72
 #: src/pages/Onboarding.tsx:379
 #: src/pages/PeerMessagesOverlay.tsx:105
@@ -2316,6 +2314,10 @@ msgstr "消息"
 msgid "Microphone failed"
 msgstr "麦克风失败"
 
+#: src/pages/Auth.tsx:273
+msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx:568
 #: src/pages/Onboarding.tsx:508
 #: src/pages/shell/bot-panel.tsx:645
@@ -2402,7 +2404,7 @@ msgid "Move to"
 msgstr "移动到"
 
 #: src/components/teach/SkillDraftCard.tsx:79
-#: src/pages/Auth.tsx:187
+#: src/pages/Auth.tsx:228
 #: src/pages/GroupPanel.tsx:124
 #: src/pages/GroupPanel.tsx:217
 #: src/pages/RoutineEditor.tsx:310
@@ -2451,7 +2453,7 @@ msgid "New open-work item"
 msgstr "新的待办"
 
 #: src/pages/AccountSettingsOverlay.tsx:310
-#: src/pages/Auth.tsx:350
+#: src/pages/Auth.tsx:418
 msgid "New password"
 msgstr "新密码"
 
@@ -2718,22 +2720,22 @@ msgstr "搁置"
 
 #: src/components/AskCard.tsx:47
 #: src/pages/AccountSettingsOverlay.tsx:290
-#: src/pages/Auth.tsx:219
-#: src/pages/Auth.tsx:228
+#: src/pages/Auth.tsx:282
+#: src/pages/Auth.tsx:292
 msgid "Password"
 msgstr "密码"
 
-#: src/pages/Auth.tsx:109
+#: src/pages/Auth.tsx:150
 msgid "Password recovery is not configured for this server"
 msgstr "此服务器未配置密码恢复"
 
 #: src/pages/AccountSettingsOverlay.tsx:335
-#: src/pages/Auth.tsx:340
+#: src/pages/Auth.tsx:408
 msgid "Password updated"
 msgstr "密码已更新"
 
 #: src/pages/AccountSettingsOverlay.tsx:260
-#: src/pages/Auth.tsx:316
+#: src/pages/Auth.tsx:384
 msgid "Passwords do not match"
 msgstr "两次密码不一致"
 
@@ -3023,11 +3025,11 @@ msgstr "重置电脑"
 msgid "Reset computer?"
 msgstr "重置电脑？"
 
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:440
 msgid "Reset password"
 msgstr "重置密码"
 
-#: src/pages/Auth.tsx:49
+#: src/pages/Auth.tsx:58
 msgid "Reset your password"
 msgstr "重置你的密码"
 
@@ -3252,7 +3254,7 @@ msgstr "发送回答"
 msgid "Send it"
 msgstr "发送"
 
-#: src/pages/Auth.tsx:266
+#: src/pages/Auth.tsx:333
 msgid "Send reset link"
 msgstr "发送重置链接"
 
@@ -3337,7 +3339,7 @@ msgstr ""
 msgid "Show more"
 msgstr "显示更多"
 
-#: src/pages/Auth.tsx:239
+#: src/pages/Auth.tsx:303
 msgid "Show password"
 msgstr "显示密码"
 
@@ -3346,18 +3348,19 @@ msgid "Show settings"
 msgstr "显示设置"
 
 #: src/lib/localized-provider-hint.ts:7
-#: src/pages/Auth.tsx:284
-#: src/pages/Auth.tsx:343
+#: src/pages/Auth.tsx:331
+#: src/pages/Auth.tsx:352
+#: src/pages/Auth.tsx:411
 #: src/pages/ModelSettingsOverlay.tsx:733
 #: src/pages/Onboarding.tsx:187
 msgid "Sign in"
 msgstr "登录"
 
-#: src/pages/Auth.tsx:45
+#: src/pages/Auth.tsx:54
 msgid "Sign in to CortexAI Agent Hub"
 msgstr "登录 CortexAI Agent Hub"
 
-#: src/pages/Auth.tsx:277
+#: src/pages/Auth.tsx:345
 #: src/pages/Welcome.tsx:39
 msgid "Sign up"
 msgstr "注册"
@@ -3591,7 +3594,7 @@ msgstr "此文件不是有效的 UTF-8 Markdown。"
 msgid "this Mac"
 msgstr "这台 Mac"
 
-#: src/pages/Auth.tsx:98
+#: src/pages/Auth.tsx:139
 msgid "This organization’s sign-in method is not supported yet"
 msgstr ""
 
@@ -3599,7 +3602,7 @@ msgstr ""
 msgid "This permanently removes every message and stops current work. The chat remains available."
 msgstr "将永久删除全部消息并停止当前工作。聊天仍可使用。"
 
-#: src/pages/Auth.tsx:308
+#: src/pages/Auth.tsx:376
 msgid "This reset link is invalid or expired"
 msgstr "此重置链接无效或已过期"
 
@@ -3750,6 +3753,10 @@ msgstr "用量"
 msgid "Use {hostLabel}"
 msgstr "使用 {hostLabel}"
 
+#: src/pages/Auth.tsx:266
+msgid "Use a different email"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx:546
 #: src/pages/Onboarding.tsx:491
 msgid "Use a found model"
@@ -3847,8 +3854,8 @@ msgstr "何时使用"
 msgid "Where should bots run?"
 msgstr "Bot 应在哪里运行？"
 
-#: src/pages/Auth.tsx:262
-#: src/pages/Auth.tsx:372
+#: src/pages/Auth.tsx:327
+#: src/pages/Auth.tsx:440
 #: src/pages/CallView.tsx:262
 msgid "Working…"
 msgstr "处理中…"
@@ -3874,11 +3881,11 @@ msgstr "可以关闭此窗口。"
 msgid "You have control"
 msgstr "你已接管"
 
-#: src/pages/Auth.tsx:210
+#: src/pages/Auth.tsx:252
 msgid "Your email address"
 msgstr "你的邮箱"
 
-#: src/pages/Auth.tsx:195
+#: src/pages/Auth.tsx:236
 msgid "Your name"
 msgstr "你的名字"
 
