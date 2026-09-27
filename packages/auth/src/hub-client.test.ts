@@ -86,6 +86,44 @@ describe("Hub Workbench-style tenant authentication", () => {
     const unknown = setup({ lookup: new Response("not found", { status: 404 }) });
     await expect(unknown.client.lookup("missing@example.test")).rejects.toThrow();
   });
+  describe("Entra tenant with Hub's per-user Always Native override", () => {
+    const tenantLookup = {
+      tenantId: "fixture-tenant",
+      tenantName: "Fixture",
+      tenantSlug: "fixture",
+    };
+    it("signs an always_native user in with a password", async () => {
+      const { client, fetcher } = setup({ lookup: { ...tenantLookup, idpType: "native" } });
+      await expect(client.lookup("user@example.test")).resolves.toEqual({
+        tenant: "fixture-tenant",
+        native: true,
+      });
+      await expect(client.login("user@example.test", "synthetic-password")).resolves.toMatchObject({
+        subject: "fixture-user",
+        tenant: "fixture-tenant",
+      });
+      expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        "/api/tenant-auth/lookup",
+        "/api/tenant-auth/lookup",
+        "/api/tenant-auth/login",
+        "/api/tenant-auth/session",
+        "/api/tenant-auth/config",
+      ]);
+    });
+    it("reports other users in the same tenant as not native and never sends a password", async () => {
+      const { client, fetcher } = setup({ lookup: { ...tenantLookup, idpType: "entra" } });
+      await expect(client.lookup("user@example.test")).resolves.toEqual({
+        tenant: "fixture-tenant",
+        native: false,
+      });
+      await expect(client.login("user@example.test", "synthetic-password")).rejects.toThrow(
+        HubUnsupportedIdpError,
+      );
+      expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).not.toContain(
+        "/api/tenant-auth/login",
+      );
+    });
+  });
   it("refreshes and revokes using native endpoints", async () => {
     const { client, fetcher } = setup();
     await expect(client.refresh("old-refresh")).resolves.toMatchObject({
