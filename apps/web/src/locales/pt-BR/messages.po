@@ -2857,17 +2857,9 @@ msgstr "Para que serve este bot"
 msgid "Wrote {path}"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:383
-msgid "Choose which connected model CortexAI Agent Hub uses."
-msgstr "Escolha qual modelo conectado a CortexAI Agent Hub usa."
-
 #: src/pages/VoiceSettingsOverlay.tsx:163
 msgid "Could not save that speech model"
 msgstr "Não foi possível salvar esse modelo de fala"
-
-#: src/pages/Auth.tsx:38
-msgid "Create your CortexAI Agent Hub"
-msgstr "Crie o seu CortexAI Agent Hub"
 
 #: src/components/call/VoiceChatCard.tsx:49
 msgid "Hide transcript"
@@ -2886,29 +2878,13 @@ msgstr "Ainda não há atividade do bot."
 msgid "On a call with {0}"
 msgstr "Em chamada com {0}"
 
-#: src/pages/ModelSettingsOverlay.tsx:503
-msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
-msgstr "Cole o endereço compatível com OpenAI do seu servidor. CortexAI Agent Hub adiciona /v1 se necessário."
-
-#: src/pages/McpOAuthCallback.tsx:62
-msgid "Return to CortexAI Agent Hub"
-msgstr "Retorno a CortexAI Agent Hub"
-
 #: src/components/call/VoiceChatCard.tsx:49
 msgid "Show transcript"
 msgstr "Mostrar transcrição"
 
-#: src/pages/Auth.tsx:36
-msgid "Sign in to CortexAI Agent Hub"
-msgstr "Entrar no CortexAI Agent Hub"
-
 #: src/pages/VoiceSettingsOverlay.tsx:338
 msgid "Speech model"
 msgstr "Modelo de fala"
-
-#: src/pages/ModelSettingsOverlay.tsx:839
-msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
-msgstr "Este login de assinatura ainda não está disponível no CortexAI Agent Hub. Use uma credencial de implantação ou escolha outro provedor."
 
 #: src/components/call/CallCard.tsx:88
 msgid "Transcript"
@@ -2921,3 +2897,39 @@ msgstr "Reativar som"
 #: src/components/call/VoiceChatCard.tsx:39
 msgid "Voice chat"
 msgstr "Conversa por voz"
+
+#: src/pages/ModelSettingsOverlay.tsx:383
+msgid "Choose which connected model CortexAI Agent Hub uses."
+msgstr "Escolha qual modelo conectado a CortexAI Agent Hub usa."
+
+#: src/components/computer/TerminalApp.tsx:243
+msgid "Could not open terminal"
+msgstr "Não foi possível abrir o terminal"
+
+#: src/pages/Auth.tsx:38
+msgid "Create your CortexAI Agent Hub"
+msgstr "Crie o seu CortexAI Agent Hub"
+
+#: src/components/computer/TerminalApp.tsx:92
+msgid "Open shell"
+msgstr "Abrir shell"
+
+#: src/pages/ModelSettingsOverlay.tsx:503
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "Cole o endereço compatível com OpenAI do seu servidor. CortexAI Agent Hub adiciona /v1 se necessário."
+
+#: src/pages/McpOAuthCallback.tsx:62
+msgid "Return to CortexAI Agent Hub"
+msgstr "Retorno a CortexAI Agent Hub"
+
+#: src/components/computer/TerminalApp.tsx:72
+msgid "Shell"
+msgstr "Shell"
+
+#: src/pages/Auth.tsx:36
+msgid "Sign in to CortexAI Agent Hub"
+msgstr "Entrar no CortexAI Agent Hub"
+
+#: src/pages/ModelSettingsOverlay.tsx:839
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "Este login de assinatura ainda não está disponível no CortexAI Agent Hub. Use uma credencial de implantação ou escolha outro provedor."

@@ -1,4 +1,4 @@
-import { computerSupportsUpdate } from "@cortexai-agent-hub/adapters";
+import { computerSupportsTerminal, computerSupportsUpdate } from "@cortexai-agent-hub/adapters";
 import type { ComputerStatus } from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES, computerScreenSize } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
@@ -90,5 +90,6 @@ export function toComputerStatus(
     homeRevision: computer?.homeRevision ?? null,
     busyBotName,
     canUpdate: computerSupportsUpdate(kind),
+    terminalAvailable: computerSupportsTerminal(kind),
   };
 }

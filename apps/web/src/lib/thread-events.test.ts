@@ -1693,6 +1693,7 @@ function computer(overrides: Partial<ComputerStatus> = {}): ComputerStatus {
     homeRevision: null,
     busyBotName: null,
     canUpdate: true,
+    terminalAvailable: true,
     ...overrides,
   };
 }

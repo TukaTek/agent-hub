@@ -10,8 +10,10 @@ import type {
   ProcessEvent,
   SandboxProvider,
   ScreenRequest,
+  TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+
 import { DesktopSandboxProvider } from "./desktop-sandbox.js";
 import { createSandboxProvider, type SandboxProviderOptions } from "./sandbox-factory.js";
 
@@ -112,6 +114,14 @@ export class HostAwareSandbox implements SandboxProvider {
 
   connectScreen(computer: ComputerRef, request: ScreenRequest, context: AdapterContext) {
     return this.route(computer).connectScreen(computer, request, context);
+  }
+
+  connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    const provider = this.route(computer);
+    if (!provider.connectTerminal) {
+      return Promise.reject(new Error("terminal is unavailable on this computer"));
+    }
+    return provider.connectTerminal(computer, request, context);
   }
 
   sendInput(
