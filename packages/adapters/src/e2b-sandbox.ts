@@ -12,9 +12,11 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
+  TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
 import { type CommandResult, Sandbox, TimeoutError } from "@e2b/desktop";
+
 import { sandboxIdleMs } from "./computer-idle.js";
 import { normalizeWorkspacePath, shellQuote, workspacePath } from "./computer-support.js";
 import {
@@ -230,6 +232,9 @@ export class E2BSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): Promise<ScreenSession> {
     return this.desktops.connectScreen(computer, request, context);
+  }
+  async connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    return this.desktops.connectTerminal(computer, request, context);
   }
   async setScreenControl(
     computer: ComputerRef,
