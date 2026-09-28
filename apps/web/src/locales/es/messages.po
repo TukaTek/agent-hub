@@ -172,8 +172,7 @@ msgstr "Agrega una hora de ejecución para este one-shot."
 msgid "Add a schedule, webhook, GitHub, or message trigger"
 msgstr ""
 
-msgid ""
-"Add a schedule, webhook, GitHub, or message trigger to run this routine."
+msgid "Add a schedule, webhook, GitHub, or message trigger to run this routine."
 msgstr ""
 
 msgid "Add a server name."
@@ -298,8 +297,7 @@ msgid "Answered: {answer}"
 msgstr "Respondido: {answer}"
 
 msgid "API is back, but the update did not finish. Check the host logs."
-msgstr ""
-"La API volvió, pero la actualización no terminó. Revisa los logs del host."
+msgstr "La API volvió, pero la actualización no terminó. Revisa los logs del host."
 
 msgid "API key"
 msgstr "Clave de API"
@@ -397,9 +395,7 @@ msgid "Authorize"
 msgstr "Autorizar"
 
 msgid "Authorize this server so agents can use its tools. A popup opens."
-msgstr ""
-"Autoriza este servidor para que tus agentes usen sus herramientas. Se abre "
-"una ventana emergente."
+msgstr "Autoriza este servidor para que tus agentes usen sus herramientas. Se abre una ventana emergente."
 
 msgid "Automated senders"
 msgstr ""
@@ -441,12 +437,8 @@ msgstr "bot"
 msgid "Bot"
 msgstr "Bot"
 
-msgid ""
-"Bots act without asking by default. Add an exception only when you want to "
-"review a type of action first."
-msgstr ""
-"Los bots actúan sin preguntar de forma predeterminada. Agrega una excepción "
-"solo cuando quieras revisar primero un tipo de acción."
+msgid "Bots act without asking by default. Add an exception only when you want to review a type of action first."
+msgstr "Los bots actúan sin preguntar de forma predeterminada. Agrega una excepción solo cuando quieras revisar primero un tipo de acción."
 
 msgid "Bots are working"
 msgstr "Los bots están trabajando"
@@ -639,14 +631,8 @@ msgstr "La computadora está detenida"
 msgid "Computers"
 msgstr "Computadoras"
 
-msgid ""
-"Computers are off. Set SANDBOX_PROVIDER=docker with "
-"SANDBOX_SUPERVISOR_TOKEN, or set SANDBOX_PROVIDER to e2b, daytona, or box "
-"with its API key. Recreate the stack after changing .env."
-msgstr ""
-"Las computadoras están apagadas. Configura SANDBOX_PROVIDER=docker con "
-"SANDBOX_SUPERVISOR_TOKEN, o establece SANDBOX_PROVIDER en e2b, daytona o box "
-"con su clave de API. Recrea el stack después de cambiar .env."
+msgid "Computers are off. Set SANDBOX_PROVIDER=docker with SANDBOX_SUPERVISOR_TOKEN, or set SANDBOX_PROVIDER to e2b, daytona, or box with its API key. Recreate the stack after changing .env."
+msgstr "Las computadoras están apagadas. Configura SANDBOX_PROVIDER=docker con SANDBOX_SUPERVISOR_TOKEN, o establece SANDBOX_PROVIDER en e2b, daytona o box con su clave de API. Recrea el stack después de cambiar .env."
 
 msgid "Configured by deployment"
 msgstr "Configurado por el despliegue"
@@ -701,16 +687,14 @@ msgid "Connected and using {0}."
 msgstr "Conectado y usando {0}."
 
 msgid "Connected. Its tools are available from your next message."
-msgstr ""
-"Conectado: sus herramientas estarán disponibles desde tu próximo mensaje."
+msgstr "Conectado: sus herramientas estarán disponibles desde tu próximo mensaje."
 
 msgid "Connecting…"
 msgstr "Conectando…"
 
 #. placeholder {0}: item.name
 msgid "Connection to {0} is still pending. You can close this and check again."
-msgstr ""
-"La conexión con {0} sigue pendiente. Puedes cerrar esto y volver a comprobar."
+msgstr "La conexión con {0} sigue pendiente. Puedes cerrar esto y volver a comprobar."
 
 msgid "Context limit"
 msgstr "Límite de contexto"
@@ -746,9 +730,7 @@ msgid "Could not change the default model"
 msgstr "No se pudo cambiar el modelo predeterminado"
 
 msgid "Could not check teaching status. Refresh the view to continue."
-msgstr ""
-"No se pudo comprobar el estado de enseñanza. Actualiza la vista para "
-"continuar."
+msgstr "No se pudo comprobar el estado de enseñanza. Actualiza la vista para continuar."
 
 msgid "Could not clear conversation"
 msgstr "No se pudo borrar la conversación"
@@ -869,9 +851,7 @@ msgstr "No se pudo cargar el estado de actualización"
 msgid "Could not load voice settings"
 msgstr "No se pudo cargar la configuración de voz"
 
-msgid ""
-"Could not open local settings. Start the local server and create its owner "
-"account, then try again."
+msgid "Could not open local settings. Start the local server and create its owner account, then try again."
 msgstr ""
 
 msgid "Could not play a test clip"
@@ -1142,27 +1122,19 @@ msgid "Dismiss error"
 msgstr "Descartar error"
 
 msgid "Dismissed. Reconnect anytime from MCP settings."
-msgstr ""
-"Descartado: puedes volver a conectar cuando quieras desde la configuración "
-"de MCP."
+msgstr "Descartado: puedes volver a conectar cuando quieras desde la configuración de MCP."
 
 msgid "Display name"
 msgstr "Nombre para mostrar"
 
 msgid "Do not type passwords into the demo. Use Take control for credentials."
-msgstr ""
-"No escribas contraseñas en la demo. Usa Tomar control para las credenciales."
+msgstr "No escribas contraseñas en la demo. Usa Tomar control para las credenciales."
 
 msgid "Docker"
 msgstr "Docker"
 
-msgid ""
-"Docker limits access to your computer for added security. Using {hostLabel} "
-"lets bots work with your local files and tools."
-msgstr ""
-"Docker limita el acceso a tu computadora para mayor seguridad. Usar "
-"{hostLabel} permite que los bots trabajen con tus archivos y herramientas "
-"locales."
+msgid "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
+msgstr "Docker limita el acceso a tu computadora para mayor seguridad. Usar {hostLabel} permite que los bots trabajen con tus archivos y herramientas locales."
 
 msgid "Don’t have an account?"
 msgstr "¿No tienes una cuenta?"
@@ -1213,19 +1185,11 @@ msgstr "Correo"
 msgid "Engage when... Ignore..."
 msgstr ""
 
-msgid ""
-"Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context "
-"limit."
-msgstr ""
-"Introduce un número entero del 1 al {MAX_MODEL_CONTEXT_WINDOW} para el "
-"límite de contexto."
+msgid "Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context limit."
+msgstr "Introduce un número entero del 1 al {MAX_MODEL_CONTEXT_WINDOW} para el límite de contexto."
 
-msgid ""
-"Enter a whole number from 1 to {MAX_MODEL_MAX_TOKENS} for maximum output "
-"tokens."
-msgstr ""
-"Introduce un número entero del 1 al {MAX_MODEL_MAX_TOKENS} para el máximo de "
-"tokens de salida."
+msgid "Enter a whole number from 1 to {MAX_MODEL_MAX_TOKENS} for maximum output tokens."
+msgstr "Introduce un número entero del 1 al {MAX_MODEL_MAX_TOKENS} para el máximo de tokens de salida."
 
 msgid "Enter a whole number from 1 to 1000 for the image limit."
 msgstr "Introduce un número entero del 1 al 1000 para el límite de imágenes."
@@ -1269,9 +1233,7 @@ msgid "Export"
 msgstr "Exportar"
 
 msgid "Export this week's list from the CRM and drop it in the shared folder"
-msgstr ""
-"Exporta la lista de esta semana desde el CRM y déjala en la carpeta "
-"compartida"
+msgstr "Exporta la lista de esta semana desde el CRM y déjala en la carpeta compartida"
 
 msgid "External conversation"
 msgstr ""
@@ -1305,12 +1267,8 @@ msgid "Finding…"
 msgstr "Buscando…"
 
 #. placeholder {0}: new URL(oauth.verificationUri).hostname
-msgid ""
-"Finish signing in at <0>{0}</0>. The final page may not load; paste its URL "
-"or code here."
-msgstr ""
-"Termina de iniciar sesión en <0>{0}</0>. Es posible que la página final no "
-"cargue; pega aquí su URL o código."
+msgid "Finish signing in at <0>{0}</0>. The final page may not load; paste its URL or code here."
+msgstr "Termina de iniciar sesión en <0>{0}</0>. Es posible que la página final no cargue; pega aquí su URL o código."
 
 msgid "finished"
 msgstr "finalizado"
@@ -1460,9 +1418,7 @@ msgstr "Unidad del intervalo"
 msgid "Isolated"
 msgstr "Aislado"
 
-msgid ""
-"Its conversation, files, and routines will be permanently deleted. "
-"Assistants it created stay in your list."
+msgid "Its conversation, files, and routines will be permanently deleted. Assistants it created stay in your list."
 msgstr ""
 
 msgid "Jump to latest"
@@ -1543,12 +1499,8 @@ msgstr "Cargando…"
 msgid "Local"
 msgstr "Local"
 
-msgid ""
-"Local access lets bots run commands without asking. Avoid it on shared or "
-"public servers."
-msgstr ""
-"El acceso local permite que los bots ejecuten comandos sin preguntar. "
-"Evítalo en servidores compartidos o públicos."
+msgid "Local access lets bots run commands without asking. Avoid it on shared or public servers."
+msgstr "El acceso local permite que los bots ejecuten comandos sin preguntar. Evítalo en servidores compartidos o públicos."
 
 msgid "Local Server Settings"
 msgstr ""
@@ -1773,8 +1725,7 @@ msgid "No longer active"
 msgstr "Ya no está activo"
 
 msgid "No managed app catalog is configured on this deployment."
-msgstr ""
-"No hay un catálogo de apps administradas configurado en este despliegue."
+msgstr "No hay un catálogo de apps administradas configurado en este despliegue."
 
 msgid "No matching models"
 msgstr "No hay modelos coincidentes"
@@ -1938,12 +1889,8 @@ msgstr "Las contraseñas no coinciden"
 msgid "Paste a replacement key"
 msgstr "Pega una clave de reemplazo"
 
-msgid ""
-"Paste the OpenAI-compatible address from your server. CortexAI Agent Hub "
-"adds /v1 if needed."
-msgstr ""
-"Pega la dirección compatible con OpenAI de tu servidor. CortexAI Agent Hub "
-"agrega /v1 si es necesario."
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "Pega la dirección compatible con OpenAI de tu servidor. CortexAI Agent Hub agrega /v1 si es necesario."
 
 msgid "Paste your API key"
 msgstr "Pega tu clave de API"
@@ -2022,9 +1969,7 @@ msgid "Reconnecting"
 msgstr "Reconectando"
 
 msgid "Recording may have started, but the view could not refresh"
-msgstr ""
-"Es posible que la grabación haya comenzado, pero la vista no se pudo "
-"actualizar"
+msgstr "Es posible que la grabación haya comenzado, pero la vista no se pudo actualizar"
 
 msgid "Recording started. Refresh the view to continue."
 msgstr "Grabación iniciada. Actualiza la vista para continuar."
@@ -2158,9 +2103,7 @@ msgid "Restore"
 msgstr "Restaurar"
 
 msgid "Restore the last saved workspace. Unsaved work on the computer is lost."
-msgstr ""
-"Restaura el último espacio de trabajo guardado. Se pierde el trabajo sin "
-"guardar en la computadora."
+msgstr "Restaura el último espacio de trabajo guardado. Se pierde el trabajo sin guardar en la computadora."
 
 msgid "Restoring your workspace"
 msgstr ""
@@ -2280,12 +2223,8 @@ msgstr "Selecciona un bot"
 msgid "Send"
 msgstr "Enviar"
 
-msgid ""
-"Send <0>{linkCode}</0> to the line from your chat app within 10 minutes. "
-"You'll get a confirmation reply once linked."
-msgstr ""
-"Envía <0>{linkCode}</0> a la línea desde tu app de chat en un plazo de 10 "
-"minutos. Recibirás una confirmación cuando esté vinculado."
+msgid "Send <0>{linkCode}</0> to the line from your chat app within 10 minutes. You'll get a confirmation reply once linked."
+msgstr "Envía <0>{linkCode}</0> a la línea desde tu app de chat en un plazo de 10 minutos. Recibirás una confirmación cuando esté vinculado."
 
 msgid "Send answer"
 msgstr "Enviar respuesta"
@@ -2465,8 +2404,7 @@ msgid "Teach a task"
 msgstr "Enseñar una tarea"
 
 msgid "Teaching in progress. Stop teaching before sending a new message."
-msgstr ""
-"Enseñanza en curso: detén la enseñanza antes de enviar un nuevo mensaje."
+msgstr "Enseñanza en curso: detén la enseñanza antes de enviar un nuevo mensaje."
 
 msgid "Team"
 msgstr "Equipo"
@@ -2498,12 +2436,8 @@ msgstr "El proveedor de memoria seleccionado no está disponible en esta build."
 msgid "Thinking"
 msgstr "Pensando"
 
-msgid ""
-"This bot runs on this computer, not a Linux desktop. Shell and files use "
-"your home folder."
-msgstr ""
-"Este bot se ejecuta en esta computadora, no en un escritorio Linux. El shell "
-"y los archivos usan tu carpeta de inicio."
+msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
+msgstr "Este bot se ejecuta en esta computadora, no en un escritorio Linux. El shell y los archivos usan tu carpeta de inicio."
 
 msgid "This cannot be undone."
 msgstr "Esto no se puede deshacer."
@@ -2523,12 +2457,8 @@ msgstr "esta Mac"
 msgid "This organization’s sign-in method is not supported yet"
 msgstr ""
 
-msgid ""
-"This permanently removes every message and stops current work. The chat "
-"remains available."
-msgstr ""
-"Esto elimina de forma permanente todos los mensajes y detiene el trabajo "
-"actual. El chat sigue disponible."
+msgid "This permanently removes every message and stops current work. The chat remains available."
+msgstr "Esto elimina de forma permanente todos los mensajes y detiene el trabajo actual. El chat sigue disponible."
 
 msgid "This reset link is invalid or expired"
 msgstr "Este enlace de restablecimiento no es válido o expiró"
@@ -2539,18 +2469,11 @@ msgstr ""
 msgid "This server did not request browser authorization."
 msgstr "Este servidor no solicitó autorización del navegador."
 
-msgid ""
-"This server is already connected. Disconnect it first to authorize again."
-msgstr ""
-"Este servidor ya está conectado. Desconéctalo primero para autorizarlo de "
-"nuevo."
+msgid "This server is already connected. Disconnect it first to authorize again."
+msgstr "Este servidor ya está conectado. Desconéctalo primero para autorizarlo de nuevo."
 
-msgid ""
-"This subscription sign-in is not available in CortexAI Agent Hub yet. Use a "
-"deployment credential or choose another provider."
-msgstr ""
-"Este inicio de sesión por suscripción aún no está disponible en CortexAI "
-"Agent Hub. Usa una credencial de despliegue o elige otro proveedor."
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "Este inicio de sesión por suscripción aún no está disponible en CortexAI Agent Hub. Usa una credencial de despliegue o elige otro proveedor."
 
 msgid "Time of day"
 msgstr "Hora del día"
@@ -2732,8 +2655,7 @@ msgid "Your name"
 msgstr "Tu nombre"
 
 msgid "Your team of always-on agents<0/>that you can give real work to."
-msgstr ""
-"Tu equipo de agentes siempre activos<0/>a los que puedes dar trabajo real."
+msgstr "Tu equipo de agentes siempre activos<0/>a los que puedes dar trabajo real."
 
 msgid "{remaining} left · bot is watching, not acting"
 msgstr "Quedan {remaining} · el bot observa, no actúa"
@@ -2744,8 +2666,9 @@ msgstr ""
 msgid "All time"
 msgstr ""
 
+#: src/pages/Artifacts.tsx:229 src/pages/Shell.tsx:3268
 msgid "Artifacts"
-msgstr ""
+msgstr "Artefactos"
 
 msgid "Attached {path}"
 msgstr ""
@@ -2759,8 +2682,9 @@ msgstr "Vista previa de la pantalla del bot"
 msgid "Bot to link"
 msgstr "Bot a vincular"
 
+#: src/pages/Artifacts.tsx:226
 msgid "Bots"
-msgstr ""
+msgstr "Bots"
 
 msgid "Browser"
 msgstr ""
@@ -2838,12 +2762,8 @@ msgstr ""
 msgid "Isolated preview — no access to your account"
 msgstr ""
 
-msgid ""
-"Its conversation, files, and routines will be permanently deleted. Bots it "
-"created stay in your list."
-msgstr ""
-"Su conversación, archivos y rutinas se eliminarán de forma permanente. Los "
-"bots que creó permanecerán en tu lista."
+msgid "Its conversation, files, and routines will be permanently deleted. Bots it created stay in your list."
+msgstr "Su conversación, archivos y rutinas se eliminarán de forma permanente. Los bots que creó permanecerán en tu lista."
 
 #. placeholder {0}: accessibleReplyExcerpt(message.replyQuote)
 msgid "Jump to replied message: “{0}”"
@@ -2938,3 +2858,68 @@ msgstr "Para qué es este bot"
 
 msgid "Wrote {path}"
 msgstr ""
+
+#: src/pages/ModelSettingsOverlay.tsx:383
+msgid "Choose which connected model CortexAI Agent Hub uses."
+msgstr "Elige qué modelo conectado usa CortexAI Agent Hub."
+
+#: src/pages/VoiceSettingsOverlay.tsx:163
+msgid "Could not save that speech model"
+msgstr "No se pudo guardar ese modelo de habla"
+
+#: src/pages/Auth.tsx:38
+msgid "Create your CortexAI Agent Hub"
+msgstr "Crea tu CortexAI Agent Hub"
+
+#: src/components/call/VoiceChatCard.tsx:49
+msgid "Hide transcript"
+msgstr "Ocultar la transcripción"
+
+#: src/components/call/CallCard.tsx:98
+msgid "Mute"
+msgstr "Silenciar"
+
+#: src/components/computer/TerminalApp.tsx:49
+msgid "No bot activity yet."
+msgstr "Aún no hay actividad del bot."
+
+#. placeholder {0}: call.botName
+#: src/components/call/CallCard.tsx:40
+msgid "On a call with {0}"
+msgstr "En llamada con {0}"
+
+#: src/pages/ModelSettingsOverlay.tsx:503
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "Pega la dirección compatible con OpenAI de tu servidor. CortexAI Agent Hub agrega /v1 si es necesario."
+
+#: src/pages/McpOAuthCallback.tsx:62
+msgid "Return to CortexAI Agent Hub"
+msgstr "Volver a CortexAI Agent Hub"
+
+#: src/components/call/VoiceChatCard.tsx:49
+msgid "Show transcript"
+msgstr "Mostrar la transcripción"
+
+#: src/pages/Auth.tsx:36
+msgid "Sign in to CortexAI Agent Hub"
+msgstr "Inicia sesión en CortexAI Agent Hub"
+
+#: src/pages/VoiceSettingsOverlay.tsx:338
+msgid "Speech model"
+msgstr "Modelo de habla"
+
+#: src/pages/ModelSettingsOverlay.tsx:839
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "Este inicio de sesión por suscripción aún no está disponible en CortexAI Agent Hub. Usa una credencial de despliegue o elige otro proveedor."
+
+#: src/components/call/CallCard.tsx:88
+msgid "Transcript"
+msgstr "Transcripción"
+
+#: src/components/call/CallCard.tsx:98
+msgid "Unmute"
+msgstr "Activar el sonido"
+
+#: src/components/call/VoiceChatCard.tsx:39
+msgid "Voice chat"
+msgstr "Chat de voz"

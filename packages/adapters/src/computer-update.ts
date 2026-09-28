@@ -4,7 +4,11 @@ import { type ComputerUpdate, ComputerUpdateSchema } from "@cortexai-agent-hub/c
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
-import { enqueueTakeoverContinuation, isIdleOwnComputerTakeover } from "./computer-control.js";
+import {
+  enqueueTakeoverContinuation,
+  isIdleOwnComputerTakeover,
+  revokeScreenControl,
+} from "./computer-control.js";
 
 import { scheduleComputerSleep } from "./computer-idle.js";
 import {
@@ -12,7 +16,6 @@ import {
   computerSupportsUpdate,
   replaceComputer,
 } from "./computer-lifecycle.js";
-import { toComputerRef } from "./computer-support.js";
 
 type Deps = Parameters<typeof replaceComputer>[0];
 type QueueDeps = Pick<Deps, "prisma" | "jobs"> &
@@ -182,9 +185,9 @@ export async function queueComputerUpdate(
         signal: new AbortController().signal,
       };
       try {
-        await releaseScreen(
-          toComputerRef(prepared.handback),
-          false,
+        await revokeScreenControl(
+          { prisma: deps.prisma, sandbox: deps.sandbox },
+          { id: computerId, ...prepared.handback },
           context,
           prepared.handback.leaseId,
         );

@@ -422,6 +422,7 @@ export const DE_MESSAGES: Record<string, string> = {
   "Could not load voice settings": "Stimmeinstellungen konnten nicht geladen werden",
   "Could not play a sample": "Beispiel konnte nicht abgespielt werden",
   "Could not save that preference": "Diese Einstellung konnte nicht gespeichert werden",
+  "Could not save that speech model": "Sprachmodell konnte nicht gespeichert werden",
   "Could not save that voice": "Stimme konnte nicht gespeichert werden",
   Disconnect: "Trennen",
   "Disconnecting…": "Verbindung wird getrennt…",
@@ -434,6 +435,7 @@ export const DE_MESSAGES: Record<string, string> = {
   "Replace key": "Schlüssel ersetzen",
   "Speak + transcribe": "Sprechen + transkribieren",
   "Speak only": "Nur sprechen",
+  "Speech model": "Sprachmodell",
   "This device": "Dieses Gerät",
   "Your phone's built-in voice. Free, no account needed":
     "Die eingebaute Stimme deines Telefons. Kostenlos, kein Konto nötig",
@@ -627,4 +629,23 @@ export const DE_MESSAGES: Record<string, string> = {
   "Android blocked notifications.": "Android hat Benachrichtigungen blockiert.",
   // lib/voice.ts
   "Could not play that clip.": "Dieser Clip konnte nicht abgespielt werden.",
+  // call
+  "Allow microphone access to call a bot.": "Erlaube den Mikrofonzugriff, um einen Bot anzurufen.",
+  "Allow speech recognition in Settings, or connect ElevenLabs, OpenAI, or Fish Audio.":
+    "Erlaube die Spracherkennung in den Einstellungen oder verbinde ElevenLabs, OpenAI oder Fish Audio.",
+  Call: "Anrufen",
+  "Calls need transcription": "Anrufe brauchen eine Transkription",
+  "Could not hear that.": "Das war nicht zu verstehen.",
+  "Could not speak that.": "Das konnte nicht vorgelesen werden.",
+  "Could not transcribe that.": "Das konnte nicht transkribiert werden.",
+  "Hang up": "Auflegen",
+  "Hide transcript": "Transkript ausblenden",
+  Mute: "Stummschalten",
+  "On a call with {name}": "Im Gespräch mit {name}",
+  "Open Voice": "Sprache öffnen",
+  Settings: "Einstellungen",
+  "Show transcript": "Transkript anzeigen",
+  Transcript: "Transkript",
+  Unmute: "Stummschaltung aufheben",
+  "Voice chat": "Sprachchat",
 };

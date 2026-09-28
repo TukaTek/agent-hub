@@ -2856,3 +2856,68 @@ msgstr "이 Bot을 언제, 어떤 일에 사용할지 적어주세요"
 
 msgid "Wrote {path}"
 msgstr ""
+
+#: src/pages/ModelSettingsOverlay.tsx:383
+msgid "Choose which connected model CortexAI Agent Hub uses."
+msgstr "CortexAI Agent Hub에서 기본으로 사용할 연결된 모델을 선택하세요."
+
+#: src/pages/VoiceSettingsOverlay.tsx:163
+msgid "Could not save that speech model"
+msgstr "음성 모델을 저장하지 못했습니다."
+
+#: src/pages/Auth.tsx:38
+msgid "Create your CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub 계정 만들기"
+
+#: src/components/call/VoiceChatCard.tsx:49
+msgid "Hide transcript"
+msgstr "대화 기록 숨기기"
+
+#: src/components/call/CallCard.tsx:98
+msgid "Mute"
+msgstr "음소거"
+
+#: src/components/computer/TerminalApp.tsx:49
+msgid "No bot activity yet."
+msgstr "아직 봇 활동이 없습니다."
+
+#. placeholder {0}: call.botName
+#: src/components/call/CallCard.tsx:40
+msgid "On a call with {0}"
+msgstr "{0}님과 통화 중"
+
+#: src/pages/ModelSettingsOverlay.tsx:503
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "서버의 OpenAI 호환 주소를 붙여넣으세요. 필요하면 CortexAI Agent Hub가 /v1을 추가합니다."
+
+#: src/pages/McpOAuthCallback.tsx:62
+msgid "Return to CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub로 돌아가기"
+
+#: src/components/call/VoiceChatCard.tsx:49
+msgid "Show transcript"
+msgstr "대화 기록 표시"
+
+#: src/pages/Auth.tsx:36
+msgid "Sign in to CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub 로그인"
+
+#: src/pages/VoiceSettingsOverlay.tsx:338
+msgid "Speech model"
+msgstr "음성 모델"
+
+#: src/pages/ModelSettingsOverlay.tsx:839
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "이 구독 로그인 방식은 아직 CortexAI Agent Hub에서 지원되지 않습니다. 서버에 설정된 인증 정보를 사용하거나 다른 서비스를 선택하세요."
+
+#: src/components/call/CallCard.tsx:88
+msgid "Transcript"
+msgstr "대화 기록"
+
+#: src/components/call/CallCard.tsx:98
+msgid "Unmute"
+msgstr "음소거 해제"
+
+#: src/components/call/VoiceChatCard.tsx:39
+msgid "Voice chat"
+msgstr "음성 대화"

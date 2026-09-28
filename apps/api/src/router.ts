@@ -81,6 +81,7 @@ import {
   resolveAutoReviewChecker,
   resolveBotUploadPath,
   resolveBotWorkspacePath,
+  revokeScreenControl,
   sanitizeComposioError,
   savePushToken,
   scheduleComputerControlExpiry,
@@ -105,6 +106,7 @@ import type {
   ComputerStatus,
   McpServer,
   Me,
+  ProductEvent,
   SpaceNavigation,
 } from "@cortexai-agent-hub/contracts";
 
@@ -120,6 +122,8 @@ import {
 import {
   ACTIVE_RUN_STATUSES,
   AttachmentValidationError,
+  CALL_CLIENT_NONCE_PREFIX,
+  callClientNonce,
   containsSecret,
   expandSkillReferencesInPrompt,
   hasMixedOneShotSchedule,
@@ -245,6 +249,7 @@ import {
   prepareVoice,
   toVoiceCredential,
   toVoiceStatus,
+  updateVoiceSpeechModel,
   voiceContext,
 } from "./voice.js";
 
@@ -252,6 +257,8 @@ const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
+/** Silence longer than this on a thread stream is indistinguishable from a dead socket. */
+export const HEARTBEAT_MS = 20_000;
 const EXPORT_MESSAGE_PAGE_SIZE = 500;
 
 async function reconcilePendingConnections(
@@ -541,6 +548,17 @@ export interface RouterDeps {
  * ignore the request abort signal, so without a deadline a hung destroy would
  * keep the deletion claim renewed forever and block stale-claim recovery. */
 const SPACE_TEARDOWN_TIMEOUT_MS = 120_000;
+
+/** The card is closed by a marker; the run that follows finishes whatever the call left open. */
+/** Deterministic nonce for a call's marker message. The unique (threadId, clientNonce)
+ * index makes it the hang-up idempotency key, and the "call:" prefix lets clients derive
+ * the marker's callId. User turns carry a uuid suffix, so they never collide. */
+export function callMarkerClientNonce(callId: string): string {
+  return `${CALL_CLIENT_NONCE_PREFIX}${callId}:marker`;
+}
+
+const HANG_UP_PROMPT =
+  "The voice call just ended because the user hung up. First call end_call with a short title for the call (leave farewell empty). Then, if anything the user asked for during the call is still unfinished, complete it now as a normal chat reply with full formatting. If nothing is pending, reply with one short sentence.";
 
 function spaceTeardownTimeoutMs(): number {
   const override = Number(process.env.SPACE_TEARDOWN_TIMEOUT_MS ?? "");
@@ -1717,15 +1735,46 @@ export function createRouter(deps: RouterDeps) {
       subscribe: authed.threads.subscribe.handler(async function* ({ context, input }) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         const peerRunCache = new Map<string, Promise<boolean>>();
-        for await (const event of deps.events.follow(
-          target.threadId,
-          input.cursor,
-          context.signal,
-        )) {
-          if (await isPeerRun(deps.prisma, event.runId, peerRunCache)) {
-            if (!shouldForwardPeerThreadEvent(event)) continue;
+        const follow = deps.events.follow(target.threadId, input.cursor, context.signal);
+        // A half-open stream looks identical to an idle one, so punctuate silence:
+        // the client treats any frame as liveness and reconnects once they stop.
+        let pending: Promise<IteratorResult<ProductEvent>> | undefined;
+        try {
+          while (!context.signal?.aborted) {
+            pending ??= follow.next();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const next = await Promise.race([
+              pending,
+              new Promise<"silent">((resolve) => {
+                timer = setTimeout(() => resolve("silent"), HEARTBEAT_MS);
+              }),
+            ]).finally(() => clearTimeout(timer));
+            if (next === "silent") {
+              // Keep `pending` so the in-flight read stays the next event in order.
+              yield {
+                id: "heartbeat",
+                spaceId: context.actor.spaceId,
+                threadId: target.threadId,
+                // A bot thread's id is not the bot. Groups have no single bot, so the thread id stands in.
+                botId: target.kind === "bot" ? target.botId : target.threadId,
+                seq: 0,
+                type: "heartbeat",
+                createdAt: new Date().toISOString(),
+                payload: {},
+              };
+              continue;
+            }
+            pending = undefined;
+            if (next.done) return;
+            const event = next.value;
+            if (await isPeerRun(deps.prisma, event.runId, peerRunCache)) {
+              if (!shouldForwardPeerThreadEvent(event)) continue;
+            }
+            yield event;
           }
-          yield event;
+        } finally {
+          // Not awaited: closing can queue behind a read that the abort has not landed on yet.
+          void follow.return(undefined).catch(() => {});
         }
       }),
       send: authed.threads.send.handler(async ({ context, input }) => {
@@ -1814,6 +1863,7 @@ export function createRouter(deps: RouterDeps) {
             blocks: [{ kind: "text", text: input.text }],
             prompt: input.text,
             trigger: "follow_up",
+            clientNonce: input.clientNonce,
           });
           if (sent.taskId && sent.runId) {
             await deps.jobs.enqueue(runContinueJob(sent.runId)).catch((error) => {
@@ -1823,6 +1873,14 @@ export function createRouter(deps: RouterDeps) {
           return { ok: true as const };
         }
         const committed = await deps.prisma.$transaction(async (tx) => {
+          if (input.clientNonce) {
+            const existing = await tx.message.findUnique({
+              where: {
+                threadId_clientNonce: { threadId: target.threadId, clientNonce: input.clientNonce },
+              },
+            });
+            if (existing) return null;
+          }
           await lockOwnedGroup(tx, context.actor, target.groupId);
           const group = await tx.chatGroup.findFirst({
             where: {
@@ -1839,6 +1897,7 @@ export function createRouter(deps: RouterDeps) {
             threadId: target.threadId,
             role: "user",
             blocks,
+            clientNonce: input.clientNonce,
           });
           const active = await tx.run.findFirst({
             where: {
@@ -1896,14 +1955,96 @@ export function createRouter(deps: RouterDeps) {
           await touchGroupUpdatedAt(tx, target.groupId);
           return { runId: run?.id, eventSeq: event.seq };
         });
-        await deps.events.notify(target.threadId, committed.eventSeq).catch((error) => {
-          getLogger().error("group follow-up realtime notification", error);
-        });
-        if (committed.runId) {
-          await deps.jobs.enqueue(runContinueJob(committed.runId)).catch((error) => {
-            getLogger().error("group follow-up enqueue", error);
+        if (committed) {
+          await deps.events.notify(target.threadId, committed.eventSeq).catch((error) => {
+            getLogger().error("group follow-up realtime notification", error);
           });
+          if (committed.runId) {
+            await deps.jobs.enqueue(runContinueJob(committed.runId)).catch((error) => {
+              getLogger().error("group follow-up enqueue", error);
+            });
+          }
         }
+        return { ok: true as const };
+      }),
+      endCall: authed.threads.endCall.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        const { botId, threadId } = target;
+        const blocks = [
+          { kind: "voice_call" as const, callId: input.callId, title: "", farewell: "" },
+        ];
+        const committed = await deps.prisma
+          .$transaction(async (tx) => {
+            // The marker's deterministic nonce is the idempotency key: the unique
+            // (threadId, clientNonce) index rejects a second hang-up, concurrent or not.
+            const message = await createThreadMessageInTransaction(tx, {
+              threadId,
+              role: "bot",
+              botId,
+              blocks,
+              clientNonce: callMarkerClientNonce(input.callId),
+            });
+            await appendEventInTransaction(tx, {
+              spaceId: context.actor.spaceId,
+              threadId,
+              botId,
+              type: "thread.message.created",
+              payload: { messageId: message.id, role: "bot", blocks, callId: input.callId },
+            });
+            const task = await tx.task.create({
+              data: {
+                spaceId: context.actor.spaceId,
+                botId,
+                threadId,
+                userId: context.actor.userId,
+                prompt: HANG_UP_PROMPT,
+                status: "queued",
+              },
+            });
+            const run = await tx.run.create({
+              data: {
+                spaceId: context.actor.spaceId,
+                botId,
+                threadId,
+                taskId: task.id,
+                userId: context.actor.userId,
+                status: "queued",
+                trigger: "call_end",
+                clientNonce: callClientNonce(input.callId),
+              },
+              select: { id: true },
+            });
+            const ended = await appendEventInTransaction(tx, {
+              spaceId: context.actor.spaceId,
+              threadId,
+              botId,
+              type: "thread.call.ended",
+              runId: run.id,
+              payload: {
+                botId,
+                threadId,
+                callId: input.callId,
+                title: "",
+                farewell: "",
+                messageId: message.id,
+              },
+            });
+            return { runId: run.id, eventSeq: ended.seq };
+          })
+          .catch((error) => {
+            if (!isUniqueViolation(error)) throw error;
+            return null;
+          });
+        if (!committed) return { ok: true as const };
+        await deps.events.notify(threadId, committed.eventSeq).catch((error) => {
+          getLogger().error("call end realtime notification", error);
+        });
+        // The queued run is durable; a missed wake is repaired by the reconciler.
+        await deps.jobs.enqueue(runContinueJob(committed.runId)).catch((error) => {
+          getLogger().error("call end enqueue", error);
+        });
         return { ok: true as const };
       }),
       answer: authed.threads.answer.handler(async ({ context, input }) => {
@@ -2026,8 +2167,13 @@ export function createRouter(deps: RouterDeps) {
           if (bot.computer.providerRef) {
             const ctx = computerContext(context.actor, bot.id, "stop");
             const ref = toComputerRef(bot.computer);
-            await checkpointAndRecordComputerWorkspace(deps, bot.computer, ref, ctx);
-            await deps.sandbox.stop(ref, ctx);
+            try {
+              await checkpointAndRecordComputerWorkspace(deps, bot.computer, ref, ctx);
+              await deps.sandbox.stop(ref, ctx);
+            } catch (error) {
+              // The sandbox is already gone: nothing left to checkpoint or stop.
+              if (!isSandboxGoneError(error)) throw error;
+            }
           }
           await deps.prisma.computer.update({
             where: { id: bot.computer.id },
@@ -2176,9 +2322,9 @@ export function createRouter(deps: RouterDeps) {
         }
         if (hasActiveComputerControl(bot.computer) && bot.computer.controlBotId !== bot.id) {
           const previousBotId = bot.computer.controlBotId!;
-          await deps.sandbox.setScreenControl?.(
-            toComputerRef(bot.computer),
-            false,
+          await revokeScreenControl(
+            deps,
+            bot.computer,
             computerContext(context.actor, previousBotId, "screen.release"),
             bot.computer.controlLeaseId ?? undefined,
           );
@@ -2200,6 +2346,11 @@ export function createRouter(deps: RouterDeps) {
           bot = await repos.getBot(context.actor, input.botId);
         }
         if (!bot.computer) throw new IsolationError();
+        // Gone-sandbox revoke may have marked the row stopped; do not fall through to the
+        // running-state grant and return a confusing "control changed" conflict.
+        if (!bot.computer.providerRef || bot.computer.state !== "running") {
+          throw new ORPCError("BAD_REQUEST", { message: "computer must be running" });
+        }
 
         const executionLease = await deps.prisma.computerExecutionLease.findUnique({
           where: { computerId_botId: { computerId: bot.computer.id, botId: bot.id } },
@@ -2311,17 +2462,27 @@ export function createRouter(deps: RouterDeps) {
           throw new ORPCError("FORBIDDEN");
         }
         if (!computer.providerRef) return { ok: true as const };
-        const mapped =
-          input.kind === "key"
-            ? { kind: "key" as const, key: String(input.payload.key ?? "") }
+        const sensitive = input.payload.sensitive === true;
+        const skillId =
+          sensitive && typeof input.payload.skillId === "string" && input.payload.skillId
+            ? input.payload.skillId
+            : undefined;
+        const mapped = {
+          ...(input.kind === "key"
+            ? { kind: "key" as const, key: String(input.payload.key ?? ""), sensitive }
             : input.kind === "clipboard"
-              ? { kind: "clipboard" as const, text: String(input.payload.text ?? "") }
+              ? {
+                  kind: "clipboard" as const,
+                  text: String(input.payload.text ?? ""),
+                  sensitive,
+                }
               : input.kind === "scroll"
                 ? {
                     kind: "scroll" as const,
                     direction:
                       input.payload.direction === "up" ? ("up" as const) : ("down" as const),
                     amount: Number(input.payload.amount ?? 3),
+                    sensitive,
                   }
                 : {
                     kind: "pointer" as const,
@@ -2331,7 +2492,10 @@ export function createRouter(deps: RouterDeps) {
                     type:
                       (input.payload.type as "move" | "down" | "up" | "click" | undefined) ??
                       "click",
-                  };
+                    sensitive,
+                  }),
+          ...(skillId ? { skillId } : {}),
+        };
         const outcome = await taughtSkills.recordInput(context.actor, bot.id, mapped);
         if (outcome === "stale") return { ok: true as const };
         if (outcome !== "recorded") {
@@ -5048,6 +5212,7 @@ export function createRouter(deps: RouterDeps) {
             ...row,
             isDefault: preference?.isDefault ?? false,
             voiceId: preference?.voiceId ?? "",
+            speechModel: preference?.speechModel ?? "",
           });
         });
       }),
@@ -5056,6 +5221,7 @@ export function createRouter(deps: RouterDeps) {
           provider: input.provider,
           plaintext: input.apiKey,
           voiceId: input.voiceId,
+          speechModel: input.speechModel,
           signal: context.signal,
         }),
       ),
@@ -5094,6 +5260,9 @@ export function createRouter(deps: RouterDeps) {
         );
         return toVoiceStatus(cred);
       }),
+      setSpeechModel: authed.voice.setSpeechModel.handler(async ({ context, input }) =>
+        updateVoiceSpeechModel(deps, context.actor, input),
+      ),
       voices: authed.voice.voices.handler(async ({ context, input }) => {
         const loaded = await loadDefaultVoiceCredential(deps, context.actor);
         if (!loaded) return [];
@@ -5379,14 +5548,12 @@ async function releaseComputerControl(
     }
     return;
   }
-  if (bot.computer.providerRef) {
-    await deps.sandbox.setScreenControl?.(
-      toComputerRef(bot.computer),
-      false,
-      computerContext(actor, controlBotId, "screen.release"),
-      controlLeaseId,
-    );
-  }
+  await revokeScreenControl(
+    deps,
+    bot.computer,
+    computerContext(actor, controlBotId, "screen.release"),
+    controlLeaseId,
+  );
 
   const released = await deps.events.finalizeComputerControlRelease({
     spaceId: actor.spaceId,
@@ -5476,7 +5643,17 @@ async function expireStaleComputerControl(
     | undefined,
 ): Promise<boolean> {
   if (!computer || hasActiveComputerControl(computer)) return false;
-  if (computer.controlHolder !== "user") return false;
+  if (computer.controlHolder !== "user") {
+    // Holder "none" with a surviving lease id is a revoke that failed mid-expiry;
+    // retry it so the row does not sit busy forever.
+    if (computer.controlLeaseId) {
+      await expireComputerControl(deps, computer.id, computer.controlLeaseId).catch(
+        () => undefined,
+      );
+      return true;
+    }
+    return false;
+  }
   const leaseId = computer.controlLeaseId;
   // Keep a failed revoke's lease id so reconciliation can retry provider shutdown.
   if (leaseId) {

@@ -6,6 +6,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import { useEffect, useRef } from "react";
 import { rpc } from "../../lib/rpc";
+import { enqueueTeachComputerInput } from "./teach-computer-input-chain";
 
 export function TeachCaptureOverlay({
   botId,
@@ -21,7 +22,6 @@ export function TeachCaptureOverlay({
   screenHeight?: number;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const inputChainRef = useRef(Promise.resolve());
   const width = screenWidth ?? DEFAULT_COMPUTER_SCREEN.width;
   const height = screenHeight ?? DEFAULT_COMPUTER_SCREEN.height;
 
@@ -32,7 +32,7 @@ export function TeachCaptureOverlay({
     const target: HTMLDivElement = overlay;
 
     function enqueueInput(task: () => Promise<void>) {
-      inputChainRef.current = inputChainRef.current.then(task).catch(() => undefined);
+      void enqueueTeachComputerInput(botId, task);
     }
 
     function pointerAt(event: PointerEvent) {

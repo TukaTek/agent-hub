@@ -46,6 +46,7 @@ type Effect = {
 function fixture({
   name = "demo_get_item",
   catalog = false,
+  readOnly = true,
   rules = [] as ActionApprovalRule[],
   autoReview = false,
   trigger = "user",
@@ -60,6 +61,7 @@ function fixture({
 }: {
   name?: string;
   catalog?: boolean;
+  readOnly?: boolean;
   rules?: ActionApprovalRule[];
   autoReview?: boolean;
   trigger?: string;
@@ -71,7 +73,7 @@ function fixture({
   const tool: ConnectorTool = {
     name,
     description: "Read an item",
-    readOnly: true,
+    readOnly,
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -428,6 +430,43 @@ describe("connector read-only metadata and approval enforcement", () => {
       expect(f.pauseRunForInput).toHaveBeenCalledOnce();
       expect(isApprovalPausedResult(f.results[0])).toBe(true);
       expect(reviewMock).not.toHaveBeenCalled();
+    });
+
+    it("forces owner approval for a webhook-triggered read-named write operation", async () => {
+      const f = fixture({
+        catalog,
+        name: "demo_read_profile_card",
+        readOnly: false,
+        trigger: "webhook",
+        rules: [
+          { effect: "always_allow", matchKind: "tool", matchValue: "demo_read_profile_card" },
+        ],
+      });
+      await f.run();
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+      expect(isApprovalPausedResult(f.results[0])).toBe(true);
+    });
+
+    it("lets a webhook-triggered declared read run unattended", async () => {
+      const f = fixture({ catalog, trigger: "webhook" });
+      await f.run();
+      expect(f.execute).toHaveBeenCalledOnce();
+      expect(f.pauseRunForInput).not.toHaveBeenCalled();
+    });
+
+    it("treats a read-named write operation as consequential for automatic review", async () => {
+      reviewMock.mockResolvedValue({ decision: "ask", reason: "Writes data", model: "mock" });
+      const f = fixture({
+        catalog,
+        name: "demo_find_validator_record",
+        readOnly: false,
+        autoReview: true,
+      });
+      await f.run();
+      expect(reviewMock).toHaveBeenCalledOnce();
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
     });
 
     it.each(["ask", "error", "pass"] as const)(
