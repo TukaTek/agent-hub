@@ -5,7 +5,9 @@ import {
   type SpaceBot,
   type SpaceGroup,
 } from "@cortexai-agent-hub/contracts";
+import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import { botColors } from "@cortexai-agent-hub/ui-tokens";
+
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,6 +27,7 @@ import { BotAvatar } from "../components/bot-avatar";
 import { BotOrganizeModal } from "../components/bot-organize-modal";
 import { GroupAvatar } from "../components/group-avatar";
 import { NativeSymbol } from "../components/native-symbol";
+import { WorkingIndicator } from "../components/WorkingIndicator";
 import {
   activityStatusLabel,
   fetchSpaceActivity,
@@ -46,6 +49,7 @@ import {
   selectSpace,
 } from "../lib/api";
 import { mobileTokens, resolveMobileAppearance } from "../lib/appearance";
+import { mobileBotAvatarPresentation } from "../lib/bot-avatar";
 import { allowFocusPrompt, scheduleFocusPrompt } from "../lib/focus-prompt";
 import { t, useI18n } from "../lib/i18n";
 import { botTag, filterBots, formatThreadTime, userInitials } from "../lib/inbox";
@@ -113,6 +117,15 @@ export default function Home() {
   });
   const [spaceBusy, setSpaceBusy] = useState(false);
   const [spaceRecoveryId, setSpaceRecoveryId] = useState<string | null>(null);
+  const [collapsedRosterParents, setCollapsedRosterParents] = useState(() => new Set<string>());
+  const toggleRosterParent = useCallback((botId: string) => {
+    setCollapsedRosterParents((previous) => {
+      const next = new Set(previous);
+      if (next.has(botId)) next.delete(botId);
+      else next.add(botId);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     void loadActivityMode().then(setActivityMode);
@@ -296,8 +309,19 @@ export default function Home() {
               },
             ]
           : [];
-    return spaceInboxItems(sidebarSpaces);
-  }, [botSections, locale, me, spaces, query, searching, searchHits, visible, visibleGroups]);
+    return spaceInboxItems(sidebarSpaces, collapsedRosterParents);
+  }, [
+    botSections,
+    collapsedRosterParents,
+    locale,
+    me,
+    spaces,
+    query,
+    searching,
+    searchHits,
+    visible,
+    visibleGroups,
+  ]);
   const initials = userInitials(me?.name ?? "");
   const organizeChat = organizeTarget
     ? organizeTarget.kind === "bot"
@@ -629,6 +653,10 @@ export default function Home() {
           ) : (
             <BotRow
               bot={item.bot}
+              depth={item.depth}
+              hasChildren={item.hasChildren}
+              collapsed={collapsedRosterParents.has(item.bot.id)}
+              onToggleChildren={() => toggleRosterParent(item.bot.id)}
               onPress={() => {
                 if (spaceActionRef.current.busy || spaceActionRef.current.recoveryId) return;
                 void openMobileSpace(item.bot.spaceId, () =>
@@ -775,8 +803,13 @@ function ConversationRow({
   preview,
   time,
   avatar,
+  indicator,
   tag,
   unread,
+  depth = 0,
+  hasChildren = false,
+  collapsed = false,
+  onToggleChildren,
   onPress,
   onLongPress,
   accessibilityLabel,
@@ -786,23 +819,59 @@ function ConversationRow({
   preview: string;
   time: string;
   avatar: ReactNode;
+  indicator?: ReactNode;
   tag?: string | null;
   unread?: boolean;
+  depth?: number;
+  hasChildren?: boolean;
+  collapsed?: boolean;
+  onToggleChildren?: () => void;
   onPress: () => void;
   onLongPress?: () => void;
   accessibilityLabel: string;
   accessibilityHint?: string;
 }) {
   const styles = useThemedStyles(createHomeStyles);
+  const { t } = useI18n();
+  const toggleLabel = collapsed
+    ? t("Expand {name}", { name: title })
+    : t("Collapse {name}", { name: title });
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
+      // Screen readers treat the row as one element, so the chevron is offered as a row action.
+      accessibilityState={hasChildren ? { expanded: !collapsed } : undefined}
+      accessibilityActions={
+        hasChildren ? [{ name: "toggleChildren", label: toggleLabel }] : undefined
+      }
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "toggleChildren") onToggleChildren?.();
+      }}
       onPress={onPress}
       onLongPress={onLongPress}
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [
+        styles.row,
+        depth > 0 ? { paddingInlineStart: 16 + depth * 16 } : null,
+        pressed && styles.rowPressed,
+      ]}
     >
+      {hasChildren ? (
+        <Pressable
+          accessible={false}
+          importantForAccessibility="no"
+          hitSlop={8}
+          onPress={onToggleChildren}
+          style={styles.treeToggle}
+        >
+          <NativeSymbol
+            ios={collapsed ? "chevron.right" : "chevron.down"}
+            android={collapsed ? "chevron-forward" : "chevron-down"}
+            size={14}
+          />
+        </Pressable>
+      ) : null}
       {avatar}
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
@@ -819,6 +888,7 @@ function ConversationRow({
             ) : null}
           </View>
           <View style={styles.rowMeta}>
+            {indicator}
             {time ? <Text style={styles.time}>{time}</Text> : null}
             {unread ? <View accessibilityElementsHidden style={styles.unreadDot} /> : null}
           </View>
@@ -886,10 +956,18 @@ function SearchRow({ hit, onPress }: { hit: SearchHit; onPress: () => void }) {
 
 function BotRow({
   bot,
+  depth = 0,
+  hasChildren = false,
+  collapsed = false,
+  onToggleChildren,
   onPress,
   onLongPress,
 }: {
   bot: MobileBot | SpaceBot;
+  depth?: number;
+  hasChildren?: boolean;
+  collapsed?: boolean;
+  onToggleChildren?: () => void;
   onPress: () => void;
   onLongPress?: () => void;
 }) {
@@ -897,10 +975,16 @@ function BotRow({
   const preview = previewSnippet(bot.preview, 40) || bot.title || t("No messages yet");
   const time = bot.updatedAt ? formatThreadTime(bot.updatedAt) : "";
   const tag = botTag(bot.title, bot.name);
+  const working = ACTIVE_RUN_STATUSES.some((status) => status === bot.status);
+  // Only flat avatars carry a usable color; image avatars fall back to the muted dot.
+  const presentation = mobileBotAvatarPresentation(bot.color || FALLBACK_COLOR);
+  const tint =
+    presentation.kind === "shape" || presentation.kind === "color" ? presentation.color : undefined;
   // Spelled out because an explicit label replaces the one built from the row's children.
   const label = [
     bot.name,
     tag,
+    working ? t("Working…") : null,
     bot.notifyOnFinish ? null : t("notifications silenced"),
     bot.unread ? t("unread") : null,
     time,
@@ -915,12 +999,17 @@ function BotRow({
       time={time}
       tag={tag}
       unread={bot.unread}
+      depth={depth}
+      hasChildren={hasChildren}
+      collapsed={collapsed}
+      onToggleChildren={onToggleChildren}
       accessibilityLabel={label}
       accessibilityHint={
         onLongPress ? t("Long press to pin, move, or silence notifications") : undefined
       }
       onPress={onPress}
       onLongPress={onLongPress}
+      indicator={working ? <WorkingIndicator compact tint={tint} /> : null}
       avatar={
         <BotAvatar
           color={bot.color || FALLBACK_COLOR}
@@ -1041,6 +1130,13 @@ function createHomeStyles() {
       paddingHorizontal: 16,
       paddingVertical: 10,
       gap: 12,
+    },
+    treeToggle: {
+      width: 20,
+      height: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: -4,
     },
     rowPressed: {
       opacity: 0.55,

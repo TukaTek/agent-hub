@@ -41,7 +41,12 @@ function fixture(hubClient?: ReturnType<typeof createHubClient>) {
     accessUntil: new Date(Date.now() + 900_000),
   };
   const client = {
-    lookup: vi.fn(async () => ({ tenant: config.tenantId, native: true })),
+    lookup: vi.fn(
+      async (): Promise<{ tenant: string; idpType: "native" | "entra" | "google" }> => ({
+        tenant: config.tenantId,
+        idpType: "native",
+      }),
+    ),
     login: vi.fn(async () => grant),
     refresh: vi.fn(async () => ({
       ...grant,
@@ -200,18 +205,28 @@ describe("Hub authentication through real auth endpoints", () => {
 
   it("routes Entra users who are not Always Native to sso_unavailable", async () => {
     const f = fixture();
-    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, native: false });
+    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
     const response = await f.request("/hub/sign-in/continue", "", { email: "entra@example.test" });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ next: "sso_unavailable" });
     expect(f.client.login).not.toHaveBeenCalled();
   });
 
+  it("uses the domain IdP for an unprovisioned email when Hub resolves its domain", async () => {
+    const f = fixture();
+    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+    const response = await f.request("/hub/sign-in/continue", "", {
+      email: "unprovisioned@example.test",
+    });
+    expect(await response.json()).toEqual({ next: "sso_unavailable" });
+  });
+
   it.each([
     ["native", "password", 200],
     ["entra", "sso_unavailable", 400],
+    ["google", "other_sso_unavailable", 400],
   ])(
-    "follows Hub's lookup for an Entra tenant user whose idpType is %s",
+    "follows Hub's lookup for a tenant user whose idpType is %s",
     async (idpType, next, signInStatus) => {
       const { createHubClient: realHubClient } =
         await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
@@ -253,8 +268,19 @@ describe("Hub authentication through real auth endpoints", () => {
     },
   );
 
+  it("uses the password step when Hub returns an invalid IdP type", async () => {
+    const { createHubClient: realHubClient } =
+      await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+    const fetcher = vi.fn(async () => Response.json({ tenantId: config.tenantId }));
+    const f = fixture(realHubClient(config, fetcher as typeof fetch));
+    const response = await f.request("/hub/sign-in/continue", "", {
+      email: "user@example.test",
+    });
+    expect(await response.json()).toEqual({ next: "password" });
+  });
+
   it.each([
-    ["unknown email", new Error("Hub access denied")],
+    ["email outside known Hub domains", new Error("Hub access denied")],
     ["other-tenant email", new Error("Hub access denied")],
     ["lookup timeout", new DOMException("The operation timed out.", "TimeoutError")],
     ["invalid Hub response", new Error("Invalid Hub response")],
@@ -325,7 +351,7 @@ describe("Hub authentication through real auth endpoints", () => {
     );
     try {
       f.client.lookup.mockRejectedValueOnce(new Error("Hub access denied"));
-      f.client.lookup.mockResolvedValueOnce({ tenant: config.tenantId, native: false });
+      f.client.lookup.mockResolvedValueOnce({ tenant: config.tenantId, idpType: "entra" });
       for (let attempt = 0; attempt < 3; attempt++) {
         await f.request("/hub/sign-in/continue", "", { email: "private@example.test" });
       }

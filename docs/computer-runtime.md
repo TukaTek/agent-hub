@@ -39,6 +39,30 @@ Fake computers and explicit `BROWSER_PROVIDER=fake|emulator` use an in-process s
 
 Human input and agent input may coexist on distinct Team screens. “Take control” grants the user an exclusive control lease on that Assistant’s screen so the embedded viewer accepts input. For a Team Assistant, takeover is refused with HTTP 409 (“Stop the Assistant first”) while that Assistant holds a live computer execution lease or an active run, unless the run is `waiting_takeover` (the Assistant asked for protected input). Stop the Assistant first, then take control; after release, the agent may continue. `request_takeover` remains available when the model explicitly needs protected input or human judgment.
 
+## Terminal and files
+
+The web and desktop computer view opens a terminal and a file browser from a dock over the screen. The dock's browser button hides those windows, keeping their sessions, so the whole screen is visible again.
+
+**Terminal**
+- The Activity view always shows what the bot did on its computer, live and from history. Each action is recorded as a `computer.command` event:
+  - `shell` commands, with the redacted command and the tail of their output;
+  - `write_file`, `attach_file`, `open_path`, and `launch_app`, as one line each, with the size for writes and the error if they failed.
+
+  Read-only tools (`read_file`, `list_files`) are left out. The bot can still run commands while the user holds control, so the feed never goes away.
+- Without control (for example after it was released or expired), an "Open shell" button takes control again and switches to the shell.
+- A user holding control also gets a Shell tab with an interactive shell. It starts on first use, stays connected across tab switches, and reconnects to a fresh shell if the connection drops. `computer.terminalUrl` starts a small PTY server in the computer beside the screen gateway.
+  - It is bound to the display's control token and reached through the same sealed capability and gateway as the control screen. Later sessions under the same lease (another tab, a reopened window) join that server with their own shell, so open shells keep running.
+  - It runs as the computer's workspace user (never root), with the same environment as the bot's `shell` tool. Docker execs inherit the container's non-root user; E2B, Daytona, and Box use the same command runner as `shell`. When the computer runs as a host uid without a passwd entry (Docker on macOS), the terminal names it `cortexai-agent-hub` through nss_wrapper for its own session, so prompts and `whoami` work; `/etc/passwd` stays unchanged.
+  - Releasing control, expiry, or screen teardown stops it, disconnects every shell, and removes its session files.
+- Providers opt in through `SandboxProvider.connectTerminal`. Docker, E2B, Daytona, and Box support it. Host (`desktop`) computers never expose a browser shell; other computers without it show only Activity.
+- The fake provider serves an emulated shell from a loopback websocket gateway that speaks the same frame protocol. Tests can then drive the browser terminal through the sealed capability and web proxy without exposing a host shell.
+
+**Files**
+- Browsing and text preview work on stopped computers through the stored workspace.
+- While the Files window is visible, the open folder refreshes every few seconds and after each bot command, so changes from a shell or the bot appear without reopening.
+- Download needs a running computer.
+- Upload also needs control. Uploads land under the bot's workspace path and are capped at the attachment size limit.
+
 ## E2B backend
 
 The E2B adapter uses `@e2b/desktop` for machine lifecycle, shell commands, files, and port URLs. Every Assistant desktop uses the shared Linux runtime, including the first Assistant. Its X display, screenshots, input, and view/control transports follow the same lifecycle as the other managed providers.
@@ -62,6 +86,8 @@ The portable computer workspace is the durable boundary. E2B uses `/home/user/co
 Before exporting a remote workspace, remote backends quiesce desktop browsers so profile databases and login state are copied consistently. Run checkpoints defer while another bot holds an execution or user-control lease; the last finishing run or idle job saves the shared workspace. Idle shutdown claims the computer before exporting, preventing a new bot from starting during the snapshot. They exclude only transient cache/lock files inside `.browser-profiles`; similarly named project files remain durable.
 
 The disposable OS image is not a portable disk snapshot. System packages installed outside the workspace are lost when moving to another provider; durable machine customization should be represented by a reproducible image or setup recipe. This is what makes a future backend switch practical instead of trying to translate vendor-specific VM snapshots.
+
+Docker computers include `uv` for rootless Python CLI installs. Run `uv tool install <package>`; the tool environments, command shims, managed Python versions, and cache stay under the persistent home. This installs Python command-line tools, not system packages such as `apt` dependencies. The image also ships GitHub's `gh` CLI; bots authenticate the CLI through device flow, and gh stores that credential under the persistent home.
 
 ## Verification
 

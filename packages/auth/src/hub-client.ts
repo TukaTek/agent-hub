@@ -157,19 +157,25 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     await verify(result.accessToken, result);
     return result;
   }
-  /** Throws for unknown, other-tenant, or failed lookups. */
-  async function lookup(email: string): Promise<{ tenant: string; native: boolean }> {
+  /** Throws for other-tenant, invalid, or failed lookups. */
+  async function lookup(email: string): Promise<{
+    tenant: string;
+    idpType: "native" | "entra" | "google";
+  }> {
     const found = await request("/api/tenant-auth/lookup", { email: email.trim() });
     const tenant = text(found.tenantId);
     if (config.tenantId && tenant !== config.tenantId) throw new Error("Hub access denied");
-    return { tenant, native: found.idpType === "native" };
+    if (found.idpType !== "native" && found.idpType !== "entra" && found.idpType !== "google") {
+      throw new Error("Invalid Hub response");
+    }
+    return { tenant, idpType: found.idpType };
   }
   return {
     verify,
     lookup,
     async login(email: string, password: string) {
-      const { tenant, native } = await lookup(email);
-      if (!native) throw new HubUnsupportedIdpError();
+      const { tenant, idpType } = await lookup(email);
+      if (idpType !== "native") throw new HubUnsupportedIdpError();
       const result = await grant(
         await request("/api/tenant-auth/login", { email: email.trim(), password }),
         tenant,

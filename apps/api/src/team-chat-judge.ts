@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
-import type { AgentModelOAuthCredential, AgentRuntime } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AgentRunModel,
+  AgentRuntime,
+  ModelCredentialFailedState,
+  ModelCredentialRetireReason,
+} from "@cortexai-agent-hub/adapter-kit";
+
 import {
   type EncryptedSecretStore,
   formatCurrentTimeInstruction,
+  matchesFailedOAuthSecret,
   resolveModelAuth,
   serializeModelSecret,
   toOAuthCredential,
 } from "@cortexai-agent-hub/adapters";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   findDefaultModelCredential,
   findModelCredential,
-  type PrismaClient,
+  retireModelCredential,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
@@ -170,6 +178,8 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
               model: event.model,
               inputTokens: event.inputTokens,
               outputTokens: event.outputTokens,
+              cacheReadTokens: event.cacheReadTokens,
+              cacheWriteTokens: event.cacheWriteTokens,
             },
           });
         }
@@ -187,10 +197,7 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
       id: string;
       apiKey?: string;
       baseUrl?: string;
-      oauth?: {
-        credential: AgentModelOAuthCredential;
-        persist?: (credential: AgentModelOAuthCredential) => Promise<void>;
-      };
+      oauth?: AgentRunModel["oauth"];
     };
   } | null> {
     const settings = await this.deps.prisma.deploymentSettings.findUnique({
@@ -248,14 +255,34 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
         data: { ciphertext: stored.ciphertext },
       });
     };
+    // Same fences as the run path: a stale failure must not delete material a
+    // concurrent refresh or reconnect already persisted.
+    const retire = (
+      _reason: ModelCredentialRetireReason,
+      _detail: string | undefined,
+      failed?: ModelCredentialFailedState,
+    ) =>
+      retireModelCredential(this.deps.prisma, {
+        userId: bot.userId,
+        credentialId: credential.id,
+        secretId: credential.secretId,
+        matchesFailedSecret: failed
+          ? matchesFailedOAuthSecret(
+              (ciphertext, secretId) => this.deps.secrets.load(ciphertext, secretId),
+              failed,
+            )
+          : undefined,
+      });
     const plaintext = this.deps.secrets.load(secret.ciphertext, secret.id);
-    const auth = await resolveModelAuth(plaintext, provider, { persist });
+    const auth = await resolveModelAuth(plaintext, provider, { persist, retire });
     const parsed = auth.secret;
+    const limit = parsed.maxTokens !== undefined ? { maxTokens: parsed.maxTokens } : {};
     if (parsed.kind === "oauth") {
       return {
         model: {
           provider,
           id: modelId,
+          ...limit,
           oauth: {
             credential: { ...parsed.credential },
             persist: async (credential) => {
@@ -263,9 +290,11 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
                 serializeModelSecret({
                   kind: "oauth",
                   credential: toOAuthCredential(credential),
+                  ...limit,
                 }),
               );
             },
+            retire,
           },
         },
       };
@@ -277,10 +306,11 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
           id: modelId,
           apiKey: parsed.apiKey,
           baseUrl: parsed.baseUrl,
+          ...limit,
         },
       };
     }
-    return { model: { provider, id: modelId, apiKey: auth.apiKey } };
+    return { model: { provider, id: modelId, apiKey: auth.apiKey, ...limit } };
   }
 }
 

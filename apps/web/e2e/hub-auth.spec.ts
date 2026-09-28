@@ -73,6 +73,18 @@ for (const desktop of [false, true]) {
     await expect(password).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
     await captureScreenshot(page, testInfo, "hub-sign-in-sso-unavailable");
+
+    await page.getByRole("button", { name: "Use a different email" }).click();
+    await page.route("**/api/auth/hub/sign-in/continue", (route) =>
+      route.fulfill({ json: { next: "other_sso_unavailable" } }),
+    );
+    await email.fill("google@example.test");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText(
+      "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.",
+    );
+    await expect(password).toHaveCount(0);
+    await captureScreenshot(page, testInfo, "hub-sign-in-other-sso-unavailable");
   });
 }
 

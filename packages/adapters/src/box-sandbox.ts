@@ -23,8 +23,10 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
+  TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
+
 import { boxResponseError, wrapBoxCall } from "./box-errors.js";
 import { normalizeWorkspacePath, shellQuote, workspacePath } from "./computer-support.js";
 import {
@@ -294,6 +296,9 @@ export class BoxSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): Promise<ScreenSession> {
     return this.desktops.connectScreen(computer, request, context);
+  }
+  async connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    return this.desktops.connectTerminal(computer, request, context);
   }
   async setScreenControl(
     computer: ComputerRef,

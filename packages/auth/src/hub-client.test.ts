@@ -67,7 +67,7 @@ describe("Hub Workbench-style tenant authentication", () => {
     const native = setup();
     await expect(native.client.lookup(" user@example.test ")).resolves.toEqual({
       tenant: "fixture-tenant",
-      native: true,
+      idpType: "native",
     });
     expect(native.fetcher).toHaveBeenCalledOnce();
     expect(JSON.parse(native.fetcher.mock.calls[0]![1].body)).toEqual({
@@ -76,10 +76,19 @@ describe("Hub Workbench-style tenant authentication", () => {
     const entra = setup({ lookup: { tenantId: "fixture-tenant", idpType: "entra" } });
     await expect(entra.client.lookup("user@example.test")).resolves.toEqual({
       tenant: "fixture-tenant",
-      native: false,
+      idpType: "entra",
     });
     await expect(entra.client.login("user@example.test", "password")).rejects.toThrow(
       HubUnsupportedIdpError,
+    );
+    const google = setup({ lookup: { tenantId: "fixture-tenant", idpType: "google" } });
+    await expect(google.client.lookup("user@example.test")).resolves.toEqual({
+      tenant: "fixture-tenant",
+      idpType: "google",
+    });
+    const invalid = setup({ lookup: { tenantId: "fixture-tenant" } });
+    await expect(invalid.client.lookup("user@example.test")).rejects.toThrow(
+      "Invalid Hub response",
     );
     const pinned = createHubClient({ origin, tenantId: "other" }, setup().fetcher);
     await expect(pinned.lookup("user@example.test")).rejects.toThrow();
@@ -96,7 +105,7 @@ describe("Hub Workbench-style tenant authentication", () => {
       const { client, fetcher } = setup({ lookup: { ...tenantLookup, idpType: "native" } });
       await expect(client.lookup("user@example.test")).resolves.toEqual({
         tenant: "fixture-tenant",
-        native: true,
+        idpType: "native",
       });
       await expect(client.login("user@example.test", "synthetic-password")).resolves.toMatchObject({
         subject: "fixture-user",
@@ -114,7 +123,7 @@ describe("Hub Workbench-style tenant authentication", () => {
       const { client, fetcher } = setup({ lookup: { ...tenantLookup, idpType: "entra" } });
       await expect(client.lookup("user@example.test")).resolves.toEqual({
         tenant: "fixture-tenant",
-        native: false,
+        idpType: "entra",
       });
       await expect(client.login("user@example.test", "synthetic-password")).rejects.toThrow(
         HubUnsupportedIdpError,

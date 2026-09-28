@@ -136,7 +136,7 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
     const client = {
       refresh,
       login: refresh,
-      lookup: vi.fn(async () => ({ tenant: config.tenantId, native: true })),
+      lookup: vi.fn(async () => ({ tenant: config.tenantId, idpType: "native" as const })),
       verify: vi.fn(async () => undefined),
       revoke: vi.fn(async () => undefined),
     };

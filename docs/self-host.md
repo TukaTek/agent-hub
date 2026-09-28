@@ -1,6 +1,6 @@
 # Self-hosting CortexAI Agent Hub
 
-The signed-in product is a long-running API, a Graphile Worker, Postgres, and a computer provider (Docker supervisor, E2B, Daytona, or Box). It is not a static site. The marketing site in `apps/www` can be hosted separately.
+The signed-in product is a long-running API, a Graphile Worker, Postgres, and a computer provider (Docker supervisor, E2B, Daytona, CreateOS, or Box). It is not a static site. The marketing site in `apps/www` can be hosted separately.
 
 ## Local (source checkout)
 
@@ -31,7 +31,7 @@ run `bash install-images.sh`. Flags may be combined in either order: `--prepare-
 `SANDBOX_PROVIDER` defaults to `docker`. The images Compose file runs a sandbox supervisor
 (from the app image, on the internal network only) and pulls `ghcr.io/tukatek/agent-hub/computer`.
 Signup and local Docker computers work without an E2B account. Optional remote providers: set
-`SANDBOX_PROVIDER` to `e2b`, `daytona`, or `box` and add the matching API key. The published-images
+`SANDBOX_PROVIDER` to `e2b`, `daytona`, `createos`, or `box` and add the matching API key. The published-images
 Compose stack requires `SANDBOX_SUPERVISOR_TOKEN` for every provider; leave it empty and `compose up` fails closed.
 
 Optional: set `OPENROUTER_API_KEY` or connect a model in the UI after signup.
@@ -81,6 +81,53 @@ Docker computer topology:
 Set any of them to `0`, `none` or `unlimited` to remove that ceiling. A malformed value fails the
 supervisor at startup naming the variable, rather than surfacing later as a failed bot.
 
+### Restricted computer egress
+
+Docker computers have full outbound access by default — the public internet plus the Docker
+host's own addresses, the LAN, and link-local cloud metadata endpoints such as
+`169.254.169.254`. On a cloud VM that last path is instance-credential theft for anything a
+bot runs. Restricted mode keeps public internet egress (browsing, DNS, apt, git over SSH)
+while dropping computer traffic to every non-public destination and to the host itself.
+
+It takes two parts, both opt-in:
+
+1. Set `SANDBOX_COMPUTER_EGRESS=restricted` in `.env` and recreate the supervisor. Each
+   computer network then gets a deterministic host bridge name (`cah-c…`) instead of a
+   generic `br-*`.
+2. Apply the host ruleset once per Docker host:
+
+   ```bash
+   sudo bash infra/compose/restrict-computer-egress.sh
+   ```
+
+   On a no-checkout install, download it first:
+   `curl -fsSLO https://raw.githubusercontent.com/TukaTek/agent-hub/main/infra/compose/restrict-computer-egress.sh`.
+   The script drops forwarded traffic from `cah-c*` bridges to all non-public IPv4/IPv6
+   destinations via the `DOCKER-USER` chain, adds an `INPUT` drop so computers cannot open
+   connections to the host (established replies to host-initiated control and screen
+   connections still flow), and installs a systemd oneshot so the rules return after a
+   reboot. `--print` shows the exact rules without changing anything; `--remove` uninstalls.
+
+Screen streaming is unaffected: the supervisor and web proxy join each computer's bridge,
+and the ruleset exempts traffic whose in- and out-interface are both `cah-c*` before
+any drop (that exemption is load-bearing on hosts where `br_netfilter` feeds bridged
+frames through `FORWARD`). Rules match interface names rather than subnets, so computer
+create/delete cycles need no firewall maintenance; deleting a computer removes its
+traffic from the match and nothing else. A computer provisioned before the flag flips
+is replaced on its next provision — resuming it on an unnamed bridge would bypass the
+restriction.
+
+To disable restricted egress, set `SANDBOX_COMPUTER_EGRESS=open`, recreate the
+supervisor, and run `sudo bash infra/compose/restrict-computer-egress.sh --remove`.
+The flag alone does not uninstall the host rules, which keep matching the still-named
+`cah-c*` bridges until removed.
+
+Do not enable restricted egress if computers must reach LAN services, an internal proxy,
+or endpoints bound to the host. Requires Linux Docker Engine with the iptables backend —
+Docker Desktop, rootless Docker, and `firewall-backend: nftables` are unsupported. The
+`SANDBOX_SCREEN_NETWORK=internal` topology shares one network instead of per-bot bridges,
+so the mode does not apply there.
+
 ## Docker Compose (single machine)
 
 1. Copy `.env.example` to `.env` and set `POSTGRES_PASSWORD` (`openssl rand -hex 16`), plus `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to independent long random strings (32+ characters; 64 hex for `ENCRYPTION_KEY`). Docker sandboxes also need a dedicated `SANDBOX_SUPERVISOR_TOKEN`. Keep existing `ENCRYPTION_KEY` values so stored credentials stay decryptable.
@@ -122,12 +169,15 @@ WEB_ORIGIN=https://app.example.com
 API_URL=https://app.example.com
 ```
 
-Cookies and CORS follow those origins. `SIGNUPS_ENABLED` / `SIGNUP_ALLOWLIST` seed the signup
-policy when the API starts for the first time. They are not reapplied on restart, so configure them
-before that first start.
+Cookies and CORS follow those origins. `SIGNUPS_ENABLED` seeds whether registration is open
+when the API starts for the first time and is not reapplied on restart. A non-empty
+`SIGNUP_ALLOWLIST` is applied on every API start, replacing the allowlist stored for the deployment.
+Leave it empty to keep that stored list.
 
-With a nonempty signup allowlist, users—including existing accounts—must verify their email to sign
-in. Configure SMTP below before enabling an allowlist or upgrading an allowlisted deployment.
+With a nonempty signup allowlist and SMTP configured, users—including existing accounts—must
+verify their email to sign in. On a fresh instance with no SMTP, the first allowlisted account
+can register without verification. That signup does not prove mailbox ownership, so create the
+account before exposing the service. Further accounts still need SMTP.
 
 For a public deployment, configure SMTP and an allowlist before the API's first start.
 Keep an installation without email on a trusted local network.
@@ -181,7 +231,7 @@ Optional:
 ```env
 SIGNUPS_ENABLED=true
 SIGNUP_ALLOWLIST=you@example.com,@company.com
-SANDBOX_PROVIDER=docker   # or none, e2b, daytona, box. Keep fake only for pnpm test.
+SANDBOX_PROVIDER=docker   # or none, e2b, daytona, createos, box. Keep fake only for pnpm test.
 AGENT_RUNTIME=pi          # Keep scripted only for pnpm test.
 WAKEUP_DRIVER=graphile
 SANDBOX_IDLE_MS=600000    # pause the bot computer after 10 minutes idle
@@ -189,6 +239,7 @@ SANDBOX_COMMAND_TIMEOUT_MS=300000 # stop a shell command after 5 minutes
 MAX_TOOL_CALLS_PER_TURN=  # optional Pi turn tool-call fuse; unset/0 = unlimited
 E2B_API_KEY=              # when SANDBOX_PROVIDER=e2b
 DAYTONA_API_KEY=          # when SANDBOX_PROVIDER=daytona
+CREATEOS_SANDBOX_API_KEY= # when SANDBOX_PROVIDER=createos
 BOX_API_KEY=              # when SANDBOX_PROVIDER=box
 ```
 
@@ -224,6 +275,10 @@ screenshot computer tools stay available. Existing connections default to disabl
 managed endpoints, the deployment-wide fallback remains
 `CORTEXAI_AGENT_HUB_OPENAI_COMPATIBLE_VISION_MODELS=gpt4o-vision,llava`.
 
+Remote MCP defaults to public HTTPS. The deployment owner can attach a server on localhost, the
+same LAN, or a Docker network. Set `MCP_ALLOW_PRIVATE_ENDPOINT=true` on the API and worker to allow it for
+every user. Cloud metadata addresses stay blocked. Leave the flag unset on public installs.
+
 For servers that accept standard `reasoning_effort`, enable **Supports thinking** under
 **Advanced** when connecting. The setting is saved on the connection (no env var or restart).
 Existing connections default to disabled. Reconnect former Qwen-list or deployment-local models
@@ -245,7 +300,8 @@ The Electron desktop app is a client of the same API. Docker and E2B still apply
 
 - **Published images** (`docker-compose.images.yml`) default to `SANDBOX_PROVIDER=docker` with a
   local supervisor and published `ghcr.io/tukatek/agent-hub/computer` image. No E2B account required.
-  Optional: set `e2b`, `daytona`, or `box` plus the matching API key for remote computers.
+  Optional: set `e2b`, `daytona`, or `createos`, or `box` plus the matching API key for remote computers.
+
 - **Docker** is the quick-start default for published images and for a source checkout / full local
   Compose stack. Workspace bots share a persistent Team Computer by default; Private computers are
   optional. Keep the supervisor private, as the included Compose files do.
@@ -253,7 +309,11 @@ The Electron desktop app is a client of the same API. Docker and E2B still apply
   production deployments. CortexAI Agent Hub checkpoints the portable workspace and browser-profile directory to
   `DATA_DIR`; the E2B disk is a runtime cache, not the durable source of truth.
 - **Daytona** provides the same remote-computer contract through Daytona sandboxes. Configure
-  `DAYTONA_API_KEY` and optionally `DAYTONA_API_URL` / `DAYTONA_TARGET`.
+  `DAYTONA_API_KEY` and optionally `DAYTONA_API_URL` / `DAYTONA_TARGET` / `DAYTONA_SNAPSHOT`.
+- **CreateOS** provides the same remote-computer contract through CreateOS desktop sandboxes.
+  Configure `CREATEOS_SANDBOX_API_KEY` and optionally `CREATEOS_SANDBOX_BASE_URL`,
+  `CREATEOS_SANDBOX_SHAPE`, or `CREATEOS_SANDBOX_ROOTFS`. CortexAI Agent Hub defaults to
+  `https://api.sb.createos.sh`, `s-2vcpu-2gb`, and `desktop:1`.
 - **Box by ASCII** provides a managed Linux desktop through `BOX_API_KEY` and optionally
   `BOX_API_URL`. CortexAI Agent Hub always creates or resumes boxes with `noEnv: true`, keeps the portable
   workspace under `/home/user/cortexai-agent-hub-home`, and refreshes a two-hour TTL. Box uses the shared Linux
@@ -283,7 +343,9 @@ output directory of any failed run.
 
 `infra/compose/docker-compose.prod.yml` runs the hosted product with Postgres, the API, worker, web app,
 and automatic HTTPS through Caddy. It uses E2B for bot computers, so the VM never exposes a Docker
-supervisor or browser containers. The root-equivalent updater sidecar is an explicit opt-in profile.
+supervisor or browser containers — `infra/compose/docker-compose.prod.docker.yml` is the opt-in
+overlay that runs local Docker computers on the same stack (see below). The root-equivalent updater
+sidecar is an explicit opt-in profile.
 
 Before deploying to a new Ubuntu host, create and verify a key-only `deploy` account, then apply the
 idempotent host-hardening baseline. It disables SSH passwords and root login, rate-limits SSH, allows
@@ -381,6 +443,58 @@ checkout's `.env` and production Compose file. If the stack was started with a c
 set the same `COMPOSE_PROJECT_NAME` in that file. For a manual run, export these variables instead.
 When updating an existing backup installation, reinstall both the script and service unit,
 then run `systemctl daemon-reload`.
+
+### Docker computers on the production stack
+
+Layer `infra/compose/docker-compose.prod.docker.yml` after the base file in every Compose
+invocation to run bot computers as local Docker containers instead of a remote provider:
+
+```bash
+# Pull only the pull-only dependency images (postgres, caddy, busybox);
+# --pull never fails when they are absent locally.
+docker compose --env-file .env \
+  -f infra/compose/docker-compose.prod.yml \
+  -f infra/compose/docker-compose.prod.docker.yml \
+  pull --ignore-buildable
+docker compose --env-file .env \
+  -f infra/compose/docker-compose.prod.yml \
+  -f infra/compose/docker-compose.prod.docker.yml \
+  up -d --build --wait --wait-timeout 300 --pull never
+```
+
+In this topology `api`, `worker`, `web`, `supervisor`, and `computer` always build
+from the checkout — `pull --ignore-buildable` only covers dependencies that have no
+`build` section. To deploy published app images instead of building, use the base
+file without the overlay. If `docker compose up --help` lacks `--wait-timeout`
+(older Compose), drop `--wait` and verify with `docker compose ... ps` instead;
+`--wait` alone can hang on one-shot services.
+
+The overlay adds the supervisor (app image, `user: root`, Docker socket), the one-shot `computer`
+image build and `data-init` ownership fix, points the API and worker at `http://supervisor:7091`,
+and makes `SANDBOX_PROVIDER=docker` the default. It needs a dedicated `SANDBOX_SUPERVISOR_TOKEN`
+in `.env`; `CORTEXAI_AGENT_HUB_COMPUTER_*` and the `SANDBOX_*` limits apply as documented in `.env.example`.
+Like the updater, the supervisor is root-equivalent on the host: it publishes no port, joins only
+the internal `app` network, and Caddy has no route to it. Bot computers are sibling containers on
+per-bot networks that only the supervisor and the `web` screen proxy join.
+
+When the `updater` profile is enabled too, give the sidecar the same file list and recreate set so
+updates do not leave the supervisor on the previous app image:
+
+```env
+CORTEXAI_AGENT_HUB_COMPOSE_FILE=infra/compose/docker-compose.prod.yml:infra/compose/docker-compose.prod.docker.yml
+CORTEXAI_AGENT_HUB_UPDATE_SERVICES=supervisor
+```
+
+The updater pulls and recreates services but cannot rebuild the `computer` stub image
+(`pull_policy: build` is not pullable). Rebuild it on the host when the computer image
+should change — for example after updating the checkout:
+
+```bash
+docker compose --env-file .env \
+  -f infra/compose/docker-compose.prod.yml \
+  -f infra/compose/docker-compose.prod.docker.yml \
+  build computer
+```
 
 ## Restore
 
@@ -639,8 +753,8 @@ shared filesystem; an object-storage adapter is not available yet.
 
 Use the same HTTPS origin for the web app, `/api`, and `/rpc`. Preserve the authenticated screen
 proxy routes. Choose a [computer provider](#choosing-a-computer-provider) appropriate to the
-service's trust boundary, and configure `SIGNUPS_ENABLED` and `SIGNUP_ALLOWLIST` before the API's
-first start.
+service's trust boundary. `SIGNUPS_ENABLED` applies on the API's first start. A non-empty
+`SIGNUP_ALLOWLIST` applies on every API start.
 The optional marketing site in `apps/www` can be hosted separately.
 
 ## Connect mobile clients

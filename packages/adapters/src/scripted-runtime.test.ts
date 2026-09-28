@@ -49,6 +49,18 @@ describe("inferScript message_bot", () => {
   });
 });
 
+describe("inferScript shell", () => {
+  it("runs the requested command verbatim, even when it mentions other intents", () => {
+    expect(inferScript("run the shell command echo sign in && ls -la")).toEqual([
+      {
+        assistant: "running it on my computer.",
+        toolCalls: [{ name: "shell", args: { command: "echo sign in && ls -la" } }],
+        complete: true,
+      },
+    ]);
+  });
+});
+
 describe("inferScript quote markdown fixture", () => {
   it("returns the markdown fixture including the caller marker", () => {
     expect(inferScript("quote markdown fixture md-stamp")[0]?.assistant).toContain(
@@ -72,6 +84,30 @@ describe("inferScript request_secret", () => {
                 name: "example_api",
                 origin: "https://api.example.test",
                 auth: { type: "bearer" },
+              },
+            },
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("inferScript login request_secret", () => {
+  it("opens a login card via request_secret", () => {
+    expect(inferScript("show a login card")).toEqual([
+      {
+        assistant: "i need that sign-in in a protected card.",
+        toolCalls: [
+          {
+            name: "request_secret",
+            args: {
+              label: "Example sign-in",
+              purpose: "password",
+              credential: {
+                name: "example_login",
+                origin: "https://login.example.test",
+                auth: { type: "login" },
               },
             },
           },

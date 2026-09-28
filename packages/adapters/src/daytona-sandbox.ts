@@ -13,6 +13,7 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
+  TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
 import {
@@ -23,6 +24,7 @@ import {
   type Sandbox,
   SandboxState,
 } from "@daytona/sdk";
+
 import { screenSessionKey } from "./computer-screens.js";
 import { normalizeWorkspacePath, shellQuote, workspacePath } from "./computer-support.js";
 import {
@@ -83,7 +85,15 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     Promise<{ url: string; token: string; expiresAt: number; viewPort: number }>
   >();
 
-  constructor(config: DaytonaConfig & { apiKey: string }, client?: DaytonaSandboxSdk) {
+  /** Optional Daytona snapshot name for new bot computers; unset = server default. */
+  private readonly snapshotName: string | undefined;
+
+  constructor(
+    config: DaytonaConfig & { apiKey: string; snapshot?: string },
+    client?: DaytonaSandboxSdk,
+  ) {
+    this.snapshotName =
+      config.snapshot?.trim() || process.env.DAYTONA_SNAPSHOT?.trim() || undefined;
     this.client =
       client ??
       new Daytona({
@@ -130,7 +140,9 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
     const sandbox = await this.client.create(
       {
+        ...(this.snapshotName ? { snapshot: this.snapshotName } : {}),
         labels: { botId: request.botId, "cortexai-agent-hub": "computer" },
+
         envVars: { VNC_RESOLUTION: "1280x800" },
         autoStopInterval: 0,
         autoDeleteInterval: -1,
@@ -191,6 +203,9 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): Promise<ScreenSession> {
     return this.desktops.connectScreen(computer, request, context);
+  }
+  async connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    return this.desktops.connectTerminal(computer, request, context);
   }
   async setScreenControl(
     computer: ComputerRef,

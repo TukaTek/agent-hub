@@ -85,6 +85,8 @@ export interface AppEnv {
   wakeupDriver: string;
   mcpStdioEnabled: boolean;
   mcpStdioAllowedCommands: string[];
+  /** Deployment-owner escape for remote MCP on RFC1918 / Docker-network hosts. */
+  mcpAllowPrivateEndpoint: boolean;
   port: number;
   gitSha: string | undefined;
   /** Private Compose control-network URL for the opt-in updater sidecar. */
@@ -176,6 +178,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean),
+    mcpAllowPrivateEndpoint: source.MCP_ALLOW_PRIVATE_ENDPOINT === "true",
     port: Number(source.API_PORT ?? 3100),
     gitSha: optional(source.GIT_SHA) ?? optional(source.CORTEXAI_AGENT_HUB_GIT_SHA),
     updaterUrl,

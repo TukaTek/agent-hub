@@ -15,9 +15,11 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
+  TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@cortexai-agent-hub/core";
 import { outgoingCorrelationHeaders } from "@cortexai-agent-hub/logging";
+
 import {
   boundedComputerActions,
   clampRounded,
@@ -257,6 +259,21 @@ export class DockerSandboxProvider implements SandboxProvider {
     };
   }
 
+  async connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    const res = await fetch(this.url(`/computers/${computer.id}/terminal`), {
+      method: "POST",
+      headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
+      body: JSON.stringify({ controlToken: request.controlToken, cwd: request.cwd ?? "" }),
+      signal: context.signal,
+    });
+    if (!res.ok) {
+      const detail = await safeBody(res, context.signal);
+      throw new Error(`sandbox terminal failed: ${res.status} ${detail}`.trim());
+    }
+    const body = await readSandboxJson<{ terminalUrl: string }>(res, context.signal);
+    return { url: body.terminalUrl };
+  }
+
   async setScreenControl(
     computer: ComputerRef,
     interactive: boolean,
@@ -476,9 +493,12 @@ export class DockerSandboxProvider implements SandboxProvider {
         }),
         deadline.signal,
       );
-      if (!res.ok && res.status !== 404) {
-        throw new Error(`sandbox screen release failed: ${res.status}`);
-      }
+      if (res.ok) return;
+      const body = await safeBody(res, deadline.signal);
+      // 404 is only an already-missing computer. A teardown failure, including
+      // one wrongly labeled 404, must stay a release failure.
+      if (res.status === 404 && body.includes("computer not found")) return;
+      throw new Error(`sandbox screen release failed: ${res.status} ${body}`.trim());
     } finally {
       deadline.dispose();
     }

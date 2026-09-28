@@ -24,7 +24,9 @@ import {
   COMPUTER_IMAGE,
   COMPUTER_UID,
   COMPUTER_USER,
+  computerBridgeNameFor,
   computerHomeStorage,
+  computerNetworkCreateOptions,
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
   computerResourceLimits,
@@ -36,6 +38,7 @@ import {
   legacyNetworkOwnedSolelyBy,
   publishedLoopbackControlHostPort,
   resolveComputerControlEndpoint,
+  resolveComputerEgressMode,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
   resolveSpaceComputerLimit,
@@ -54,6 +57,7 @@ import {
   ComputerControlUnavailableError,
   clearComputerScreenRegistry,
   computerActionSchema,
+  computerCommandEnv,
   computerControlTimeoutMs,
   containerActionSteps,
   demuxDockerStream,
@@ -66,6 +70,7 @@ import {
   normalizeWorkspaceRelative,
   parseObservation,
   preferComputerControl,
+  quiesceBrowserProfilesCommand,
   releaseAssignedScreen,
   resetManagedScreensCommand,
   type ScreenAssignment,
@@ -74,8 +79,8 @@ import {
   screenReleaseStopCommand,
   shouldReplayComputerActions,
   stopExtraScreenCommand,
-  stopScreensCommand,
   teardownReleasedScreen,
+  terminalCommand,
   toSandboxInput,
   withKeyedLock,
   workspaceTarget,
@@ -94,6 +99,7 @@ let imageReady: Promise<void> | undefined;
 let supervisorInfo: Docker.ContainerInspectInfo | undefined;
 const supervisorToken = resolveSupervisorToken(process.env);
 const screenNetworkMode = resolveScreenNetworkMode(process.env.SANDBOX_SCREEN_NETWORK);
+const computerEgressMode = resolveComputerEgressMode();
 const teamScreenLimit = resolveTeamScreenLimit();
 // Host-run supervisors on Docker Desktop (macOS/Windows) cannot reach container
 // IPs, so computer control must use a published loopback port instead.
@@ -192,9 +198,40 @@ app.post("/computers", async (c) => {
           info.HostConfig.PortBindings,
           controlViaLoopback,
         );
+        // A network created while egress was open keeps a generic br-* bridge
+        // the host ruleset does not match, so restricted mode must not resume a
+        // computer on it — the replace path rekeys the network instead.
+        const restrictedBridgeOk =
+          !networkMode ||
+          computerEgressMode !== "restricted" ||
+          networkMode !== computerNetworkNameFor(body.botId) ||
+          (await docker
+            .getNetwork(networkMode)
+            .inspect()
+            .then(
+              (net) =>
+                net.Options?.["com.docker.network.bridge.name"] ===
+                computerBridgeNameFor(body.botId),
+              (error) => {
+                // A missing network is incompatible; transient inspect
+                // failures must surface instead of force-replacing a
+                // healthy computer.
+                const status = (error as { statusCode?: number })?.statusCode;
+                if (status === 404 || /no such network|not found/i.test(String(error))) {
+                  return false;
+                }
+                throw error;
+              },
+            ));
         if (
           info.Image === desired.Id &&
-          (!networkMode || info.HostConfig.NetworkMode === networkMode) &&
+          // A named-network container must also still be attached: a network
+          // deleted mid-recreate leaves HostConfig.NetworkMode set while
+          // NetworkSettings is empty, and resuming that yields no connectivity.
+          (!networkMode ||
+            (info.HostConfig.NetworkMode === networkMode &&
+              Boolean(info.NetworkSettings?.Networks?.[networkMode]))) &&
+          restrictedBridgeOk &&
           info.Config.User === computerUser &&
           controlPublishOk &&
           (!storage.homeVolume || homeVolumeMatches(info.HostConfig.Mounts, storage.homeVolume))
@@ -331,11 +368,8 @@ app.post("/computers/:id/exec", async (c) => {
       {
         workingDir: body.cwd ?? "/home/cortexai-agent-hub",
         env: [
-          `DISPLAY=${layout.display}`,
-          "HOME=/home/cortexai-agent-hub",
-          "PATH=/home/cortexai-agent-hub/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-          "NPM_CONFIG_PREFIX=/home/cortexai-agent-hub/.local",
-          "PIP_USER=1",
+          ...computerCommandEnv(layout),
+
           ...Object.entries(body.env ?? {}).map(([k, v]) => `${k}=${v}`),
         ],
         timeoutMs: boundedSandboxCommandTimeoutMs(body.timeoutMs),
@@ -377,6 +411,7 @@ app.post("/computers/:id/browser", async (c) => {
                 kind: z.enum(["fill", "type"]),
                 ref: z.string().min(1).max(200),
                 text: z.string().max(32_000),
+                origin: z.string().url().max(2048).optional(),
               }),
             ]),
           )
@@ -385,6 +420,8 @@ app.post("/computers/:id/browser", async (c) => {
       }),
     ])
     .parse(await c.req.json());
+  const carriesSavedLogin =
+    body.command === "act" && body.actions.some((step) => "origin" in step && step.origin);
   try {
     const { container, layout } = await managedScreen(
       c.req.param("id"),
@@ -395,16 +432,25 @@ app.post("/computers/:id/browser", async (c) => {
     );
     const result = await runContainerCommand(
       container,
-      ["/usr/local/bin/cortexai-agent-hub-page-browser", body.command, JSON.stringify(body)],
+      // Arguments go over stdin: origin-bound fills carry saved logins, and argv is readable by
+      // any process in the computer, including the bot's own shell. Other commands also keep the
+      // argv copy so a computer still on an older image keeps working until it is replaced.
+      [
+        "/usr/local/bin/cortexai-agent-hub-page-browser",
+        body.command,
+        ...(carriesSavedLogin ? [] : [JSON.stringify(body)]),
+      ],
       {
         env: [
           `DISPLAY=${layout.display}`,
           `CORTEXAI_AGENT_HUB_CDP_PORT=${layout.debugPort}`,
           "HOME=/home/cortexai-agent-hub",
           "CORTEXAI_AGENT_HUB_BROWSER_WATCH_STDIN=1",
+          "CORTEXAI_AGENT_HUB_BROWSER_ARGS_STDIN=1",
         ],
         timeoutMs: 25_000,
         signal,
+        stdin: `${JSON.stringify(body)}\n`,
       },
     );
     // A nonzero exit or malformed output cannot establish which mutations ran.
@@ -656,6 +702,58 @@ app.post("/computers/:id/screen-mode", async (c) => {
   }
 });
 
+app.post("/computers/:id/terminal", async (c) => {
+  const body = z
+    .object({
+      controlToken: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+      cwd: z.string().max(4096).default(""),
+    })
+    .parse(await c.req.json());
+  try {
+    const id = c.req.param("id");
+    const botId = c.req.header("x-cortexai-agent-hub-bot-id");
+    const { container, info } = await managedContainer(
+      id,
+      botId,
+      c.req.header("x-cortexai-agent-hub-space-id"),
+    );
+    const cwd = workspaceTarget(normalizeWorkspaceRelative(body.cwd));
+    const terminalToken = randomUUID();
+    const layout = await withComputerScreenLock(id, async () => {
+      const screen = await ensureManagedScreen(
+        id,
+        container,
+        info,
+        botId,
+        c.req.header("x-cortexai-agent-hub-screen-id"),
+        c.req.header("x-cortexai-agent-hub-screen-lease-id"),
+      );
+      const result = await runContainerCommand(
+        container,
+        [
+          "bash",
+          "-c",
+          terminalCommand(body.controlToken, terminalToken, cwd, undefined, screen.layout),
+        ],
+        { env: computerCommandEnv(screen.layout) },
+      );
+      if (result.code === 75) throw new TerminalControlReleasedError();
+      if (result.code !== 0) throw new Error(result.stderr || "terminal failed to start");
+      return screen.layout;
+    });
+    const screenUrl = await publishedScreenUrl(container, info, layout.controlPort);
+    return c.json({ terminalUrl: screenUrlWithToken(screenUrl, terminalToken) });
+  } catch (error) {
+    if (error instanceof TerminalControlReleasedError) {
+      return c.json({ error: "screen control is not active" }, 409);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: message }, 400);
+  }
+});
+
+class TerminalControlReleasedError extends Error {}
+
 app.post("/computers/:id/input", async (c) => {
   const id = c.req.param("id");
   const body = z
@@ -698,6 +796,8 @@ app.post("/computers/:id/input", async (c) => {
 });
 
 app.delete("/computers/:id/screen", async (c) => {
+  // A later exec 404 ("no such exec") is a failed stop, not a missing computer.
+  let containerFound = false;
   try {
     const id = c.req.param("id");
     const { container } = await managedContainer(
@@ -705,12 +805,14 @@ app.delete("/computers/:id/screen", async (c) => {
       c.req.header("x-cortexai-agent-hub-bot-id"),
       c.req.header("x-cortexai-agent-hub-space-id"),
     );
+    containerFound = true;
     const screenId =
       c.req.header("x-cortexai-agent-hub-screen-id") ||
       c.req.header("x-cortexai-agent-hub-bot-id") ||
       id;
     const cancelRunWork = c.req.header("x-cortexai-agent-hub-cancel-run-work") === "1";
     const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
+
     await withComputerScreenLock(id, async () => {
       const assigned = computerScreens.get(id);
       const index = assigned ? releaseAssignedScreen(assigned, screenId, screenLeaseId) : undefined;
@@ -729,12 +831,23 @@ app.delete("/computers/:id/screen", async (c) => {
           throw new Error(result.stderr || "computer screen failed to stop");
         }
       }
-      if (assigned?.size === 0) computerScreens.delete(id);
+      // Keep an emptied registry. A missing one means the supervisor lost track of the
+      // container, and the next screen request then resets every desktop process in it.
     });
     return c.json({ ok: true });
   } catch (error) {
+    if (error instanceof ComputerIdentityError)
+      return c.json({ error: "invalid computer identity" }, 403);
+    if (
+      !containerFound &&
+      error &&
+      typeof error === "object" &&
+      "statusCode" in error &&
+      error.statusCode === 404
+    )
+      return c.json({ error: "computer not found" }, 404);
     const message = error instanceof Error ? error.message : String(error);
-    return c.json({ error: message }, 404);
+    return c.json({ error: message || "computer screen failed to stop" }, 500);
   }
 });
 
@@ -749,15 +862,12 @@ app.post("/computers/:id/stop", async (c) => {
     await withComputerScreenLock(id, async () => {
       const info = await container.inspect();
       if (info.State.Running) {
-        const screens = [...(computerScreens.get(id) ?? [])].map(([screenId, slot]) => ({
-          screenId,
-          index: slot.index,
-        }));
         try {
+          // Every profile on the home volume, not only screens still held in memory.
           const checkpoint = await runContainerCommand(container, [
             "bash",
             "-c",
-            stopScreensCommand(screens),
+            quiesceBrowserProfilesCommand(),
           ]);
           if (checkpoint.code !== 0)
             throw new Error(checkpoint.stderr || "bot browsers failed to stop");
@@ -811,6 +921,13 @@ function startSupervisor() {
   // and pass its healthcheck, then fail the first POST /computers with a 500 that reads like a
   // Docker problem. Failing here names the variable while the deployment is still coming up.
   computerResourceLimits();
+  if (computerEgressMode === "restricted") {
+    // Enforcement is host-side (DOCKER-USER/INPUT on cah-c* bridges); the flag
+    // only names the interfaces. Without the host script, egress stays open.
+    logger.warn(
+      "SANDBOX_COMPUTER_EGRESS=restricted requires the host firewall rules from infra/compose/restrict-computer-egress.sh (see docs/self-host.md)",
+    );
+  }
   const port = Number(process.env.SUPERVISOR_PORT ?? 7091);
   const hostname = process.env.SUPERVISOR_HOST ?? "127.0.0.1";
   const server = serve({ fetch: app.fetch, hostname, port }, () => {
@@ -1237,13 +1354,86 @@ async function connectComposeScreenPeers(networkName: string, info: Docker.Conta
 }
 
 async function ensureBotNetwork(botId: string) {
-  const name = computerNetworkNameFor(botId);
   return docker
-    .createNetwork({ Name: name, Driver: "bridge", CheckDuplicate: true })
-    .catch((error) => {
+    .createNetwork(computerNetworkCreateOptions(botId, computerEgressMode))
+    .catch(async (error) => {
       // Existing networks and concurrent provision requests are both safe.
       if (!/already exists/i.test(String(error))) throw error;
+      if (computerEgressMode === "restricted") {
+        await rekeyRestrictedBotNetwork(computerNetworkNameFor(botId), botId);
+      }
     });
+}
+
+// A network created before SANDBOX_COMPUTER_EGRESS=restricted has a generic br-*
+// bridge the host ruleset does not match. Recreate it with the named bridge: the
+// only caller is the create path, which replaces the computer container anyway,
+// and supervisor/web screen peers rejoin lazily via connectComposeScreenPeers.
+async function rekeyRestrictedBotNetwork(name: string, botId: string) {
+  const expectedBridge = computerBridgeNameFor(botId);
+  const inspect = () =>
+    docker
+      .getNetwork(name)
+      .inspect()
+      .catch(() => undefined);
+  const hasNamedBridge = (info: Docker.NetworkInspectInfo | undefined) =>
+    info?.Options?.["com.docker.network.bridge.name"] === expectedBridge;
+  const info = await inspect();
+  if (info && !hasNamedBridge(info)) {
+    const network = docker.getNetwork(name);
+    const containerIds = Object.keys(info.Containers ?? {});
+    for (const containerId of containerIds) {
+      await network.disconnect({ Container: containerId, Force: true }).catch(() => undefined);
+    }
+    const removed = await network.remove().then(
+      () => true,
+      () => false,
+    );
+    // Fail closed. This bridge is outside the host ruleset, so reconnecting
+    // would restore access to the host, private networks, and metadata.
+    // Stop this bot's containers in case disconnect left one running there.
+    if (!removed) {
+      await stopBotContainers(containerIds, botId);
+      throw new Error(`cannot restrict egress: failed to replace unrestricted network ${name}`);
+    }
+  }
+  if (!info || !hasNamedBridge(info)) {
+    await docker.createNetwork(computerNetworkCreateOptions(botId, "restricted")).catch((error) => {
+      if (!/already exists/i.test(String(error))) throw error;
+    });
+  }
+  if (!hasNamedBridge(await inspect())) {
+    throw new Error(`cannot restrict egress: network ${name} is missing the named bridge`);
+  }
+}
+
+async function stopContainer(container: Docker.Container) {
+  await container.stop({ t: 1 }).catch(async () => {
+    await container.kill().catch(() => undefined);
+  });
+}
+
+async function stopBotContainers(containerIds: string[], botId: string) {
+  const stoppedIds = new Set<string>();
+  await Promise.all(
+    containerIds.map(async (containerId) => {
+      const container = docker.getContainer(containerId);
+      const inspected = await container.inspect().catch(() => undefined);
+      // A failed inspect is not proof this endpoint belongs to someone else.
+      // Only a successful inspect of a different bot may skip the stop.
+      if (inspected && inspected.Config.Labels?.["cortexai-agent-hub.botId"] !== botId) return;
+      if (!inspected) return;
+      await stopContainer(container);
+      stoppedIds.add(containerId);
+      if (inspected.Id) stoppedIds.add(inspected.Id);
+    }),
+  );
+  // The computer's name does not depend on reading the endpoint. Stop it even
+  // when inspect failed, so a failed disconnect cannot leave it running.
+  const named = docker.getContainer(containerNameFor(botId));
+  const namedInfo = await named.inspect().catch(() => undefined);
+  if (namedInfo?.Id && stoppedIds.has(namedInfo.Id)) return;
+  await stopContainer(named);
 }
 
 async function removeBotNetwork(botId: string) {
@@ -1315,8 +1505,16 @@ async function inspectSupervisorContainer() {
 async function runContainerCommand(
   container: Docker.Container,
   argv: string[],
-  options: { workingDir?: string; env?: string[]; timeoutMs?: number; signal?: AbortSignal } = {},
+  options: {
+    workingDir?: string;
+    env?: string[];
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    /** Written to stdin without closing it; requires `signal`, whose abort closes stdin. */
+    stdin?: string;
+  } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
+  if (options.stdin !== undefined && !options.signal) throw new Error("stdin requires a signal");
   options.signal?.throwIfAborted();
   const timeoutMs = options.timeoutMs;
   const completionMarker = timeoutMs
@@ -1336,6 +1534,7 @@ async function runContainerCommand(
   });
   options.signal?.throwIfAborted();
   const stream = await exec.start({ hijack: true, stdin: Boolean(options.signal) });
+  if (options.stdin !== undefined) stream.write(options.stdin);
   const chunks: Buffer[] = [];
   let onAbort: (() => void) | undefined;
   try {

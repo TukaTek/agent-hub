@@ -1,8 +1,9 @@
-import { PassThrough, Readable } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable } from "node:stream";
 import { resolveSupervisorToken } from "@cortexai-agent-hub/core";
+
 import { beforeEach, expect, it, vi } from "vitest";
 
-const mock = vi.hoisted(() => ({ exec: vi.fn(), inspect: vi.fn() }));
+const mock = vi.hoisted(() => ({ exec: vi.fn(), inspect: vi.fn(), stdin: [] as string[] }));
 vi.mock("dockerode", () => ({
   default: class {
     getContainer() {
@@ -16,6 +17,7 @@ import { supervisorApp } from "./index.js";
 beforeEach(() => {
   mock.exec.mockReset();
   mock.inspect.mockReset();
+  mock.stdin.length = 0;
   mock.inspect.mockResolvedValue({
     Config: {
       Labels: {
@@ -26,20 +28,30 @@ beforeEach(() => {
     },
   });
   mock.exec.mockImplementation(async (options: { Cmd: string[] }) => ({
+    // Docker's hijacked exec stream is duplex: stdin is written, output is read.
     start: async () =>
-      Readable.from([
-        Buffer.from(
-          options.Cmd.includes("/usr/local/bin/cortexai-agent-hub-page-browser")
-            ? JSON.stringify({
-                ok: true,
-                url: "https://example.test",
-                title: "Fixture",
-                tree: "",
-                elements: [],
-              })
-            : "",
-        ),
-      ]),
+      Duplex.from({
+        readable: Readable.from([
+          Buffer.from(
+            options.Cmd.includes("/usr/local/bin/cortexai-agent-hub-page-browser")
+              ? JSON.stringify({
+                  ok: true,
+                  url: "https://example.test",
+                  title: "Fixture",
+                  tree: "",
+                  elements: [],
+                })
+              : "",
+          ),
+        ]),
+        writable: new Writable({
+          write(chunk, _encoding, callback) {
+            mock.stdin.push(String(chunk));
+            callback();
+          },
+        }),
+      }),
+
     inspect: async () => ({ ExitCode: 0 }),
   }));
 });
@@ -72,6 +84,7 @@ it("resolves the owned display and refuses an older fence before running the hel
       "CORTEXAI_AGENT_HUB_CDP_PORT=9223",
       "HOME=/home/cortexai-agent-hub",
       "CORTEXAI_AGENT_HUB_BROWSER_WATCH_STDIN=1",
+      "CORTEXAI_AGENT_HUB_BROWSER_ARGS_STDIN=1",
     ],
   });
   mock.exec.mockClear();
@@ -144,4 +157,29 @@ it("closes helper stdin when the request is cancelled", async () => {
   controller.abort();
   expect(await (await response).json()).toMatchObject({ ok: false, uncertain: true });
   expect(stream.destroyed).toBe(true);
+});
+
+it("sends a saved-login fill only over stdin, never in the helper's arguments", async () => {
+  const actions = [
+    { kind: "fill", ref: "e1", text: "fake-password-1", origin: "https://login.example.test" },
+  ];
+  const response = await supervisorApp.request("/computers/computer-login/browser", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
+      "content-type": "application/json",
+      "x-cortexai-agent-hub-bot-id": "home",
+      "x-cortexai-agent-hub-space-id": "space",
+      "x-cortexai-agent-hub-screen-id": "first",
+      "x-cortexai-agent-hub-screen-lease-id": "run:9",
+    },
+    body: JSON.stringify({ command: "act", actions }),
+  });
+  expect(await response.json()).toMatchObject({ ok: true });
+  const helperCall = mock.exec.mock.calls.find(([options]) =>
+    options.Cmd.includes("/usr/local/bin/cortexai-agent-hub-page-browser"),
+  )!;
+  expect(JSON.stringify(helperCall[0].Cmd)).not.toContain("fake-password-1");
+  expect(helperCall[0].Env).toContain("CORTEXAI_AGENT_HUB_BROWSER_ARGS_STDIN=1");
+  expect(mock.stdin.join("")).toBe(`${JSON.stringify({ command: "act", actions })}\n`);
 });

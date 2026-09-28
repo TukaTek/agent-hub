@@ -168,6 +168,38 @@ it("explains unavailable Microsoft sign-in without offering a password field", a
   expect(button("Use a different email")).toBeDefined();
 });
 
+it("explains unavailable non-Microsoft sign-in without naming the wrong provider", async () => {
+  stubServer("hub", { next: "other_sso_unavailable" });
+  await render();
+  await continueWithEmail();
+  const message = await until(() => container.querySelector('[role="status"]'));
+  expect(message.textContent).toBe(
+    "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.",
+  );
+  expect(passwordInput()).toBeNull();
+  expect(container.querySelector('button[type="submit"]')).toBeNull();
+});
+
+it("keeps the email read-only while Continue is pending", async () => {
+  stubServer("hub");
+  await render();
+  let resolveContinue!: (response: Response) => void;
+  const response = new Promise<Response>((resolve) => {
+    resolveContinue = resolve;
+  });
+  fetchMock.mockImplementation((url: string) => {
+    if (url === "/api/auth/hub/sign-in/continue") return response;
+    throw new Error(`Unexpected request ${url}`);
+  });
+  await type(emailInput(), email);
+  await click(button("Continue"));
+  expect(emailInput().readOnly).toBe(true);
+  expect(emailInput().value).toBe(email);
+  await act(async () => resolveContinue(Response.json({ next: "password" })));
+  await until(passwordInput);
+  expect(emailInput().value).toBe(email);
+});
+
 it("keeps the email step when Continue fails", async () => {
   stubServer("hub", { message: "Too many requests" }, 429);
   await render();

@@ -2,6 +2,7 @@ import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import {
   createVoiceProvider,
   type EncryptedSecretStore,
+  isFishSpeechModelId,
   isVoiceProviderId,
   listVoiceCatalog,
   MAX_SPEAK_CHARS,
@@ -21,7 +22,9 @@ import {
   type PrismaClient,
   selectSpaceVoicePreference,
 } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
+
 import type { Context, Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
 import { withSerializableRetry } from "./serializable-retry.js";
@@ -67,6 +70,7 @@ export function toVoiceCredential(row: {
   provider: string;
   isDefault: boolean;
   voiceId: string;
+  speechModel?: string | null;
 }): VoiceCredential {
   return {
     id: row.id,
@@ -74,8 +78,21 @@ export function toVoiceCredential(row: {
     hasKey: true,
     isDefault: row.isDefault,
     voiceId: row.voiceId,
+    speechModel: row.speechModel ?? "",
     transcribe: Boolean(catalogEntry(row.provider)?.transcribe),
   };
+}
+
+const FISH_AUDIO_PROVIDER = "fish-audio";
+
+/** Empty clears the Fish override. Anything else must be a header-safe model id. */
+export function fishSpeechModelValue(speechModel: string): string | null {
+  const trimmed = speechModel.trim();
+  if (!trimmed) return null;
+  if (!isFishSpeechModelId(trimmed)) {
+    throw new ORPCError("BAD_REQUEST", { message: "That speech model id is not valid." });
+  }
+  return trimmed;
 }
 
 export async function loadDefaultVoiceCredential(deps: VoiceDeps, actor: Actor) {
@@ -122,12 +139,17 @@ export async function persistVoiceCredential(
     provider: string;
     plaintext: string;
     voiceId?: string;
+    speechModel?: string;
     signal?: AbortSignal;
   },
 ): Promise<VoiceCredential> {
   if (!isVoiceProviderId(input.provider)) {
     throw new ORPCError("BAD_REQUEST", { message: "Unknown voice provider." });
   }
+  const requestedSpeechModel =
+    input.provider === FISH_AUDIO_PROVIDER && input.speechModel !== undefined
+      ? fishSpeechModelValue(input.speechModel)
+      : undefined;
   const provider = createVoiceProvider(input.provider);
   const verified = await provider.verify(input.plaintext, voiceContext(actor, input.signal));
   if (!verified.ok) {
@@ -179,7 +201,11 @@ export async function persistVoiceCredential(
             })
           : null;
         const selectedVoiceId = voiceId || previousPreference?.voiceId || "";
-        await selectSpaceVoicePreference(tx, actor, credential.id, selectedVoiceId);
+        const speechModel =
+          requestedSpeechModel !== undefined
+            ? requestedSpeechModel
+            : previousPreference?.speechModel;
+        await selectSpaceVoicePreference(tx, actor, credential.id, selectedVoiceId, speechModel);
         if (existing) {
           await deleteUnreferencedCredentialSecret(tx, {
             credentialKind: "voice",
@@ -187,7 +213,12 @@ export async function persistVoiceCredential(
             secretId: existing.secretId,
           });
         }
-        return { ...credential, isDefault: true, voiceId: selectedVoiceId };
+        return {
+          ...credential,
+          isDefault: true,
+          voiceId: selectedVoiceId,
+          speechModel: speechModel ?? "",
+        };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
@@ -232,6 +263,70 @@ export async function disconnectVoiceCredential(
   return { ok: true as const };
 }
 
+export async function updateVoiceSpeechModel(
+  deps: VoiceDeps,
+  actor: Actor,
+  input: { provider: string; speechModel: string },
+): Promise<VoiceCredential> {
+  if (input.provider !== FISH_AUDIO_PROVIDER) {
+    throw new ORPCError("BAD_REQUEST", { message: "Speech model applies to Fish Audio." });
+  }
+  const speechModel = fishSpeechModelValue(input.speechModel);
+  return withSerializableRetry(() =>
+    deps.prisma.$transaction(
+      async (tx) => {
+        const found = await tx.userVoiceCredential.findFirst({
+          where: { userId: actor.userId, provider: input.provider },
+          orderBy: newestVoiceCredentialOrder,
+        });
+        if (!found) {
+          throw new ORPCError("BAD_REQUEST", { message: "Connect a voice provider first." });
+        }
+        const where = {
+          spaceId_userId_credentialId: {
+            spaceId: actor.spaceId,
+            userId: actor.userId,
+            credentialId: found.id,
+          },
+        };
+        const preference = await tx.spaceVoicePreference.findUnique({ where });
+        if (!preference) {
+          // Remember the model without taking the default. Another provider may
+          // already be selected, and this row still has no voice.
+          if (speechModel === null) {
+            return toVoiceCredential({ ...found, isDefault: false, voiceId: "", speechModel: "" });
+          }
+          const created = await tx.spaceVoicePreference.create({
+            data: {
+              spaceId: actor.spaceId,
+              userId: actor.userId,
+              credentialId: found.id,
+              speechModel,
+            },
+          });
+          return toVoiceCredential({
+            ...found,
+            isDefault: created.isDefault,
+            voiceId: created.voiceId,
+            speechModel: created.speechModel,
+          });
+        }
+        const updated = await tx.spaceVoicePreference.update({
+          where: { id: preference.id },
+          data: { speechModel },
+        });
+        return toVoiceCredential({
+          ...found,
+          isDefault: preference.isDefault,
+          voiceId: preference.voiceId,
+          speechModel: updated.speechModel,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+}
+
 export async function prepareVoice(
   deps: VoiceDeps,
   actor: Actor,
@@ -265,6 +360,7 @@ export async function synthesizeVoice(
       text,
       voiceId: target.voiceId,
       apiKey: target.apiKey,
+      model: target.cred.speechModel || undefined,
       signal: input.signal,
     },
     voiceContext(actor, input.signal),
@@ -392,5 +488,7 @@ function voiceHttpError(c: Context, error: unknown) {
     return c.json({ error: error.message }, status);
   }
   const message = error instanceof Error ? error.message : "Voice request failed.";
+  // Message only: request bodies, keys and audio never reach the log.
+  getLogger().warn("voice request failed", { route: c.req.path, reason: message });
   return c.json({ error: message }, 502);
 }

@@ -93,6 +93,13 @@ export type GroupMember = z.infer<typeof GroupMemberSchema>;
 /** Selected-text excerpt carried by a reply; capped so a quote stays a quote. */
 export const REPLY_QUOTE_MAX_LENGTH = 2_000;
 
+/** Cap an excerpt at the quote limit without splitting a surrogate pair. */
+export function truncateReplyQuote(value: string): string {
+  const truncated = value.slice(0, REPLY_QUOTE_MAX_LENGTH);
+  const last = truncated.charCodeAt(truncated.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? truncated.slice(0, -1) : truncated;
+}
+
 export const GROUP_MEMBER_MIN = 2;
 export const GROUP_MEMBER_MAX = 6;
 
@@ -453,6 +460,7 @@ export const TeachRecordingEventSchema = z.object({
   key: z.string().optional(),
   text: z.string().optional(),
   summary: z.string().optional(),
+  sensitive: z.boolean().optional(),
 });
 export type TeachRecordingEvent = z.infer<typeof TeachRecordingEventSchema>;
 
@@ -713,10 +721,23 @@ export const ArtifactSchema = z.object({
   groupId: Id.nullable(),
   runId: Id.nullable(),
   name: z.string(),
+  description: z.string().nullable(),
   mimeType: z.string(),
   size: z.number().int(),
+  version: z.number().int(),
   createdAt: z.string(),
 });
+
+export type Artifact = z.infer<typeof ArtifactSchema>;
+
+export const ArtifactVersionSchema = z.object({
+  id: Id,
+  version: z.number().int(),
+  name: z.string(),
+  createdAt: z.string(),
+});
+
+export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>;
 
 export const ArtifactWithContentSchema = ArtifactSchema.extend({
   contentBase64: z.string(),
@@ -767,6 +788,7 @@ export const ComputerStatusSchema = z.object({
   homeRevision: z.string().nullable(),
   busyBotName: z.string().nullable(),
   canUpdate: z.boolean(),
+  terminalAvailable: z.boolean(),
 });
 export type ComputerStatus = z.infer<typeof ComputerStatusSchema>;
 
@@ -828,12 +850,14 @@ export const RunSchema = z.object({
     "resume",
     "follow_up",
     "reaction",
+    "call_end",
     "spawn",
     "skill",
     "bot_message",
     "webhook",
     "messaging",
     "cloud_agent",
+    "created",
   ]),
   routineId: Id.nullable(),
   modelProvider: z.string().nullable(),
@@ -944,14 +968,14 @@ export const ModelConnectInputSchema = z
     modelId: z.string().optional(),
     reasoning: z.boolean().optional(),
     thinkingLevel: ThinkingLevelSchema.nullable().optional(),
-    maxTokens: z.number().int().min(1).max(MAX_MODEL_MAX_TOKENS).optional(),
+    maxTokens: z.number().int().min(1).max(MAX_MODEL_MAX_TOKENS).nullable().optional(),
     contextWindow: z.number().int().min(1).max(MAX_MODEL_CONTEXT_WINDOW).optional(),
     supportsImages: z.boolean().optional(),
     maxImagesPerPrompt: z.number().int().min(1).max(1000).nullable().optional(),
   })
   .superRefine((value, ctx) => {
     if (
-      value.maxTokens !== undefined &&
+      typeof value.maxTokens === "number" &&
       value.contextWindow !== undefined &&
       value.maxTokens > value.contextWindow
     ) {
@@ -978,7 +1002,16 @@ export const ModelConnectInputSchema = z
       }
       return;
     }
-    if (!value.apiKey || value.apiKey.trim().length < 8) {
+    const apiKey = value.apiKey?.trim() ?? "";
+    if (apiKey.length > 0 && apiKey.length < 8) {
+      ctx.addIssue({
+        code: "custom",
+        message: "API key must contain at least 8 characters",
+        path: ["apiKey"],
+      });
+    }
+    // An existing connection can update its output limit without a new key.
+    if (!apiKey && value.maxTokens === undefined) {
       ctx.addIssue({
         code: "custom",
         message: "API key must contain at least 8 characters",
@@ -1057,6 +1090,8 @@ export const VoiceCredentialSchema = z.object({
   hasKey: z.boolean(),
   isDefault: z.boolean(),
   voiceId: z.string(),
+  /** Fish speech-model override. Empty uses the deployment default. */
+  speechModel: z.string(),
   transcribe: z.boolean(),
 });
 export type VoiceCredential = z.infer<typeof VoiceCredentialSchema>;

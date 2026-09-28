@@ -38,9 +38,12 @@ function signInContinueEndpoint(client?: Pick<HubClient, "lookup">) {
       let next: SignInContinueResponse["next"] = "password";
       if (client) {
         try {
-          if (!(await client.lookup(body.email)).native) next = "sso_unavailable";
+          const { idpType } = await client.lookup(body.email);
+          if (idpType === "entra") next = "sso_unavailable";
+          if (idpType === "google") next = "other_sso_unavailable";
         } catch {
-          // Unknown, other-tenant and failed lookups must be indistinguishable from native users.
+          // Other-tenant, invalid, and failed lookups use the password step. Hub
+          // can resolve unknown emails by domain, so they follow that tenant's IdP.
         }
       }
       return ctx.json({ next } satisfies SignInContinueResponse);

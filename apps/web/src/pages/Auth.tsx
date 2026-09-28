@@ -45,6 +45,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
   const [step, setStep] = useState<SignInStep>("email");
   const signInStep = mode === "in" ? step : null;
+  const signInUnavailable =
+    signInStep === "sso_unavailable" || signInStep === "other_sso_unavailable";
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
@@ -79,9 +81,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
       })
       .finally(() => clearTimeout(timer));
     return () => {
+      // Do not abort on unmount: a guard redirect that bounces through this
+      // page only mounts it for a render or two, and the cancelled fetch then
+      // surfaces as a failed request. `active` drops the result and the timer
+      // keeps its bound — abort() on an already settled fetch is a no-op.
       active = false;
-      clearTimeout(timer);
-      controller.abort();
     };
   }, [mode]);
 
@@ -99,7 +103,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (signInStep === "sso_unavailable") return;
+    if (signInUnavailable) return;
     setPending(true);
     setError(null);
     try {
@@ -118,7 +122,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               )
             ).next
           : undefined;
-        if (next === "password" || next === "sso_unavailable") setStep(next);
+        if (next === "password" || next === "sso_unavailable" || next === "other_sso_unavailable")
+          setStep(next);
         else setError(t`Could not continue`);
         return;
       }
@@ -252,10 +257,14 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               placeholder={t`Your email address`}
               type="email"
               required
-              readOnly={signInStep === "password" || signInStep === "sso_unavailable"}
+              readOnly={
+                signInUnavailable ||
+                signInStep === "password" ||
+                (signInStep === "email" && pending)
+              }
               className={fieldClass}
             />
-            {signInStep === "password" || signInStep === "sso_unavailable" ? (
+            {signInStep === "password" || signInUnavailable ? (
               <div className="mt-2 text-right text-sm">
                 <Button
                   type="button"
@@ -272,6 +281,14 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
               <Trans>
                 Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your
+                admin to enable password sign-in for your account.
+              </Trans>
+            </p>
+          ) : null}
+          {signInStep === "other_sso_unavailable" ? (
+            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+              <Trans>
+                Single sign-on for your organization isn't available in Agent Hub yet. Ask your
                 admin to enable password sign-in for your account.
               </Trans>
             </p>
@@ -321,7 +338,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               {error}
             </p>
           ) : null}
-          {signInStep === "sso_unavailable" ? null : (
+          {signInUnavailable ? null : (
             <Button type="submit" size="lg" disabled={pending} className={submitClass}>
               {pending ? (
                 <Trans>Working…</Trans>

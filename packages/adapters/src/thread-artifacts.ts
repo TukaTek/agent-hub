@@ -7,7 +7,12 @@ import type {
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { ComputerMode, MessageBlock } from "@cortexai-agent-hub/contracts";
-import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
+import {
+  ARTIFACT_DESCRIPTION_MAX_LENGTH,
+  ARTIFACT_NAME_MAX_LENGTH,
+  ATTACHMENT_MAX_BYTES,
+} from "@cortexai-agent-hub/contracts";
+
 import {
   attachmentExtensionForMimeType,
   inferAttachmentMimeType,
@@ -15,6 +20,8 @@ import {
   validateAttachmentMimeType,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { withResolvedArtifactVersion } from "@cortexai-agent-hub/db";
+
 import { resolveBotWorkspacePath } from "./computer-support.js";
 
 export type MaterializedThreadFile = {
@@ -38,13 +45,16 @@ export async function attachWorkspaceFileToThread(
     filePath: string;
     bytes: Uint8Array;
     operationId: string;
+    name?: string;
+    description?: string;
   },
 ): Promise<{ artifactId: string; block: Extract<MessageBlock, { kind: "image" | "file" }> }> {
-  const name = path.basename(input.filePath) || input.filePath;
-  const mimeType = inferAttachmentMimeType(name);
+  const fileName = path.basename(input.filePath) || input.filePath;
+  const mimeType = inferAttachmentMimeType(fileName);
   if (!mimeType) {
-    throw new Error(`Unsupported attachment type for ${name}`);
+    throw new Error(`Unsupported attachment type for ${fileName}`);
   }
+  const name = (input.name?.trim() || fileName).slice(0, ARTIFACT_NAME_MAX_LENGTH);
   validateAttachmentMimeType(mimeType);
   if (input.bytes.byteLength > ATTACHMENT_MAX_BYTES) {
     throw new Error("file exceeds the 10 MiB attachment limit");
@@ -60,25 +70,37 @@ export async function attachWorkspaceFileToThread(
   };
   const stored = await deps.artifacts.put({ name, mimeType, bytes: input.bytes }, context);
   const hash = createHash("sha256").update(input.bytes).digest("hex");
-  const row = await deps.prisma.artifact
-    .create({
-      data: {
-        spaceId: input.spaceId,
-        userId: input.userId,
-        botId: input.botId,
-        groupId: input.groupId,
-        runId: input.runId,
-        name,
-        mimeType,
-        size: input.bytes.byteLength,
-        hash,
-        storageKey: stored.id,
-      },
-    })
-    .catch(async (error) => {
-      await deps.artifacts.remove(stored.id, context).catch(() => undefined);
-      throw error;
-    });
+  const row = await withResolvedArtifactVersion(
+    deps.prisma,
+    {
+      spaceId: input.spaceId,
+      userId: input.userId,
+      botId: input.botId,
+      groupId: input.groupId,
+      name,
+    },
+    (tx, { rootArtifactId, version }) =>
+      tx.artifact.create({
+        data: {
+          spaceId: input.spaceId,
+          userId: input.userId,
+          botId: input.botId,
+          groupId: input.groupId,
+          runId: input.runId,
+          name,
+          description: input.description?.trim().slice(0, ARTIFACT_DESCRIPTION_MAX_LENGTH) || null,
+          mimeType,
+          size: input.bytes.byteLength,
+          hash,
+          storageKey: stored.id,
+          rootArtifactId,
+          version,
+        },
+      }),
+  ).catch(async (error) => {
+    await deps.artifacts.remove(stored.id, context).catch(() => undefined);
+    throw error;
+  });
   return {
     artifactId: row.id,
     block: messageBlockForArtifact({

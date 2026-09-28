@@ -1,5 +1,6 @@
 vi.mock("./ai-consent", () => ({ promptAiConsent: vi.fn() }));
 
+import { withLiveStreamingProgress } from "@cortexai-agent-hub/core";
 import * as SecureStore from "expo-secure-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promptAiConsent } from "./ai-consent";
@@ -12,6 +13,7 @@ import {
   changePassword,
   currentApiBase,
   deleteAccount,
+  IDLE_TIMEOUT_MS,
   loadApiBase,
   MAX_MOBILE_AUTH_RESPONSE_BYTES,
   MAX_MOBILE_RPC_RESPONSE_BYTES,
@@ -1656,6 +1658,65 @@ describe("mobile thread subscription", () => {
       subscribeThread({ botId: "bot-1" }, -1, vi.fn(), new AbortController().signal),
     ).rejects.toThrow("rpc threads/subscribe failed (200)");
   });
+
+  it("ignores heartbeat frames so the caller's cursor never skips an event", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"json":{"type":"heartbeat","seq":0,"payload":{}}}\n\n' +
+              ": keepalive\n\n" +
+              'data: {"json":{"type":"thread.progress","seq":1,"payload":{}}}\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(stream, { status: 200 })),
+    );
+    const onEvent = vi.fn();
+
+    await subscribeThread({ botId: "bot-1" }, -1, onEvent, new AbortController().signal);
+
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: "thread.progress", seq: 1 }),
+    );
+  });
+
+  it("gives up on a silent stream after the idle timeout so the caller reconnects", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start() {},
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(stream, { status: 200 })),
+    );
+    const onEvent = vi.fn();
+    const abort = new AbortController();
+
+    const running = subscribeThread({ botId: "bot-1" }, -1, onEvent, abort.signal);
+    let settled = false;
+    void running.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await running;
+
+    expect(settled).toBe(true);
+    expect(cancelled).toBe(true);
+    expect(abort.signal.aborted).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("mobile thread refresh targeting", () => {
@@ -1742,6 +1803,28 @@ describe("mobile thread event reduction", () => {
     });
   });
 
+  it("keeps a message in its call when an update leaves the call id out", () => {
+    const spoken: MobileMessage = {
+      ...mobileMessage("message-1", [{ kind: "text", text: "Hi" }]),
+      callId: "call-1",
+    };
+    const initial = snapshot([spoken]);
+
+    const next = applyMobileThreadEvent(initial, {
+      type: "thread.message.updated",
+      seq: 5,
+      payload: {
+        messageId: "message-1",
+        role: "bot",
+        blocks: [{ kind: "text", text: "Hi. Talk soon." }],
+      },
+    });
+
+    expect(next?.messages.find((message) => message.id === "message-1")).toMatchObject({
+      callId: "call-1",
+    });
+  });
+
   it("prepends ordered history pages without duplicating the boundary message", () => {
     const initial = snapshot([mobileMessage("m-2", [], 2), mobileMessage("m-3", [], 3)], 2);
 
@@ -1794,6 +1877,74 @@ describe("mobile thread event reduction", () => {
         role: "bot",
         runId: "run-1",
         blocks: [{ kind: "progress", text: "Hello" }],
+      },
+    ]);
+  });
+
+  it("keeps hidden token progress so re-enabling streaming stays continuous", () => {
+    const afterTokens = applyMobileThreadEvent(snapshot(), {
+      type: "thread.progress",
+      seq: 4,
+      runId: "run-1",
+      payload: { text: "Lis", streaming: true },
+    });
+    const afterDelta = applyMobileThreadEvent(afterTokens, {
+      type: "thread.progress",
+      seq: 5,
+      runId: "run-1",
+      payload: { delta: "bon", streaming: true },
+    });
+
+    expect(afterDelta?.cursor).toBe(5);
+    expect(afterDelta?.messages).toEqual([
+      {
+        id: "progress:run-1",
+        role: "bot",
+        runId: "run-1",
+        blocks: [{ kind: "progress", text: "Lisbon" }],
+      },
+    ]);
+    expect(withLiveStreamingProgress(afterDelta, false)?.messages).toEqual([]);
+
+    const afterComplete = applyMobileThreadEvent(afterDelta, {
+      type: "thread.message.created",
+      seq: 6,
+      runId: "run-1",
+      payload: {
+        messageId: "m-final",
+        role: "bot",
+        blocks: [{ kind: "text", text: "Lisbon" }],
+      },
+    });
+    expect(afterComplete?.messages).toEqual([
+      expect.objectContaining({
+        id: "m-final",
+        blocks: [{ kind: "text", text: "Lisbon" }],
+      }),
+    ]);
+  });
+
+  it("resumes from retained tokens after streaming is turned back on mid-reply", () => {
+    const afterPrefix = applyMobileThreadEvent(snapshot(), {
+      type: "thread.progress",
+      seq: 4,
+      runId: "run-1",
+      payload: { text: "Lis", streaming: true },
+    });
+    expect(withLiveStreamingProgress(afterPrefix, false)?.messages).toEqual([]);
+
+    const afterResume = applyMobileThreadEvent(afterPrefix, {
+      type: "thread.progress",
+      seq: 5,
+      runId: "run-1",
+      payload: { delta: "bon", streaming: true },
+    });
+    expect(withLiveStreamingProgress(afterResume, true)?.messages).toEqual([
+      {
+        id: "progress:run-1",
+        role: "bot",
+        runId: "run-1",
+        blocks: [{ kind: "progress", text: "Lisbon" }],
       },
     ]);
   });

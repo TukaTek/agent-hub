@@ -46,6 +46,26 @@ export interface AgentModelOAuthCredential {
   accountId?: string;
 }
 
+/**
+ * Why a stored OAuth credential is being dropped. `terminal-refresh-failure`
+ * means the provider permanently rejected the refresh token; `account-changed`
+ * means a refreshed token belongs to a different account than the stored one.
+ */
+export type ModelCredentialRetireReason = "terminal-refresh-failure" | "account-changed";
+
+/**
+ * Identity of the stored credential material whose refresh attempt triggered
+ * retirement. Implementations compare access, refresh, and expiry to the secret
+ * still on the credential row so a concurrently persisted newer credential —
+ * same row rewritten by a successful refresh, or a reconnect — is not deleted
+ * by the stale failure.
+ */
+export interface ModelCredentialFailedState {
+  access: string;
+  refresh: string;
+  expires: number;
+}
+
 export interface PortableFile {
   path: string;
   content: Uint8Array;
@@ -81,6 +101,13 @@ export interface ScreenRequest {
   interactive?: boolean;
   /** Fences an interactive stream so an older lease cannot revoke its replacement. */
   controlToken?: string;
+}
+
+export interface TerminalRequest {
+  /** The active screen control token; a terminal exists only while the user holds control. */
+  controlToken: string;
+  /** Workspace-relative starting directory. */
+  cwd?: string;
 }
 
 export interface ScreenSession {
@@ -182,6 +209,7 @@ export interface ConnectorTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Declared effect. `false` forces approval; `true` never relaxes the name-based gate. */
   readOnly?: boolean;
   /** In-process routing metadata. It is never exposed to the model. */
   route?: ConnectorRoute;
@@ -367,6 +395,12 @@ export interface AgentRunModel {
   oauth?: {
     credential: AgentModelOAuthCredential;
     persist?: (credential: AgentModelOAuthCredential) => Promise<void>;
+    /** Drop the stored credential after a terminal provider rejection. */
+    retire?: (
+      reason: ModelCredentialRetireReason,
+      detail?: string,
+      failed?: ModelCredentialFailedState,
+    ) => Promise<boolean | undefined>;
   };
 }
 
@@ -377,7 +411,13 @@ export interface AgentRunRequest {
   sourceMessageId?: string | null;
   prompt: string;
   instructions: string;
-  history: Array<{ id?: string; role: "user" | "assistant" | "system"; content: string }>;
+  history: Array<{
+    id?: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    /** Images attached to this message, hydrated only for recent user turns. */
+    images?: AgentInputImage[];
+  }>;
   currentTurnImages?: AgentInputImage[];
   tools: ConnectorTool[];
   model: AgentRunModel;
@@ -430,7 +470,16 @@ export type AgentRuntimeEvent =
       actions?: Array<{ id: string; label: string }>;
     }
   | { type: "takeover"; reason: string }
-  | { type: "usage"; inputTokens: number; outputTokens: number; provider: string; model: string }
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      /** Cache hits and writes folded into inputTokens, kept apart so cost views can split them. */
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+      provider: string;
+      model: string;
+    }
   | { type: "checkpoint"; blob: string }
   | {
       type: "subagent";
@@ -476,6 +525,8 @@ export interface VoiceSynthesizeRequest {
   text: string;
   voiceId: string;
   apiKey: string;
+  /** Connection speech model. Fish uses this, then `FISH_TTS_MODEL`, then s2.1-pro. */
+  model?: string;
   signal?: AbortSignal;
 }
 
@@ -507,6 +558,8 @@ export type BackgroundJob = {
     payload: BackgroundJobPayloads[Name];
     availableAt?: Date;
     replaceKey?: string;
+    /** Cap retried executions; omit to use the job queue's default. */
+    maxAttempts?: number;
   };
 }[BackgroundJobName];
 
@@ -730,7 +783,13 @@ export type BrowserActKind = "click" | "fill" | "type";
 
 export type BrowserActStep =
   | { kind: "click"; ref: string }
-  | { kind: "fill" | "type"; ref: string; text: string };
+  | {
+      kind: "fill" | "type";
+      ref: string;
+      text: string;
+      /** Refuse the step unless the page is on this origin when it is applied. */
+      origin?: string;
+    };
 
 export interface BrowserActRequest {
   actions: BrowserActStep[];
