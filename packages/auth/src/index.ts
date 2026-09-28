@@ -301,6 +301,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       bearer(),
       organization({
         allowUserToCreateOrganization: false,
+        disableOrganizationDeletion: true,
         creatorRole: "owner",
       }),
     ],
@@ -524,11 +525,11 @@ function loopbackTwinOrigins(origin: string): string[] {
   }
 }
 
-export const blockedAuthPaths = [
-  "/organization/create",
-  "/organization/invite",
-  "/organization/accept-invitation",
-  "/organization/reject-invitation",
-  "/organization/remove-member",
-  "/organization/update-member-role",
-];
+/**
+ * Spaces are Better Auth organizations, but their lifecycle belongs to the
+ * product RPCs. No client calls the organization plugin over HTTP, so every
+ * route under it stays closed, including ones a future plugin version adds.
+ */
+export function isBlockedAuthPath(path: string): boolean {
+  return path.startsWith("/organization");
+}

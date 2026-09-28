@@ -172,8 +172,7 @@ msgstr ""
 msgid "Add a schedule, webhook, GitHub, or message trigger"
 msgstr ""
 
-msgid ""
-"Add a schedule, webhook, GitHub, or message trigger to run this routine."
+msgid "Add a schedule, webhook, GitHub, or message trigger to run this routine."
 msgstr ""
 
 msgid "Add a server name."
@@ -316,8 +315,7 @@ msgid "Approve"
 msgstr "Onayla"
 
 msgid "Approve this server to let your agent use its tools."
-msgstr ""
-"Agent'ının bu sunucunun araçlarını kullanabilmesi için sunucuyu onayla."
+msgstr "Agent'ının bu sunucunun araçlarını kullanabilmesi için sunucuyu onayla."
 
 msgid "Archive"
 msgstr "Arşivle"
@@ -397,9 +395,7 @@ msgid "Authorize"
 msgstr "Yetkilendir"
 
 msgid "Authorize this server so agents can use its tools. A popup opens."
-msgstr ""
-"Agent'ların araçlarını kullanabilmesi için bu sunucuyu yetkilendir. Bir "
-"açılır pencere açılır."
+msgstr "Agent'ların araçlarını kullanabilmesi için bu sunucuyu yetkilendir. Bir açılır pencere açılır."
 
 msgid "Automated senders"
 msgstr ""
@@ -441,12 +437,8 @@ msgstr "bot"
 msgid "Bot"
 msgstr "Bot"
 
-msgid ""
-"Bots act without asking by default. Add an exception only when you want to "
-"review a type of action first."
-msgstr ""
-"Botlar varsayılan olarak sormadan hareket eder. Yalnızca belirli bir işlem "
-"türünü önce incelemek istediğinde istisna ekle."
+msgid "Bots act without asking by default. Add an exception only when you want to review a type of action first."
+msgstr "Botlar varsayılan olarak sormadan hareket eder. Yalnızca belirli bir işlem türünü önce incelemek istediğinde istisna ekle."
 
 msgid "Bots are working"
 msgstr "Botlar çalışıyor"
@@ -639,14 +631,8 @@ msgstr "Bilgisayar durduruldu"
 msgid "Computers"
 msgstr "Bilgisayarlar"
 
-msgid ""
-"Computers are off. Set SANDBOX_PROVIDER=docker with "
-"SANDBOX_SUPERVISOR_TOKEN, or set SANDBOX_PROVIDER to e2b, daytona, or box "
-"with its API key. Recreate the stack after changing .env."
-msgstr ""
-"Bilgisayarlar kapalı. SANDBOX_PROVIDER=docker ve SANDBOX_SUPERVISOR_TOKEN "
-"ayarlayın; ya da SANDBOX_PROVIDER değerini e2b, daytona veya box yapıp API "
-"anahtarını ekleyin. .env değişince stacki yeniden oluşturun."
+msgid "Computers are off. Set SANDBOX_PROVIDER=docker with SANDBOX_SUPERVISOR_TOKEN, or set SANDBOX_PROVIDER to e2b, daytona, or box with its API key. Recreate the stack after changing .env."
+msgstr "Bilgisayarlar kapalı. SANDBOX_PROVIDER=docker ve SANDBOX_SUPERVISOR_TOKEN ayarlayın; ya da SANDBOX_PROVIDER değerini e2b, daytona veya box yapıp API anahtarını ekleyin. .env değişince stacki yeniden oluşturun."
 
 msgid "Configured by deployment"
 msgstr "Dağıtım tarafından yapılandırıldı"
@@ -708,9 +694,7 @@ msgstr "Bağlanıyor…"
 
 #. placeholder {0}: item.name
 msgid "Connection to {0} is still pending. You can close this and check again."
-msgstr ""
-"{0} bağlantısı hâlâ beklemede. Bunu kapatıp daha sonra tekrar kontrol "
-"edebilirsin."
+msgstr "{0} bağlantısı hâlâ beklemede. Bunu kapatıp daha sonra tekrar kontrol edebilirsin."
 
 msgid "Context limit"
 msgstr "Bağlam sınırı"
@@ -867,9 +851,7 @@ msgstr ""
 msgid "Could not load voice settings"
 msgstr "Ses ayarları yüklenemedi"
 
-msgid ""
-"Could not open local settings. Start the local server and create its owner "
-"account, then try again."
+msgid "Could not open local settings. Start the local server and create its owner account, then try again."
 msgstr ""
 
 msgid "Could not play a test clip"
@@ -1151,12 +1133,8 @@ msgstr "Demoya parola yazma. Kimlik bilgileri için Kontrolü al'ı kullan."
 msgid "Docker"
 msgstr "Docker"
 
-msgid ""
-"Docker limits access to your computer for added security. Using {hostLabel} "
-"lets bots work with your local files and tools."
-msgstr ""
-"Docker, ek güvenlik için bilgisayarına erişimi sınırlar. {hostLabel} "
-"kullanıldığında botlar yerel dosyaların ve araçlarınla çalışabilir."
+msgid "Docker limits access to your computer for added security. Using {hostLabel} lets bots work with your local files and tools."
+msgstr "Docker, ek güvenlik için bilgisayarına erişimi sınırlar. {hostLabel} kullanıldığında botlar yerel dosyaların ve araçlarınla çalışabilir."
 
 msgid "Don’t have an account?"
 msgstr "Hesabın yok mu?"
@@ -1207,19 +1185,11 @@ msgstr "E-posta"
 msgid "Engage when... Ignore..."
 msgstr ""
 
-msgid ""
-"Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context "
-"limit."
-msgstr ""
-"Bağlam sınırı için 1 ile {MAX_MODEL_CONTEXT_WINDOW} arasında bir tam sayı "
-"girin."
+msgid "Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context limit."
+msgstr "Bağlam sınırı için 1 ile {MAX_MODEL_CONTEXT_WINDOW} arasında bir tam sayı girin."
 
-msgid ""
-"Enter a whole number from 1 to {MAX_MODEL_MAX_TOKENS} for maximum output "
-"tokens."
-msgstr ""
-"Maksimum çıktı token sayısı için 1 ile {MAX_MODEL_MAX_TOKENS} arasında bir "
-"tam sayı girin."
+msgid "Enter a whole number from 1 to {MAX_MODEL_MAX_TOKENS} for maximum output tokens."
+msgstr "Maksimum çıktı token sayısı için 1 ile {MAX_MODEL_MAX_TOKENS} arasında bir tam sayı girin."
 
 msgid "Enter a whole number from 1 to 1000 for the image limit."
 msgstr "Görüntü sınırı için 1 ile 1000 arasında bir tam sayı girin."
@@ -1297,12 +1267,8 @@ msgid "Finding…"
 msgstr "Aranıyor…"
 
 #. placeholder {0}: new URL(oauth.verificationUri).hostname
-msgid ""
-"Finish signing in at <0>{0}</0>. The final page may not load; paste its URL "
-"or code here."
-msgstr ""
-"<0>{0}</0> adresinde oturum açmayı tamamla. Son sayfa yüklenmeyebilir; "
-"URL'sini veya kodu buraya yapıştır."
+msgid "Finish signing in at <0>{0}</0>. The final page may not load; paste its URL or code here."
+msgstr "<0>{0}</0> adresinde oturum açmayı tamamla. Son sayfa yüklenmeyebilir; URL'sini veya kodu buraya yapıştır."
 
 msgid "finished"
 msgstr "tamamlandı"
@@ -1452,9 +1418,7 @@ msgstr "Aralık birimi"
 msgid "Isolated"
 msgstr "Yalıtılmış"
 
-msgid ""
-"Its conversation, files, and routines will be permanently deleted. "
-"Assistants it created stay in your list."
+msgid "Its conversation, files, and routines will be permanently deleted. Assistants it created stay in your list."
 msgstr ""
 
 msgid "Jump to latest"
@@ -1535,12 +1499,8 @@ msgstr "Yükleniyor…"
 msgid "Local"
 msgstr "Yerel"
 
-msgid ""
-"Local access lets bots run commands without asking. Avoid it on shared or "
-"public servers."
-msgstr ""
-"Yerel erişim, botların sormadan komut çalıştırmasına izin verir. Paylaşılan "
-"veya herkese açık sunucularda bunu kullanma."
+msgid "Local access lets bots run commands without asking. Avoid it on shared or public servers."
+msgstr "Yerel erişim, botların sormadan komut çalıştırmasına izin verir. Paylaşılan veya herkese açık sunucularda bunu kullanma."
 
 msgid "Local Server Settings"
 msgstr ""
@@ -1929,12 +1889,8 @@ msgstr "Parolalar eşleşmiyor"
 msgid "Paste a replacement key"
 msgstr "Yeni bir anahtar yapıştır"
 
-msgid ""
-"Paste the OpenAI-compatible address from your server. CortexAI Agent Hub "
-"adds /v1 if needed."
-msgstr ""
-"Sunucundaki OpenAI uyumlu adresi yapıştır. Gerekirse CortexAI Agent Hub /v1 "
-"ekler."
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "Sunucundaki OpenAI uyumlu adresi yapıştır. Gerekirse CortexAI Agent Hub /v1 ekler."
 
 msgid "Paste your API key"
 msgstr "API anahtarını yapıştır"
@@ -2267,9 +2223,7 @@ msgstr "Bir bot seç"
 msgid "Send"
 msgstr "Gönder"
 
-msgid ""
-"Send <0>{linkCode}</0> to the line from your chat app within 10 minutes. "
-"You'll get a confirmation reply once linked."
+msgid "Send <0>{linkCode}</0> to the line from your chat app within 10 minutes. You'll get a confirmation reply once linked."
 msgstr ""
 
 msgid "Send answer"
@@ -2482,12 +2436,8 @@ msgstr "Seçilen hafıza sağlayıcısı bu sürümde kullanılamıyor."
 msgid "Thinking"
 msgstr "Düşünüyor"
 
-msgid ""
-"This bot runs on this computer, not a Linux desktop. Shell and files use "
-"your home folder."
-msgstr ""
-"Bu bot bir Linux masaüstünde değil, bu bilgisayarda çalışır. Kabuk ve "
-"dosyalar senin kullanıcı klasörünü kullanır."
+msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
+msgstr "Bu bot bir Linux masaüstünde değil, bu bilgisayarda çalışır. Kabuk ve dosyalar senin kullanıcı klasörünü kullanır."
 
 msgid "This cannot be undone."
 msgstr "Bu işlem geri alınamaz."
@@ -2507,9 +2457,7 @@ msgstr "bu Mac"
 msgid "This organization’s sign-in method is not supported yet"
 msgstr ""
 
-msgid ""
-"This permanently removes every message and stops current work. The chat "
-"remains available."
+msgid "This permanently removes every message and stops current work. The chat remains available."
 msgstr ""
 
 msgid "This reset link is invalid or expired"
@@ -2521,17 +2469,11 @@ msgstr ""
 msgid "This server did not request browser authorization."
 msgstr "Bu sunucu tarayıcı yetkilendirmesi istemedi."
 
-msgid ""
-"This server is already connected. Disconnect it first to authorize again."
-msgstr ""
-"Bu sunucu zaten bağlı. Yeniden yetkilendirmek için önce bağlantısını kes."
+msgid "This server is already connected. Disconnect it first to authorize again."
+msgstr "Bu sunucu zaten bağlı. Yeniden yetkilendirmek için önce bağlantısını kes."
 
-msgid ""
-"This subscription sign-in is not available in CortexAI Agent Hub yet. Use a "
-"deployment credential or choose another provider."
-msgstr ""
-"Bu abonelik girişi CortexAI Agent Hub'da henüz kullanılamıyor. Bir dağıtım "
-"kimlik bilgisi kullan veya başka bir sağlayıcı seç."
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "Bu abonelik girişi CortexAI Agent Hub'da henüz kullanılamıyor. Bir dağıtım kimlik bilgisi kullan veya başka bir sağlayıcı seç."
 
 msgid "Time of day"
 msgstr "Günün saati"
@@ -2818,12 +2760,8 @@ msgstr ""
 msgid "Isolated preview — no access to your account"
 msgstr ""
 
-msgid ""
-"Its conversation, files, and routines will be permanently deleted. Bots it "
-"created stay in your list."
-msgstr ""
-"Sohbeti, dosyaları ve rutinleri kalıcı olarak silinecek. Oluşturduğu botlar "
-"listende kalır."
+msgid "Its conversation, files, and routines will be permanently deleted. Bots it created stay in your list."
+msgstr "Sohbeti, dosyaları ve rutinleri kalıcı olarak silinecek. Oluşturduğu botlar listende kalır."
 
 #. placeholder {0}: accessibleReplyExcerpt(message.replyQuote)
 msgid "Jump to replied message: “{0}”"
@@ -2918,3 +2856,68 @@ msgstr "Bu botun amacı"
 
 msgid "Wrote {path}"
 msgstr ""
+
+#: src/pages/ModelSettingsOverlay.tsx:383
+msgid "Choose which connected model CortexAI Agent Hub uses."
+msgstr "CortexAI Agent Hub'nun hangi bağlı modeli kullanacağını seç."
+
+#: src/pages/VoiceSettingsOverlay.tsx:163
+msgid "Could not save that speech model"
+msgstr "Bu konuşma modeli kaydedilemedi"
+
+#: src/pages/Auth.tsx:38
+msgid "Create your CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub hesabını oluştur"
+
+#: src/components/call/VoiceChatCard.tsx:49
+msgid "Hide transcript"
+msgstr "Dökümü gizle"
+
+#: src/components/call/CallCard.tsx:98
+msgid "Mute"
+msgstr "Sesi kapat"
+
+#: src/components/computer/TerminalApp.tsx:49
+msgid "No bot activity yet."
+msgstr "Henüz bot etkinliği yok."
+
+#. placeholder {0}: call.botName
+#: src/components/call/CallCard.tsx:40
+msgid "On a call with {0}"
+msgstr "{0} ile görüşmede"
+
+#: src/pages/ModelSettingsOverlay.tsx:503
+msgid "Paste the OpenAI-compatible address from your server. CortexAI Agent Hub adds /v1 if needed."
+msgstr "Sunucundaki OpenAI uyumlu adresi yapıştır. Gerekirse CortexAI Agent Hub /v1 ekler."
+
+#: src/pages/McpOAuthCallback.tsx:62
+msgid "Return to CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub'ya dön"
+
+#: src/components/call/VoiceChatCard.tsx:49
+msgid "Show transcript"
+msgstr "Dökümü göster"
+
+#: src/pages/Auth.tsx:36
+msgid "Sign in to CortexAI Agent Hub"
+msgstr "CortexAI Agent Hub'da oturum aç"
+
+#: src/pages/VoiceSettingsOverlay.tsx:338
+msgid "Speech model"
+msgstr "Konuşma modeli"
+
+#: src/pages/ModelSettingsOverlay.tsx:839
+msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
+msgstr "Bu abonelik girişi CortexAI Agent Hub'da henüz kullanılamıyor. Bir dağıtım kimlik bilgisi kullan veya başka bir sağlayıcı seç."
+
+#: src/components/call/CallCard.tsx:88
+msgid "Transcript"
+msgstr "Döküm"
+
+#: src/components/call/CallCard.tsx:98
+msgid "Unmute"
+msgstr "Sesi aç"
+
+#: src/components/call/VoiceChatCard.tsx:39
+msgid "Voice chat"
+msgstr "Sesli sohbet"

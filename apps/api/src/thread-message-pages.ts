@@ -1,5 +1,5 @@
 import type { MessageBlock, ThreadMessage, ThreadMessagePage } from "@cortexai-agent-hub/contracts";
-import { isPeerReceiptBlocks } from "@cortexai-agent-hub/core";
+import { callIdFromClientNonce, isPeerReceiptBlocks } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
@@ -177,6 +177,7 @@ function toThreadMessage(row: {
   replyToMessageId: string | null;
   replyQuote: string | null;
   runId: string | null;
+  clientNonce?: string | null;
   createdAt: Date;
 }): ThreadMessage {
   return {
@@ -189,6 +190,7 @@ function toThreadMessage(row: {
     replyToMessageId: row.replyToMessageId ?? undefined,
     replyQuote: row.replyQuote ?? undefined,
     runId: row.runId ?? undefined,
+    callId: callIdFromClientNonce(row.clientNonce),
     createdAt: row.createdAt.toISOString(),
   };
 }

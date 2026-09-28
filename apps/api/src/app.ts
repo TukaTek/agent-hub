@@ -63,7 +63,7 @@ import {
   sandboxProviderOptionsFromEnv,
   toTeamChatInbound,
 } from "@cortexai-agent-hub/adapters";
-import { blockedAuthPaths, createAuth, createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
+import { createAuth, createUserWorkAuthorizer, isBlockedAuthPath } from "@cortexai-agent-hub/auth";
 import { signupAllowlistBootUpdate, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
 
@@ -546,7 +546,7 @@ export async function createApp(
   mountScreenTarget(app, prisma, env.screenProxySecret);
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");
-    if (blockedAuthPaths.some((blocked) => path.startsWith(blocked))) {
+    if (isBlockedAuthPath(path)) {
       return c.json({ error: "Not available in version 1" }, 404);
     }
     return auth.handler(c.req.raw);
