@@ -12,6 +12,7 @@ export {
   ensureScreenCommand,
   interactiveScreenCommand,
   prepareBrowserProfileCommand,
+  quiesceBrowserProfilesCommand,
   stopBrowserCommand,
   stopExtraScreenCommand,
 } from "@cortexai-agent-hub/core/node/desktop-runtime";

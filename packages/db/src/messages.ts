@@ -1,5 +1,6 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import type { Prisma, PrismaClient } from "./client.js";
+import { withTransactionRetry } from "./transaction-retry.js";
 
 /** Group turns use channel inputs and their own outputs, never private thread history. */
 export function loadRunHistoryMessages(
@@ -52,8 +53,10 @@ export interface CreateThreadMessageInput {
 }
 
 export async function createThreadMessage(prisma: PrismaClient, input: CreateThreadMessageInput) {
-  return prisma.$transaction((tx: Prisma.TransactionClient) =>
-    createThreadMessageInTransaction(tx, input),
+  return withTransactionRetry(() =>
+    prisma.$transaction((tx: Prisma.TransactionClient) =>
+      createThreadMessageInTransaction(tx, input),
+    ),
   );
 }
 
@@ -105,4 +108,24 @@ export async function assertRunCanWriteHistory(
     throw new RunHistoryWriteError();
   }
   return run;
+}
+
+/**
+ * run.cancelled is recorded by the path that cancelled the run, after the row
+ * already reads cancelled — where the liveness assert above would reject it.
+ * The event must name its run (clients key off it) and the row must already be
+ * cancelled, so it can never announce a cancellation nothing committed.
+ */
+export async function assertRunIsCancelled(
+  tx: Prisma.TransactionClient,
+  runId?: string,
+): Promise<void> {
+  if (!runId) throw new RunHistoryWriteError();
+  const run = await tx.run.findUnique({
+    where: { id: runId },
+    select: { status: true },
+  });
+  if (run?.status !== "cancelled") {
+    throw new RunHistoryWriteError();
+  }
 }

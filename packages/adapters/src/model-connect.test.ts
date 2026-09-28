@@ -2,6 +2,157 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildModelConnectPlaintext, modelCredentialDto } from "./model-connect.js";
 import { parseModelSecret, serializeModelSecret } from "./pi-oauth.js";
 
+describe("built-in provider output limits", () => {
+  const row = {
+    id: "cred-builtin",
+    provider: "anthropic",
+    label: "Anthropic",
+    isDefault: true,
+  };
+
+  it("stores an output-token limit with an API key", () => {
+    const plaintext = buildModelConnectPlaintext({
+      provider: "anthropic",
+      apiKey: "sk-test-key",
+      maxTokens: 16384,
+    });
+    expect(parseModelSecret(plaintext)).toEqual({
+      kind: "api_key",
+      key: "sk-test-key",
+      maxTokens: 16384,
+    });
+    expect(modelCredentialDto(row, plaintext)).toMatchObject({ maxTokens: 16384, hasKey: true });
+    expect(JSON.stringify(modelCredentialDto(row, plaintext))).not.toContain("sk-test-key");
+  });
+
+  it("keeps a raw API key when no limit is configured", () => {
+    expect(
+      buildModelConnectPlaintext({
+        provider: "anthropic",
+        apiKey: "sk-test-key",
+      }),
+    ).toBe("sk-test-key");
+  });
+
+  it("updates the limit without replacing the key", () => {
+    const previous = buildModelConnectPlaintext({
+      provider: "anthropic",
+      apiKey: "sk-test-key",
+      maxTokens: 8192,
+    });
+    const updated = buildModelConnectPlaintext(
+      { provider: "anthropic", maxTokens: 16384 },
+      previous,
+    );
+    expect(parseModelSecret(updated)).toEqual({
+      kind: "api_key",
+      key: "sk-test-key",
+      maxTokens: 16384,
+    });
+  });
+
+  it("clears the limit without replacing the key", () => {
+    const previous = buildModelConnectPlaintext({
+      provider: "anthropic",
+      apiKey: "sk-test-key",
+      maxTokens: 8192,
+    });
+    expect(buildModelConnectPlaintext({ provider: "anthropic", maxTokens: null }, previous)).toBe(
+      "sk-test-key",
+    );
+  });
+
+  it("preserves the limit when a replacement key omits it", () => {
+    const previous = buildModelConnectPlaintext({
+      provider: "anthropic",
+      apiKey: "sk-test-key",
+      maxTokens: 8192,
+    });
+    expect(
+      parseModelSecret(
+        buildModelConnectPlaintext({ provider: "anthropic", apiKey: "sk-new-key-value" }, previous),
+      ),
+    ).toEqual({ kind: "api_key", key: "sk-new-key-value", maxTokens: 8192 });
+  });
+
+  it("updates an OAuth connection limit without dropping the credential", () => {
+    const credential = {
+      type: "oauth" as const,
+      access: "access",
+      refresh: "refresh",
+      expires: 10,
+    };
+    const previous = serializeModelSecret({ kind: "oauth", credential });
+    expect(
+      parseModelSecret(
+        buildModelConnectPlaintext({ provider: "openai-codex", maxTokens: 8192 }, previous),
+      ),
+    ).toEqual({ kind: "oauth", credential, maxTokens: 8192 });
+  });
+
+  it("rejects a limit update when no credential exists", () => {
+    expect(() => buildModelConnectPlaintext({ provider: "anthropic", maxTokens: 8192 })).toThrow(
+      /API key/,
+    );
+  });
+});
+
+describe("openai-codex API key guard", () => {
+  const codexOauth = serializeModelSecret({
+    kind: "oauth",
+    credential: { type: "oauth", access: "access", refresh: "refresh", expires: 10 },
+  });
+
+  it("rejects an API key because the Codex transport needs the sign-in JWT", () => {
+    expect(() =>
+      buildModelConnectPlaintext({ provider: "openai-codex", apiKey: "sk-test-key-123" }),
+    ).toThrow(/ChatGPT subscription sign-in is required/);
+  });
+
+  it("rejects replacing a ChatGPT sign-in with an API key", () => {
+    expect(() =>
+      buildModelConnectPlaintext(
+        { provider: "openai-codex", apiKey: "sk-test-key-123" },
+        codexOauth,
+      ),
+    ).toThrow(/ChatGPT subscription sign-in is required/);
+  });
+
+  it("points a keyless first connect at subscription sign-in instead of asking for a key", () => {
+    expect(() => buildModelConnectPlaintext({ provider: "openai-codex", maxTokens: 8192 })).toThrow(
+      /ChatGPT subscription sign-in is required/,
+    );
+  });
+
+  it("rejects re-saving a legacy stored API key on a keyless connect", () => {
+    const legacyKey = buildModelConnectPlaintext({
+      provider: "anthropic",
+      apiKey: "sk-legacy-key",
+    });
+    expect(() =>
+      buildModelConnectPlaintext({ provider: "openai-codex", maxTokens: 8192 }, legacyKey),
+    ).toThrow(/ChatGPT subscription sign-in is required/);
+  });
+
+  it("carries a previous ChatGPT sign-in forward when only the output limit changes", () => {
+    expect(
+      parseModelSecret(
+        buildModelConnectPlaintext({ provider: "openai-codex", maxTokens: 8192 }, codexOauth),
+      ),
+    ).toEqual({
+      kind: "oauth",
+      credential: { type: "oauth", access: "access", refresh: "refresh", expires: 10 },
+      maxTokens: 8192,
+    });
+  });
+
+  it("keeps other providers' API keys working", () => {
+    expect(buildModelConnectPlaintext({ provider: "anthropic", apiKey: "sk-test-key-123" })).toBe(
+      "sk-test-key-123",
+    );
+  });
+});
+
 describe("modelCredentialDto", () => {
   it("returns stored baseUrl and modelId for openai-compatible credentials", () => {
     const plaintext = serializeModelSecret({

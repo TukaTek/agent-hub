@@ -1,4 +1,4 @@
-import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
+import { ChatMarkdown, LinkifiedText } from "@cortexai-agent-hub/chat-ui/web";
 import type {
   AgentSkillCatalogEntry,
   Bot,
@@ -43,6 +43,8 @@ import {
   isToolActivityBlock,
   latestAnswerableAskMessageId,
   mentionChipKey,
+  nestRosterByParent,
+  plainTextFromMarkdown,
   projectMessageReactions,
   reorderBotTo,
   resolveComposerSendPlan,
@@ -55,6 +57,7 @@ import {
   speechFromBlocks,
   truncateSlashDescription,
   userVisibleMessages,
+  withLiveStreamingProgress,
 } from "@cortexai-agent-hub/core";
 import {
   AvatarStyleProvider,
@@ -86,6 +89,7 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  FolderOpen,
   Gauge,
   LayoutGrid,
   Lock,
@@ -125,6 +129,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -138,6 +143,7 @@ import {
   computersAreUnavailable,
 } from "../components/ComputersUnavailableHint";
 import { ComputerUpdateProgress } from "../components/ComputerUpdateProgress";
+import { ComputerWorkspace } from "../components/computer/ComputerWorkspace";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
@@ -157,11 +163,13 @@ import {
   requestBrowserNotificationPermission,
   shouldNotifyBrowser,
 } from "../lib/browser-notifications";
+import { newClientId } from "../lib/client-id";
 import {
   embeddableScreenUrl,
   loadComputerScreen,
   screenIframeSandbox,
 } from "../lib/computer-screen";
+import { publishComputerCommand } from "../lib/computer-workspace";
 import { desktopBridge } from "../lib/desktop";
 import { scheduleFocusPrompt } from "../lib/focus-prompt";
 import { localTimezone } from "../lib/local-timezone";
@@ -170,10 +178,12 @@ import { messageProviderLabel } from "../lib/messaging";
 import {
   isFileDrag,
   isFilePaste,
+  readFileAsBase64,
   revokePendingAttachmentPreviews,
 } from "../lib/pending-attachments";
 import { markAfterPaint, markOnce } from "../lib/performance";
 import { quoteDraftForSelection } from "../lib/quote-selection";
+import { getResponseStreamingEnabled, subscribeResponseStreaming } from "../lib/response-streaming";
 import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/rpc";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
 import { sharedInflight } from "../lib/shared-inflight";
@@ -307,8 +317,12 @@ function collapsedSidebarSectionsStorageKey(userId: string | null | undefined): 
   return `cortexai-agent-hub:collapsed-sidebar-sections:${userId}`;
 }
 
-function readCollapsedSidebarSections(userId: string | null | undefined): Set<string> {
-  const storageKey = collapsedSidebarSectionsStorageKey(userId);
+function collapsedRosterParentsStorageKey(userId: string | null | undefined): string | null {
+  if (!userId) return null;
+  return `cortexai-agent-hub:collapsed-roster-parents:${userId}`;
+}
+
+function readCollapsedIdSet(storageKey: string | null): Set<string> {
   if (!storageKey) return new Set();
   try {
     const value = window.localStorage.getItem(storageKey);
@@ -319,6 +333,32 @@ function readCollapsedSidebarSections(userId: string | null | undefined): Set<st
   } catch {
     return new Set();
   }
+}
+
+function toggleCollapsedIdSet(
+  previous: ReadonlySet<string>,
+  id: string,
+  storageKey: string | null,
+): Set<string> {
+  const next = new Set(previous);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  if (storageKey) {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify([...next]));
+    } catch {
+      // Keep the UI usable when storage is unavailable.
+    }
+  }
+  return next;
+}
+
+function readCollapsedSidebarSections(userId: string | null | undefined): Set<string> {
+  return readCollapsedIdSet(collapsedSidebarSectionsStorageKey(userId));
+}
+
+function readCollapsedRosterParents(userId: string | null | undefined): Set<string> {
+  return readCollapsedIdSet(collapsedRosterParentsStorageKey(userId));
 }
 
 export function ShellPage() {
@@ -346,9 +386,11 @@ export function ShellPage() {
   const [archivedGroups, setArchivedGroups] = useState<Group[]>([]);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState(() => new Set<string>());
+  const [collapsedRosterParents, setCollapsedRosterParents] = useState(() => new Set<string>());
 
   useEffect(() => {
     setCollapsedSidebarSections(readCollapsedSidebarSections(userId));
+    setCollapsedRosterParents(readCollapsedRosterParents(userId));
   }, [userId]);
   useEffect(() => {
     setBotsSidebarCollapsed(readBotsSidebarCollapsed(userId));
@@ -358,6 +400,13 @@ export function ShellPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [snapshot, setSnapshot] = useState<ThreadSnapshot | null>(null);
   const snapshotRef = useRef<ThreadSnapshot | null>(null);
+  const streamResponses = useSyncExternalStore(
+    subscribeResponseStreaming,
+    getResponseStreamingEnabled,
+    () => false,
+  );
+  const streamResponsesRef = useRef(streamResponses);
+  streamResponsesRef.current = streamResponses;
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [replyTarget, setReplyTarget] = useState<ThreadMessage | null>(null);
   const [replyQuote, setReplyQuote] = useState<string | null>(null);
@@ -424,8 +473,12 @@ export function ShellPage() {
 
   function commitSnapshot(next: ThreadSnapshot | null) {
     snapshotRef.current = next;
-    setSnapshot(next);
+    setSnapshot(withLiveStreamingProgress(next, streamResponsesRef.current));
   }
+
+  useEffect(() => {
+    setSnapshot(withLiveStreamingProgress(snapshotRef.current, streamResponses));
+  }, [streamResponses]);
 
   function commitComputer(next: ComputerStatus | null) {
     computerRef.current = next;
@@ -614,6 +667,11 @@ export function ShellPage() {
   const expandedHistoryThread = useRef<string | null>(null);
   const historyEpoch = useRef(0);
   const jumpGeneration = useRef(0);
+  const [scrollRequest, setScrollRequest] = useState<{
+    messageId: string;
+    nonce: number;
+  } | null>(null);
+  const clearScrollRequest = useCallback(() => setScrollRequest(null), []);
   const initiallyScrolledThread = useRef<string | null>(null);
   const messageScroll = useRef<HTMLDivElement>(null);
   const pinnedAroundRef = useRef<{
@@ -1394,7 +1452,13 @@ export function ShellPage() {
         [
           ...visibleBots.map((chat) => ({ kind: "bot" as const, chat })),
           ...visibleGroups.map((chat) => ({ kind: "group" as const, chat })),
-        ].map((item) => ({ ...item, pinned: item.chat.pinned, sectionId: item.chat.sectionId })),
+        ].map((item) => ({
+          ...item,
+          id: item.chat.id,
+          parentBotId: item.kind === "bot" ? item.chat.parentBotId : null,
+          pinned: item.chat.pinned,
+          sectionId: item.chat.sectionId,
+        })),
         space.botSections,
       ).map((group, index) => ({
         ...group,
@@ -1492,20 +1556,17 @@ export function ShellPage() {
   );
   const toggleSidebarSection = useCallback(
     (key: string) => {
-      setCollapsedSidebarSections((previous) => {
-        const next = new Set(previous);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        const storageKey = collapsedSidebarSectionsStorageKey(userId);
-        if (storageKey) {
-          try {
-            window.localStorage.setItem(storageKey, JSON.stringify([...next]));
-          } catch {
-            // Keep the UI usable when storage is unavailable.
-          }
-        }
-        return next;
-      });
+      setCollapsedSidebarSections((previous) =>
+        toggleCollapsedIdSet(previous, key, collapsedSidebarSectionsStorageKey(userId)),
+      );
+    },
+    [userId],
+  );
+  const toggleRosterParent = useCallback(
+    (botId: string) => {
+      setCollapsedRosterParents((previous) =>
+        toggleCollapsedIdSet(previous, botId, collapsedRosterParentsStorageKey(userId)),
+      );
     },
     [userId],
   );
@@ -1602,20 +1663,20 @@ export function ShellPage() {
       setRoutines([]);
       setRoutinesBotId(null);
     }
-    window.requestAnimationFrame(() => {
-      if (epoch !== historyEpoch.current || jumpId !== jumpGeneration.current) return;
-      if (!targetInPage) {
+    if (targetInPage) {
+      // The transcript owns the scroll: it retries until the pinned row is
+      // mounted and unfollows the tail, so live commits cannot cancel it.
+      setScrollRequest({ messageId: target.messageId, nonce: jumpId });
+    } else {
+      window.requestAnimationFrame(() => {
+        if (epoch !== historyEpoch.current || jumpId !== jumpGeneration.current) return;
         const element = messageScroll.current;
         if (element) {
           element.scrollTop = element.scrollHeight;
           initiallyScrolledThread.current = page.threadId;
         }
-        return;
-      }
-      document
-        .querySelector(`[data-message-id="${target.messageId}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
+      });
+    }
   }
 
   useEffect(() => {
@@ -1660,11 +1721,11 @@ export function ShellPage() {
     : snapshot?.botId === active?.id
       ? snapshot
       : null;
-  const activeReplyTarget =
-    replyTarget && activeSnapshot?.messages.some((message) => message.id === replyTarget.id)
-      ? replyTarget
-      : null;
-  const activeReplyQuote = activeReplyTarget ? replyQuote : null;
+  // Keep the armed reply even when its parent leaves the loaded page: the
+  // server resolves a paged-out target and degrades a deleted one to a plain
+  // reply instead of failing the send.
+  const activeReplyTarget = replyTarget;
+  const activeReplyQuote = replyTarget ? replyQuote : null;
   const clearReply = useCallback(() => {
     setReplyTarget(null);
     setReplyQuote(null);
@@ -1863,7 +1924,7 @@ export function ShellPage() {
     if (existing) {
       // Cancel any in-flight around-fetch so it cannot overwrite this scroll.
       jumpGeneration.current += 1;
-      existing.scrollIntoView({ behavior: "smooth", block: "center" });
+      setScrollRequest({ messageId, nonce: jumpGeneration.current });
       return;
     }
     const groupId = activeGroupId.current;
@@ -1874,22 +1935,26 @@ export function ShellPage() {
     const botId = activeBotId.current;
     if (botId) void jumpToMessageRef.current({ botId, messageId });
   }, []);
-  const answerMessage = useCallback(async (message: ThreadMessage, text: string) => {
-    const botId = activeBotId.current;
-    const groupId = activeGroupId.current;
-    if (!botId && !groupId) return;
-    await rpc.threads.answer({
-      ...(groupId ? { groupId } : { botId: botId! }),
-      runId: message.runId ?? "",
-      messageId: message.id,
-      answer: text,
-    });
-    if (groupId && activeGroupId.current === groupId) {
-      await refreshGroupThreadRef.current(groupId);
-    } else if (botId && activeBotId.current === botId) {
-      await refreshThreadRef.current(botId);
-    }
-  }, []);
+  const answerMessage = useCallback(
+    async (message: ThreadMessage, text: string, username?: string) => {
+      const botId = activeBotId.current;
+      const groupId = activeGroupId.current;
+      if (!botId && !groupId) return;
+      await rpc.threads.answer({
+        ...(groupId ? { groupId } : { botId: botId! }),
+        runId: message.runId ?? "",
+        messageId: message.id,
+        answer: text,
+        ...(username ? { username } : {}),
+      });
+      if (groupId && activeGroupId.current === groupId) {
+        await refreshGroupThreadRef.current(groupId);
+      } else if (botId && activeBotId.current === botId) {
+        await refreshThreadRef.current(botId);
+      }
+    },
+    [],
+  );
   const reactToMessage = useCallback(
     async (message: ThreadMessage, reaction: MessageReaction) => {
       const botId = activeBotId.current;
@@ -2125,7 +2190,7 @@ export function ShellPage() {
           }
           return;
         }
-        // Stop has no terminal event; clear run UI before refresh races with in-flight gets.
+        // Clear run UI ahead of the run.cancelled event so refresh races with in-flight gets.
         if (activeGroupId.current === groupTarget) {
           updateSnapshot((prev) =>
             prev && prev.groupId === groupTarget ? clearActiveThreadRuns(prev) : prev,
@@ -2144,7 +2209,7 @@ export function ShellPage() {
         }
         return;
       }
-      // Stop does not emit a terminal thread event. Clear local run/busy immediately so a
+      // Clear local run/busy immediately rather than waiting for run.cancelled so a
       // superseded in-flight refresh (older cursor) cannot leave Stop enabled / Take control
       // blocked while the API is already idle.
       if (activeBotId.current === botTarget) {
@@ -2782,6 +2847,16 @@ export function ShellPage() {
                 const groupBotIds = group.bots.flatMap((item) =>
                   item.kind === "bot" ? [item.chat.id] : [],
                 );
+                const nestedRows = nestRosterByParent(group.bots, collapsedRosterParents);
+                const treeActive = nestedRows.some((row) => row.depth > 0 || row.hasChildren);
+                const rosterParent = new Map(
+                  nestedRows.map((row) => [row.item.chat.id, row.parentId] as const),
+                );
+                // Reorder among visible siblings so keyboard and drag moves match the tree.
+                const siblingBotIds = (parentId: string | null) =>
+                  nestedRows.flatMap((row) =>
+                    row.item.kind === "bot" && row.parentId === parentId ? [row.item.chat.id] : [],
+                  );
                 return (
                   <div key={group.key} data-sidebar-group={group.key}>
                     {group.title ? (
@@ -2877,153 +2952,203 @@ export function ShellPage() {
                       </div>
                     ) : null}
                     {!collapsed &&
-                      group.bots.map((item) => (
-                        <button
-                          key={`${item.kind}:${item.chat.id}`}
-                          type="button"
-                          draggable={item.kind === "bot"}
-                          data-roster-bot-id={item.kind === "bot" ? item.chat.id : undefined}
-                          aria-keyshortcuts={
-                            item.kind === "bot" ? "Alt+ArrowUp Alt+ArrowDown" : undefined
-                          }
-                          onDragStart={(event) => {
-                            if (item.kind !== "bot") return;
-                            setDraggedBotId(item.chat.id);
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", item.chat.id);
-                          }}
-                          onDragOver={(event) => {
-                            if (
-                              item.kind === "bot" &&
-                              draggedBotId &&
-                              groupBotIds.includes(draggedBotId)
-                            ) {
-                              event.preventDefault();
-                              event.dataTransfer.dropEffect = "move";
-                            }
-                          }}
-                          onDrop={(event) => {
-                            if (item.kind !== "bot" || !draggedBotId) return;
-                            event.preventDefault();
-                            reorderRosterBot(draggedBotId, item.chat.id, groupBotIds);
-                            setDraggedBotId(null);
-                          }}
-                          onDragEnd={() => setDraggedBotId(null)}
-                          onKeyDown={(event) => {
-                            if (
-                              item.kind !== "bot" ||
-                              !event.altKey ||
-                              (event.key !== "ArrowUp" && event.key !== "ArrowDown")
-                            )
-                              return;
-                            const index = groupBotIds.indexOf(item.chat.id);
-                            const target = groupBotIds[index + (event.key === "ArrowUp" ? -1 : 1)];
-                            if (!target) return;
-                            event.preventDefault();
-                            reorderRosterBot(item.chat.id, target, groupBotIds);
-                          }}
-                          onClick={() => {
-                            openSpaceChat(
-                              item.chat.spaceId,
-                              item.kind === "bot"
-                                ? `/app/${item.chat.id}`
-                                : `/app/g/${item.chat.id}`,
-                            );
-                          }}
-                          onContextMenu={(event) => {
-                            if (item.chat.spaceId !== bootstrapMe?.spaceId) return;
-                            event.preventDefault();
-                            botMenuAnchor.current = event.currentTarget;
-                            setBotMenu({
-                              kind: item.kind,
-                              id: item.chat.id,
-                              position: { x: event.clientX, y: event.clientY },
-                            });
-                          }}
-                          className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-[10px] text-start ${
-                            item.kind === "bot" ? "cursor-grab active:cursor-grabbing" : ""
-                          } ${
-                            (item.kind === "bot" && !inGroup && active?.id === item.chat.id) ||
-                            (item.kind === "group" && inGroup && activeGroup?.id === item.chat.id)
-                              ? "bg-sidebar-accent"
-                              : "hover:bg-sidebar-accent"
-                          }`}
-                          style={{
-                            opacity:
-                              item.kind === "bot" && draggedBotId === item.chat.id ? 0.55 : 1,
-                          }}
-                        >
-                          {item.kind === "bot" ? (
-                            <BotAvatar
-                              color={item.chat.color}
-                              identity={item.chat.id}
-                              size={38}
-                              status={item.chat.status}
-                            />
-                          ) : (
-                            <GroupAvatar
-                              members={
-                                item.chat.id === activeSnapshot?.groupId
-                                  ? (activeSnapshot.members ?? item.chat.members)
-                                  : item.chat.members
+                      nestedRows.map(({ item, depth, hasChildren, parentId }) => {
+                        const parentCollapsed =
+                          hasChildren && collapsedRosterParents.has(item.chat.id);
+                        const selected =
+                          (item.kind === "bot" && !inGroup && active?.id === item.chat.id) ||
+                          (item.kind === "group" && inGroup && activeGroup?.id === item.chat.id);
+                        return (
+                          <div
+                            key={`${item.kind}:${item.chat.id}`}
+                            className="group/row relative"
+                            style={{
+                              opacity:
+                                item.kind === "bot" && draggedBotId === item.chat.id ? 0.55 : 1,
+                            }}
+                          >
+                            {hasChildren ? (
+                              <span
+                                className="absolute inset-y-0 z-10 flex w-3.5 items-center justify-center"
+                                style={{ insetInlineStart: `${10 + depth * 14}px` }}
+                              >
+                                <button
+                                  type="button"
+                                  aria-expanded={!parentCollapsed}
+                                  aria-label={
+                                    parentCollapsed
+                                      ? t`Expand ${item.chat.name}`
+                                      : t`Collapse ${item.chat.name}`
+                                  }
+                                  className="inline-flex size-3.5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                                  onClick={() => toggleRosterParent(item.chat.id)}
+                                >
+                                  <ChevronDown
+                                    size={12}
+                                    strokeWidth={2}
+                                    className={`transition-transform ${
+                                      parentCollapsed ? "-rotate-90" : ""
+                                    }`}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </span>
+                            ) : null}
+                            <button
+                              type="button"
+                              draggable={item.kind === "bot"}
+                              data-roster-bot-id={item.kind === "bot" ? item.chat.id : undefined}
+                              data-roster-depth={
+                                item.kind === "bot" && treeActive ? depth : undefined
                               }
-                              size={38}
-                            />
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-1.5">
-                              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-                                <span
+                              aria-keyshortcuts={
+                                item.kind === "bot" ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+                              }
+                              onDragStart={(event) => {
+                                if (item.kind !== "bot") return;
+                                setDraggedBotId(item.chat.id);
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", item.chat.id);
+                              }}
+                              onDragOver={(event) => {
+                                if (
+                                  item.kind === "bot" &&
+                                  draggedBotId &&
+                                  groupBotIds.includes(draggedBotId) &&
+                                  rosterParent.get(draggedBotId) === parentId
+                                ) {
+                                  event.preventDefault();
+                                  event.dataTransfer.dropEffect = "move";
+                                }
+                              }}
+                              onDrop={(event) => {
+                                if (
+                                  item.kind !== "bot" ||
+                                  !draggedBotId ||
+                                  rosterParent.get(draggedBotId) !== parentId
+                                )
+                                  return;
+                                event.preventDefault();
+                                reorderRosterBot(draggedBotId, item.chat.id, groupBotIds);
+                                setDraggedBotId(null);
+                              }}
+                              onDragEnd={() => setDraggedBotId(null)}
+                              onKeyDown={(event) => {
+                                if (
+                                  item.kind !== "bot" ||
+                                  !event.altKey ||
+                                  (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+                                )
+                                  return;
+                                const siblings = siblingBotIds(parentId);
+                                const index = siblings.indexOf(item.chat.id);
+                                const target = siblings[index + (event.key === "ArrowUp" ? -1 : 1)];
+                                if (!target) return;
+                                event.preventDefault();
+                                reorderRosterBot(item.chat.id, target, groupBotIds);
+                              }}
+                              onClick={() => {
+                                openSpaceChat(
+                                  item.chat.spaceId,
+                                  item.kind === "bot"
+                                    ? `/app/${item.chat.id}`
+                                    : `/app/g/${item.chat.id}`,
+                                );
+                              }}
+                              onContextMenu={(event) => {
+                                if (item.chat.spaceId !== bootstrapMe?.spaceId) return;
+                                event.preventDefault();
+                                botMenuAnchor.current = event.currentTarget;
+                                setBotMenu({
+                                  kind: item.kind,
+                                  id: item.chat.id,
+                                  position: { x: event.clientX, y: event.clientY },
+                                });
+                              }}
+                              className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-[10px] text-start ${
+                                item.kind === "bot" ? "cursor-grab active:cursor-grabbing" : ""
+                              } ${
+                                selected ? "bg-sidebar-accent" : "group-hover/row:bg-sidebar-accent"
+                              }`}
+                              style={
+                                treeActive
+                                  ? { paddingInlineStart: `${24 + depth * 14}px` }
+                                  : undefined
+                              }
+                            >
+                              {item.kind === "bot" ? (
+                                <BotAvatar
+                                  color={item.chat.color}
+                                  identity={item.chat.id}
+                                  size={38}
+                                  status={item.chat.status}
+                                />
+                              ) : (
+                                <GroupAvatar
+                                  members={
+                                    item.chat.id === activeSnapshot?.groupId
+                                      ? (activeSnapshot.members ?? item.chat.members)
+                                      : item.chat.members
+                                  }
+                                  size={38}
+                                />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-1.5">
+                                  <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+                                    <span
+                                      dir="auto"
+                                      data-roster-bot-name={item.kind === "bot" ? "" : undefined}
+                                      className={`min-w-0 truncate text-[14px] text-foreground ${
+                                        item.chat.unread ? "font-semibold" : "font-medium"
+                                      }`}
+                                    >
+                                      {item.chat.name}
+                                    </span>
+                                    {item.chat.unread ? (
+                                      <span className="sr-only">
+                                        <Trans> (unread)</Trans>
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex shrink-0 items-center gap-1.5">
+                                    <span className="text-[11.5px] text-muted-foreground/60 tabular-nums">
+                                      {formatRosterTime(item.chat.updatedAt)}
+                                    </span>
+                                    {item.chat.unread ? (
+                                      <span
+                                        aria-hidden="true"
+                                        className="inline-block h-2 w-2 rounded-full bg-foreground"
+                                      />
+                                    ) : null}
+                                  </div>
+                                </div>
+                                {item.kind === "bot" && item.chat.title ? (
+                                  <div className="mt-1 flex">
+                                    <span className="max-w-full truncate rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
+                                      {item.chat.title}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                <div
                                   dir="auto"
-                                  data-roster-bot-name={item.kind === "bot" ? "" : undefined}
-                                  className={`min-w-0 truncate text-[14px] text-foreground ${
-                                    item.chat.unread ? "font-semibold" : "font-medium"
+                                  className={`mt-1 line-clamp-2 text-[12.5px] break-words whitespace-normal ${
+                                    item.chat.unread
+                                      ? "font-medium text-foreground/75"
+                                      : "text-muted-foreground/60"
                                   }`}
                                 >
-                                  {item.chat.name}
-                                </span>
-                                {item.chat.unread ? (
-                                  <span className="sr-only">
-                                    <Trans> (unread)</Trans>
-                                  </span>
-                                ) : null}
+                                  {item.kind === "bot"
+                                    ? item.chat.preview ||
+                                      (item.chat.status !== "idle" ? item.chat.status : "")
+                                    : item.chat.preview ||
+                                      item.chat.members.map((member) => member.name).join(", ")}
+                                </div>
                               </div>
-                              <div className="flex shrink-0 items-center gap-1.5">
-                                <span className="text-[11.5px] text-muted-foreground/60 tabular-nums">
-                                  {formatRosterTime(item.chat.updatedAt)}
-                                </span>
-                                {item.chat.unread ? (
-                                  <span
-                                    aria-hidden="true"
-                                    className="inline-block h-2 w-2 rounded-full bg-foreground"
-                                  />
-                                ) : null}
-                              </div>
-                            </div>
-                            {item.kind === "bot" && item.chat.title ? (
-                              <div className="mt-1 flex">
-                                <span className="max-w-full truncate rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
-                                  {item.chat.title}
-                                </span>
-                              </div>
-                            ) : null}
-                            <div
-                              dir="auto"
-                              className={`mt-1 line-clamp-2 text-[12.5px] break-words whitespace-normal ${
-                                item.chat.unread
-                                  ? "font-medium text-foreground/75"
-                                  : "text-muted-foreground/60"
-                              }`}
-                            >
-                              {item.kind === "bot"
-                                ? item.chat.preview ||
-                                  (item.chat.status !== "idle" ? item.chat.status : "")
-                                : item.chat.preview ||
-                                  item.chat.members.map((member) => member.name).join(", ")}
-                            </div>
+                            </button>
                           </div>
-                        </button>
-                      ))}
+                        );
+                      })}
                   </div>
                 );
               })}
@@ -3145,6 +3270,18 @@ export function ShellPage() {
               <Button
                 variant="ghost"
                 className="w-full justify-start font-normal"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setMobileSidebarOpen(false);
+                  navigate("/app/artifacts");
+                }}
+              >
+                <FolderOpen className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Artifacts</Trans>
+              </Button>
+              <Button
+                variant="ghost"
+                className="w-full justify-start font-normal"
                 aria-label={t`Settings`}
                 onClick={() => {
                   setMenuOpen(false);
@@ -3188,48 +3325,51 @@ export function ShellPage() {
         </Popover>
       </aside>
 
-      <button
-        type="button"
-        data-testid="bots-sidebar-edge"
-        aria-label={botsSidebarCollapsed ? t`Show bots` : t`Hide bots`}
-        aria-pressed={!botsSidebarCollapsed}
-        className={`absolute inset-y-0 z-50 hidden w-2 cursor-ew-resize touch-none border-0 bg-transparent p-0 md:block ${
-          botsSidebarCollapsed ? "start-0" : "start-[308px]"
-        }`}
-        onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId);
-          botsSidebarEdgeDragRef.current = {
-            startX: event.clientX,
-            mode: botsSidebarCollapsed ? "expand" : "collapse",
-          };
-        }}
-        onPointerMove={(event) => {
-          const drag = botsSidebarEdgeDragRef.current;
-          if (!drag) return;
-          const rtl =
-            typeof document !== "undefined" &&
-            document.documentElement.getAttribute("dir") === "rtl";
-          const delta = rtl ? drag.startX - event.clientX : event.clientX - drag.startX;
-          if (drag.mode === "expand" && delta >= BOTS_SIDEBAR_EDGE_DRAG_PX) {
+      {/* The full-screen computer covers the sidebar, so its edge must not catch clicks there. */}
+      {computerOpen || booting ? null : (
+        <button
+          type="button"
+          data-testid="bots-sidebar-edge"
+          aria-label={botsSidebarCollapsed ? t`Show bots` : t`Hide bots`}
+          aria-pressed={!botsSidebarCollapsed}
+          className={`absolute inset-y-0 z-50 hidden w-2 cursor-ew-resize touch-none border-0 bg-transparent p-0 md:block ${
+            botsSidebarCollapsed ? "start-0" : "start-[308px]"
+          }`}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            botsSidebarEdgeDragRef.current = {
+              startX: event.clientX,
+              mode: botsSidebarCollapsed ? "expand" : "collapse",
+            };
+          }}
+          onPointerMove={(event) => {
+            const drag = botsSidebarEdgeDragRef.current;
+            if (!drag) return;
+            const rtl =
+              typeof document !== "undefined" &&
+              document.documentElement.getAttribute("dir") === "rtl";
+            const delta = rtl ? drag.startX - event.clientX : event.clientX - drag.startX;
+            if (drag.mode === "expand" && delta >= BOTS_SIDEBAR_EDGE_DRAG_PX) {
+              botsSidebarEdgeDragRef.current = null;
+              setBotsSidebarCollapsedPref(false);
+            } else if (drag.mode === "collapse" && delta <= -BOTS_SIDEBAR_EDGE_DRAG_PX) {
+              botsSidebarEdgeDragRef.current = null;
+              setBotsSidebarCollapsedPref(true);
+            }
+          }}
+          onPointerUp={(event) => {
+            const drag = botsSidebarEdgeDragRef.current;
             botsSidebarEdgeDragRef.current = null;
-            setBotsSidebarCollapsedPref(false);
-          } else if (drag.mode === "collapse" && delta <= -BOTS_SIDEBAR_EDGE_DRAG_PX) {
+            if (!drag) return;
+            if (Math.abs(event.clientX - drag.startX) < BOTS_SIDEBAR_EDGE_DRAG_PX) {
+              setBotsSidebarCollapsedPref(!botsSidebarCollapsed);
+            }
+          }}
+          onPointerCancel={() => {
             botsSidebarEdgeDragRef.current = null;
-            setBotsSidebarCollapsedPref(true);
-          }
-        }}
-        onPointerUp={(event) => {
-          const drag = botsSidebarEdgeDragRef.current;
-          botsSidebarEdgeDragRef.current = null;
-          if (!drag) return;
-          if (Math.abs(event.clientX - drag.startX) < BOTS_SIDEBAR_EDGE_DRAG_PX) {
-            setBotsSidebarCollapsedPref(!botsSidebarCollapsed);
-          }
-        }}
-        onPointerCancel={() => {
-          botsSidebarEdgeDragRef.current = null;
-        }}
-      />
+          }}
+        />
+      )}
 
       <main
         aria-hidden={mobileSidebarOpen || undefined}
@@ -3320,6 +3460,8 @@ export function ShellPage() {
           <Transcript
             key={activeSnapshot?.threadId}
             scrollRef={messageScroll}
+            scrollRequest={scrollRequest}
+            onScrollRequestHandled={clearScrollRequest}
             artifactTarget={transcriptArtifactTarget}
             messages={transcriptMessages}
             olderCursor={activeSnapshot?.olderCursor ?? null}
@@ -4325,38 +4467,45 @@ export function ShellPage() {
               </div>
             ) : null}
             <div className="relative min-h-0 flex-1 bg-background">
-              {computer?.kind === "desktop" ? (
-                <DesktopKindEmptyState className="grid h-full place-items-center px-8 text-center text-sm text-muted-foreground/80" />
-              ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
-                <>
-                  <iframe
-                    title={t`Assistant screen`}
-                    src={embeddedScreenUrl}
-                    sandbox={screenIframeSandbox(embeddedScreenUrl)}
-                    className="h-full w-full border-0 bg-black"
-                    allow="clipboard-read; clipboard-write; fullscreen"
-                    style={{
-                      pointerEvents: recordingSkill || !hasControl ? "none" : "auto",
-                    }}
-                  />
-                  {computerBot ? (
-                    <TeachCaptureOverlay
-                      botId={computerBot.id}
-                      skill={recordingSkill}
-                      enabled={Boolean(recordingSkill)}
-                      screenWidth={computer?.screenWidth}
-                      screenHeight={computer?.screenHeight}
+              <ComputerWorkspace
+                botId={computerBot.id}
+                computer={computer}
+                hasControl={hasControl}
+                dock={!recordingSkill}
+              >
+                {computer?.kind === "desktop" ? (
+                  <DesktopKindEmptyState className="grid h-full place-items-center px-8 text-center text-sm text-muted-foreground/80" />
+                ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
+                  <>
+                    <iframe
+                      title={t`Assistant screen`}
+                      src={embeddedScreenUrl}
+                      sandbox={screenIframeSandbox(embeddedScreenUrl)}
+                      className="h-full w-full border-0 bg-black"
+                      allow="clipboard-read; clipboard-write; fullscreen"
+                      style={{
+                        pointerEvents: recordingSkill || !hasControl ? "none" : "auto",
+                      }}
                     />
-                  ) : null}
-                </>
-              ) : (
-                <div className="grid h-full place-items-center text-sm text-muted-foreground/80">
-                  {computerScreenError ??
-                    (computer?.state === "suspended"
-                      ? t`Computer is asleep`
-                      : computerLabel(computer?.mode, computerBot.name))}
-                </div>
-              )}
+                    {computerBot ? (
+                      <TeachCaptureOverlay
+                        botId={computerBot.id}
+                        skill={recordingSkill}
+                        enabled={Boolean(recordingSkill)}
+                        screenWidth={computer?.screenWidth}
+                        screenHeight={computer?.screenHeight}
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="grid h-full place-items-center text-sm text-muted-foreground/80">
+                    {computerScreenError ??
+                      (computer?.state === "suspended"
+                        ? t`Computer is asleep`
+                        : computerLabel(computer?.mode, computerBot.name))}
+                  </div>
+                )}
+              </ComputerWorkspace>
             </div>
           </div>
         </div>
@@ -4371,6 +4520,8 @@ export function ShellPage() {
 
 const Transcript = memo(function Transcript({
   scrollRef,
+  scrollRequest,
+  onScrollRequestHandled,
   artifactTarget,
   messages,
   olderCursor,
@@ -4397,6 +4548,8 @@ const Transcript = memo(function Transcript({
   onOpenComputer,
 }: {
   scrollRef: RefObject<HTMLDivElement | null>;
+  scrollRequest: { messageId: string; nonce: number } | null;
+  onScrollRequestHandled: () => void;
   artifactTarget: ArtifactTarget;
   messages: ThreadMessage[];
   olderCursor: number | null;
@@ -4406,7 +4559,7 @@ const Transcript = memo(function Transcript({
   workingBots: GroupAvatarMember[];
   onLoadOlder: () => void | Promise<void>;
   onOpenBot: (botId: string) => void;
-  onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
+  onAnswer: (message: ThreadMessage, text: string, username?: string) => Promise<void>;
   onReply: (message: ThreadMessage) => void;
   onQuote: (message: ThreadMessage, quote: string) => void;
   onReact: (message: ThreadMessage, reaction: MessageReaction) => Promise<void>;
@@ -4457,15 +4610,35 @@ const Transcript = memo(function Transcript({
       (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>(
         "[data-quote-message-id]",
       ) ?? null;
+    const startContent = contentOf(range.startContainer);
+    const endContent = contentOf(range.endContainer);
+    // selection.toString() serializes the whole range (a Ctrl+A transcript is
+    // unbounded), so it only runs once both endpoints sit in one message.
     const draft = quoteDraftForSelection(
       {
-        startContent: contentOf(range.startContainer),
-        endContent: contentOf(range.endContainer),
-        text: selection.toString(),
+        startContent,
+        endContent,
+        text: startContent && startContent === endContent ? selection.toString() : "",
       },
       messageById,
     );
-    setQuoteDraft(draft ? { ...draft, range } : null);
+    setQuoteDraft((prev) => {
+      if (!draft) return null;
+      // Repeat firings for an unchanged selection reuse the draft so the
+      // transcript isn't re-rendered by every unrelated selection event. A
+      // moved selection (e.g. keyboard-selecting a second occurrence of the
+      // same text) must carry its new Range — the pill anchors to it.
+      if (
+        prev &&
+        prev.message === draft.message &&
+        prev.text === draft.text &&
+        prev.range.compareBoundaryPoints(Range.START_TO_START, range) === 0 &&
+        prev.range.compareBoundaryPoints(Range.END_TO_END, range) === 0
+      ) {
+        return prev;
+      }
+      return { ...draft, range };
+    });
   }, [messageById]);
 
   // Keyboard and assistive-tech selections never reach a mouseup, so the pill
@@ -4487,15 +4660,22 @@ const Transcript = memo(function Transcript({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setQuoteDraft(null);
     };
+    // A drag that ends outside the window never fires document mouseup; reset
+    // the flag on blur so keyboard selections keep working afterwards.
+    const onWindowBlur = () => {
+      selectingWithMouse.current = false;
+    };
     document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("mouseup", onMouseUp, true);
     document.addEventListener("selectionchange", onSelectionChange);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", onWindowBlur);
     return () => {
       document.removeEventListener("mousedown", onMouseDown, true);
       document.removeEventListener("mouseup", onMouseUp, true);
       document.removeEventListener("selectionchange", onSelectionChange);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, [evaluateSelection]);
   const snapToEnd = useCallback(() => {
@@ -4528,6 +4708,38 @@ const Transcript = memo(function Transcript({
     );
   }, [scrollRef]);
 
+  const scrolledJump = useRef<number | null>(null);
+  const jumpScrolling = useRef(false);
+  const jumpScrollTimer = useRef<number | undefined>(undefined);
+  const endJumpScroll = useCallback(() => {
+    jumpScrolling.current = false;
+    window.clearTimeout(jumpScrollTimer.current);
+    scrollRef.current?.removeEventListener("scrollend", endJumpScroll);
+  }, [scrollRef]);
+  // A jump scroll must win over follow-the-tail: unfollow inside the commit
+  // that mounts the row so a live commit cannot cancel the animation, keep
+  // retrying while the pinned window is still rendering, and suppress the
+  // near-end follow re-arm only for the jump's own scroll events — scrollend
+  // (or user input interrupting it, which also fires scrollend) ends the
+  // suppression, with the timeout as fallback when no scroll happens.
+  useLayoutEffect(() => {
+    if (!scrollRequest || scrolledJump.current === scrollRequest.nonce) return;
+    const element = scrollRef.current;
+    const row = element?.querySelector(
+      `[data-message-id="${CSS.escape(scrollRequest.messageId)}"]`,
+    );
+    if (!element || !row) return;
+    scrolledJump.current = scrollRequest.nonce;
+    following.current = false;
+    autoScrolling.current = false;
+    jumpScrolling.current = true;
+    element.addEventListener("scrollend", endJumpScroll, { once: true });
+    window.clearTimeout(jumpScrollTimer.current);
+    jumpScrollTimer.current = window.setTimeout(endJumpScroll, 2_000);
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    onScrollRequestHandled();
+  }, [messages, scrollRequest, scrollRef, endJumpScroll, onScrollRequestHandled]);
+
   useLayoutEffect(() => {
     if (following.current) snapToEnd();
   }, [messages, running, snapToEnd]);
@@ -4559,6 +4771,7 @@ const Transcript = memo(function Transcript({
   useEffect(
     () => () => {
       window.clearTimeout(autoScrollTimer.current);
+      window.clearTimeout(jumpScrollTimer.current);
     },
     [],
   );
@@ -4593,6 +4806,9 @@ const Transcript = memo(function Transcript({
           lastScrollTop.current = event.currentTarget.scrollTop;
           const nearEnd = transcriptIsNearEnd(event.currentTarget);
           setAtEnd(nearEnd);
+          // A jump scroll owns the viewport until its animation settles; its
+          // own near-end crossings must not re-arm tail-following.
+          if (jumpScrolling.current) return;
           if (nearEnd) {
             if (scrolledDown) following.current = true;
             if (autoScrolling.current) {
@@ -4654,19 +4870,11 @@ const Transcript = memo(function Transcript({
                       ? undefined
                       : `relative w-fit min-w-0 ${
                           message.role === "user"
-                            ? "max-w-[min(70%,calc(100%_-_6rem))]"
-                            : "max-w-[min(74%,calc(100%_-_6rem))]"
+                            ? "max-w-[min(84%,calc(100%_-_6rem))] [@media(hover:none)]:max-w-[84%]"
+                            : "max-w-[min(88%,calc(100%_-_6rem))] [@media(hover:none)]:max-w-[88%]"
                         }`
                   }
                 >
-                  {peerReceipt ? null : (
-                    <MessageHoverActions
-                      message={message}
-                      side={message.role === "user" ? "start" : "end"}
-                      onReply={onReply}
-                      onReact={onReact}
-                    />
-                  )}
                   <MessageView
                     artifactTarget={artifactTarget}
                     message={message}
@@ -4698,6 +4906,14 @@ const Transcript = memo(function Transcript({
                     onSpeak={() => onSpeak(message)}
                     onOpenComputer={onOpenComputer}
                   />
+                  {peerReceipt ? null : (
+                    <MessageHoverActions
+                      message={message}
+                      side={message.role === "user" ? "start" : "end"}
+                      onReply={onReply}
+                      onReact={onReact}
+                    />
+                  )}
                 </div>
               </div>
               {!peerReceipt && messageReactions ? (
@@ -4896,6 +5112,11 @@ const Composer = memo(function Composer({
   const [selectedSkill, setSelectedSkill] = useState<AgentSkillCatalogEntry | null>(null);
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [replyAnnouncement, setReplyAnnouncement] = useState("");
+  // What the live region currently holds — a send disarming the reply clears
+  // "reply" text, while an explicit cancel must keep "Reply cancelled".
+  const replyAnnouncementKind = useRef<"reply" | "cancelled" | null>(null);
+  const prevReplyTarget = useRef<ThreadMessage | null>(null);
   const runErrorRef = useRef<HTMLDivElement>(null);
   const presentedRunErrorIdRef = useRef<string | null>(null);
   const mentionListboxId = useId();
@@ -5140,6 +5361,44 @@ const Composer = memo(function Composer({
   const showComposerPlaceholder =
     draft.length === 0 && selectedSkill === null && selectedMentions.length === 0;
   const replyName = replyTarget ? (replyTargetName ?? previewMessageText(replyTarget)) : "";
+  const replyNameRef = useRef(replyName);
+  replyNameRef.current = replyName;
+  const announceTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(announceTimer.current), []);
+
+  // Arming or retargeting a reply unmounts the control that started it, so
+  // focus would drop to <body>; announce on start and when the target changes.
+  // The timer lives in a ref: a same-id rerender (e.g. the display name
+  // resolving after arming) must not cancel the pending announcement.
+  useEffect(() => {
+    const prev = prevReplyTarget.current;
+    prevReplyTarget.current = replyTarget ?? null;
+    if (!replyTarget) {
+      // Cancel (or send) within the delay must not let a stale "Replying to"
+      // overwrite the cancel announcement — kill the pending timer.
+      window.clearTimeout(announceTimer.current);
+      // A send disarms the reply without touching the region — drop the stale
+      // "Replying to" so it cannot linger or re-announce. An explicit cancel
+      // sets "Reply cancelled" in the same event, so only clear "reply" text.
+      if (replyAnnouncementKind.current === "reply") {
+        replyAnnouncementKind.current = null;
+        setReplyAnnouncement("");
+      }
+      return;
+    }
+    if (!prev || prev.id !== replyTarget.id) {
+      textareaRef.current?.focus();
+      // Clear-then-set so a switch between same-author targets re-announces —
+      // identical live-region text would otherwise be a no-op.
+      setReplyAnnouncement("");
+      replyAnnouncementKind.current = null;
+      window.clearTimeout(announceTimer.current);
+      announceTimer.current = window.setTimeout(() => {
+        replyAnnouncementKind.current = "reply";
+        setReplyAnnouncement(t`Replying to ${replyNameRef.current}`);
+      }, 50);
+    }
+  }, [replyTarget, replyName, t]);
 
   return (
     <fieldset
@@ -5153,6 +5412,9 @@ const Composer = memo(function Composer({
         draggingFiles ? "rounded-[14px] ring-2 ring-inset ring-ring" : ""
       }`}
     >
+      <div role="status" data-testid="composer-announcement" className="sr-only">
+        {replyAnnouncement}
+      </div>
       {sendError || runError ? (
         <div
           ref={runErrorRef}
@@ -5188,7 +5450,17 @@ const Composer = memo(function Composer({
           <button
             type="button"
             aria-label={t`Cancel reply`}
-            onClick={onClearReply}
+            onClick={() => {
+              replyAnnouncementKind.current = "cancelled";
+              // Kill a pending arm announce in this event — the effect's
+              // cleanup can lag the timer, and a late "Replying to" would
+              // then be cleared as stale, dropping the cancel announcement.
+              window.clearTimeout(announceTimer.current);
+              onClearReply?.();
+              setReplyAnnouncement(t`Reply cancelled`);
+              // The chip unmounts with this button — keep focus in the composer.
+              textareaRef.current?.focus();
+            }}
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >
             <X size={13} strokeWidth={2} />
@@ -5555,7 +5827,14 @@ function MentionChipIcon({ mention }: { mention: ComposerMention }) {
 
 function previewMessageText(message: ThreadMessage): string {
   const text = message.blocks
-    .map((block) => (block.kind === "text" || block.kind === "channel_message" ? block.text : ""))
+    .map((block) => {
+      if (block.kind === "channel_message") return block.text;
+      if (block.kind === "text") {
+        // Bot text is Markdown; user text is already plain.
+        return message.role === "bot" ? plainTextFromMarkdown(block.text) : block.text;
+      }
+      return "";
+    })
     .filter(Boolean)
     .join(" ")
     .trim();
@@ -5564,6 +5843,15 @@ function previewMessageText(message: ThreadMessage): string {
     return t`Attachment`;
   }
   return t`Message`;
+}
+
+/** Bound reply excerpts used in accessible names (visible UI truncates via CSS). */
+function accessibleReplyExcerpt(text: string, max = 120): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  // Reserve a slot for the ellipsis; never split a surrogate pair at the cut.
+  const end = (normalized.charCodeAt(max - 2) & 0xfc00) === 0xd800 ? max - 2 : max - 1;
+  return `${normalized.slice(0, end).trimEnd()}…`;
 }
 
 function formatRosterTime(isoDate?: string | null): string {
@@ -5664,7 +5952,10 @@ function MessageHoverActions({
           type="button"
           aria-label={t`Reply`}
           onClick={() => onReply(message)}
-          className={`${iconButtonClass} hidden [@media(hover:hover)_and_(pointer:fine)]:grid`}
+          className={cn(
+            iconButtonClass,
+            "h-11 w-11 [@media(hover:hover)_and_(pointer:fine)]:h-7 [@media(hover:hover)_and_(pointer:fine)]:w-7",
+          )}
         >
           <Reply size={15} strokeWidth={1.7} />
         </button>
@@ -5679,13 +5970,6 @@ function MessageHoverActions({
             <MoreHorizontal size={15} strokeWidth={1.7} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align={side === "end" ? "start" : "end"}>
-            <DropdownMenuItem
-              className="[@media(hover:hover)_and_(pointer:fine)]:hidden"
-              onClick={() => onReply(message)}
-            >
-              <Reply size={15} />
-              <Trans>Reply</Trans>
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={copyMessage}>
               <Copy size={14} strokeWidth={1.7} />
               <Trans>Copy</Trans>
@@ -5713,6 +5997,7 @@ function applyThreadEvent(
   snapshotRef: MutableRefObject<ThreadSnapshot | null>,
   computerRef: MutableRefObject<ComputerStatus | null>,
 ) {
+  publishComputerCommand(event);
   if (isThreadSnapshotEvent(event)) {
     const next = reduceThreadSnapshot(snapshotRef.current, event);
     commitSnapshot(next);
@@ -5773,7 +6058,7 @@ const MessageView = memo(function MessageView({
   artifactTarget: ArtifactTarget;
   canAnswer: boolean;
   message: ThreadMessage;
-  onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
+  onAnswer: (message: ThreadMessage, text: string, username?: string) => Promise<void>;
   onOpenBot: (botId: string) => void;
   onOpenPeerMessages: (peer: { peerBotId: string; peerBotName: string }) => void;
   speakerName?: string;
@@ -5826,7 +6111,15 @@ const MessageView = memo(function MessageView({
         <button
           type="button"
           data-testid="reply-parent-preview"
-          aria-label={t`Jump to replied message`}
+          // Name the action and a short excerpt; a bare action label would
+          // hide the quote, and an unbounded quote can be thousands of chars.
+          aria-label={
+            message.replyQuote
+              ? t`Jump to replied message: “${accessibleReplyExcerpt(message.replyQuote)}”`
+              : replyPreview
+                ? t`Jump to replied message: ${accessibleReplyExcerpt(previewMessageText(replyPreview))}`
+                : t`Jump to replied message`
+          }
           onClick={() => onJumpToMessage?.(parentJumpId)}
           className="mb-2 block max-w-[74%] truncate rounded-[14px] border border-border bg-background px-3 py-2 text-start text-[12.5px] text-muted-foreground hover:border-border hover:text-foreground/75"
           dir="auto"
@@ -5845,7 +6138,7 @@ const MessageView = memo(function MessageView({
     return (
       <>
         {messageContext}
-        <div className="flex w-fit max-w-full justify-start">
+        <div className="flex w-fit max-w-full justify-start [@media(hover:none)]:w-full">
           <div
             data-testid="message-bot-bubble"
             className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
@@ -5941,7 +6234,10 @@ const MessageView = memo(function MessageView({
         }
         if (block.kind === "progress") {
           return (
-            <div key={i} className="flex w-fit max-w-full justify-start">
+            <div
+              key={i}
+              className="flex w-fit max-w-full justify-start [@media(hover:none)]:w-full"
+            >
               <div
                 data-testid="message-bot-bubble"
                 className="max-w-full rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
@@ -6050,16 +6346,11 @@ const MessageView = memo(function MessageView({
           );
         }
         if (block.kind === "mcp_approval") {
+          const botId = "botId" in artifactTarget ? artifactTarget.botId : message.botId;
+          if (!botId) return null;
           return (
             <div key={i} className="flex justify-start">
-              <McpApprovalCard
-                botId={"botId" in artifactTarget ? artifactTarget.botId : message.botId}
-                name={block.name}
-                serverId={block.serverId}
-                transport={block.transport}
-                endpoint={block.endpoint}
-                needsOAuth={block.needsOAuth}
-              />
+              <McpApprovalCard botId={botId} threadId={message.threadId} block={block} />
             </div>
           );
         }
@@ -6094,22 +6385,28 @@ const MessageView = memo(function MessageView({
           );
         }
         if (block.kind === "text" && message.role === "user") {
+          // User bubbles stay literal text on web and mobile. Only explicit URLs
+          // and email addresses are links, so a sent address is tappable without
+          // formatting bold or headings.
           return (
-            <div key={i} className="flex w-fit max-w-full justify-end">
+            <div key={i} className="flex w-fit max-w-full justify-end [@media(hover:none)]:w-full">
               <div
                 data-testid="message-user-bubble"
                 data-quote-message-id={quoteMessageId}
                 className="max-w-full whitespace-pre-wrap wrap-anywhere rounded-[20px] bg-chat-user px-[18px] py-3 text-[15.5px] leading-[1.45] text-chat-user-foreground"
                 dir="auto"
               >
-                {block.text}
+                <LinkifiedText>{block.text}</LinkifiedText>
               </div>
             </div>
           );
         }
         if (block.kind === "text") {
           return (
-            <div key={i} className="flex w-fit max-w-full justify-start">
+            <div
+              key={i}
+              className="flex w-fit max-w-full justify-start [@media(hover:none)]:w-full"
+            >
               <div
                 data-testid="message-bot-bubble"
                 className="max-w-full rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
@@ -6154,7 +6451,7 @@ const MessageView = memo(function MessageView({
               key={i}
               block={block}
               canAnswer={canAnswer}
-              onAnswer={(text) => onAnswer(message, text)}
+              onAnswer={(text, username) => onAnswer(message, text, username)}
             />
           );
         }
@@ -6234,22 +6531,5 @@ function computerLabel(mode: ComputerStatus["mode"] | undefined, botName: string
 }
 
 function newClientNonce(): string {
-  const webCrypto = globalThis.crypto;
-  if (webCrypto && typeof webCrypto.randomUUID === "function") {
-    return webCrypto.randomUUID();
-  }
-  return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      const base64 = result.includes(",") ? (result.split(",")[1] ?? "") : result;
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
+  return newClientId();
 }

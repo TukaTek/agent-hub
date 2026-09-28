@@ -194,6 +194,46 @@ describe("computer loopback provision lifecycle", () => {
     expect(container.stop).toHaveBeenCalledOnce();
   });
 
+  it("quiesces browser profiles with Browser.close before stopping the container", async () => {
+    const { supervisorApp } = await import("./index.js");
+    const container = {
+      inspect: vi.fn(async () => ({
+        Config: {
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "bot",
+            "cortexai-agent-hub.spaceId": "space",
+          },
+        },
+        State: { Running: true },
+      })),
+      exec: vi.fn(async (_options: { Cmd?: string[] }) => ({
+        start: async () => Readable.from([]),
+        inspect: async () => ({ ExitCode: 0 }),
+      })),
+      stop: vi.fn(async () => {}),
+    };
+    mocks.docker.getContainer.mockReturnValue(container);
+    const response = await supervisorApp.request("/computers/quiesce-before-stop/stop", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
+        "x-cortexai-agent-hub-bot-id": "bot",
+        "x-cortexai-agent-hub-space-id": "space",
+      },
+    });
+    expect(response.status).toBe(200);
+    const command = String(container.exec.mock.calls[0]?.[0]?.Cmd?.[2] ?? "");
+    expect(command).toContain("Browser.close");
+    expect(command).toContain(".browser-profiles'/chromium ");
+    expect(command).toContain(".browser-profiles'/chromium-bot-");
+    expect(command).toContain(".browser-profiles'/chromium-screen-");
+    expect(container.exec).toHaveBeenCalledOnce();
+    expect(container.exec.mock.invocationCallOrder[0]).toBeLessThan(
+      container.stop.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
   it.each([
     { enabled: true, hosts: [], resumed: false },
     { enabled: true, hosts: ["127.0.0.1"], resumed: true },
@@ -777,5 +817,196 @@ describe("space computer limit enforcement", () => {
     expect(await createResponse.json()).toEqual({
       error: "Computer limit reached for space (max: 1)",
     });
+  });
+});
+
+describe("screen release status", () => {
+  const headers = {
+    authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
+    "content-type": "application/json",
+    "x-cortexai-agent-hub-bot-id": "bot",
+    "x-cortexai-agent-hub-space-id": "space",
+    "x-cortexai-agent-hub-screen-id": "writer",
+  };
+
+  function managedContainer(exec?: ReturnType<typeof vi.fn>) {
+    return {
+      inspect: vi.fn(async () => ({
+        Config: {
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "bot",
+            "cortexai-agent-hub.spaceId": "space",
+          },
+        },
+        HostConfig: { NetworkMode: computerNetworkNameFor("bot") },
+        State: { Running: true },
+        NetworkSettings: {
+          Ports: { "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: screenPort }] },
+        },
+      })),
+      exec:
+        exec ??
+        vi.fn(async () => ({
+          start: async () => Readable.from([]),
+          inspect: async () => ({ ExitCode: 0 }),
+        })),
+    };
+  }
+
+  it("returns 404 only when the computer is already missing", async () => {
+    const { supervisorApp } = await import("./index.js");
+    const missing = {
+      inspect: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("no such container"), { statusCode: 404 })),
+    };
+    mocks.docker.getContainer.mockReturnValue(missing);
+    const response = await supervisorApp.request("/computers/missing-screen/screen", {
+      method: "DELETE",
+      headers,
+    });
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "computer not found" });
+  });
+
+  it("rejects another computer identity without releasing its screen", async () => {
+    const { supervisorApp } = await import("./index.js");
+    const container = {
+      inspect: vi.fn().mockResolvedValue({
+        Config: {
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "other",
+            "cortexai-agent-hub.spaceId": "other",
+          },
+        },
+      }),
+      exec: vi.fn(),
+    };
+    mocks.docker.getContainer.mockReturnValue(container);
+    const response = await supervisorApp.request("/computers/identity-screen/screen", {
+      method: "DELETE",
+      headers,
+    });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "invalid computer identity" });
+    expect(container.exec).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when tearing down a screen leaves the browser running", async () => {
+    const { supervisorApp } = await import("./index.js");
+    let failStop = false;
+    const container = managedContainer(
+      vi.fn(async (options: { Cmd?: string[] }) => {
+        const command = options.Cmd?.join(" ") ?? "";
+        const code = failStop && command.includes("Browser.close") ? 1 : 0;
+        return {
+          start: async () => Readable.from([]),
+          inspect: async () => ({ ExitCode: code }),
+        };
+      }),
+    );
+    mocks.docker.getContainer.mockReturnValue(container);
+    const opened = await supervisorApp.request("/computers/release-failed/screen-mode", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ interactive: false, revokeControl: false }),
+    });
+    expect(opened.status).toBe(200);
+
+    failStop = true;
+    const released = await supervisorApp.request("/computers/release-failed/screen", {
+      method: "DELETE",
+      headers: { ...headers, "x-cortexai-agent-hub-screen-lease-id": "run-1:1" },
+    });
+    expect(released.status).toBe(500);
+    await expect(released.json()).resolves.toEqual({ error: "computer screen failed to stop" });
+  });
+
+  it("returns 500 when exec.start 404s after the container was found", async () => {
+    const { supervisorApp } = await import("./index.js");
+    let failStart = false;
+    const container = managedContainer(
+      vi.fn(async () => ({
+        start: async () => {
+          if (failStart) throw Object.assign(new Error("no such exec"), { statusCode: 404 });
+          return Readable.from([]);
+        },
+        inspect: async () => ({ ExitCode: 0 }),
+      })),
+    );
+    mocks.docker.getContainer.mockReturnValue(container);
+    const opened = await supervisorApp.request("/computers/exec-start-404/screen-mode", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ interactive: false, revokeControl: false }),
+    });
+    expect(opened.status).toBe(200);
+    expect(container.inspect).toHaveBeenCalled();
+
+    failStart = true;
+    const released = await supervisorApp.request("/computers/exec-start-404/screen", {
+      method: "DELETE",
+      headers: { ...headers, "x-cortexai-agent-hub-screen-lease-id": "run-1:1" },
+    });
+    expect(released.status).toBe(500);
+    await expect(released.json()).resolves.toEqual({ error: "no such exec" });
+  });
+});
+
+describe("screen registry across run boundaries", () => {
+  it("does not reset the desktop when a screen is requested after the last one is released", async () => {
+    const { supervisorApp } = await import("./index.js");
+    const commands: string[] = [];
+    const container = {
+      inspect: vi.fn().mockResolvedValue({
+        Config: {
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "bot",
+            "cortexai-agent-hub.spaceId": "space",
+          },
+        },
+        HostConfig: { NetworkMode: computerNetworkNameFor("bot") },
+        State: { Running: true },
+        NetworkSettings: {
+          Ports: { "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: screenPort }] },
+        },
+      }),
+      exec: vi.fn(async ({ Cmd }: { Cmd: string[] }) => {
+        commands.push(Cmd.join(" "));
+        return { start: async () => Readable.from([]), inspect: async () => ({ ExitCode: 0 }) };
+      }),
+    };
+    mocks.docker.getContainer.mockReturnValue(container);
+    const headers = {
+      authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
+      "content-type": "application/json",
+      "x-cortexai-agent-hub-bot-id": "bot",
+      "x-cortexai-agent-hub-space-id": "space",
+      "x-cortexai-agent-hub-screen-id": "writer",
+    };
+    const view = () =>
+      supervisorApp.request("/computers/registry/screen-mode", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ interactive: false, revokeControl: false }),
+      });
+    const resets = () =>
+      commands.filter((command) =>
+        command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*"),
+      ).length;
+
+    expect((await view()).status).toBe(200);
+    expect(resets()).toBe(1);
+    const released = await supervisorApp.request("/computers/registry/screen", {
+      method: "DELETE",
+      headers: { ...headers, "x-cortexai-agent-hub-screen-lease-id": "run-1:1" },
+    });
+    expect(released.status).toBe(200);
+    expect((await view()).status).toBe(200);
+    // The first request after a supervisor start resets; a released screen must not.
+    expect(resets()).toBe(1);
   });
 });

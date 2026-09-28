@@ -61,14 +61,23 @@ function provider(allowWrites = true, brainLabel = "") {
 }
 
 describe("SerenityMemoryProvider", () => {
+  it("keeps labeled entities to the single type/slug shape Serenity accepts", () => {
+    for (const entity of [
+      serenityBotEntity("bot-1", "Personal Brain"),
+      serenitySpaceEntity("workspace-1", "Personal Brain"),
+    ]) {
+      expect(entity.split("/")).toHaveLength(2);
+    }
+  });
+
   it("keeps bot and space entity namespaces inside the adapter", () => {
     expect(serenityBotEntity("bot-1")).toBe("cortexai-agent-hub-bot/bot-1");
     expect(serenitySpaceEntity("workspace-1")).toBe("cortexai-agent-hub-space/workspace-1");
     expect(serenityBotEntity("bot-1", "Personal Brain")).toBe(
-      `cortexai-agent-hub-bot/${PERSONAL_BRAIN}/bot-1`,
+      `cortexai-agent-hub-bot/${PERSONAL_BRAIN}--bot-1`,
     );
     expect(serenitySpaceEntity("workspace-1", "Personal Brain")).toBe(
-      `cortexai-agent-hub-space/${PERSONAL_BRAIN}/workspace-1`,
+      `cortexai-agent-hub-space/${PERSONAL_BRAIN}--workspace-1`,
     );
   });
 
@@ -97,6 +106,13 @@ describe("SerenityMemoryProvider", () => {
         endpointTrust: "private",
       }),
     ).toBe(true);
+  });
+
+  it("requires an explicit endpoint and does not assume a hosted URL", async () => {
+    await expect(
+      prepareSerenityConnection({ allowWrites: "false" }, { token: "serenity_test_token" }),
+    ).rejects.toThrow("endpoint is required");
+    expect(probeSerenityMock).not.toHaveBeenCalled();
   });
 
   it("classifies private LAN DNS without probing", async () => {
@@ -186,7 +202,7 @@ describe("SerenityMemoryProvider", () => {
     );
   });
 
-  it("mirrors shared durable saves to space and bot entities", async () => {
+  it("writes shared durable saves once, to the space entity", async () => {
     rememberSerenityMock.mockResolvedValue({
       ok: true,
       value: { id: "fact-2", status: "inserted" },
@@ -205,8 +221,47 @@ describe("SerenityMemoryProvider", () => {
     expect(result).toEqual({ ok: true, value: undefined });
     expect(rememberSerenityMock.mock.calls.map((call) => call[3]?.entity)).toEqual([
       "cortexai-agent-hub-space/workspace-1",
+    ]);
+  });
+
+  it("writes isolated durable saves to the bot entity", async () => {
+    rememberSerenityMock.mockResolvedValue({
+      ok: true,
+      value: { id: "fact-2", status: "inserted" },
+    });
+    await provider().save(
+      {
+        content: "Use metric units.",
+        scope: "isolated",
+        botId: "bot-1",
+        source: { kind: "durable" },
+      },
+      context,
+    );
+    expect(rememberSerenityMock.mock.calls.map((call) => call[3]?.entity)).toEqual([
       "cortexai-agent-hub-bot/bot-1",
     ]);
+  });
+
+  it("keys retried saves within a run so Serenity replays instead of duplicating", async () => {
+    rememberSerenityMock.mockResolvedValue({
+      ok: true,
+      value: { id: "fact-2", status: "inserted" },
+    });
+    const request = {
+      content: "Use metric units.",
+      scope: "isolated" as const,
+      botId: "bot-1",
+      source: { kind: "durable" as const },
+    };
+    const run = { ...context, runId: "run-1" };
+    await provider().save(request, { ...run, operationId: "op-1" });
+    await provider().save(request, { ...run, operationId: "op-2" });
+    await provider().save({ ...request, content: "Use imperial units." }, run);
+    const keys = rememberSerenityMock.mock.calls.map((call) => call[3]?.operationKey);
+    expect(keys[0]).toMatch(/^cortexai-agent-hub:[0-9a-f]{48}$/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
   });
 
   it("scopes shared durable saves by brain label when configured", async () => {
@@ -232,8 +287,7 @@ describe("SerenityMemoryProvider", () => {
     );
 
     expect(rememberSerenityMock.mock.calls.map((call) => call[3]?.entity)).toEqual([
-      `cortexai-agent-hub-space/${PERSONAL_BRAIN}/workspace-1`,
-      `cortexai-agent-hub-bot/${PERSONAL_BRAIN}/bot-1`,
+      `cortexai-agent-hub-space/${PERSONAL_BRAIN}--workspace-1`,
     ]);
   });
 
@@ -250,7 +304,12 @@ describe("SerenityMemoryProvider", () => {
       allowWrites: true,
     });
     await labeled.forget(
-      { id: "fact-9", entity: `cortexai-agent-hub-bot/${PERSONAL_BRAIN}/bot-1`, reason: "cleanup" },
+      {
+        id: "fact-9",
+        entity: `cortexai-agent-hub-bot/${PERSONAL_BRAIN}--bot-1`,
+        reason: "cleanup",
+      },
+
       context,
     );
     expect(forgetSerenityMock).toHaveBeenCalledWith(
@@ -332,7 +391,7 @@ describe("SerenityMemoryProvider", () => {
           score: 1,
           id: "fact-space-1",
           provenance: "space policy",
-          entity: `cortexai-agent-hub-space/${PERSONAL_BRAIN}/workspace-1`,
+          entity: `cortexai-agent-hub-space/${PERSONAL_BRAIN}--workspace-1`,
         },
       ],
     });
