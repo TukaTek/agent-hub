@@ -1,5 +1,5 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { REPLY_QUOTE_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
+import { truncateReplyQuote } from "@cortexai-agent-hub/contracts";
 import { blocksToAgentHistoryText, messageReaction } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 
@@ -23,7 +23,7 @@ function replyContext(source: ReplyMessage, threadId: string): string | undefine
   const excerpt =
     !emoji && typeof source.replyQuote === "string" ? source.replyQuote.trim() : undefined;
   const targetPayload = excerpt
-    ? { quotedText: excerpt.slice(0, REPLY_QUOTE_MAX_LENGTH) }
+    ? { quotedText: truncateReplyQuote(excerpt) }
     : (() => {
         const content = blocksToAgentHistoryText(messageBlocks(target));
         return {

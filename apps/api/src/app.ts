@@ -18,6 +18,7 @@ import type {
 import {
   applyMessagingOutboundStatus,
   ChatSdkMessagingSurface,
+  CodexCatalogCache,
   ComposioConnector,
   createBackgroundJobHandlers,
   createCloudAgentConnection,
@@ -59,11 +60,13 @@ import {
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
+  sandboxProviderOptionsFromEnv,
   toTeamChatInbound,
 } from "@cortexai-agent-hub/adapters";
 import { blockedAuthPaths, createAuth, createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
-import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
+import { signupAllowlistBootUpdate, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
+
 import {
   createDb,
   createPool,
@@ -185,7 +188,8 @@ export async function createApp(
   if (!deploymentSettings.signupPolicyInitialized) {
     // Older versions created this row with schema defaults even though auth
     // still enforced the environment policy. Copy that effective policy once
-    // so upgrades preserve behavior before Settings becomes authoritative.
+    // so upgrades preserve behavior. Later starts reapply a non-empty
+    // SIGNUP_ALLOWLIST; a blank value leaves the stored list alone.
     await prisma.deploymentSettings.updateMany({
       where: { id: "default", signupPolicyInitialized: false },
       data: {
@@ -194,6 +198,19 @@ export async function createApp(
         signupPolicyInitialized: true,
       },
     });
+  } else {
+    const signupAllowlist = signupAllowlistBootUpdate(
+      deploymentSettings.signupAllowlist,
+      env.signupAllowlist,
+      true,
+    );
+    if (signupAllowlist !== null) {
+      await prisma.deploymentSettings.update({
+        where: { id: "default" },
+        data: { signupAllowlist },
+      });
+      logger.info("applied SIGNUP_ALLOWLIST from the environment");
+    }
   }
 
   const jobKind = env.wakeupDriver;
@@ -220,6 +237,7 @@ export async function createApp(
   const sandbox: SandboxProvider =
     sandboxOverride ??
     createRunSandbox(env.sandboxProvider, {
+      ...sandboxProviderOptionsFromEnv(),
       supervisorUrl: env.sandboxSupervisorUrl,
       supervisorToken: env.sandboxSupervisorToken,
       e2bApiKey: env.e2bApiKey,
@@ -231,7 +249,12 @@ export async function createApp(
       dataDir: env.dataDir,
       prisma,
     });
-  const mcpOAuth = new McpOAuthBroker(prisma, secrets, remoteConnectors);
+  const mcpOAuth = new McpOAuthBroker(
+    prisma,
+    secrets,
+    remoteConnectors,
+    env.mcpAllowPrivateEndpoint,
+  );
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const oauthLogins = new PiOAuthLogins();
   const home = new LocalAgentHomeStore(env.dataDir);
@@ -245,6 +268,7 @@ export async function createApp(
       allowedCommands: env.mcpStdioAllowedCommands,
       network: remoteConnectors,
       events,
+      allowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
     },
     mcpOAuth,
   );
@@ -359,6 +383,9 @@ export async function createApp(
     CLOUD_AGENT_SPACE_ID: env.cloudAgentSpaceId,
   });
   const shutdown = new AbortController();
+  // One cache serves models.list, selection validation, and run-time model
+  // resolution alike, so a list call warms the run path in this process.
+  const codexCatalog = new CodexCatalogCache();
   const executor = createRunExecutor({
     authorizeUserWork: createUserWorkAuthorizer(
       prisma,
@@ -373,6 +400,7 @@ export async function createApp(
     ),
     prisma,
     runtime,
+    codexCatalog,
     sandbox,
     memory,
     memoryProviders,
@@ -399,6 +427,7 @@ export async function createApp(
     ].filter(Boolean),
     secretStore: secrets,
     secretHttp: remoteConnectors,
+    mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
     deploymentModelKey: env.deploymentModelKey,
     dataDir: env.dataDir,
     notifications,
@@ -440,6 +469,7 @@ export async function createApp(
 
   const router = createRouter({
     cloudAgent,
+    codexCatalog,
     prisma,
     events,
     auth,
@@ -478,6 +508,7 @@ export async function createApp(
       updaterToken: env.updaterToken,
       imageTag: env.imageTag,
       integrationsCatalogUrl: env.integrationsCatalogUrl,
+      mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
     },
   });
   const rpc = new RPCHandler(router, {

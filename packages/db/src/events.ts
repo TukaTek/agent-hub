@@ -1,6 +1,8 @@
 import type { RealtimeFanout } from "@cortexai-agent-hub/adapter-kit";
 import {
   type BotSecretDestination,
+  encodeLoginSecret,
+  LoginSecretValue,
   type MessageBlock,
   MessageBlock as MessageBlockSchema,
   type ProductEvent,
@@ -8,6 +10,7 @@ import {
 import {
   blocksToAgentHistoryText,
   isApprovalAskBlock,
+  isConversationalRun,
   isSecretAskBlock,
   messagingChannelId,
   resolveAskChoice,
@@ -19,6 +22,7 @@ import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
 import {
   assertRunCanWriteHistory,
+  assertRunIsCancelled,
   createThreadMessageInTransaction,
   RunHistoryWriteError,
 } from "./messages.js";
@@ -186,6 +190,8 @@ export interface AnswerRunInput {
   messageId: string;
   answeredByUserId: string;
   answer: string;
+  /** Only for a login card; `answer` carries its password. */
+  username?: string;
 }
 
 export interface SendUserMessageInput {
@@ -377,9 +383,12 @@ export async function sendUserMessage(
         clientNonce: input.clientNonce,
       });
       const createRun = input.createRun !== false;
-      const busy =
+      // Include the creation intro. It has no tools, so it must not absorb the message, and a
+      // second run would overlap it on a dedicated computer. Pending steering waits for the
+      // continuation that starts when the intro finishes.
+      const activeRuns =
         createRun && !input.allowParallelRun
-          ? await tx.run.findFirst({
+          ? await tx.run.findMany({
               where: {
                 threadId: input.threadId,
                 botId: input.botId,
@@ -387,9 +396,12 @@ export async function sendUserMessage(
                   in: ["running", "queued", "leased", "waiting_input", "waiting_takeover"],
                 },
               },
-              select: { id: true, taskId: true },
+              select: { id: true, taskId: true, trigger: true },
             })
-          : null;
+          : [];
+      // Steer a conversational run when there is one; a routine, webhook, or intro turn only holds the queue.
+      const busy =
+        activeRuns.find((run) => isConversationalRun(run.trigger)) ?? activeRuns[0] ?? null;
       let task = null;
       let run = null;
       if (createRun && !busy) {
@@ -420,12 +432,15 @@ export async function sendUserMessage(
           await tx.message.update({ where: { id: message.id }, data: { runId: run.id } });
         }
       } else if (createRun && busy) {
+        const held = !isConversationalRun(busy.trigger);
         await tx.steeringMessage.create({
           data: {
             messageId: message.id,
             botId: input.botId,
             userId: input.userId,
-            runId: busy.id,
+            // Keep messaging on the hold so the later run is mirrored back to that app.
+            runId: held ? null : busy.id,
+            ...(held && input.trigger === "messaging" ? { originTrigger: "messaging" } : {}),
           },
         });
         await tx.message.update({ where: { id: message.id }, data: { runId: busy.id } });
@@ -475,22 +490,35 @@ export async function claimSteering(
       },
       select: { id: true, trigger: true, sourceMessage: { select: { blocks: true } } },
     });
-    if (!run) return [];
+    if (!run || run.trigger === "created") return [];
     const channelId =
       run.trigger === "messaging"
         ? messagingChannelId(run.sourceMessage?.blocks as MessageBlock[] | undefined)
         : undefined;
+    const directMessage = run.trigger === "messaging" && !channelId;
+    // Pending rows from another chat stay for their own continuation.
+    const pendingWhere = directMessage
+      ? { runId: null, originTrigger: "messaging" }
+      : channelId
+        ? { runId: null }
+        : { runId: null, originTrigger: null };
     const steering = await tx.steeringMessage.findMany({
       where: {
         botId: input.botId,
         id: input.seenIds.length ? { notIn: input.seenIds } : undefined,
-        OR: [{ runId: null }, { runId: input.runId }],
+        // A routine or webhook turn only takes steering addressed to it; pending user messages
+        // wait for the conversational continuation that starts once it finishes.
+        OR: isConversationalRun(run.trigger)
+          ? [pendingWhere, { runId: input.runId }]
+          : [{ runId: input.runId }],
         message: {
           threadId: input.threadId,
           // Private follow-ups remain unclaimed for the existing private continuation.
           ...(channelId
             ? { blocks: { array_contains: [{ kind: "channel_message", channelId }] } }
-            : {}),
+            : directMessage
+              ? { NOT: { blocks: { array_contains: [{ kind: "channel_message" }] } } }
+              : {}),
         },
       },
       include: { message: { select: { blocks: true, seq: true } } },
@@ -573,6 +601,13 @@ async function commitAnswerRunInput(
   const selectedChoice = choiceAsk ? resolveAskChoice(input.answer, pendingAsk.actions) : undefined;
   if (secretAsk && !runSecretWriter) return null;
   if (secretAsk && pendingAsk.credential && run.userId !== input.answeredByUserId) return null;
+  const loginAsk = secretAsk && pendingAsk.credential?.auth.type === "login";
+  // A username belongs only to a login card, which cannot be saved without one.
+  if (loginAsk !== Boolean(input.username?.trim())) return null;
+  const login = loginAsk
+    ? LoginSecretValue.safeParse({ username: input.username!.trim(), password: input.answer })
+    : undefined;
+  if (login && !login.success) return null;
   let approvalEffect: { id: string; kind: string } | null = null;
   let approvalUserId: string | null = null;
 
@@ -643,7 +678,7 @@ async function commitAnswerRunInput(
       runId: input.runId,
       userId: run.userId,
       spaceId: input.spaceId,
-      plaintext: input.answer,
+      plaintext: login?.success ? encodeLoginSecret(login.data) : input.answer,
       tx,
     });
     await tx.externalEffect.updateMany({
@@ -992,8 +1027,9 @@ export async function appendEvent(
   input: AppendEventInput,
   realtime?: RealtimeFanout,
 ): Promise<ProductEvent> {
-  const event = await prisma.$transaction((tx: Prisma.TransactionClient) =>
-    appendEventInTransaction(tx, input),
+  // Concurrent writers in one thread (group members, bot messages) can deadlock on the thread row.
+  const event = await withTransactionRetry(() =>
+    prisma.$transaction((tx: Prisma.TransactionClient) => appendEventInTransaction(tx, input)),
   );
   const productEvent = mapProductEvent(event);
   await notifyRealtime(realtime, event.threadId, event.seq);
@@ -1172,13 +1208,16 @@ async function createSteeringContinuation(
     orderBy: [{ message: { seq: "asc" } }, { id: "asc" }],
   });
   if (pending.length === 0) return null;
-  const last = pending.at(-1)!;
+  // One origin per continuation so a group channel and a direct chat are not answered together.
+  const origin = steeringOrigin(pending[0]!);
+  const batch = pending.filter((item) => steeringOrigin(item) === origin);
+  const source = batch.at(-1)!;
   const task = await tx.task.create({
     data: {
       spaceId: input.spaceId,
       botId: input.botId,
       threadId: input.threadId,
-      userId: pending[0]!.userId,
+      userId: batch[0]!.userId,
       prompt: "Respond to the user's steering context.",
       status: "queued",
     },
@@ -1189,17 +1228,26 @@ async function createSteeringContinuation(
       botId: input.botId,
       threadId: input.threadId,
       taskId: task.id,
-      userId: pending[0]!.userId,
+      userId: batch[0]!.userId,
       status: "queued",
-      trigger: "follow_up",
-      sourceMessageId: last.message.id,
+      trigger: origin === "app" ? "follow_up" : "messaging",
+      sourceMessageId: source.message.id,
     },
   });
   await tx.steeringMessage.updateMany({
-    where: { id: { in: pending.map((item) => item.id) }, runId: null },
+    where: { id: { in: batch.map((item) => item.id) }, runId: null },
     data: { runId: run.id, claimedAt: null },
   });
   return run.id;
+}
+
+function steeringOrigin(item: {
+  originTrigger: string | null;
+  message: { blocks: unknown };
+}): string {
+  if (item.originTrigger !== "messaging") return "app";
+  const channelId = messagingChannelId(item.message.blocks as MessageBlock[] | undefined);
+  return channelId ? `channel:${channelId}` : "dm";
 }
 
 export async function appendEventInTransaction(
@@ -1211,7 +1259,13 @@ export async function appendEventInTransaction(
     data: { nextEventSeq: { increment: 1 } },
     select: { nextEventSeq: true },
   });
-  await assertRunCanWriteHistory(tx, input.runId);
+  // run.cancelled is appended after the run row already reads cancelled, so it
+  // asserts the terminal status where every other event needs a writable run.
+  if (input.type === "run.cancelled") {
+    await assertRunIsCancelled(tx, input.runId);
+  } else {
+    await assertRunCanWriteHistory(tx, input.runId);
+  }
   // Unpaired UTF-16 surrogates (e.g. a split emoji high half) are invalid JSON for Postgres.
   const payload = sanitizeJsonValue(input.payload);
   return tx.event.create({

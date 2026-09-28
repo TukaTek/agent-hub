@@ -23,6 +23,8 @@ export const RU_MESSAGES: Record<string, string> = {
   "Default (medium)": "По умолчанию (средний)",
   "Direct MCP": "Прямой MCP",
   Dismiss: "Закрыть",
+  "Dismissed. Reconnect anytime from MCP settings.":
+    "Отклонено. Можно заново подключить в настройках MCP.",
   "Extra high": "Очень высокий",
   "Finish MCP authorization in the web app.": "Завершите авторизацию MCP в веб-приложении.",
   "Get credentials": "Получить учетные данные",
@@ -115,10 +117,15 @@ export const RU_MESSAGES: Record<string, string> = {
   "Android blocked notifications.": "Android заблокировал уведомления.",
   Answer: "Ответ",
   Answered: "Отвечено",
+  Approve: "Одобрить",
+  "Approve this server to let your agent use its tools.":
+    "Одобрите сервер, чтобы агент мог использовать его инструменты.",
   "Answered: {answer}": "Отвечено: {answer}",
   Archive: "Архивировать",
   "Archive keeps everything and can be undone. Delete is permanent.":
     "Архивирование сохраняет всё и обратимо. Удаление необратимо.",
+  "Collapse {name}": "Свернуть {name}",
+  "Expand {name}": "Развернуть {name}",
   "Archived bots": "Архивированные боты",
   "Archived. Chat, memory, and files kept.": "В архиве. Чат, память и файлы сохраняются.",
   Asleep: "Спит",
@@ -168,15 +175,19 @@ export const RU_MESSAGES: Record<string, string> = {
   "Connect a voice provider first.": "Сначала подключите провайдера голосовой связи.",
   "Connect API key": "Подключить API-ключ",
   "Connect Executor": "Подключить Executor",
+  "Connect MCP server {name}": "Подключение MCP-сервера {name}",
   "Connect Treg": "Подключить Treg",
   "Connect this provider to use it as your personal model.":
     "Подключите этого провайдера, чтобы использовать его в качестве своей личной модели.",
   Connected: "Подключено",
   "Connected · {label}": "Подключено · {label}",
+  "Connected. Its tools are available from your next message.":
+    "Подключено. Его инструменты доступны со следующего сообщения.",
   "Connected and using {label}.": "Подключено и используется {label}.",
   Copy: "Копировать",
   More: "Ещё",
   "Could not add source": "Не удалось добавить источник",
+  "Could not approve this server": "Не удалось одобрить этот сервер",
   "Could not archive bot": "Не удалось заархивировать бота",
   "Could not authorize this app": "Не удалось авторизовать это приложение",
   "Could not change language": "Не удалось изменить язык",
@@ -362,6 +373,7 @@ export const RU_MESSAGES: Record<string, string> = {
   "No messages yet": "Сообщений пока нет",
   "No results": "Нет результатов",
   "Not connected": "Не подключено",
+  "Not now": "Не сейчас",
   "Now using {label}.": "Сейчас используется {label}.",
   Now: "Сейчас",
   Notifications: "Уведомления",
@@ -396,6 +408,7 @@ export const RU_MESSAGES: Record<string, string> = {
     "Публичным серверам требуется https://. HTTP работает только в вашей локальной сети.",
   "Questions, approvals, takeover": "Вопросы, подтверждения, передача управления",
   Queued: "В очереди",
+  Quote: "Цитировать",
   React: "Реакция",
   Recent: "Недавние",
   Recover: "Восстановить",
@@ -418,6 +431,7 @@ export const RU_MESSAGES: Record<string, string> = {
   "Reset computer?": "Сбросить компьютер?",
   "Resetting…": "Сброс…",
   Restore: "Восстановить",
+  "Stream replies": "Потоковые ответы",
   "Restore the last saved workspace. Unsaved work on the computer is lost.":
     "Восстановить последнее сохранённое рабочее пространство. Несохранённые данные на компьютере будут потеряны.",
   "Resume notifications": "Возобновить уведомления",
@@ -462,6 +476,7 @@ export const RU_MESSAGES: Record<string, string> = {
   Space: "Пространство",
   "Space actions for {name}": "Действия пространства {name}",
   "Space created": "Пространство создано",
+  "Read replies aloud": "Читать ответы вслух",
   "Speak + transcribe": "Озвучить и расшифровать",
   "Speak message": "Озвучить сообщение",
   Speak: "Озвучить",
@@ -615,4 +630,5 @@ export const RU_MESSAGES: Record<string, string> = {
   "Your phone's built-in voice. Free, no account needed":
     "Встроенный голос телефона. Бесплатно, без аккаунта",
   "Could not save that preference": "Не удалось сохранить эту настройку",
+  Username: "Имя пользователя",
 };

@@ -19,7 +19,7 @@ CortexAI Agent Hub is in beta. Learn more at the [CortexAI product page](https:/
 - Assistants that can delegate to peer assistants or short-lived subagents
 - Bring-your-own model credentials through Pi
 - App integrations through Composio or Pipedream Connect, plus user-installed Treg, remote MCP, and OpenAPI tool sources
-- Docker, E2B, Daytona, Box, and trusted local-computer support
+- Docker, E2B, Daytona, CreateOS, Box, and trusted local-computer support
 
 ## Stack
 
@@ -31,7 +31,7 @@ CortexAI Agent Hub is in beta. Learn more at the [CortexAI product page](https:/
 - Better Auth
 - Graphile Worker
 - Pi
-- Docker, E2B, Daytona, and Box
+- Docker, E2B, Daytona, CreateOS, and Box
 - Composio, Pipedream Connect, MCP, and OpenAPI integrations
 
 ## Quick start (published images)
@@ -57,7 +57,7 @@ place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or wh
 disposable); `docker compose down -v` deletes all Postgres state.
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
-Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, or `box`
+Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, or `box`
 with the matching API key.
 
 Default image tag is `edge` (main builds, `linux/amd64` + `linux/arm64`). Details and tags:
@@ -77,7 +77,8 @@ the desktop app, the mobile app, or a browser.
 
 ```bash
 bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=box (or e2b / daytona) with its API key, CORTEXAI_AGENT_HUB_HOST=your.domain
+# edit .env: SANDBOX_PROVIDER=box (or e2b / daytona / createos) with its API key, CORTEXAI_AGENT_HUB_HOST=your.domain
+
 bash install-images.sh
 ```
 
@@ -130,6 +131,11 @@ your first assistant.
 For deployment, provider selection, backups, and upgrades, see the
 [self-hosting guide](./docs/self-host.md).
 
+To use CreateOS, set `SANDBOX_PROVIDER=createos` and `CREATEOS_SANDBOX_API_KEY`.
+Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, and
+`CREATEOS_SANDBOX_ROOTFS` default to `https://api.sb.createos.sh`, `s-2vcpu-2gb`,
+and `desktop:1`.
+
 ## Desktop and mobile
 
 The Electron and Expo apps are clients of the same CortexAI Agent Hub API used by the web app.
@@ -162,7 +168,9 @@ Mobile build and release instructions live in [docs/mobile-release.md](./docs/mo
 
 The web (and Electron-hosted) UI supports English, Deutsch, 한국어, Türkçe, हिन्दी,
 Português (Brasil), 简体中文, Español, and Русский under **Settings → Language**. The Expo
-app supports English, 简体中文, and Русский under **Account → Language**. The marketing
+app ships English, 简体中文, Русский, and Deutsch catalogs; **Account → Language** offers
+English and 简体中文, and the other catalogs follow the device language or
+`EXPO_PUBLIC_DEFAULT_UI_LOCALE`. The marketing
 homepage (`apps/www`) is available in en/de/ko/zh via footer language links (`/`, `/de/`,
 `/ko/`, `/zh/`); other marketing pages stay English. The Russian marketing homepage and
 native Electron setup/menu remain separate follow-up work.

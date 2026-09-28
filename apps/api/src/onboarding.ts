@@ -1,14 +1,14 @@
 import type { ConnectorRegistry } from "@cortexai-agent-hub/adapters";
 import type { Actor, MessageBlock } from "@cortexai-agent-hub/contracts";
 import { featuredConnectorProvidersMatch } from "@cortexai-agent-hub/core";
+import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
   IsolationError,
-  type Prisma,
-  type PrismaClient,
-  type ThreadEvents,
 } from "@cortexai-agent-hub/db";
+import { requireBotThread, updateBlocks } from "./bot-thread.js";
 
 /**
  * First-run conversational onboarding, seeded deterministically into the bot's
@@ -70,15 +70,6 @@ const APP_DESCRIPTIONS: Record<string, string> = {
   hackernews: "Search stories and discussions.",
 };
 
-async function requireBotThread(deps: OnboardingDeps, actor: Actor, botId: string) {
-  const bot = await deps.prisma.bot.findFirst({
-    where: { id: botId, spaceId: actor.spaceId, userId: actor.userId },
-    include: { thread: true },
-  });
-  if (!bot?.thread) throw new IsolationError();
-  return { bot, thread: bot.thread };
-}
-
 async function post(
   deps: OnboardingDeps,
   target: { spaceId: string; botId: string; threadId: string },
@@ -101,25 +92,6 @@ async function post(
   });
   await deps.events.notify(target.threadId, committed.event.seq);
   return committed.message.id;
-}
-
-async function updateBlocks(
-  deps: OnboardingDeps,
-  target: { spaceId: string; botId: string; threadId: string },
-  messageId: string,
-  blocks: MessageBlock[],
-): Promise<void> {
-  const event = await deps.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.message.update({ where: { id: messageId }, data: { blocks } });
-    return appendEventInTransaction(tx, {
-      spaceId: target.spaceId,
-      threadId: target.threadId,
-      botId: target.botId,
-      type: "thread.message.updated",
-      payload: { messageId, role: "bot", blocks },
-    });
-  });
-  await deps.events.notify(target.threadId, event.seq);
 }
 
 /** Sentinel answerId for a focus card the user dismissed without choosing. */
