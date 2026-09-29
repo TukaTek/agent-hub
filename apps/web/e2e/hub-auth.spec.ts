@@ -85,8 +85,46 @@ for (const desktop of [false, true]) {
     );
     await expect(password).toHaveCount(0);
     await captureScreenshot(page, testInfo, "hub-sign-in-other-sso-unavailable");
+
+    await page.getByRole("button", { name: "Use a different email" }).click();
+    const authorizeUrl = "https://hub.example.test/authorize?request=fixture";
+    await page.route("**/api/auth/hub/sign-in/continue", (route) =>
+      route.fulfill({ json: { next: "redirect", url: authorizeUrl } }),
+    );
+    await page.route("https://hub.example.test/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<h1>Hub</h1>" }),
+    );
+    await email.fill("entra@example.test");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    if (desktop) {
+      await expect(page.getByRole("status")).toHaveText(
+        `Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser. ${new URL(page.url()).origin}`,
+      );
+      await expect(password).toHaveCount(0);
+      await captureScreenshot(page, testInfo, "hub-sign-in-desktop-sso");
+    } else {
+      await expect(page).toHaveURL(authorizeUrl);
+    }
   });
 }
+
+test("Hub SSO callback errors show a fixed message", async ({ page }, testInfo) => {
+  await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
+  await page.route("**/api/auth/capabilities", (route) =>
+    route.fulfill({ json: { mode: "hub", passwordReset: false, resetUrl: null } }),
+  );
+  await page.goto("/sign-in?error=sso_expired");
+  await expect(page.getByRole("alert")).toHaveText("Your sign-in expired. Try again.");
+  await page.goto("/sign-in?error=sso_failed");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Microsoft sign-in didn't finish. Try again, or ask your admin for access.",
+  );
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+  await captureScreenshot(page, testInfo, "hub-sign-in-sso-failed");
+  await page.goto("/sign-in?error=unexpected");
+  await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
 
 test("capability network failure blocks authentication", async ({ page }) => {
   await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
