@@ -46,12 +46,13 @@ EAS Update channel. The runtime version follows the public app version, so bump
 `expo.version` whenever native code, config plugins, permissions, or native
 dependencies change, then create and submit new store builds.
 
-After the full GitHub Actions test suite passes on `main`, CI publishes a
-production OTA update when the revision only changes the mobile JavaScript,
-TypeScript, or bundled CSS. CI deliberately skips OTA publishing when native
+OTA publishing is optional. Set the `MOBILE_OTA_ENABLED` Actions repository
+variable to `true` only after linking `apps/mobile` to an Expo project and adding
+an `EXPO_TOKEN` Actions secret with access to it. Without that variable, CI skips
+the hosted update job. Once enabled, CI publishes a production OTA update after
+the full test suite passes on `main` when the revision only changes mobile
+JavaScript, TypeScript, or bundled CSS. CI skips OTA publishing when native
 configuration, modules, dependencies, assets, or the update workflow changed.
-The repository needs an `EXPO_TOKEN` Actions secret with access to the linked
-Expo project.
 
 To publish a compatible update manually from `apps/mobile`:
 
