@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
+import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import {
   createHubClient,
+  HubRequestError,
   HubUnsupportedIdpError,
   hubAuthFromEnv,
   hubUserId,
@@ -171,5 +173,330 @@ describe("Hub Workbench-style tenant authentication", () => {
   it("keeps ownership stable across transport changes and distinct across tenants", () => {
     expect(hubUserId(origin, "tenant", "user")).toBe(hubUserId(origin, "tenant", "user"));
     expect(hubUserId(origin, "other", "user")).not.toBe(hubUserId(origin, "tenant", "user"));
+  });
+});
+
+describe("Hub agent-hub-web SSO contract", () => {
+  const sso = fixture.sso;
+  const config = {
+    origin,
+    tenantId: web.ssoStartRequest.body.tenantId,
+    deploymentId: web.ssoStartRequest.body.deploymentId,
+    sso: { apiId: sso.serviceTokenRequest.apiId, secret: sso.serviceTokenRequest.secret },
+  };
+  const tokenReply = (seconds: number) => ({
+    ...sso.serviceTokenResponse,
+    expiresAt: new Date(Date.now() + seconds * 1000).toISOString(),
+  });
+  function ssoSetup(overrides: Record<string, unknown> = {}) {
+    const replies: Record<string, unknown> = {
+      "service-token": tokenReply(900),
+      "sso-start": web.ssoStartResponse,
+      "sso-exchange": web.exchangeResponse,
+      session: {
+        valid: true,
+        userId: web.exchangeResponse.user.id,
+        tenantId: web.exchangeResponse.tenantId,
+      },
+      config: { product: "cortexai-agent-hub", products: web.exchangeResponse.products },
+      ...overrides,
+    };
+    const fetcher = vi.fn(async (url: any, options: any) => {
+      expect(new URL(String(url)).origin).toBe(origin);
+      expect(options.redirect).toBe("error");
+      const value = replies[new URL(String(url)).pathname.split("/").at(-1)!];
+      return typeof value === "function"
+        ? value()
+        : value instanceof Response
+          ? value.clone()
+          : Response.json(value);
+    });
+    const calls = (name: string) =>
+      fetcher.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith(`/${name}`));
+    return { client: createHubClient(config, fetcher), fetcher, calls };
+  }
+  const redirectUri = new URL(web.exchangeRequest.body.redirectUri).href;
+
+  it("starts with Hub's published request shape and a service bearer", async () => {
+    const { client, calls } = ssoSetup();
+    const body = web.ssoStartRequest.body;
+    await expect(client.ssoStart(body.email, body.state, body.codeChallenge)).resolves.toBe(
+      web.ssoStartResponse.authorizeUrl,
+    );
+    const [tokenUrl, tokenInit] = calls("service-token")[0]!;
+    expect(new URL(String(tokenUrl)).pathname).toBe(fixture.endpoints.serviceToken);
+    expect(JSON.parse(tokenInit.body)).toEqual(sso.serviceTokenRequest);
+    expect(tokenInit.headers.authorization).toBeUndefined();
+    const [startUrl, startInit] = calls("sso-start")[0]!;
+    expect(new URL(String(startUrl)).pathname).toBe(fixture.endpoints.ssoStart);
+    expect(JSON.parse(startInit.body)).toEqual(body);
+    expect(startInit.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.accessToken}`);
+  });
+
+  it("exchanges with Hub's published request shape and returns the native grant", async () => {
+    const { client, calls } = ssoSetup();
+    const body = web.exchangeRequest.body;
+    await expect(client.ssoExchange(body.code, body.codeVerifier, redirectUri)).resolves.toEqual({
+      subject: web.exchangeResponse.user.id,
+      tenant: web.exchangeResponse.tenantId,
+      accessToken: web.exchangeResponse.accessToken,
+      refreshToken: web.exchangeResponse.refreshToken,
+      accessUntil: new Date(web.exchangeResponse.accessTokenExpiresAt),
+      displayName: web.exchangeResponse.user.displayName,
+    });
+    const [url, init] = calls("sso-exchange")[0]!;
+    expect(new URL(String(url)).pathname).toBe(fixture.endpoints.ssoExchange);
+    expect(JSON.parse(init.body)).toEqual(body);
+    expect(init.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.accessToken}`);
+    expect(new URL(redirectUri).pathname).toBe(`${web.callbackPath}`);
+    expect(sso.callbackPath).toBe(web.callbackPath);
+    expect(sso.returnChannel).toBe(web.returnChannel);
+    expect(calls("session")).toHaveLength(1);
+    expect(calls("config")).toHaveLength(1);
+  });
+
+  it.each([
+    ["another tenant", { "sso-exchange": { ...web.exchangeResponse, tenantId: "tenant-b" } }],
+    [
+      "another tenant's user",
+      {
+        "sso-exchange": {
+          ...web.exchangeResponse,
+          user: { ...web.exchangeResponse.user, tenantId: "tenant-b" },
+        },
+      },
+    ],
+    [
+      "another deployment",
+      {
+        "sso-exchange": {
+          ...web.exchangeResponse,
+          deploymentId: "22222222-2222-4222-8222-222222222222",
+        },
+      },
+    ],
+    ["no deployment", { "sso-exchange": { ...web.exchangeResponse, deploymentId: null } }],
+    ["no Agent Hub entitlement", { "sso-exchange": { ...web.exchangeResponse, products: [] } }],
+    ["config denial", { config: new Response("denied", { status: 403 }) }],
+  ])("rejects an exchange grant for %s", async (_case, overrides) => {
+    const body = web.exchangeRequest.body;
+    await expect(
+      ssoSetup(overrides).client.ssoExchange(body.code, body.codeVerifier, redirectUri),
+    ).rejects.toThrow();
+  });
+
+  it.each(web.errors.filter((entry) => entry.endpoint === "sso-exchange"))(
+    "surfaces exchange $status $error once, never retrying the code",
+    async ({ status, error }) => {
+      const { client, calls } = ssoSetup({ "sso-exchange": Response.json({ error }, { status }) });
+      const body = web.exchangeRequest.body;
+      const failure = await client
+        .ssoExchange(body.code, body.codeVerifier, redirectUri)
+        .catch((caught: unknown) => caught);
+      expect(failure).toBeInstanceOf(HubRequestError);
+      expect(failure).toMatchObject({ status, code: error });
+      expect(calls("sso-exchange")).toHaveLength(1);
+    },
+  );
+
+  it.each(web.errors.filter((entry) => entry.endpoint === "sso-start"))(
+    "surfaces start $status $error without leaking secrets",
+    async ({ status, error }) => {
+      const { client } = ssoSetup({ "sso-start": Response.json({ error }, { status }) });
+      const body = web.ssoStartRequest.body;
+      const failure = await client
+        .ssoStart(body.email, body.state, body.codeChallenge)
+        .catch((caught: unknown) => caught);
+      expect(failure).toMatchObject({ status, code: error });
+      expect(String(failure)).not.toContain(config.sso.secret);
+      expect(String(failure)).not.toContain(body.state);
+    },
+  );
+
+  it("retries start once with a fresh service token after invalid_service_token", async () => {
+    let starts = 0;
+    const { client, calls } = ssoSetup({
+      "sso-start": () =>
+        ++starts === 1
+          ? Response.json({ error: "invalid_service_token" }, { status: 401 })
+          : Response.json(web.ssoStartResponse),
+    });
+    const body = web.ssoStartRequest.body;
+    await expect(client.ssoStart(body.email, body.state, body.codeChallenge)).resolves.toBe(
+      web.ssoStartResponse.authorizeUrl,
+    );
+    expect(calls("service-token")).toHaveLength(2);
+    expect(calls("sso-start")).toHaveLength(2);
+  });
+
+  it("drops the cached service token when Hub rejects it at exchange", async () => {
+    const { client, calls } = ssoSetup({
+      "sso-exchange": Response.json({ error: "invalid_service_token" }, { status: 401 }),
+    });
+    const body = web.exchangeRequest.body;
+    await expect(client.ssoExchange(body.code, body.codeVerifier, redirectUri)).rejects.toThrow();
+    await expect(client.ssoExchange(body.code, body.codeVerifier, redirectUri)).rejects.toThrow();
+    expect(calls("service-token")).toHaveLength(2);
+  });
+
+  it("caches the service token and renews it once under five minutes remain", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { client, calls } = ssoSetup();
+      const body = web.ssoStartRequest.body;
+      await Promise.all([
+        client.ssoStart(body.email, body.state, body.codeChallenge),
+        client.ssoStart(body.email, body.state, body.codeChallenge),
+      ]);
+      expect(calls("service-token")).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 599_000);
+      await client.ssoStart(body.email, body.state, body.codeChallenge);
+      expect(calls("service-token")).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 2_000);
+      await client.ssoStart(body.email, body.state, body.codeChallenge);
+      expect(calls("service-token")).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("accepts a service token with expiresIn seconds", async () => {
+    const { client, calls } = ssoSetup({
+      "service-token": { accessToken: "synthetic-service-token", expiresIn: 900 },
+    });
+    const body = web.ssoStartRequest.body;
+    await client.ssoStart(body.email, body.state, body.codeChallenge);
+    await client.ssoStart(body.email, body.state, body.codeChallenge);
+    expect(calls("service-token")).toHaveLength(1);
+  });
+
+  it("never puts the service secret in an error when the token request fails", async () => {
+    const { client } = ssoSetup({
+      "service-token": new Response(`bad secret ${config.sso.secret}`, { status: 401 }),
+    });
+    const body = web.ssoStartRequest.body;
+    const failure = await client
+      .ssoStart(body.email, body.state, body.codeChallenge)
+      .catch((caught: unknown) => caught);
+    expect(JSON.stringify(failure)).not.toContain(config.sso.secret);
+    expect(String(failure)).not.toContain(config.sso.secret);
+  });
+
+  it("refuses a non-HTTPS authorize URL", async () => {
+    const { client } = ssoSetup({ "sso-start": { authorizeUrl: "http://login.example.test/" } });
+    const body = web.ssoStartRequest.body;
+    await expect(client.ssoStart(body.email, body.state, body.codeChallenge)).rejects.toThrow();
+  });
+
+  it("refuses to start or exchange without SSO configuration", async () => {
+    const client = createHubClient({ origin, tenantId: config.tenantId }, vi.fn());
+    await expect(client.ssoStart("user@example.test", "s".repeat(43), "c")).rejects.toThrow(
+      "Hub SSO is not configured",
+    );
+    await expect(client.ssoExchange("code", "verifier", redirectUri)).rejects.toThrow(
+      "Hub SSO is not configured",
+    );
+  });
+});
+
+describe("Hub session product and deployment binding", () => {
+  const identity = { subject: "fixture-user", tenant: "fixture-tenant" };
+  const deploymentId = "11111111-1111-4111-8111-111111111111";
+  const replies = (session: Record<string, unknown>) =>
+    vi.fn(async (url: any) =>
+      new URL(String(url)).pathname.endsWith("/session")
+        ? Response.json({
+            valid: true,
+            userId: "fixture-user",
+            tenantId: "fixture-tenant",
+            ...session,
+          })
+        : Response.json({
+            product: "cortexai-agent-hub",
+            products: fixture.sessionResponse.products,
+          }),
+    );
+  it.each([
+    [{}],
+    [{ product: null, deploymentId: null }],
+    [{ product: "cortexai-agent-hub", deploymentId }],
+  ])("accepts %j", async (session) => {
+    const client = createHubClient({ origin, deploymentId }, replies(session));
+    await expect(client.verify("opaque", identity)).resolves.toBeUndefined();
+  });
+  it.each([
+    [{ product: "cortexai-workbench" }],
+    [{ deploymentId: "22222222-2222-4222-8222-222222222222" }],
+  ])("rejects %j", async (session) => {
+    const client = createHubClient({ origin, deploymentId }, replies(session));
+    await expect(client.verify("opaque", identity)).rejects.toThrow();
+  });
+  it("rejects a deployment-bound session when this deployment has no id", async () => {
+    const client = createHubClient({ origin }, replies({ deploymentId }));
+    await expect(client.verify("opaque", identity)).rejects.toThrow();
+  });
+});
+
+describe("Hub SSO configuration", () => {
+  const base = {
+    AUTH_MODE: "hub",
+    HUB_AUTH_ORIGIN: origin,
+    HUB_SSO_ENABLED: "true",
+    HUB_AUTH_TENANT_ID: "fixture-tenant",
+    HUB_DEPLOYMENT_ID: "11111111-1111-4111-8111-111111111111",
+    HUB_SERVICE_API_ID: "fixture-api-id",
+    HUB_SERVICE_SECRET_FILE: "/run/secrets/hub-service-secret",
+  };
+  const readSecretFile = vi.fn((_path: string) => "synthetic-service-secret\n");
+
+  it("defaults off and leaves hub mode exactly as before", () => {
+    expect(
+      hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin }, { readSecretFile }),
+    ).toEqual({ origin });
+    expect(
+      hubAuthFromEnv({ ...base, HUB_SSO_ENABLED: "false" }, { readSecretFile })?.sso,
+    ).toBeUndefined();
+    expect(readSecretFile).not.toHaveBeenCalled();
+  });
+
+  it("reads the service secret from its file only in the API process", () => {
+    expect(hubAuthFromEnv(base, { readSecretFile })).toEqual({
+      origin,
+      tenantId: "fixture-tenant",
+      deploymentId: base.HUB_DEPLOYMENT_ID,
+      sso: { apiId: "fixture-api-id", secret: "synthetic-service-secret" },
+    });
+    expect(readSecretFile).toHaveBeenCalledWith(base.HUB_SERVICE_SECRET_FILE);
+    readSecretFile.mockClear();
+    expect(hubAuthFromEnv(base)?.sso).toBeUndefined();
+    expect(readSecretFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["AUTH_MODE", "local", "HUB_SSO_ENABLED requires AUTH_MODE=hub"],
+    ["AUTH_MODE", undefined, "HUB_SSO_ENABLED requires AUTH_MODE=hub"],
+    ["HUB_AUTH_TENANT_ID", undefined, "HUB_SSO_ENABLED requires HUB_AUTH_TENANT_ID"],
+    ["HUB_DEPLOYMENT_ID", undefined, "HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID"],
+    ["HUB_DEPLOYMENT_ID", "prod-1", "HUB_DEPLOYMENT_ID must be the deployment UUID"],
+    ["HUB_SERVICE_API_ID", " ", "HUB_SSO_ENABLED requires HUB_SERVICE_API_ID"],
+    ["HUB_SERVICE_SECRET_FILE", undefined, "HUB_SSO_ENABLED requires HUB_SERVICE_SECRET_FILE"],
+    ["HUB_SSO_ENABLED", "yes", "HUB_SSO_ENABLED must be true or false"],
+  ])("refuses to start when %s is %s", (key, value, message) => {
+    const env: NodeJS.ProcessEnv = { ...base, [key]: value };
+    if (value === undefined) delete env[key];
+    expect(() => hubAuthFromEnv(env, { readSecretFile })).toThrow(message);
+  });
+
+  it("refuses an unreadable or empty secret file without echoing its contents", () => {
+    expect(() =>
+      hubAuthFromEnv(base, {
+        readSecretFile: () => {
+          throw new Error("ENOENT synthetic-service-secret");
+        },
+      }),
+    ).toThrow(/^HUB_SERVICE_SECRET_FILE could not be read$/);
+    expect(() => hubAuthFromEnv(base, { readSecretFile: () => " \n" })).toThrow(
+      "HUB_SERVICE_SECRET_FILE is empty",
+    );
   });
 });
