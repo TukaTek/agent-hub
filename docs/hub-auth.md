@@ -22,13 +22,13 @@ With `HUB_SSO_ENABLED=true` the API refuses to start unless all of these are set
 | --- | --- |
 | `AUTH_MODE` | `hub` |
 | `HUB_AUTH_ORIGIN` | Hub's HTTPS origin |
-| `HUB_AUTH_TENANT_ID` | The one tenant this deployment serves |
-| `HUB_DEPLOYMENT_ID` | The deployment UUID Hub issued for this installation |
-| `HUB_SERVICE_API_ID` | The service credential's API id |
-| `HUB_SERVICE_SECRET_FILE` | Path to a file holding the service credential's secret |
+| `HUB_AUTH_TENANT_ID` | The one tenant this deployment serves (up to 256 characters) |
+| `HUB_DEPLOYMENT_ID` | The deployment UUID Hub issued for this installation, registered against the same credential as `HUB_SERVICE_API_ID` |
+| `HUB_SERVICE_API_ID` | The service credential's API id (up to 256 characters) |
+| `HUB_SERVICE_SECRET_FILE` | Path to a file holding the service credential's secret (up to 4096 characters, trimmed) |
 | `BETTER_AUTH_URL` | This deployment's HTTPS origin |
 
-The secret is read from a file so it never sits in the process environment or `.env`. The callback URL registered with Hub for the deployment is `<BETTER_AUTH_URL>/api/auth/hub/sso/callback`.
+The secret is read from a file so it never sits in the process environment or `.env`. Hub must register `HUB_DEPLOYMENT_ID` against the same credential as `HUB_SERVICE_API_ID`: for the `agent-hub-web` channel, sso-start and sso-exchange reject any service token whose credential differs from the deployment's registered product credential with `401 invalid_service_token`, which shows up as a start failure at Continue. The callback URL registered with Hub for the deployment is `<BETTER_AUTH_URL>/api/auth/hub/sso/callback`.
 
 The flow follows Hub's `agent-hub-web-sso.v1` contract, copied verbatim to `packages/auth/src/fixtures/agent-hub-web-sso.v1.json`:
 
@@ -38,7 +38,9 @@ The flow follows Hub's `agent-hub-web-sso.v1` contract, copied verbatim to `pack
 
 Failures land on `/sign-in?error=sso_expired` (a malformed callback, or a missing, mismatched, unknown or expired state) or `/sign-in?error=sso_failed` (a rejected exchange or grant), and the page shows a fixed message for each. Nothing else from the query is displayed. Logs carry a short reason code only; codes, state, verifiers, tokens, emails and the service secret are never logged. Errors Hub shows on its own `/tenant-sso-error` page stay there.
 
-Service tokens are cached per process and renewed five minutes before expiry. A start that Hub rejects with `invalid_service_token` renews the token and is retried once; an exchange never is.
+**Service token.** The API process sends `POST /api/agent-hub/service-token` with exactly `{ "apiId", "secret", "tenantId" }`, with `tenantId` set to `HUB_AUTH_TENANT_ID`. Hub's schema is strict, so any other field is `400 invalid_request`. Hub answers `{ "token", "tokenType": "Bearer", "expiresIn": 300 }`. Agent Hub treats the token as opaque and sends it as `Authorization: Bearer <token>` to sso-start and sso-exchange. The token is cached in memory for the pinned tenant and renewed 45 seconds before it expires. Concurrent renewals share one request, which keeps Agent Hub well under Hub's limit of 60 renewals a minute per credential and tenant.
+
+When Hub returns `401 invalid_service_token`, the cached token is dropped. A start is retried once with a fresh token. An exchange is never retried, because Hub consumes the code on every attempt, so the callback fails with `sso_failed`. Token endpoint failures (`400 invalid_request`, `401 invalid_credentials`, a grant or binding denial for the tenant, `429` rate limits, or `503 configuration_unavailable`) fail the attempt and are logged only as a reason code such as `start:invalid_credentials`. Hub also rate limits failed attempts to 10 per 15 minutes, so a wrong secret soon starts returning `429` as well. The secret and the token are never logged.
 
 **Break-glass.** If Entra or Hub SSO is unavailable, set the affected users to Always Native in Hub. The lookup then reports them as native and they sign in with their password, with or without `HUB_SSO_ENABLED`. Setting `HUB_SSO_ENABLED=false` returns everyone to the pre-SSO behaviour.
 
