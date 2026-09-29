@@ -205,7 +205,11 @@ it("refuses a non-HTTPS authorize URL", async () => {
 
 it("points desktop Microsoft users to the browser instead of redirecting", async () => {
   const assign = vi.fn();
-  vi.stubGlobal("location", { ...window.location, origin: "https://agent-hub.example.test", assign });
+  vi.stubGlobal("location", {
+    ...window.location,
+    origin: "https://agent-hub.example.test",
+    assign,
+  });
   vi.stubGlobal("cortexAiAgentHubDesktop", {});
   stubServer("hub", { next: "redirect", url: "https://hub.example.test/authorize" });
   await render();
