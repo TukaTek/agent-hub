@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "./env.js";
 
@@ -15,6 +18,43 @@ describe("loadEnv", () => {
     expect(env.wakeupDriver).toBe("graphile");
     expect(env.apiHost).toBe("127.0.0.1");
     expect(env.nodeEnv).toBe("test");
+  });
+
+  it("refuses to start Hub SSO without its tenant, deployment and service credential", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hub-sso-"));
+    const secretFile = path.join(dir, "service-secret");
+    writeFileSync(secretFile, "synthetic-service-secret\n");
+    const sso = {
+      ...base,
+      AUTH_MODE: "hub",
+      HUB_AUTH_ORIGIN: "https://hub.example.test",
+      HUB_SSO_ENABLED: "true",
+      HUB_AUTH_TENANT_ID: "fixture-tenant",
+      HUB_DEPLOYMENT_ID: "11111111-1111-4111-8111-111111111111",
+      HUB_SERVICE_API_ID: "fixture-api-id",
+      HUB_SERVICE_SECRET_FILE: secretFile,
+    };
+    try {
+      expect(loadEnv(sso).hubAuth?.sso).toEqual({
+        apiId: "fixture-api-id",
+        secret: "synthetic-service-secret",
+      });
+      expect(loadEnv({ ...sso, HUB_SSO_ENABLED: undefined }).hubAuth?.sso).toBeUndefined();
+      for (const key of [
+        "HUB_AUTH_TENANT_ID",
+        "HUB_DEPLOYMENT_ID",
+        "HUB_SERVICE_API_ID",
+        "HUB_SERVICE_SECRET_FILE",
+      ]) {
+        expect(() => loadEnv({ ...sso, [key]: "" })).toThrow(`requires ${key}`);
+      }
+      expect(() => loadEnv({ ...sso, AUTH_MODE: "local" })).toThrow("requires AUTH_MODE=hub");
+      expect(() => loadEnv({ ...sso, HUB_SERVICE_SECRET_FILE: `${secretFile}.missing` })).toThrow(
+        "HUB_SERVICE_SECRET_FILE could not be read",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("defaults Pi JSONL session recording to off", () => {
