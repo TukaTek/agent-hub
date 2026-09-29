@@ -12,6 +12,64 @@ Opaque Hub access and refresh tokens are encrypted in server-side `hub_session` 
 
 Every protected session/work authorization checks current identity and `/api/tenant-auth/config?product=cortexai-agent-hub`. Successful verifications are cached for a short TTL (default 30 seconds, configurable via `HUB_VERIFY_CACHE_TTL_MS`) to avoid Hub round-trips on every protected RPC while preserving fail-closed semantics. The cache keys by access token and respects both the configured TTL and the token's actual expiry time. Cache entries are invalidated when tokens are refreshed or rotated. Failures always deny access and are never cached. Expired tokens refresh through `/api/tenant-auth/refresh` under a database row lock; refresh must preserve user and tenant identity. Session deletion attempts `/api/tenant-auth/revoke` and always removes the local session. Hub access tokens currently last 24 hours and rotating refresh tokens 30 days.
 
+## Entra SSO
+
+`HUB_SSO_ENABLED` defaults to `false`. When it is off, sign-in behaves as described above: Entra users see the unavailable message and Always Native users use their password.
+
+With `HUB_SSO_ENABLED=true` the API refuses to start unless all of these are set:
+
+| Variable | Value |
+| --- | --- |
+| `AUTH_MODE` | `hub` |
+| `HUB_AUTH_ORIGIN` | Hub's HTTPS origin |
+| `HUB_AUTH_TENANT_ID` | The one tenant this deployment serves |
+| `HUB_DEPLOYMENT_ID` | The deployment UUID Hub issued for this installation |
+| `HUB_SERVICE_API_ID` | The service credential's API id |
+| `HUB_SERVICE_SECRET_FILE` | Path to a file holding the service credential's secret |
+| `BETTER_AUTH_URL` | This deployment's HTTPS origin |
+
+The secret is read from a file so it never sits in the process environment or `.env`. The callback URL registered with Hub for the deployment is `<BETTER_AUTH_URL>/api/auth/hub/sso/callback`.
+
+The flow follows Hub's `agent-hub-web-sso.v1` contract, copied verbatim to `packages/auth/src/fixtures/agent-hub-web-sso.v1.json`:
+
+1. The email step's lookup reports Entra. Agent Hub generates a random state and PKCE verifier, stores the verifier encrypted in a `verification` row keyed by the SHA-256 of the state (10 minutes), sets the state in an HttpOnly `__Host-ah_sso` cookie, and calls `POST /api/tenant-auth/sso-start` with its service token, the `agent-hub-web` return channel, the deployment id, the state and the S256 challenge. The browser follows the returned `authorizeUrl`.
+2. Hub redirects to the callback with `code` and `state`. Agent Hub requires the cookie's state to match the query in constant time, deletes the verification row (so a state works once), and calls `POST /api/agent-hub/sso-exchange` once. Hub consumes the code on every attempt, so the exchange is never retried.
+3. The grant must name the configured tenant and deployment. It then goes through the same entitlement check, `hub_<tenant>_<user>` identity and encrypted `hub_session` as password sign-in, so a user who signs in both ways has one account.
+
+Failures land on `/sign-in?error=sso_expired` (a malformed callback, or a missing, mismatched, unknown or expired state) or `/sign-in?error=sso_failed` (a rejected exchange or grant), and the page shows a fixed message for each. Nothing else from the query is displayed. Logs carry a short reason code only; codes, state, verifiers, tokens, emails and the service secret are never logged. Errors Hub shows on its own `/tenant-sso-error` page stay there.
+
+Service tokens are cached per process and renewed five minutes before expiry. A start that Hub rejects with `invalid_service_token` renews the token and is retried once; an exchange never is.
+
+**Break-glass.** If Entra or Hub SSO is unavailable, set the affected users to Always Native in Hub. The lookup then reports them as native and they sign in with their password, with or without `HUB_SSO_ENABLED`. Setting `HUB_SSO_ENABLED=false` returns everyone to the pre-SSO behaviour.
+
+**Sessions and revocation.** SSO sessions are the same Hub sessions as password sign-in: 24-hour access tokens and 30-day rotating refresh tokens. Revoking a user or their assignment in Hub takes effect within the verification cache TTL plus one request, as described below. If Hub's session reports a product or deployment, it must be Agent Hub and this deployment; set `HUB_DEPLOYMENT_ID` whenever Hub has issued one, even with SSO off, or deployment-bound sessions are refused.
+
+**Desktop.** The Electron app does not support SSO yet because it hands off-origin navigation to the system browser, which cannot complete an app sign-in. Entra users see a message pointing them to this deployment in their browser. Always Native users sign in on desktop as before. Mobile keeps its password form.
+
+### Staging check
+
+This runs against a staging Hub, never production. Hub must first issue a deployment and service credential for the staging Agent Hub origin and register its callback URL.
+
+```bash
+AUTH_MODE=hub
+HUB_AUTH_ORIGIN=<staging Hub origin>
+HUB_AUTH_TENANT_ID=<staging tenant id>
+HUB_DEPLOYMENT_ID=<deployment UUID from Hub>
+HUB_SERVICE_API_ID=<service credential API id>
+HUB_SERVICE_SECRET_FILE=<path to a file with the service secret>
+HUB_SSO_ENABLED=true
+BETTER_AUTH_URL=<staging Agent Hub HTTPS origin>
+WEB_ORIGIN=<staging Agent Hub HTTPS origin>
+```
+
+Then, in a browser:
+
+1. Sign in as an assigned Entra test user. Expect Microsoft sign-in, then `/app`.
+2. Sign in as an Entra test user without an Agent Hub assignment. Expect `/sign-in` with "Microsoft sign-in didn't finish".
+3. Reload the callback URL from step 1. Expect "Your sign-in expired".
+4. Set the first user to Always Native in Hub and sign in with their password. Expect the same account and data as step 1.
+5. Remove the first user's assignment in Hub while signed in. Expect access to stop within the verification cache TTL.
+
 ## Verification cache and revoke semantics
 
 **Worst-case revoke detection lag = cache TTL + one request round-trip.**
