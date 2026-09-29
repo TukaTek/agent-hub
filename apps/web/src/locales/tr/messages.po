@@ -2942,3 +2942,12 @@ msgstr ""
 
 msgid "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
 msgstr ""
+
+msgid "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser."
+msgstr ""
+
+msgid "Microsoft sign-in didn't finish. Try again, or ask your admin for access."
+msgstr ""
+
+msgid "Your sign-in expired. Try again."
+msgstr ""
