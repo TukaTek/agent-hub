@@ -709,6 +709,25 @@ describe("Hub tenant Entra SSO", () => {
     expect(f.data.verification).toHaveLength(0);
   });
 
+  it("drops an SSO session within the verify TTL after Hub disables the user", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { state, cookie } = await f.startSso();
+    await f.callback(`code=${code}&state=${state}`, cookie);
+    const headers = new Headers({ authorization: `Bearer ${f.data.session![0]!.token}` });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+      f.client.verify.mockRejectedValue(new Error("user disabled"));
+      vi.setSystemTime(Date.now() + 29_000);
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+      vi.setSystemTime(Date.now() + 1_001);
+      expect(await f.auth.api.getSession({ headers })).toBeNull();
+      expect(f.data.session).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("still refuses session creation outside the Hub sign-in paths", async () => {
     const f = fixture(undefined, { sso: true });
     await f.login();
