@@ -114,7 +114,11 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
         if (path.endsWith("/lookup"))
           return Response.json({ tenantId: config.tenantId, idpType: hub.idpType });
         if (path.endsWith("/service-token"))
-          return Response.json({ accessToken: "synthetic-service-token", expiresIn: 900 });
+          return Response.json({
+            token: "synthetic-service-token",
+            tokenType: "Bearer",
+            expiresIn: 300,
+          });
         if (path.endsWith("/sso-start")) {
           hub.starts.push(body);
           return Response.json(web.ssoStartResponse);

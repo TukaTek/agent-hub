@@ -74,9 +74,11 @@ export function hubAuthFromEnv(
   let sso: HubServiceCredential | undefined;
   if (ssoEnabled) {
     if (!tenantId) throw new Error("HUB_SSO_ENABLED requires HUB_AUTH_TENANT_ID");
+    if (tenantId.length > 256) throw new Error("HUB_AUTH_TENANT_ID must be at most 256 characters");
     if (!deploymentId) throw new Error("HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID");
     const apiId = source.HUB_SERVICE_API_ID?.trim();
     if (!apiId) throw new Error("HUB_SSO_ENABLED requires HUB_SERVICE_API_ID");
+    if (apiId.length > 256) throw new Error("HUB_SERVICE_API_ID must be at most 256 characters");
     const secretFile = source.HUB_SERVICE_SECRET_FILE?.trim();
     if (!secretFile) throw new Error("HUB_SSO_ENABLED requires HUB_SERVICE_SECRET_FILE");
     let secret: string;
@@ -86,6 +88,8 @@ export function hubAuthFromEnv(
       throw new Error("HUB_SERVICE_SECRET_FILE could not be read");
     }
     if (!secret) throw new Error("HUB_SERVICE_SECRET_FILE is empty");
+    if (secret.length > 4096)
+      throw new Error("HUB_SERVICE_SECRET_FILE must hold at most 4096 characters");
     sso = { apiId, secret };
   }
 
@@ -154,8 +158,10 @@ export class HubRequestError extends Error {
     super("Hub access denied");
   }
 }
-/** Renew the cached service token once less than this much lifetime remains. */
-const SERVICE_TOKEN_RENEW_MS = 300_000;
+/** Hub issues 300 s service tokens; renew this long before expiry. */
+const SERVICE_TOKEN_RENEW_MS = 45_000;
+/** Hub accepts `Bearer <token>` with no whitespace, up to 16384 characters. */
+const SERVICE_TOKEN = /^[^\s]{1,16384}$/;
 export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = fetch) {
   async function request(path: string, body?: unknown, accessToken?: string, limit = 64 * 1024) {
     const signal = AbortSignal.timeout(8_000);
@@ -246,21 +252,28 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
   let pendingServiceToken: Promise<string> | undefined;
   async function fetchServiceToken(): Promise<string> {
     const credential = sso();
+    // Hub's schema is strict: any other field is rejected as invalid_request.
     const reply = await request("/api/agent-hub/service-token", {
       apiId: credential.apiId,
       secret: credential.secret,
       tenantId: config.tenantId,
-      product: PRODUCT,
     });
-    const value = text(reply.accessToken ?? reply.token);
-    const expiresAt =
-      typeof reply.expiresIn === "number" && reply.expiresIn > 0
-        ? Date.now() + reply.expiresIn * 1000
-        : expiry(reply.expiresAt).getTime();
-    serviceToken = { value, expiresAt };
+    const value = reply.token;
+    if (
+      reply.tokenType !== "Bearer" ||
+      typeof value !== "string" ||
+      !SERVICE_TOKEN.test(value) ||
+      typeof reply.expiresIn !== "number" ||
+      !(reply.expiresIn > 0)
+    )
+      throw new Error("Invalid Hub response");
+    serviceToken = { value, expiresAt: Date.now() + reply.expiresIn * 1000 };
     return value;
   }
-  /** Cached per process; concurrent callers share one in-flight request. */
+  /**
+   * The client serves one pinned tenant, so this cache is per tenant. Concurrent
+   * callers share one in-flight renewal to stay under Hub's per-credential limit.
+   */
   function currentServiceToken(): Promise<string> {
     if (serviceToken && serviceToken.expiresAt - Date.now() > SERVICE_TOKEN_RENEW_MS)
       return Promise.resolve(serviceToken.value);
@@ -275,10 +288,16 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     return config.sso;
   }
   async function serviceRequest(path: string, body: Record<string, unknown>) {
+    const token = await currentServiceToken();
     try {
-      return await request(path, body, await currentServiceToken());
+      return await request(path, body, token);
     } catch (error) {
-      if (error instanceof HubRequestError && error.code === "invalid_service_token")
+      // Keep a token another caller already renewed; drop only the rejected one.
+      if (
+        error instanceof HubRequestError &&
+        error.code === "invalid_service_token" &&
+        serviceToken?.value === token
+      )
         serviceToken = undefined;
       throw error;
     }

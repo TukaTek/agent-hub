@@ -30,13 +30,19 @@
     "serviceTokenRequest": {
       "apiId": "fixture-api-id",
       "secret": "synthetic-service-secret",
-      "tenantId": "fixture-tenant",
-      "product": "cortexai-agent-hub"
+      "tenantId": "fixture-tenant"
     },
     "serviceTokenResponse": {
-      "accessToken": "synthetic-service-token",
-      "expiresAt": "2030-01-01T00:15:00.000Z"
+      "token": "synthetic.service-token.not-a-jwt",
+      "tokenType": "Bearer",
+      "expiresIn": 300
     },
+    "serviceTokenErrors": [
+      { "status": 400, "error": "invalid_request" },
+      { "status": 401, "error": "invalid_credentials" },
+      { "status": 429 },
+      { "status": 503, "error": "configuration_unavailable" }
+    ],
     "callbackErrors": ["sso_expired", "sso_failed"]
   },
   "lookupRequest": { "email": "user@example.test" },

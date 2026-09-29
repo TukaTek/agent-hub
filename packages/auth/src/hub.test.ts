@@ -786,4 +786,57 @@ describe("Hub tenant Entra SSO", () => {
     const output = JSON.stringify([...logged.map(String), ...reasons]);
     for (const secret of secrets) expect(output).not.toContain(secret);
   });
+
+  it("never logs the service secret or tokens while the real client renews and is rejected", async () => {
+    const { createHubClient: realClient } =
+      await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+    const email = "private@example.test";
+    const tokens = ["synthetic.service-token.one", "synthetic.service-token.two"];
+    let issued = 0;
+    const hits: Record<string, number> = {};
+    const hub = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      hits[path] = (hits[path] ?? 0) + 1;
+      const bearer = (init!.headers as Record<string, string>).authorization;
+      if (path === "/api/tenant-auth/lookup")
+        return Response.json({ tenantId: config.tenantId, idpType: "entra" });
+      if (path === "/api/agent-hub/service-token")
+        return Response.json({ token: tokens[issued++], tokenType: "Bearer", expiresIn: 300 });
+      if (path === "/api/tenant-auth/sso-start")
+        return bearer === `Bearer ${tokens[0]}`
+          ? Response.json({ error: "invalid_service_token" }, { status: 401 })
+          : Response.json({ authorizeUrl });
+      if (path === "/api/agent-hub/sso-exchange")
+        return Response.json({ error: "invalid_service_token" }, { status: 401 });
+      throw new Error(`Unexpected Hub request ${path}`);
+    });
+    const reasons: string[] = [];
+    const logged: unknown[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args) => void logged.push(...args)),
+    );
+    let state = "";
+    let location: string | null = null;
+    try {
+      const f = fixture(realClient(ssoConfig, hub as typeof fetch), {
+        sso: true,
+        onHubSsoError: (reason) => reasons.push(reason),
+      });
+      const start = await f.request("/hub/sign-in/continue", "", { email });
+      expect(await start.json()).toEqual({ next: "redirect", url: authorizeUrl });
+      state = /__Host-ah_sso=([^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1] ?? "";
+      const callback = await f.callback(`code=${code}&state=${state}`, `__Host-ah_sso=${state}`);
+      location = callback.headers.get("location");
+      expect(f.data.session).toHaveLength(0);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(location).toBe("https://web.example.test/sign-in?error=sso_failed");
+    expect(hits["/api/tenant-auth/sso-start"]).toBe(2);
+    expect(hits["/api/agent-hub/sso-exchange"]).toBe(1);
+    expect(reasons).toEqual(["callback:exchange:invalid_service_token"]);
+    const output = JSON.stringify([...logged.map(String), ...reasons]);
+    for (const secret of [ssoConfig.sso.secret, ...tokens, code, state, email])
+      expect(output).not.toContain(secret);
+  });
 });

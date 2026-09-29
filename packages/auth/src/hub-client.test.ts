@@ -184,13 +184,9 @@ describe("Hub agent-hub-web SSO contract", () => {
     deploymentId: web.ssoStartRequest.body.deploymentId,
     sso: { apiId: sso.serviceTokenRequest.apiId, secret: sso.serviceTokenRequest.secret },
   };
-  const tokenReply = (seconds: number) => ({
-    ...sso.serviceTokenResponse,
-    expiresAt: new Date(Date.now() + seconds * 1000).toISOString(),
-  });
   function ssoSetup(overrides: Record<string, unknown> = {}) {
     const replies: Record<string, unknown> = {
-      "service-token": tokenReply(900),
+      "service-token": sso.serviceTokenResponse,
       "sso-start": web.ssoStartResponse,
       "sso-exchange": web.exchangeResponse,
       session: {
@@ -206,7 +202,7 @@ describe("Hub agent-hub-web SSO contract", () => {
       expect(options.redirect).toBe("error");
       const value = replies[new URL(String(url)).pathname.split("/").at(-1)!];
       return typeof value === "function"
-        ? value()
+        ? value(options)
         : value instanceof Response
           ? value.clone()
           : Response.json(value);
@@ -230,7 +226,7 @@ describe("Hub agent-hub-web SSO contract", () => {
     const [startUrl, startInit] = calls("sso-start")[0]!;
     expect(new URL(String(startUrl)).pathname).toBe(fixture.endpoints.ssoStart);
     expect(JSON.parse(startInit.body)).toEqual(body);
-    expect(startInit.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.accessToken}`);
+    expect(startInit.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.token}`);
   });
 
   it("exchanges with Hub's published request shape and returns the native grant", async () => {
@@ -247,7 +243,7 @@ describe("Hub agent-hub-web SSO contract", () => {
     const [url, init] = calls("sso-exchange")[0]!;
     expect(new URL(String(url)).pathname).toBe(fixture.endpoints.ssoExchange);
     expect(JSON.parse(init.body)).toEqual(body);
-    expect(init.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.accessToken}`);
+    expect(init.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.token}`);
     expect(new URL(redirectUri).pathname).toBe(`${web.callbackPath}`);
     expect(sso.callbackPath).toBe(web.callbackPath);
     expect(sso.returnChannel).toBe(web.returnChannel);
@@ -339,7 +335,7 @@ describe("Hub agent-hub-web SSO contract", () => {
     expect(calls("service-token")).toHaveLength(2);
   });
 
-  it("caches the service token and renews it once under five minutes remain", async () => {
+  it("caches Hub's 300 s service token and renews it 45 s before expiry", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const { client, calls } = ssoSetup();
@@ -349,26 +345,105 @@ describe("Hub agent-hub-web SSO contract", () => {
         client.ssoStart(body.email, body.state, body.codeChallenge),
       ]);
       expect(calls("service-token")).toHaveLength(1);
-      vi.setSystemTime(Date.now() + 599_000);
+      vi.setSystemTime(Date.now() + 254_000);
       await client.ssoStart(body.email, body.state, body.codeChallenge);
       expect(calls("service-token")).toHaveLength(1);
       vi.setSystemTime(Date.now() + 2_000);
-      await client.ssoStart(body.email, body.state, body.codeChallenge);
+      await Promise.all([
+        client.ssoStart(body.email, body.state, body.codeChallenge),
+        client.ssoStart(body.email, body.state, body.codeChallenge),
+      ]);
       expect(calls("service-token")).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("accepts a service token with expiresIn seconds", async () => {
+  it("renews once when concurrent starts are rejected with the same token", async () => {
+    let issued = 0;
     const { client, calls } = ssoSetup({
-      "service-token": { accessToken: "synthetic-service-token", expiresIn: 900 },
+      "service-token": () =>
+        Response.json({ ...sso.serviceTokenResponse, token: `synthetic-token-${++issued}` }),
+      "sso-start": (init: RequestInit) =>
+        (init.headers as Record<string, string>).authorization === "Bearer synthetic-token-1"
+          ? Response.json({ error: "invalid_service_token" }, { status: 401 })
+          : Response.json(web.ssoStartResponse),
     });
     const body = web.ssoStartRequest.body;
-    await client.ssoStart(body.email, body.state, body.codeChallenge);
-    await client.ssoStart(body.email, body.state, body.codeChallenge);
-    expect(calls("service-token")).toHaveLength(1);
+    await expect(
+      Promise.all([
+        client.ssoStart(body.email, body.state, body.codeChallenge),
+        client.ssoStart(body.email, body.state, body.codeChallenge),
+      ]),
+    ).resolves.toEqual([web.ssoStartResponse.authorizeUrl, web.ssoStartResponse.authorizeUrl]);
+    expect(calls("service-token")).toHaveLength(2);
+    expect(calls("sso-start")).toHaveLength(4);
   });
+
+  it("keeps a renewed token when a slower request is rejected with the old one", async () => {
+    let issued = 0;
+    let releaseSlow!: () => void;
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    let starts = 0;
+    const { client, calls } = ssoSetup({
+      "service-token": () =>
+        Response.json({ ...sso.serviceTokenResponse, token: `synthetic-token-${++issued}` }),
+      "sso-start": async (init: RequestInit) => {
+        const call = ++starts;
+        if ((init.headers as Record<string, string>).authorization !== "Bearer synthetic-token-1")
+          return Response.json(web.ssoStartResponse);
+        if (call === 1) await slow;
+        return Response.json({ error: "invalid_service_token" }, { status: 401 });
+      },
+    });
+    const body = web.ssoStartRequest.body;
+    const slowStart = client.ssoStart(body.email, body.state, body.codeChallenge);
+    await vi.waitFor(() => expect(starts).toBe(1));
+    await client.ssoStart(body.email, body.state, body.codeChallenge);
+    expect(calls("service-token")).toHaveLength(2);
+    releaseSlow();
+    await expect(slowStart).resolves.toBe(web.ssoStartResponse.authorizeUrl);
+    await client.ssoStart(body.email, body.state, body.codeChallenge);
+    expect(calls("service-token")).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "an access_token-style field",
+      { accessToken: "synthetic-token", tokenType: "Bearer", expiresIn: 300 },
+    ],
+    ["snake_case expires_in", { token: "synthetic-token", tokenType: "Bearer", expires_in: 300 }],
+    ["another token type", { ...fixture.sso.serviceTokenResponse, tokenType: "DPoP" }],
+    ["whitespace in the token", { ...fixture.sso.serviceTokenResponse, token: "synthetic token" }],
+    ["an oversized token", { ...fixture.sso.serviceTokenResponse, token: "t".repeat(16385) }],
+    ["a non-positive lifetime", { ...fixture.sso.serviceTokenResponse, expiresIn: 0 }],
+  ])("refuses a service-token reply with %s", async (_case, reply) => {
+    const { client, calls } = ssoSetup({ "service-token": reply });
+    const body = web.ssoStartRequest.body;
+    await expect(client.ssoStart(body.email, body.state, body.codeChallenge)).rejects.toThrow(
+      "Invalid Hub response",
+    );
+    expect(calls("sso-start")).toHaveLength(0);
+  });
+
+  it.each(fixture.sso.serviceTokenErrors)(
+    "surfaces service-token $status $error without calling start or retrying",
+    async ({ status, error }) => {
+      const { client, calls } = ssoSetup({
+        "service-token": Response.json(error ? { error } : {}, { status }),
+      });
+      const body = web.ssoStartRequest.body;
+      const failure = await client
+        .ssoStart(body.email, body.state, body.codeChallenge)
+        .catch((caught: unknown) => caught);
+      expect(failure).toMatchObject({ status, code: error });
+      expect(String(failure)).not.toContain(config.sso.secret);
+      expect(calls("service-token")).toHaveLength(1);
+      expect(calls("sso-start")).toHaveLength(0);
+    },
+  );
 
   it("never puts the service secret in an error when the token request fails", async () => {
     const { client } = ssoSetup({
@@ -481,6 +556,8 @@ describe("Hub SSO configuration", () => {
     ["HUB_SERVICE_API_ID", " ", "HUB_SSO_ENABLED requires HUB_SERVICE_API_ID"],
     ["HUB_SERVICE_SECRET_FILE", undefined, "HUB_SSO_ENABLED requires HUB_SERVICE_SECRET_FILE"],
     ["HUB_SSO_ENABLED", "yes", "HUB_SSO_ENABLED must be true or false"],
+    ["HUB_AUTH_TENANT_ID", "t".repeat(257), "HUB_AUTH_TENANT_ID must be at most 256 characters"],
+    ["HUB_SERVICE_API_ID", "a".repeat(257), "HUB_SERVICE_API_ID must be at most 256 characters"],
   ])("refuses to start when %s is %s", (key, value, message) => {
     const env: NodeJS.ProcessEnv = { ...base, [key]: value };
     if (value === undefined) delete env[key];
@@ -498,5 +575,14 @@ describe("Hub SSO configuration", () => {
     expect(() => hubAuthFromEnv(base, { readSecretFile: () => " \n" })).toThrow(
       "HUB_SERVICE_SECRET_FILE is empty",
     );
+    const oversized = "s".repeat(4097);
+    const failure = (() => {
+      try {
+        hubAuthFromEnv(base, { readSecretFile: () => oversized });
+      } catch (error) {
+        return String(error);
+      }
+    })();
+    expect(failure).toBe("Error: HUB_SERVICE_SECRET_FILE must hold at most 4096 characters");
   });
 });
