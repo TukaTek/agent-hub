@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createHubClient, HubUnsupportedIdpError, hubUserId } from "./hub-client.js";
+import {
+  createHubClient,
+  HubRequestError,
+  HubUnsupportedIdpError,
+  hubUserId,
+} from "./hub-client.js";
 import { createUserWorkAuthorizer } from "./hub-sessions.js";
 import { createAuth } from "./index.js";
 
@@ -29,7 +35,16 @@ const config = {
 };
 const encryptionKey = "offline-encryption-key-not-a-real-secret";
 const userId = hubUserId(config.origin, config.tenantId, "subject-1");
-function fixture(hubClient?: ReturnType<typeof createHubClient>) {
+const ssoConfig = {
+  ...config,
+  deploymentId: "11111111-1111-4111-8111-111111111111",
+  sso: { apiId: "fixture-api-id", secret: "service-secret-not-real" },
+};
+const authorizeUrl = "https://login.microsoftonline.com/synthetic-tenant/oauth2/v2.0/authorize";
+function fixture(
+  hubClient?: ReturnType<typeof createHubClient>,
+  options: { sso?: boolean; onHubSsoError?: (reason: string) => void } = {},
+) {
   const data: Record<string, any[]> = { user: [], account: [], session: [], verification: [] };
   const identities = new Map<string, any>();
   const grants = new Map<string, any>();
@@ -55,6 +70,10 @@ function fixture(hubClient?: ReturnType<typeof createHubClient>) {
     })),
     verify: vi.fn(async () => undefined),
     revoke: vi.fn(async () => undefined),
+    ssoStart: vi.fn(
+      async (_email: string, _state: string, _challenge: string): Promise<string> => authorizeUrl,
+    ),
+    ssoExchange: vi.fn(async (_code: string, _verifier: string, _redirectUri: string) => grant),
   };
   vi.mocked(createHubClient).mockReturnValue(hubClient ?? client);
   let transaction = Promise.resolve();
@@ -106,21 +125,35 @@ function fixture(hubClient?: ReturnType<typeof createHubClient>) {
       },
     },
     spaceMember: { findFirst: async () => ({ spaceId: "space-1" }) },
+    verification: {
+      create: async ({ data: row }: any) => {
+        data.verification!.push(row);
+        return row;
+      },
+      findUnique: async ({ where }: any) => data.verification!.find((row) => row.id === where.id),
+      deleteMany: async ({ where }: any) => {
+        const before = data.verification!.length;
+        data.verification = data.verification!.filter((row) => row.id !== where.id);
+        return { count: before - data.verification.length };
+      },
+    },
   };
+  const web = options.sso ? "https://web.example.test" : "http://web.example.test";
   const auth = createAuth(prisma, {
     secret: "offline-auth-secret-at-least-32-characters",
     tokenEncryptionKey: encryptionKey,
-    baseURL: "http://web.example.test",
-    webOrigin: "http://web.example.test",
-    hub: config,
+    baseURL: web,
+    webOrigin: web,
+    hub: options.sso ? ssoConfig : config,
     signupsEnabled: "true",
     signupAllowlist: "",
+    onHubSsoError: options.onHubSsoError,
   });
   const request = (path: string, cookie = "", body?: unknown) =>
     auth.handler(
-      new Request(`http://web.example.test/api/auth${path}`, {
+      new Request(`${web}/api/auth${path}`, {
         method: body ? "POST" : "GET",
-        headers: { cookie, origin: "http://web.example.test", "content-type": "application/json" },
+        headers: { cookie, origin: web, "content-type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );
@@ -135,7 +168,16 @@ function fixture(hubClient?: ReturnType<typeof createHubClient>) {
     const headers = new Headers({ authorization: `Bearer ${token}` });
     return { response, headers };
   }
-  return { auth, request, login, data, identities, grants, client, prisma };
+  /** Continue as an Entra user and return what the browser would hold. */
+  async function startSso(email = "entra@example.test") {
+    client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+    const response = await request("/hub/sign-in/continue", "", { email });
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    const state = /__Host-ah_sso=([^;]+)/.exec(setCookie)?.[1] ?? "";
+    return { response, setCookie, state, cookie: `__Host-ah_sso=${state}` };
+  }
+  const callback = (query: string, cookie = "") => request(`/hub/sso/callback?${query}`, cookie);
+  return { auth, request, login, startSso, callback, data, identities, grants, client, prisma };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -451,5 +493,278 @@ describe("Hub authentication through real auth endpoints", () => {
           .status,
       ).toBe(403);
     }
+  });
+});
+
+describe("Hub tenant Entra SSO", () => {
+  const code = "c".repeat(43);
+  const redirectUri = "https://web.example.test/api/auth/hub/sso/callback";
+
+  it("keeps today's routing when SSO is off", async () => {
+    const f = fixture();
+    const { response } = await f.startSso();
+    expect(await response.json()).toEqual({ next: "sso_unavailable" });
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(f.client.ssoStart).not.toHaveBeenCalled();
+    expect((await f.callback(`code=${code}&state=${"s".repeat(43)}`)).status).toBe(404);
+  });
+
+  it("sends an Entra user to Hub with server-side state and an S256 challenge", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { response, setCookie, state } = await f.startSso();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.text();
+    expect(JSON.parse(body)).toEqual({ next: "redirect", url: authorizeUrl });
+    expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(setCookie).toMatch(/HttpOnly/i);
+    expect(setCookie).toMatch(/Secure/i);
+    expect(setCookie).toMatch(/SameSite=Lax/i);
+    expect(setCookie).toMatch(/Path=\//);
+    expect(setCookie).toMatch(/Max-Age=600/);
+    expect(setCookie).not.toMatch(/Domain=/i);
+    const [email, sentState, challenge] = f.client.ssoStart.mock.calls[0]!;
+    expect(email).toBe("entra@example.test");
+    expect(sentState).toBe(state);
+    const [row] = f.data.verification!;
+    expect(row.id).toBe(`hub-sso:${createHash("sha256").update(state).digest("hex")}`);
+    expect(row.value).not.toContain(state);
+    expect(row.expiresAt.getTime() - Date.now()).toBeGreaterThan(9 * 60_000);
+    const verifier = await symmetricDecrypt({ key: encryptionKey, data: row.value });
+    expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(challenge).toBe(createHash("sha256").update(verifier).digest("base64url"));
+    expect(body).not.toContain(state);
+    expect(body).not.toContain(verifier);
+    expect(setCookie).not.toContain(verifier);
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("shows the password step to native and Always Native users when SSO is on", async () => {
+    const f = fixture(undefined, { sso: true });
+    const native = await f.request("/hub/sign-in/continue", "", { email: "user@example.test" });
+    expect(await native.json()).toEqual({ next: "password" });
+    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+    f.client.ssoStart.mockRejectedValue(new HubRequestError(400, "user_always_native"));
+    const alwaysNative = await f.request("/hub/sign-in/continue", "", {
+      email: "admin@example.test",
+    });
+    expect(await alwaysNative.json()).toEqual({ next: "password" });
+    expect(alwaysNative.headers.get("set-cookie")).toBeNull();
+    expect(f.data.verification).toHaveLength(0);
+    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "native" });
+    await f.login();
+  });
+
+  it.each([
+    ["email outside known Hub domains", new Error("Hub access denied")],
+    ["other-tenant email", new Error("Hub access denied")],
+    ["lookup timeout", new DOMException("The operation timed out.", "TimeoutError")],
+  ])("answers a %s exactly like a native user when SSO is on", async (_case, failure) => {
+    const f = fixture(undefined, { sso: true });
+    const snapshot = async (response: Response) => ({
+      status: response.status,
+      cookie: response.headers.get("set-cookie"),
+      cacheControl: response.headers.get("cache-control"),
+      body: await response.text(),
+    });
+    const native = await snapshot(
+      await f.request("/hub/sign-in/continue", "", { email: "user@example.test" }),
+    );
+    f.client.lookup.mockRejectedValue(failure);
+    const hidden = await snapshot(
+      await f.request("/hub/sign-in/continue", "", { email: "someone@example.test" }),
+    );
+    expect(hidden).toEqual(native);
+    expect(f.client.ssoStart).not.toHaveBeenCalled();
+  });
+
+  it("fails Continue without a cookie or pending row when Hub cannot start", async () => {
+    const f = fixture(undefined, { sso: true });
+    f.client.ssoStart.mockRejectedValue(new HubRequestError(404, "agent_hub_not_registered"));
+    const { response } = await f.startSso();
+    expect(response.status).toBe(502);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(f.data.verification).toHaveLength(0);
+  });
+
+  it("signs the Entra user into the same hub_ row as password sign-in", async () => {
+    const f = fixture(undefined, { sso: true });
+    await f.login();
+    const passwordRow = { ...f.data.user![0] };
+    const { state, cookie } = await f.startSso();
+    const verifier = await symmetricDecrypt({
+      key: encryptionKey,
+      data: f.data.verification![0].value,
+    });
+    const response = await f.callback(`code=${code}&state=${state}`, cookie);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://web.example.test/app");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((value) => /^__Host-ah_sso=;.*Max-Age=0/i.test(value))).toBe(true);
+    expect(cookies.some((value) => value.includes("better-auth.session_token="))).toBe(true);
+    expect(f.client.ssoExchange).toHaveBeenCalledExactlyOnceWith(code, verifier, redirectUri);
+    expect(f.data.user).toHaveLength(1);
+    expect(f.data.user![0]).toEqual(passwordRow);
+    expect(f.data.user![0]!.id).toBe(userId);
+    expect(f.data.session).toHaveLength(2);
+    expect(f.data.verification).toHaveLength(0);
+    const token = f.data.session![1]!.token;
+    const session = await f.auth.api.getSession({
+      headers: new Headers({ authorization: `Bearer ${token}` }),
+    });
+    expect(session?.user.id).toBe(userId);
+    expect(f.grants.size).toBe(2);
+  });
+
+  it("creates a fresh session instead of reusing one the browser already holds", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { headers } = await f.login();
+    const existing = f.data.session![0]!.token;
+    const { state, cookie } = await f.startSso();
+    const response = await f.callback(
+      `code=${code}&state=${state}`,
+      `${cookie}; __Secure-better-auth.session_token=${existing}`,
+    );
+    expect(response.status).toBe(302);
+    expect(f.data.session).toHaveLength(2);
+    expect(f.data.session![1]!.token).not.toBe(existing);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  });
+
+  async function expectRejected(
+    f: ReturnType<typeof fixture>,
+    response: Response,
+    error: "sso_expired" | "sso_failed",
+  ) {
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      `https://web.example.test/sign-in?error=${error}`,
+    );
+    expect(response.headers.get("set-cookie")).toMatch(/__Host-ah_sso=;.*Max-Age=0/i);
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+  }
+
+  it("rejects a callback without the browser's state cookie (login CSRF)", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { state } = await f.startSso();
+    await expectRejected(f, await f.callback(`code=${code}&state=${state}`), "sso_expired");
+    expect(f.client.ssoExchange).not.toHaveBeenCalled();
+    expect(f.data.verification).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing state", (_state: string) => `code=${code}`],
+    ["missing code", (state: string) => `state=${state}`],
+    ["mismatched state", (_state: string) => `code=${code}&state=${"x".repeat(43)}`],
+    ["malformed state", (_state: string) => `code=${code}&state=${"x".repeat(10)}`],
+  ])("rejects a callback with %s", async (_case, query) => {
+    const f = fixture(undefined, { sso: true });
+    const { state, cookie } = await f.startSso();
+    await expectRejected(f, await f.callback(query(state), cookie), "sso_expired");
+    expect(f.client.ssoExchange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a state whose server row is unknown or expired", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { state, cookie } = await f.startSso();
+    f.data.verification![0].expiresAt = new Date(Date.now() - 1);
+    await expectRejected(f, await f.callback(`code=${code}&state=${state}`, cookie), "sso_expired");
+    expect(f.data.verification).toHaveLength(0);
+    const forged = "f".repeat(43);
+    await expectRejected(
+      f,
+      await f.callback(`code=${code}&state=${forged}`, `__Host-ah_sso=${forged}`),
+      "sso_expired",
+    );
+    expect(f.client.ssoExchange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replayed callback URL without a second exchange", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { state, cookie } = await f.startSso();
+    const url = `code=${code}&state=${state}`;
+    expect((await f.callback(url, cookie)).status).toBe(302);
+    expect(f.data.session).toHaveLength(1);
+    const replay = await f.callback(url, cookie);
+    expect(replay.headers.get("location")).toBe(
+      "https://web.example.test/sign-in?error=sso_expired",
+    );
+    expect(f.client.ssoExchange).toHaveBeenCalledOnce();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it.each([
+    ["Hub exchange 400", new HubRequestError(400, "invalid_verifier")],
+    ["Hub exchange 401", new HubRequestError(401, "invalid_code")],
+    ["user without Agent Hub assigned", new HubRequestError(403, "access_denied")],
+    ["tenant-B user on a tenant-A deployment", new HubRequestError(403, "tenant_mismatch")],
+    ["entitlement removed before verification", new Error("Hub access denied")],
+  ])("fails closed on %s without retrying the code", async (_case, failure) => {
+    const f = fixture(undefined, { sso: true });
+    f.client.ssoExchange.mockRejectedValue(failure);
+    const { state, cookie } = await f.startSso();
+    await expectRejected(f, await f.callback(`code=${code}&state=${state}`, cookie), "sso_failed");
+    expect(f.client.ssoExchange).toHaveBeenCalledOnce();
+    expect(f.data.verification).toHaveLength(0);
+  });
+
+  it("still refuses session creation outside the Hub sign-in paths", async () => {
+    const f = fixture(undefined, { sso: true });
+    await f.login();
+    const context = await f.auth.$context;
+    await expect(context.internalAdapter.createSession(userId)).rejects.toThrow(
+      "Sign in through CortexAI Hub",
+    );
+    for (const path of ["/sign-in/email", "/sign-in/social", "/sign-up/email"]) {
+      expect(
+        (await f.request(path, "", { email: "user@example.test", password: "test-password" }))
+          .status,
+      ).toBe(403);
+    }
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("never logs the code, state, verifier, tokens, email or service secret", async () => {
+    const reasons: string[] = [];
+    const logged: unknown[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args) => void logged.push(...args)),
+    );
+    let secrets: string[] = [];
+    try {
+      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+      const { state, cookie } = await f.startSso("private@example.test");
+      const verifier = await symmetricDecrypt({
+        key: encryptionKey,
+        data: f.data.verification![0].value,
+      });
+      await f.callback(`code=${code}&state=${state}`, cookie);
+      await f.callback(`code=${code}&state=${state}`, cookie);
+      f.client.ssoExchange.mockRejectedValueOnce(new HubRequestError(400, "invalid_verifier"));
+      const second = await f.startSso("private@example.test");
+      await f.callback(`code=${code}&state=${second.state}`, second.cookie);
+      f.client.ssoStart.mockRejectedValueOnce(new HubRequestError(401, "invalid_service_token"));
+      await f.startSso("private@example.test");
+      secrets = [
+        code,
+        state,
+        second.state,
+        verifier,
+        "private@example.test",
+        "access-secret-1",
+        "refresh-secret-1",
+        ssoConfig.sso.secret,
+      ];
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(reasons).toEqual([
+      "callback:state_unknown",
+      "callback:exchange:invalid_verifier",
+      "start:invalid_service_token",
+    ]);
+    const output = JSON.stringify([...logged.map(String), ...reasons]);
+    for (const secret of secrets) expect(output).not.toContain(secret);
   });
 });

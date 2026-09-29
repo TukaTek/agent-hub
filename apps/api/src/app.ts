@@ -341,6 +341,7 @@ export async function createApp(
     signupAllowlist: env.signupAllowlist,
     email,
     onEmailError: (error) => getLogger().error("transactional email delivery failed", error),
+    onHubSsoError: (reason) => getLogger().warn("hub.sso.failed", { "hub.sso.reason": reason }),
     extraOrigins: [
       "cortexai-agent-hub://",
       "exp://",
@@ -529,6 +530,7 @@ export async function createApp(
   app.get("/api/auth/capabilities", (c) =>
     c.json({
       mode: env.hubAuth ? "hub" : "local",
+      sso: Boolean(env.hubAuth?.sso),
       passwordReset: !env.hubAuth && Boolean(email),
       resetUrl: !env.hubAuth && email ? new URL("/reset-password", env.webOrigin).href : null,
     }),

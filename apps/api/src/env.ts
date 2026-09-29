@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   resolveCloudAgentProvider,
   resolveDeploymentModel,
@@ -105,7 +106,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const updaterUrl = optional(source.CORTEXAI_AGENT_HUB_UPDATER_URL);
   const updaterToken = optional(source.CORTEXAI_AGENT_HUB_UPDATER_TOKEN);
   return {
-    hubAuth: hubAuthFromEnv(source),
+    hubAuth: hubAuthFromEnv(source, { readSecretFile: (path) => readFileSync(path, "utf8") }),
     nodeEnv: source.NODE_ENV ?? "",
     databaseUrl: required(source, "DATABASE_URL"),
     realtimeDatabaseUrl: source.REALTIME_DATABASE_URL ?? required(source, "DATABASE_URL"),

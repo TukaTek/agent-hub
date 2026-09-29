@@ -16,7 +16,12 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, organization } from "better-auth/plugins";
-import { createHubAuth, localSignInPlugin, rejectHubAccountMutation } from "./hub.js";
+import {
+  createHubAuth,
+  HUB_SESSION_PATHS,
+  localSignInPlugin,
+  rejectHubAccountMutation,
+} from "./hub.js";
 import type { HubAuthConfig } from "./hub-client.js";
 
 export { type HubAuthConfig, hubAuthFromEnv } from "./hub-client.js";
@@ -38,6 +43,8 @@ export interface AuthEnv {
   beforeDeleteUser?: (userId: string) => Promise<void>;
   hub?: HubAuthConfig;
   tokenEncryptionKey?: string;
+  /** Fixed Hub SSO failure reasons for operator logs; never carries secrets or email. */
+  onHubSsoError?: (reason: string) => void;
 }
 
 export async function resolveSignupPolicy(
@@ -402,7 +409,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
             // The auth adapter can still be inside the signup transaction.
             const user = await ctx?.context.internalAdapter.findUserById(session.userId);
             if (hub) {
-              if (ctx?.path !== "/hub/sign-in" || !user?.id.startsWith("hub_")) {
+              if (!HUB_SESSION_PATHS.includes(ctx?.path ?? "") || !user?.id.startsWith("hub_")) {
                 throw new APIError("FORBIDDEN", { message: "Sign in through CortexAI Hub" });
               }
               return;

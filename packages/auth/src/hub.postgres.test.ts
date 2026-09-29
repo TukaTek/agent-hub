@@ -139,6 +139,8 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
       lookup: vi.fn(async () => ({ tenant: config.tenantId, idpType: "native" as const })),
       verify: vi.fn(async () => undefined),
       revoke: vi.fn(async () => undefined),
+      ssoStart: vi.fn(async () => "https://login.example.test/authorize"),
+      ssoExchange: refresh,
     };
     try {
       await db.prisma.user.create({
