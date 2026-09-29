@@ -1,14 +1,19 @@
-import { readBoundedJsonResponse, signupRequiresEmailVerification } from "@cortexai-agent-hub/core";
+import {
+  readBoundedJsonResponse,
+  type SignInContinueResponse,
+  signupRequiresEmailVerification,
+} from "@cortexai-agent-hub/core";
 import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { Eye, EyeOff } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth";
 import { clearSpaceSelection } from "../lib/rpc";
 import { WelcomePage } from "./Welcome";
 
 type AuthMode = "in" | "up" | "forgot";
+type SignInStep = "email" | SignInContinueResponse["next"];
 type PasswordResetCapabilities = {
   passwordReset: boolean;
   resetUrl: string | null;
@@ -38,6 +43,12 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
   const mode = reset?.mode === "hub" || requestedMode === "entry" ? "in" : requestedMode;
   const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
+  const [step, setStep] = useState<SignInStep>("email");
+  const signInStep = mode === "in" ? step : null;
+  const signInUnavailable =
+    signInStep === "sso_unavailable" || signInStep === "other_sso_unavailable";
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
   const title = sent ? (
     <Trans>Check your email</Trans>
@@ -78,11 +89,44 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     };
   }, [mode]);
 
+  useEffect(() => {
+    if (signInStep === "password") passwordRef.current?.focus();
+  }, [signInStep]);
+
+  function changeEmail() {
+    setStep("email");
+    setPassword("");
+    setShowPassword(false);
+    setError(null);
+    emailRef.current?.focus();
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (signInUnavailable) return;
     setPending(true);
     setError(null);
     try {
+      if (signInStep === "email") {
+        const response = await fetch("/api/auth/hub/sign-in/continue", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const next = response.ok
+          ? (
+              await readBoundedJsonResponse<SignInContinueResponse>(
+                response,
+                MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+              )
+            ).next
+          : undefined;
+        if (next === "password" || next === "sso_unavailable" || next === "other_sso_unavailable")
+          setStep(next);
+        else setError(t`Could not continue`);
+        return;
+      }
       if (reset?.mode === "hub") {
         const response = await fetch("/api/auth/hub/sign-in", {
           method: "POST",
@@ -204,6 +248,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               <Trans>Email</Trans>
             </Label>
             <Input
+              ref={emailRef}
               id="email"
               name="email"
               autoComplete="username"
@@ -212,16 +257,50 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               placeholder={t`Your email address`}
               type="email"
               required
+              readOnly={
+                signInUnavailable ||
+                signInStep === "password" ||
+                (signInStep === "email" && pending)
+              }
               className={fieldClass}
             />
+            {signInStep === "password" || signInUnavailable ? (
+              <div className="mt-2 text-right text-sm">
+                <Button
+                  type="button"
+                  variant="link"
+                  onClick={changeEmail}
+                  className="h-auto p-0 font-medium text-foreground"
+                >
+                  <Trans>Use a different email</Trans>
+                </Button>
+              </div>
+            ) : null}
           </div>
-          {mode !== "forgot" ? (
+          {signInStep === "sso_unavailable" ? (
+            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+              <Trans>
+                Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your
+                admin to enable password sign-in for your account.
+              </Trans>
+            </p>
+          ) : null}
+          {signInStep === "other_sso_unavailable" ? (
+            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+              <Trans>
+                Single sign-on for your organization isn't available in Agent Hub yet. Ask your
+                admin to enable password sign-in for your account.
+              </Trans>
+            </p>
+          ) : null}
+          {mode !== "forgot" && (signInStep === null || signInStep === "password") ? (
             <div className="mt-4 w-full">
               <Label htmlFor={passwordFieldId} className="text-muted-foreground">
                 <Trans>Password</Trans>
               </Label>
               <div className="relative">
                 <Input
+                  ref={passwordRef}
                   id={passwordFieldId}
                   name="password"
                   autoComplete={mode === "in" ? "current-password" : "new-password"}
@@ -259,17 +338,21 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               {error}
             </p>
           ) : null}
-          <Button type="submit" size="lg" disabled={pending} className={submitClass}>
-            {pending ? (
-              <Trans>Working…</Trans>
-            ) : mode === "in" ? (
-              <Trans>Continue with email</Trans>
-            ) : mode === "forgot" ? (
-              <Trans>Send reset link</Trans>
-            ) : (
-              <Trans>Create account</Trans>
-            )}
-          </Button>
+          {signInUnavailable ? null : (
+            <Button type="submit" size="lg" disabled={pending} className={submitClass}>
+              {pending ? (
+                <Trans>Working…</Trans>
+              ) : signInStep === "email" ? (
+                <Trans>Continue</Trans>
+              ) : signInStep === "password" ? (
+                <Trans>Sign in</Trans>
+              ) : mode === "forgot" ? (
+                <Trans>Send reset link</Trans>
+              ) : (
+                <Trans>Create account</Trans>
+              )}
+            </Button>
+          )}
           {reset.mode !== "hub" ? (
             <p className="mt-8 text-muted-foreground">
               {mode === "in" ? (

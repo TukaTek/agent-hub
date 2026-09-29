@@ -2935,3 +2935,12 @@ msgstr "Inicia sesión en CortexAI Agent Hub"
 #: src/pages/ModelSettingsOverlay.tsx:839
 msgid "This subscription sign-in is not available in CortexAI Agent Hub yet. Use a deployment credential or choose another provider."
 msgstr "Este inicio de sesión por suscripción aún no está disponible en CortexAI Agent Hub. Usa una credencial de despliegue o elige otro proveedor."
+
+msgid "Use a different email"
+msgstr ""
+
+msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
+msgid "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""

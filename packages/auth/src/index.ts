@@ -16,7 +16,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, organization } from "better-auth/plugins";
-import { createHubAuth, rejectHubAccountMutation } from "./hub.js";
+import { createHubAuth, localSignInPlugin, rejectHubAccountMutation } from "./hub.js";
 import type { HubAuthConfig } from "./hub-client.js";
 
 export { type HubAuthConfig, hubAuthFromEnv } from "./hub-client.js";
@@ -297,7 +297,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       },
     },
     plugins: [
-      ...(hub ? [hub.plugin] : []),
+      hub ? hub.plugin : localSignInPlugin,
       bearer(),
       organization({
         allowUserToCreateOrganization: false,

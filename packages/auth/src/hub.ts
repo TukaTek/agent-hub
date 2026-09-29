@@ -1,3 +1,4 @@
+import type { SignInContinueResponse } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 import { APIError, createAuthEndpoint } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
@@ -9,6 +10,51 @@ import {
   hubUserId,
 } from "./hub-client.js";
 import { createHubSessionAuthorizer } from "./hub-sessions.js";
+
+type HubClient = ReturnType<typeof createHubClient>;
+
+function assertTrustedOrigin(ctx: {
+  headers?: Headers;
+  context: { isTrustedOrigin(url: string, settings: { allowRelativePaths: boolean }): boolean };
+}) {
+  const origin = ctx.headers?.get("origin");
+  if (!origin || !ctx.context.isTrustedOrigin(origin, { allowRelativePaths: false })) {
+    throw new APIError("FORBIDDEN", { message: "Invalid sign-in origin" });
+  }
+}
+
+/** Without a Hub client (local auth) every email continues to the password step. */
+function signInContinueEndpoint(client?: Pick<HubClient, "lookup">) {
+  return createAuthEndpoint(
+    "/hub/sign-in/continue",
+    { method: "POST", requireHeaders: true },
+    async (ctx) => {
+      ctx.setHeader("cache-control", "no-store");
+      assertTrustedOrigin(ctx);
+      const body = ctx.body as Record<string, unknown> | undefined;
+      if (typeof body?.email !== "string" || !body.email.trim() || body.email.length > 320) {
+        throw new APIError("BAD_REQUEST", { message: "Email is required" });
+      }
+      let next: SignInContinueResponse["next"] = "password";
+      if (client) {
+        try {
+          const { idpType } = await client.lookup(body.email);
+          if (idpType === "entra") next = "sso_unavailable";
+          if (idpType === "google") next = "other_sso_unavailable";
+        } catch {
+          // Other-tenant, invalid, and failed lookups use the password step. Hub
+          // can resolve unknown emails by domain, so they follow that tenant's IdP.
+        }
+      }
+      return ctx.json({ next } satisfies SignInContinueResponse);
+    },
+  );
+}
+
+export const localSignInPlugin = {
+  id: "cortexai-sign-in",
+  endpoints: { signInContinue: signInContinueEndpoint() },
+};
 
 export function createHubAuth(
   prisma: PrismaClient,
@@ -30,15 +76,13 @@ export function createHubAuth(
   const plugin = {
     id: "cortexai-hub",
     endpoints: {
+      signInContinue: signInContinueEndpoint(client),
       hubSignIn: createAuthEndpoint(
         "/hub/sign-in",
         { method: "POST", requireHeaders: true },
         async (ctx) => {
           ctx.setHeader("cache-control", "no-store");
-          const origin = ctx.headers?.get("origin");
-          if (!origin || !ctx.context.isTrustedOrigin(origin, { allowRelativePaths: false })) {
-            throw new APIError("FORBIDDEN", { message: "Invalid sign-in origin" });
-          }
+          assertTrustedOrigin(ctx);
           const body = ctx.body as Record<string, unknown> | undefined;
           if (
             typeof body?.email !== "string" ||
@@ -135,6 +179,7 @@ export function rejectHubAccountMutation(path: string) {
   if (
     ![
       "/hub/sign-in",
+      "/hub/sign-in/continue",
       "/get-session",
       "/sign-out",
       "/list-sessions",

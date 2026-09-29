@@ -29,7 +29,7 @@ const config = {
 };
 const encryptionKey = "offline-encryption-key-not-a-real-secret";
 const userId = hubUserId(config.origin, config.tenantId, "subject-1");
-function fixture() {
+function fixture(hubClient?: ReturnType<typeof createHubClient>) {
   const data: Record<string, any[]> = { user: [], account: [], session: [], verification: [] };
   const identities = new Map<string, any>();
   const grants = new Map<string, any>();
@@ -41,6 +41,12 @@ function fixture() {
     accessUntil: new Date(Date.now() + 900_000),
   };
   const client = {
+    lookup: vi.fn(
+      async (): Promise<{ tenant: string; idpType: "native" | "entra" | "google" }> => ({
+        tenant: config.tenantId,
+        idpType: "native",
+      }),
+    ),
     login: vi.fn(async () => grant),
     refresh: vi.fn(async () => ({
       ...grant,
@@ -50,7 +56,7 @@ function fixture() {
     verify: vi.fn(async () => undefined),
     revoke: vi.fn(async () => undefined),
   };
-  vi.mocked(createHubClient).mockReturnValue(client);
+  vi.mocked(createHubClient).mockReturnValue(hubClient ?? client);
   let transaction = Promise.resolve();
   const prisma: any = {
     authData: data,
@@ -186,6 +192,175 @@ describe("Hub authentication through real auth endpoints", () => {
     expect(response.status).toBe(403);
     expect(f.client.login).not.toHaveBeenCalled();
   });
+  it("routes Continue to the password step for native and Always Native users", async () => {
+    const f = fixture();
+    const response = await f.request("/hub/sign-in/continue", "", { email: "user@example.test" });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ next: "password" });
+    expect(f.client.lookup).toHaveBeenCalledExactlyOnceWith("user@example.test");
+    expect(f.data.session).toHaveLength(0);
+    await f.login();
+  });
+
+  it("routes Entra users who are not Always Native to sso_unavailable", async () => {
+    const f = fixture();
+    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+    const response = await f.request("/hub/sign-in/continue", "", { email: "entra@example.test" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ next: "sso_unavailable" });
+    expect(f.client.login).not.toHaveBeenCalled();
+  });
+
+  it("uses the domain IdP for an unprovisioned email when Hub resolves its domain", async () => {
+    const f = fixture();
+    f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+    const response = await f.request("/hub/sign-in/continue", "", {
+      email: "unprovisioned@example.test",
+    });
+    expect(await response.json()).toEqual({ next: "sso_unavailable" });
+  });
+
+  it.each([
+    ["native", "password", 200],
+    ["entra", "sso_unavailable", 400],
+    ["google", "other_sso_unavailable", 400],
+  ])(
+    "follows Hub's lookup for a tenant user whose idpType is %s",
+    async (idpType, next, signInStatus) => {
+      const { createHubClient: realHubClient } =
+        await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+      const user = { id: "subject-1", tenantId: config.tenantId, displayName: "Tenant User" };
+      const products = [{ id: "cortexai-agent-hub", enabled: true }];
+      const replies: Record<string, unknown> = {
+        lookup: { tenantId: config.tenantId, tenantName: "Tenant", idpType, tenantSlug: "tenant" },
+        login: {
+          success: true,
+          user,
+          accessToken: "access-secret-1",
+          accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+          refreshToken: "refresh-secret-1",
+          refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          products,
+        },
+        session: { valid: true, userId: user.id, tenantId: user.tenantId },
+        config: { product: "cortexai-agent-hub", products },
+      };
+      const fetcher = vi.fn(async (url: URL | string) =>
+        Response.json(replies[new URL(String(url)).pathname.split("/").at(-1)!]),
+      );
+      const f = fixture(realHubClient(config, fetcher as typeof fetch));
+      const email = "tenant-user@example.test";
+      const routed = await f.request("/hub/sign-in/continue", "", { email });
+      expect(await routed.json()).toEqual({ next });
+      const signIn = await f.request("/hub/sign-in", "", { email, password: "test-password" });
+      expect(signIn.status).toBe(signInStatus);
+      const paths = fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname);
+      if (idpType === "native") {
+        expect(paths).toContain("/api/tenant-auth/login");
+        expect(f.data.user!.map((row) => row.id)).toEqual([userId]);
+        expect(f.data.session).toHaveLength(1);
+      } else {
+        expect(paths).not.toContain("/api/tenant-auth/login");
+        expect(await signIn.json()).toMatchObject({ code: "HUB_IDP_UNSUPPORTED" });
+        expect(f.data.session).toHaveLength(0);
+      }
+    },
+  );
+
+  it("uses the password step when Hub returns an invalid IdP type", async () => {
+    const { createHubClient: realHubClient } =
+      await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+    const fetcher = vi.fn(async () => Response.json({ tenantId: config.tenantId }));
+    const f = fixture(realHubClient(config, fetcher as typeof fetch));
+    const response = await f.request("/hub/sign-in/continue", "", {
+      email: "user@example.test",
+    });
+    expect(await response.json()).toEqual({ next: "password" });
+  });
+
+  it.each([
+    ["email outside known Hub domains", new Error("Hub access denied")],
+    ["other-tenant email", new Error("Hub access denied")],
+    ["lookup timeout", new DOMException("The operation timed out.", "TimeoutError")],
+    ["invalid Hub response", new Error("Invalid Hub response")],
+  ])("answers a %s exactly like a native user", async (_case, failure) => {
+    const f = fixture();
+    const snapshot = async (response: Response) => ({
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      cacheControl: response.headers.get("cache-control"),
+      body: await response.text(),
+    });
+    const native = await snapshot(
+      await f.request("/hub/sign-in/continue", "", { email: "user@example.test" }),
+    );
+    f.client.lookup.mockRejectedValue(failure);
+    const hidden = await snapshot(
+      await f.request("/hub/sign-in/continue", "", { email: "someone@example.test" }),
+    );
+    expect(hidden).toEqual(native);
+    expect(native.body).toBe('{"next":"password"}');
+  });
+
+  it("rejects Continue from untrusted origins or without an email", async () => {
+    const f = fixture();
+    for (const origin of ["https://untrusted.example.test", undefined]) {
+      const response = await f.auth.handler(
+        new Request("http://web.example.test/api/auth/hub/sign-in/continue", {
+          method: "POST",
+          headers: {
+            ...(origin ? { origin } : {}),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ email: "user@example.test" }),
+        }),
+      );
+      expect(response.status).toBe(403);
+    }
+    for (const body of [{}, { email: " " }, { email: `${"a".repeat(320)}@x.test` }]) {
+      expect((await f.request("/hub/sign-in/continue", "", body)).status).toBe(400);
+    }
+    expect(f.client.lookup).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits Continue exactly like password sign-in", async () => {
+    const f = fixture();
+    const context = await f.auth.$context;
+    context.rateLimit.enabled = true;
+    const allowedBeforeLimit = async (path: string) => {
+      for (let count = 0; count < 500; count++) {
+        const response = await f.request(path, "", {});
+        if (response.status === 429) return count;
+      }
+      throw new Error(`${path} was never rate-limited`);
+    };
+    try {
+      const signIn = await allowedBeforeLimit("/hub/sign-in");
+      expect(await allowedBeforeLimit("/hub/sign-in/continue")).toBe(signIn);
+    } finally {
+      context.rateLimit.enabled = false;
+    }
+  });
+
+  it("never logs the submitted email", async () => {
+    const f = fixture();
+    const logged: unknown[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args) => void logged.push(...args)),
+    );
+    try {
+      f.client.lookup.mockRejectedValueOnce(new Error("Hub access denied"));
+      f.client.lookup.mockResolvedValueOnce({ tenant: config.tenantId, idpType: "entra" });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await f.request("/hub/sign-in/continue", "", { email: "private@example.test" });
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(JSON.stringify(logged.map(String))).not.toContain("private@example.test");
+  });
+
   it("removes access before token expiry when Hub denies current entitlement", async () => {
     const f = fixture();
     const { headers } = await f.login();

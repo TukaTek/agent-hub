@@ -4141,3 +4141,12 @@ msgstr "Votre nom"
 #: src/pages/Welcome.tsx:21
 msgid "Your team of always-on agents<0/>that you can give real work to."
 msgstr "Votre équipe d'agents toujours actifs<0/>à qui vous pouvez confier de vrais travaux."
+
+msgid "Use a different email"
+msgstr ""
+
+msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
+msgid "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
