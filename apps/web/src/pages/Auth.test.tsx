@@ -180,6 +180,75 @@ it("explains unavailable non-Microsoft sign-in without naming the wrong provider
   expect(container.querySelector('button[type="submit"]')).toBeNull();
 });
 
+it("sends a Hub SSO user to the authorize URL without a password step", async () => {
+  const authorizeUrl = "https://hub.example.test/authorize?request=fixture";
+  const assign = vi.fn();
+  vi.stubGlobal("location", { ...window.location, origin: window.location.origin, assign });
+  stubServer("hub", { next: "redirect", url: authorizeUrl });
+  await render();
+  await continueWithEmail();
+  await until(() => assign.mock.calls.length > 0);
+  expect(assign).toHaveBeenCalledExactlyOnceWith(authorizeUrl);
+  expect(passwordInput()).toBeNull();
+});
+
+it("refuses a non-HTTPS authorize URL", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { ...window.location, assign });
+  stubServer("hub", { next: "redirect", url: "http://hub.example.test/authorize" });
+  await render();
+  await continueWithEmail();
+  await until(() => container.querySelector('[role="alert"]'));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not continue");
+  expect(assign).not.toHaveBeenCalled();
+});
+
+it("points desktop Microsoft users to the browser instead of redirecting", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { ...window.location, origin: "https://agent-hub.example.test", assign });
+  vi.stubGlobal("cortexAiAgentHubDesktop", {});
+  stubServer("hub", { next: "redirect", url: "https://hub.example.test/authorize" });
+  await render();
+  await continueWithEmail();
+  const message = await until(() => container.querySelector('[role="status"]'));
+  expect(message.textContent).toBe(
+    "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser. https://agent-hub.example.test",
+  );
+  expect(assign).not.toHaveBeenCalled();
+  expect(passwordInput()).toBeNull();
+  expect(container.querySelector('button[type="submit"]')).toBeNull();
+  await click(button("Use a different email"));
+  expect(emailInput().readOnly).toBe(false);
+});
+
+it("keeps desktop password users on the password step", async () => {
+  vi.stubGlobal("cortexAiAgentHubDesktop", {});
+  stubServer("hub");
+  await render();
+  await continueWithEmail();
+  await until(passwordInput);
+});
+
+it.each([
+  ["sso_expired", "Your sign-in expired. Try again."],
+  ["sso_failed", "Microsoft sign-in didn't finish. Try again, or ask your admin for access."],
+])("shows a fixed message for the %s callback error", async (code, message) => {
+  stubServer("hub");
+  await render(`/sign-in?error=${code}`);
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(message);
+  await continueWithEmail();
+  await until(passwordInput);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("ignores unknown callback errors", async () => {
+  stubServer("hub");
+  await render("/sign-in?error=<script>alert(1)</script>");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  await render("/sign-in?error=constructor");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
 it("keeps the email read-only while Continue is pending", async () => {
   stubServer("hub");
   await render();
