@@ -3345,6 +3345,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 remote: deps.secretHttp,
                 registerRedactions: registerRunSecrets,
                 downloads: {
+                  maxBytes: downloads.maxBytes,
                   directory: downloads.directory,
                   publish: (hostPath, filename) => {
                     workspaceCheckpoint.markDirty();

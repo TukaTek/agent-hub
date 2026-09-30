@@ -9,6 +9,7 @@ import {
   isPrivateNetworkHost,
   SecretHttpRequest,
 } from "@cortexai-agent-hub/contracts";
+import { attachmentExtensionForMimeType, inferAttachmentMimeType } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
@@ -27,7 +28,7 @@ function scopeFields({ userId, spaceId, botId }: BotSecretScope): BotSecretScope
   return { userId, spaceId, botId };
 }
 
-function getFileDownloadCap(): number {
+export function getFileDownloadCap(): number {
   const env = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
   if (!env) return 100 * 1024 * 1024;
   const parsed = parseInt(env, 10);
@@ -78,6 +79,7 @@ function safeFilename(raw: string, redact: (text: string) => string): string | u
 function sanitizeFilename(
   disposition: string | null,
   url: URL,
+  contentType: string | null,
   redact: (text: string) => string,
 ): string {
   const fromDisposition =
@@ -87,11 +89,19 @@ function sanitizeFilename(
       ?.slice(1)
       .find(Boolean);
   const fromUrl = redact(url.pathname).split("/").filter(Boolean).pop();
-  return (
+  const name =
     (fromDisposition && safeFilename(fromDisposition, redact)) ||
     (fromUrl && safeFilename(fromUrl, redact)) ||
-    `download-${Date.now()}.bin`
-  );
+    `download-${Date.now()}`;
+  return withContentTypeExtension(name, contentType);
+}
+
+/** Extensionless endpoints like `/forms/<id>/pdf` get the extension attach_file recognizes. */
+function withContentTypeExtension(name: string, contentType: string | null): string {
+  const mimeType = contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  const extension = attachmentExtensionForMimeType(mimeType);
+  if (!extension || inferAttachmentMimeType(name) === mimeType) return name;
+  return `${name.slice(0, 255 - extension.length)}${extension}`;
 }
 
 /** The saved name first, then timestamped variants, so a download never replaces a file. */
@@ -229,6 +239,8 @@ export async function forgetBotSecret(prisma: PrismaClient, scope: BotSecretScop
 
 /** Where a binary response is saved so the bot's file tools and computer can open it. */
 export interface SecretDownloadTarget {
+  /** Largest file this computer can receive. */
+  maxBytes: number;
   /** Host directory the response streams into. */
   directory(): Promise<string>;
   /** Makes a finished file visible to the bot and returns its path relative to the bot home. */
@@ -330,19 +342,18 @@ export async function requestWithBotSecret(input: {
 
     // Binary/file mode: non-text/JSON content types
     if (!isTextOrJsonContentType(contentType)) {
-      const fileCap = getFileDownloadCap();
-      if (declaredSize !== undefined && declaredSize > fileCap) {
-        await response.body?.cancel().catch(() => undefined);
-        return {
-          error: `Response size ${declaredSize} bytes exceeds the ${fileCap} byte file download limit.`,
-        };
-      }
-
       if (!input.downloads) {
         await response.body?.cancel().catch(() => undefined);
         return {
           error:
             "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
+        };
+      }
+      const fileCap = input.downloads.maxBytes;
+      if (declaredSize !== undefined && declaredSize > fileCap) {
+        await response.body?.cancel().catch(() => undefined);
+        return {
+          error: `Response size ${declaredSize} bytes exceeds the ${fileCap} byte file download limit for this computer.`,
         };
       }
 
@@ -495,7 +506,7 @@ async function downloadToFile(
           size += value.byteLength;
           if (size > maxBytes) {
             throw new SecretRequestFailure(
-              `Response exceeds the ${maxBytes} byte file download limit.`,
+              `Response exceeds the ${maxBytes} byte file download limit for this computer.`,
             );
           }
           hash.update(value);
@@ -510,7 +521,7 @@ async function downloadToFile(
     const filename = await linkWithoutReplacing(
       temp,
       directory,
-      sanitizeFilename(response.headers.get("content-disposition"), url, redact),
+      sanitizeFilename(response.headers.get("content-disposition"), url, contentType, redact),
     ).catch(saveFailed);
     const path = await target.publish(join(directory, filename), filename).catch(saveFailed);
     return {

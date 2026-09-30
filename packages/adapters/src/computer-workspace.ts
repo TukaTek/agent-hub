@@ -8,10 +8,14 @@ import type {
   PortableFile,
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { ComputerMode } from "@cortexai-agent-hub/contracts";
+import { ATTACHMENT_MAX_BYTES, type ComputerMode } from "@cortexai-agent-hub/contracts";
 import { parseScreenLeaseId } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { downloadFilenameCandidates, type SecretDownloadTarget } from "./bot-secrets.js";
+import {
+  downloadFilenameCandidates,
+  getFileDownloadCap,
+  type SecretDownloadTarget,
+} from "./bot-secrets.js";
 import {
   normalizeWorkspacePath,
   resolveBotWorkspacePath,
@@ -80,6 +84,7 @@ export function createSecretDownloadTarget(
   if (computer.kind === "docker" && deps.home instanceof LocalAgentHomeStore) {
     const homePath = resolveAgentHomePath(deps.home, computerRecord.homeKey, deps.dataDir);
     return {
+      maxBytes: getFileDownloadCap(),
       directory: () =>
         ensureContainedDirectory(homePath, path.join(homePath, ...workspaceDirectory.split("/"))),
       publish: async (_hostPath, filename) => `downloads/${filename}`,
@@ -88,17 +93,20 @@ export function createSecretDownloadTarget(
   }
   let staging: string | undefined;
   return {
+    // Whole-buffer sandbox writes are bounded to the attachment size until writes can stream.
+    maxBytes: Math.min(getFileDownloadCap(), ATTACHMENT_MAX_BYTES),
     directory: async () => {
       staging ??= await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-download-"));
       return staging;
     },
     publish: async (hostPath, filename) => {
-      const taken = new Set(
-        (await deps.sandbox.listFiles(computer, workspaceDirectory, context).catch(() => [])).map(
-          (entry) => entry.path.split("/").pop(),
-        ),
-      );
-      const name = [...downloadFilenameCandidates(filename)].find((c) => !taken.has(c));
+      const listed = await deps.sandbox
+        .listFiles(computer, workspaceDirectory, context)
+        .then((entries) => new Set(entries.map((entry) => entry.path.split("/").pop())))
+        .catch(() => undefined);
+      // Without a listing the plain name may already exist, so only timestamped names are safe.
+      const candidates = [...downloadFilenameCandidates(filename)].slice(listed ? 0 : 1);
+      const name = candidates.find((candidate) => !listed?.has(candidate));
       if (!name) throw new Error("No free filename in downloads/");
       await deps.sandbox.writeFile(
         computer,

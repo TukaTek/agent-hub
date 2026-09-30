@@ -7,6 +7,7 @@ import { encodeLoginSecret } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getFileDownloadCap,
   normalizeSecretDestination,
   requestWithBotSecret,
   resolveLoginFill,
@@ -235,10 +236,11 @@ describe("authenticated secret requests", () => {
         directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
       );
     });
-    async function downloadTarget() {
+    async function downloadTarget(maxBytes = getFileDownloadCap()) {
       const directory = await mkdtemp(join(tmpdir(), "secret-downloads-"));
       directories.push(directory);
       const target: SecretDownloadTarget = {
+        maxBytes,
         directory: async () => directory,
         publish: async (_hostPath, filename) => `downloads/${filename}`,
       };
@@ -302,7 +304,8 @@ describe("authenticated secret requests", () => {
         }),
       );
       expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
-        error: "Response size 31457280 bytes exceeds the 10485760 byte file download limit.",
+        error:
+          "Response size 31457280 bytes exceeds the 10485760 byte file download limit for this computer.",
       });
       expect(cancel).toHaveBeenCalled();
       expect(await readdir(directory)).toEqual([]);
@@ -314,7 +317,7 @@ describe("authenticated secret requests", () => {
       const { directory, target } = await downloadTarget();
       fetch.mockResolvedValueOnce(fileResponse(streamOf(new Uint8Array(800), new Uint8Array(800))));
       expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
-        error: "Response exceeds the 1024 byte file download limit.",
+        error: "Response exceeds the 1024 byte file download limit for this computer.",
       });
       expect(await readdir(directory)).toEqual([]);
     });
@@ -326,7 +329,8 @@ describe("authenticated secret requests", () => {
         fileResponse(new ReadableStream(), { "content-length": String(100 * 1024 * 1024 + 1) }),
       );
       expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
-        error: "Response size 104857601 bytes exceeds the 104857600 byte file download limit.",
+        error:
+          "Response size 104857601 bytes exceeds the 104857600 byte file download limit for this computer.",
       });
     });
 
@@ -364,6 +368,7 @@ describe("authenticated secret requests", () => {
       const { input, fetch } = await fixture();
       fetch.mockResolvedValueOnce(fileResponse("data"));
       const target: SecretDownloadTarget = {
+        maxBytes: getFileDownloadCap(),
         directory: async () => {
           throw new Error(`EACCES ${secret}`);
         },
@@ -379,6 +384,7 @@ describe("authenticated secret requests", () => {
       const { directory } = await downloadTarget();
       fetch.mockResolvedValueOnce(fileResponse("data"));
       const target: SecretDownloadTarget = {
+        maxBytes: getFileDownloadCap(),
         directory: async () => directory,
         publish: async () => {
           throw new Error(`upload rejected ${secret}`);
@@ -399,10 +405,45 @@ describe("authenticated secret requests", () => {
     ])("keeps %s inside the downloads folder as %s", async (disposition, expected) => {
       const { input, fetch } = await fixture();
       const { directory, target } = await downloadTarget();
-      fetch.mockResolvedValueOnce(fileResponse("safe", { "content-disposition": disposition }));
+      fetch.mockResolvedValueOnce(
+        fileResponse("safe", {
+          "content-type": "application/octet-stream",
+          "content-disposition": disposition,
+        }),
+      );
       expect(await requestWithBotSecret({ ...input, downloads: target })).toMatchObject({
         file: { path: `downloads/${expected}`, filename: expected },
       });
+      expect(await readdir(directory)).toEqual([expected]);
+    });
+
+    it("honors the computer's own cap below the configured one", async () => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget(8);
+      fetch.mockResolvedValueOnce(fileResponse("0123456789"));
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Response exceeds the 8 byte file download limit for this computer.",
+      });
+      expect(await readdir(directory)).toEqual([]);
+    });
+
+    it.each([
+      ["/v1/forms/abc/pdf", "application/pdf", "pdf.pdf"],
+      ["/v1/export", "image/png; charset=binary", "export.png"],
+      ["/v1/report.PDF", "application/pdf", "report.PDF"],
+      ["/v1/photo.jpeg", "image/jpeg", "photo.jpeg"],
+      ["/v1/archive", "application/zip", "archive"],
+    ])("names %s (%s) as %s", async (path, contentType, expected) => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      fetch.mockResolvedValueOnce(fileResponse("bytes", { "content-type": contentType }));
+      expect(
+        await requestWithBotSecret({
+          ...input,
+          request: { ...input.request, url: `${destination.origin}${path}` },
+          downloads: target,
+        }),
+      ).toMatchObject({ file: { path: `downloads/${expected}`, filename: expected } });
       expect(await readdir(directory)).toEqual([expected]);
     });
 

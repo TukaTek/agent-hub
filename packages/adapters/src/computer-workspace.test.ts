@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ComputerRef } from "@cortexai-agent-hub/adapter-kit";
+import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkpointComputerWorkspace,
@@ -125,6 +126,57 @@ describe("secret download target", () => {
       ).toBe("pdf");
     },
   );
+
+  it("caps local Docker downloads at the configured cap and other computers at 10 MiB", async () => {
+    const provider = new FakeSandboxProvider();
+    const remote = await provider.provision({ botId: "bot-1", homePath: "/ignored" }, context);
+    const target = (computer: ComputerRef) =>
+      createSecretDownloadTarget(
+        { home: new LocalAgentHomeStore("/unused"), sandbox: provider },
+        { homeKey: "home-key-1" },
+        computer,
+        "dedicated",
+        "bot-1",
+        context,
+      ).maxBytes;
+    expect(target(dockerComputer("bot-1"))).toBe(100 * 1024 * 1024);
+    expect(target(remote)).toBe(ATTACHMENT_MAX_BYTES);
+    vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES", "4096");
+    try {
+      expect(target(dockerComputer("bot-1"))).toBe(4096);
+      expect(target(remote)).toBe(4096);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("uses only timestamped names when the downloads folder cannot be listed", async () => {
+    const provider = new FakeSandboxProvider();
+    const computer = await provider.provision({ botId: "bot-1", homePath: "/ignored" }, context);
+    await provider.writeFile(
+      computer,
+      { path: "downloads/report.pdf", content: new TextEncoder().encode("old") },
+      context,
+    );
+    vi.spyOn(provider, "listFiles").mockRejectedValueOnce(new Error("listing unavailable"));
+    const target = createSecretDownloadTarget(
+      { home: await localHome(), sandbox: provider },
+      { homeKey: "home-key-1" },
+      computer,
+      "dedicated",
+      "bot-1",
+      context,
+    );
+    const staging = await target.directory();
+    await writeFile(path.join(staging, "report.pdf"), "new");
+    const published = await target.publish(path.join(staging, "report.pdf"), "report.pdf");
+    await target.dispose();
+    expect(published).toMatch(/^downloads\/report-\d+\.pdf$/);
+    const read = (file: string) =>
+      provider.readFile(computer, file, context).then((bytes) => new TextDecoder().decode(bytes));
+    expect(await read("downloads/report.pdf")).toBe("old");
+    expect(await read(published)).toBe("new");
+  });
 
   it("refuses a downloads symlink that leaves the home", async () => {
     const home = await localHome();
