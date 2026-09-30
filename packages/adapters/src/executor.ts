@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import type {
   AdapterContext,
   AgentHomeStore,
@@ -210,7 +209,10 @@ import {
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
 import { observationToolResult, parseComputerActions } from "./computer-tools.js";
-import { checkpointRunComputerWorkspace } from "./computer-workspace.js";
+import {
+  checkpointRunComputerWorkspace,
+  createSecretDownloadTarget,
+} from "./computer-workspace.js";
 import { redactConnectorPayload, sanitizeConnectorError } from "./connector-safety.js";
 import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
@@ -3320,11 +3322,15 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return finish(await forgetBotSecret(deps.prisma, run, parsed.data));
           }
           if (name === "secret_request") {
+            const downloads = createSecretDownloadTarget(
+              deps,
+              storedComputer,
+              computer,
+              computerMode,
+              bot.id,
+              context,
+            );
             try {
-              // Write to the bot's working directory so the file is visible to file tools
-              const downloadsDir = path.join(
-                resolveBotWorkspacePath(computerMode, bot.id, "downloads"),
-              );
               const result = await requestWithBotSecret({
                 prisma: deps.prisma,
                 secretStore: deps.secretStore,
@@ -3333,14 +3339,22 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 signal: context.signal,
                 remote: deps.secretHttp,
                 registerRedactions: registerRunSecrets,
-                downloadsDir,
+                downloads: {
+                  directory: downloads.directory,
+                  publish: (hostPath, filename) => {
+                    workspaceCheckpoint.markDirty();
+                    return downloads.publish(hostPath, filename);
+                  },
+                },
               });
               return finish(result);
             } catch (error) {
-              // requestWithBotSecret should never throw; if it does, preserve the message
-              const message =
-                error instanceof Error ? error.message : "Invalid authenticated request.";
-              return finish({ error: message });
+              const message = error instanceof Error ? error.message : String(error);
+              return finish({
+                error: `Authenticated request failed: ${redactSecrets(message, runSecrets)}`,
+              });
+            } finally {
+              await downloads.dispose();
             }
           }
           if (name === "request_secret") {

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdir, unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { constants } from "node:fs";
+import { link, open, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
 import {
   botSecretDestinationSchema,
@@ -14,7 +14,11 @@ import { getLogger } from "@cortexai-agent-hub/logging";
 
 import { combineSignals, redactConnectorPayload } from "./connector-safety.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
-import { createPrivateNetworkFetch, createSafeRemoteFetch } from "./remote-mcp.js";
+import {
+  createPrivateNetworkFetch,
+  createSafeRemoteFetch,
+  RemoteRedirectError,
+} from "./remote-mcp.js";
 import type { EncryptedSecretStore } from "./secrets.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
@@ -40,7 +44,8 @@ function getRequestTimeoutMs(): number {
 const TEXT_BODY_CAP = 1_000_000;
 
 function isTextOrJsonContentType(contentType: string | null): boolean {
-  if (!contentType) return false;
+  // Untyped responses stay inline text, bounded by the text cap.
+  if (!contentType) return true;
   const lower = contentType.toLowerCase();
   return (
     lower.includes("text/") ||
@@ -50,70 +55,53 @@ function isTextOrJsonContentType(contentType: string | null): boolean {
   );
 }
 
-function sanitizeFilename(disposition: string | null, url: string): string {
-  if (disposition) {
-    const match = /filename\*?=["']?([^"';]+)["']?/i.exec(disposition);
-    if (match) {
-      let name = match[1]!.trim();
-      // Remove path separators, control characters, and unsafe characters
-      name = name
-        .split("")
-        .filter((char) => {
-          const code = char.charCodeAt(0);
-          // Remove control characters (0x00-0x1F), DEL (0x7F), path separators, and unsafe chars
-          return (
-            code > 0x1f &&
-            code !== 0x7f &&
-            char !== "/" &&
-            char !== "\\" &&
-            char !== ":" &&
-            char !== "|" &&
-            char !== "<" &&
-            char !== ">" &&
-            char !== "*" &&
-            char !== "?" &&
-            char !== '"' &&
-            char !== "'"
-          );
-        })
-        .join("");
-      // Remove leading dots to prevent hidden files
-      name = name.replace(/^\.+/, "");
-      // Limit length
-      if (name && name.length <= 255) return name;
-    }
-  }
+const UNSAFE_FILENAME_CHARACTERS = new Set(["/", "\\", ":", "|", "<", ">", "*", "?", '"', "'"]);
+
+function safeFilename(raw: string, redact: (text: string) => string): string | undefined {
+  let decoded = redact(raw);
   try {
-    const path = new URL(url).pathname;
-    const lastSegment = path.split("/").filter(Boolean).pop();
-    if (lastSegment) {
-      let name = lastSegment
-        .split("")
-        .filter((char) => {
-          const code = char.charCodeAt(0);
-          return (
-            code > 0x1f &&
-            code !== 0x7f &&
-            char !== "/" &&
-            char !== "\\" &&
-            char !== ":" &&
-            char !== "|" &&
-            char !== "<" &&
-            char !== ">" &&
-            char !== "*" &&
-            char !== "?" &&
-            char !== '"' &&
-            char !== "'"
-          );
-        })
-        .join("")
-        .replace(/^\.+/, "");
-      if (name && name.length <= 255) return name;
-    }
+    decoded = decodeURIComponent(decoded);
   } catch {
-    /* Fall through */
+    /* Keep the raw name when it is not percent-encoded. */
   }
-  return `download-${Date.now()}.bin`;
+  // Redacted after decoding too, so an encoded credential never becomes a visible filename.
+  const name = [...redact(decoded).trim()]
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return code > 0x1f && code !== 0x7f && !UNSAFE_FILENAME_CHARACTERS.has(char);
+    })
+    .join("")
+    .replace(/^\.+/, "");
+  return name && name.length <= 255 ? name : undefined;
+}
+
+function sanitizeFilename(
+  disposition: string | null,
+  url: URL,
+  redact: (text: string) => string,
+): string {
+  const fromDisposition =
+    /filename\*\s*=\s*(?:[\w-]+'[^']*')?([^;]+)/i.exec(disposition ?? "")?.[1] ??
+    /filename\s*=\s*(?:"([^"]*)"|([^;]+))/i
+      .exec(disposition ?? "")
+      ?.slice(1)
+      .find(Boolean);
+  const fromUrl = redact(url.pathname).split("/").filter(Boolean).pop();
+  return (
+    (fromDisposition && safeFilename(fromDisposition, redact)) ||
+    (fromUrl && safeFilename(fromUrl, redact)) ||
+    `download-${Date.now()}.bin`
+  );
+}
+
+/** The saved name first, then timestamped variants, so a download never replaces a file. */
+export function* downloadFilenameCandidates(filename: string): Generator<string> {
+  yield filename;
+  const dot = filename.lastIndexOf(".");
+  const [base, ext] = dot > 0 ? [filename.slice(0, dot), filename.slice(dot)] : [filename, ""];
+  const stamp = Date.now();
+  yield `${base}-${stamp}${ext}`;
+  for (let attempt = 2; attempt <= 20; attempt++) yield `${base}-${stamp}-${attempt}${ext}`;
 }
 
 const metadata = { name: true, origin: true, auth: true } as const;
@@ -239,6 +227,17 @@ export async function forgetBotSecret(prisma: PrismaClient, scope: BotSecretScop
   return { removed: true };
 }
 
+/** Where a binary response is saved so the bot's file tools and computer can open it. */
+export interface SecretDownloadTarget {
+  /** Host directory the response streams into. */
+  directory(): Promise<string>;
+  /** Makes a finished file visible to the bot and returns its path relative to the bot home. */
+  publish(hostPath: string, filename: string): Promise<string>;
+}
+
+/** A failure whose message is already safe and specific enough to show the bot. */
+class SecretRequestFailure extends Error {}
+
 /** Credentials are resolved only inside this destination-bound HTTP boundary. */
 export async function requestWithBotSecret(input: {
   prisma: PrismaClient;
@@ -248,9 +247,19 @@ export async function requestWithBotSecret(input: {
   signal: AbortSignal;
   remote?: RemoteTransportDependencies;
   registerRedactions?: (values: string[]) => void;
-  downloadsDir?: string;
+  downloads?: SecretDownloadTarget;
 }): Promise<unknown> {
-  const request = SecretHttpRequest.parse(input.request);
+  const parsed = SecretHttpRequest.safeParse(input.request);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`)
+      .join("; ");
+    return { error: `Invalid authenticated request — ${detail}` };
+  }
+  const request = parsed.data;
+  if (!URL.canParse(request.url)) {
+    return { error: "Invalid authenticated request — url: must be an absolute URL" };
+  }
   const row = await input.prisma.botSecret.findFirst({
     where: { ...scopeFields(input.scope), name: request.name },
   });
@@ -276,12 +285,12 @@ export async function requestWithBotSecret(input: {
     ]),
   ].filter(Boolean);
   input.registerRedactions?.(redactions);
+  const redact = (text: string) =>
+    redactions.reduce((result, value) => result.replaceAll(value, "[REDACTED]"), text);
   const controller = new AbortController();
-  const signal = combineSignals(
-    input.signal,
-    controller.signal,
-    AbortSignal.timeout(getRequestTimeoutMs()),
-  );
+  const timeoutMs = getRequestTimeoutMs();
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = combineSignals(input.signal, controller.signal, timeout);
   // The safe fetch refuses plain-HTTP and private hosts outright. A credential
   // saved under the owner's private-HTTP opt-in was validated against exactly
   // those rules at save time, and the request URL is pinned to its origin, so
@@ -308,27 +317,6 @@ export async function requestWithBotSecret(input: {
       signal,
     );
 
-    // Check redirects first with detailed error including status and redacted location
-    if (response.status >= 300 && response.status < 400) {
-      let targetHost = "";
-      try {
-        const location = response.headers.get("location");
-        if (location) {
-          const targetUrl = new URL(location, url.href);
-          targetHost = targetUrl.hostname;
-          // Redact secret from target host if it somehow got included
-          for (const value of redactions) {
-            targetHost = targetHost.replaceAll(value, "[REDACTED]");
-          }
-        }
-      } catch {
-        targetHost = "[invalid]";
-      }
-      return {
-        error: `Redirect not followed (HTTP ${response.status}${targetHost ? ` to ${targetHost}` : ""}).`,
-      };
-    }
-
     if (!response.ok) {
       const snippet = await readBodySnippet(response, signal, redactions);
       return {
@@ -344,31 +332,33 @@ export async function requestWithBotSecret(input: {
     if (!isTextOrJsonContentType(contentType)) {
       const fileCap = getFileDownloadCap();
       if (declaredSize !== undefined && declaredSize > fileCap) {
+        await response.body?.cancel().catch(() => undefined);
         return {
           error: `Response size ${declaredSize} bytes exceeds the ${fileCap} byte file download limit.`,
         };
       }
 
-      if (!input.downloadsDir) {
+      if (!input.downloads) {
+        await response.body?.cancel().catch(() => undefined);
         return {
           error:
             "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
         };
       }
 
-      return await downloadToFile(
-        response,
-        url.href,
+      return await downloadToFile(response, {
+        url,
         contentType,
-        fileCap,
-        input.downloadsDir,
+        maxBytes: fileCap,
+        target: input.downloads,
         signal,
-        redactions,
-      );
+        redact,
+      });
     }
 
     // Text/JSON mode
     if (declaredSize !== undefined && declaredSize > TEXT_BODY_CAP) {
+      await response.body?.cancel().catch(() => undefined);
       return {
         error: `Response size ${declaredSize} bytes exceeds the ${TEXT_BODY_CAP} byte text body limit.`,
       };
@@ -390,38 +380,9 @@ export async function requestWithBotSecret(input: {
       truncated: safe.length > 20_000,
     };
   } catch (error) {
-    if (signal.aborted) {
-      const timeoutMs = getRequestTimeoutMs();
-      const timeoutSec = Math.round(timeoutMs / 1000);
-      return { error: `Request timed out after ${timeoutSec} seconds.` };
-    }
-    if (error instanceof Error) {
-      if (error.message.includes("Response is too large")) {
-        return {
-          error: `Response body exceeds the ${TEXT_BODY_CAP} byte limit. Use a streaming endpoint or request file mode support.`,
-        };
-      }
-      if (
-        error.message.includes("private") ||
-        error.message.includes("internal") ||
-        error.message.includes("blocked")
-      ) {
-        return { error: "Destination is blocked by network policy (private or internal host)." };
-      }
-      if (error.message.includes("ENOTFOUND") || error.message.includes("EAI_AGAIN")) {
-        return { error: "DNS resolution failed. Check the destination hostname." };
-      }
-      if (
-        error.message.includes("ECONNREFUSED") ||
-        error.message.includes("ETIMEDOUT") ||
-        error.message.includes("ECONNRESET")
-      ) {
-        return { error: `Network error: ${error.message}` };
-      }
-      // Log unexpected errors for debugging
-      getLogger().error(`secret_request unexpected error: ${error.message}`);
-    }
-    return { error: "Authenticated request failed. Check the destination and credential." };
+    return {
+      error: redact(secretRequestFailureMessage(error, url, timeout, input.signal, timeoutMs)),
+    };
   } finally {
     controller.abort();
     await withAbort(fetch.close(), AbortSignal.timeout(1000)).catch(() => undefined);
@@ -447,118 +408,135 @@ async function readBodySnippet(
   }
 }
 
+function secretRequestFailureMessage(
+  error: unknown,
+  url: URL,
+  timeout: AbortSignal,
+  cancel: AbortSignal,
+  timeoutMs: number,
+): string {
+  if (timeout.aborted) {
+    const seconds = Math.ceil(timeoutMs / 1000);
+    return `Request timed out after ${seconds} second${seconds === 1 ? "" : "s"}.`;
+  }
+  if (cancel.aborted) return "Request was cancelled before it finished.";
+  if (error instanceof RemoteRedirectError) {
+    let target = "";
+    if (error.location) {
+      try {
+        target = ` to ${new URL(error.location, url).hostname}`;
+      } catch {
+        target = " to an invalid location";
+      }
+    }
+    return `Redirect not followed (HTTP ${error.status}${target}). Request the final URL directly.`;
+  }
+  if (error instanceof SecretRequestFailure) return error.message;
+  const message = error instanceof Error ? error.message : "";
+  const code = error instanceof Error && "code" in error ? String(error.code) : "";
+  if (message === "Response is too large") {
+    return `Response body exceeds the ${TEXT_BODY_CAP} byte text limit.`;
+  }
+  if (/private|must use HTTPS/i.test(message)) {
+    return "Destination is blocked by network policy.";
+  }
+  if (/ENOTFOUND|EAI_AGAIN/.test(`${code} ${message}`)) {
+    return `DNS lookup failed for ${url.hostname}. Check the destination hostname.`;
+  }
+  if (message.startsWith("Could not reach")) return `Network error: ${message}.`;
+  getLogger().error(`secret_request unexpected error: ${message || String(error)}`);
+  return "Authenticated request failed. Check the destination and credential.";
+}
+
 async function downloadToFile(
   response: Response,
-  url: string,
-  contentType: string | null,
-  maxBytes: number,
-  downloadsDir: string,
-  signal: AbortSignal,
-  redactions: string[],
+  {
+    url,
+    contentType,
+    maxBytes,
+    target,
+    signal,
+    redact,
+  }: {
+    url: URL;
+    contentType: string | null;
+    maxBytes: number;
+    target: SecretDownloadTarget;
+    signal: AbortSignal;
+    redact: (text: string) => string;
+  },
 ): Promise<unknown> {
-  let filename = sanitizeFilename(response.headers.get("content-disposition"), url);
-
-  // Check if file exists and add timestamp suffix to avoid silent overwrite
-  const finalPath = join(downloadsDir, filename);
-  const { access } = await import("node:fs/promises");
-  try {
-    await access(finalPath);
-    // File exists, add timestamp suffix before extension
-    const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
-    const base = ext ? filename.slice(0, -ext.length) : filename;
-    filename = `${base}-${Date.now()}${ext}`;
-  } catch {
-    // File doesn't exist, use original name
-  }
-
-  const tempPath = join(downloadsDir, `.${filename}.tmp.${randomBytes(8).toString("hex")}`);
-  const actualFinalPath = join(downloadsDir, filename);
-
-  await mkdir(downloadsDir, { recursive: true });
-
+  const directory = await target.directory().catch((error: unknown) => {
+    getLogger().error("secret_request download directory", error);
+    throw new SecretRequestFailure("Could not prepare the downloads folder in the bot workspace.");
+  });
+  const saveFailed = (error: unknown): never => {
+    if (error instanceof SecretRequestFailure) throw error;
+    getLogger().error("secret_request save download", error);
+    throw new SecretRequestFailure("Could not save the downloaded file to the bot workspace.");
+  };
+  const temp = join(directory, `.${randomBytes(8).toString("hex")}.download`);
   const hash = createHash("sha256");
-  let bytesWritten = 0;
-
+  let size = 0;
   try {
-    const writeStream = createWriteStream(tempPath);
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("Response body is not readable");
-
+    const handle = await open(
+      temp,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o666,
+    ).catch(saveFailed);
     try {
-      while (true) {
-        if (signal.aborted) throw new Error("Download aborted");
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        bytesWritten += value.length;
-        if (bytesWritten > maxBytes) {
-          throw new Error(
-            `Response size exceeds the ${maxBytes} byte file download limit (received ${bytesWritten} bytes so far).`,
-          );
+      const reader = response.body?.getReader();
+      try {
+        while (reader) {
+          const { done, value } = await withAbort(reader.read(), signal).catch(() => {
+            throw new SecretRequestFailure("Network error: the connection closed mid-download.");
+          });
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) {
+            throw new SecretRequestFailure(
+              `Response exceeds the ${maxBytes} byte file download limit.`,
+            );
+          }
+          hash.update(value);
+          await handle.write(value).catch(saveFailed);
         }
-
-        hash.update(value);
-        writeStream.write(value);
+      } finally {
+        await reader?.cancel().catch(() => undefined);
       }
-
-      writeStream.end();
-      await new Promise<void>((resolve, reject) => {
-        writeStream.on("finish", () => resolve());
-        writeStream.on("error", reject);
-      });
     } finally {
-      reader.releaseLock();
+      await handle.close();
     }
-
-    await mkdir(dirname(actualFinalPath), { recursive: true });
-    try {
-      await unlink(actualFinalPath);
-    } catch {
-      /* OK if it doesn't exist */
-    }
-
-    const { rename } = await import("node:fs/promises");
-    await rename(tempPath, actualFinalPath);
-
+    const filename = await linkWithoutReplacing(
+      temp,
+      directory,
+      sanitizeFilename(response.headers.get("content-disposition"), url, redact),
+    ).catch(saveFailed);
+    const path = await target.publish(join(directory, filename), filename).catch(saveFailed);
     return {
       file: {
-        path: actualFinalPath,
-        size: bytesWritten,
+        path,
+        filename: path.split("/").pop() ?? filename,
+        size,
         contentType: contentType || "application/octet-stream",
         sha256: hash.digest("hex"),
-        filename,
       },
     };
-  } catch (error) {
-    try {
-      await unlink(tempPath);
-    } catch {
-      /* Cleanup best-effort */
-    }
-    if (error instanceof Error) {
-      if (error.message.includes("exceeds the")) {
-        // Size limit error - already has the right format
-        let message = error.message;
-        for (const value of redactions) {
-          message = message.replaceAll(value, "[REDACTED]");
-        }
-        return { error: message };
-      }
-      if (error.message.includes("aborted")) {
-        return { error: "Download aborted." };
-      }
-      if (error.message.includes("not readable")) {
-        return { error: "Response body is not readable." };
-      }
-      // Network/IO errors
-      let message = `Download failed: ${error.message}`;
-      for (const value of redactions) {
-        message = message.replaceAll(value, "[REDACTED]");
-      }
-      return { error: message };
-    }
-    return { error: "Download failed due to an unexpected error." };
+  } finally {
+    await unlink(temp).catch(() => undefined);
   }
+}
+
+async function linkWithoutReplacing(source: string, directory: string, filename: string) {
+  for (const candidate of downloadFilenameCandidates(filename)) {
+    try {
+      await link(source, join(directory, candidate));
+      return candidate;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+  }
+  throw new SecretRequestFailure("Could not choose a free filename in downloads/.");
 }
 
 export type LoginField = "username" | "password";

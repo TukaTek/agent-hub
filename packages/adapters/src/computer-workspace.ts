@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -11,8 +11,13 @@ import type {
 import type { ComputerMode } from "@cortexai-agent-hub/contracts";
 import { parseScreenLeaseId } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { normalizeWorkspacePath, teamBotWorkspaceDirectory } from "./computer-support.js";
-import { LocalAgentHomeStore } from "./home.js";
+import { downloadFilenameCandidates, type SecretDownloadTarget } from "./bot-secrets.js";
+import {
+  normalizeWorkspacePath,
+  resolveBotWorkspacePath,
+  teamBotWorkspaceDirectory,
+} from "./computer-support.js";
+import { ensureContainedDirectory, LocalAgentHomeStore, resolveAgentHomePath } from "./home.js";
 
 export const PORTABLE_TRANSFER_BATCH_BYTES = 8 * 1024 * 1024;
 
@@ -56,6 +61,56 @@ export async function restoreComputerWorkspace(
 ): Promise<void> {
   if (computer.kind === "docker" && home instanceof LocalAgentHomeStore) return;
   await sandbox.importWorkspace(computer, home.exportHome(homeKey, context), context);
+}
+
+/**
+ * secret_request saves files into the running computer's `downloads/`, the folder the bot's
+ * file tools and computer see. A local Docker computer mounts its home, so the response streams
+ * straight into it; other computers get a staged copy through the sandbox API.
+ */
+export function createSecretDownloadTarget(
+  deps: { home: AgentHomeStore; sandbox: SandboxProvider; dataDir?: string },
+  computerRecord: { homeKey: string },
+  computer: ComputerRef,
+  scope: ComputerMode,
+  botId: string,
+  context: AdapterContext,
+): SecretDownloadTarget & { dispose(): Promise<void> } {
+  const workspaceDirectory = resolveBotWorkspacePath(scope, botId, "downloads");
+  if (computer.kind === "docker" && deps.home instanceof LocalAgentHomeStore) {
+    const homePath = resolveAgentHomePath(deps.home, computerRecord.homeKey, deps.dataDir);
+    return {
+      directory: () =>
+        ensureContainedDirectory(homePath, path.join(homePath, ...workspaceDirectory.split("/"))),
+      publish: async (_hostPath, filename) => `downloads/${filename}`,
+      dispose: async () => undefined,
+    };
+  }
+  let staging: string | undefined;
+  return {
+    directory: async () => {
+      staging ??= await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-download-"));
+      return staging;
+    },
+    publish: async (hostPath, filename) => {
+      const taken = new Set(
+        (await deps.sandbox.listFiles(computer, workspaceDirectory, context).catch(() => [])).map(
+          (entry) => entry.path.split("/").pop(),
+        ),
+      );
+      const name = [...downloadFilenameCandidates(filename)].find((c) => !taken.has(c));
+      if (!name) throw new Error("No free filename in downloads/");
+      await deps.sandbox.writeFile(
+        computer,
+        { path: path.posix.join(workspaceDirectory, name), content: await readFile(hostPath) },
+        context,
+      );
+      return `downloads/${name}`;
+    },
+    dispose: async () => {
+      if (staging) await rm(staging, { recursive: true, force: true });
+    },
+  };
 }
 
 export async function ensureComputerWorkspaceLayout(

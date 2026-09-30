@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
 import { encodeLoginSecret } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
@@ -6,6 +10,7 @@ import {
   normalizeSecretDestination,
   requestWithBotSecret,
   resolveLoginFill,
+  type SecretDownloadTarget,
 } from "./bot-secrets.js";
 
 import { EncryptedSecretStore } from "./secrets.js";
@@ -138,7 +143,10 @@ describe("authenticated secret requests", () => {
         headers: { location: `${destination.origin}/redirected` },
       }),
     );
-    expect(await requestWithBotSecret(input)).toMatchObject({ error: expect.any(String) });
+    expect(await requestWithBotSecret(input)).toEqual({
+      error:
+        "Redirect not followed (HTTP 302 to api.example.test). Request the final URL directly.",
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -164,17 +172,16 @@ describe("authenticated secret requests", () => {
     expect(await requestWithBotSecret(input)).toMatchObject({ error: expect.any(String) });
   });
 
-  it("handles aborted requests gracefully", async () => {
+  it("cancels a stalled response body", async () => {
     const { input, fetch } = await fixture();
     const controller = new AbortController();
-    fetch.mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      return Response.json({ ok: true });
-    });
+    const cancel = vi.fn();
+    fetch.mockResolvedValueOnce(new Response(new ReadableStream({ cancel })));
     const pending = requestWithBotSecret({ ...input, signal: controller.signal });
     await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
     controller.abort();
-    expect(await pending).toMatchObject({ error: expect.stringContaining("timed out") });
+    expect(await pending).toEqual({ error: "Request was cancelled before it finished." });
+    expect(cancel).toHaveBeenCalled();
   });
 
   it("delivers plain-HTTP private destination requests directly when the owner opts in", async () => {
@@ -221,378 +228,349 @@ describe("authenticated secret requests", () => {
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${secret}`);
   });
 
-  it("downloads binary responses to a file in the workspace", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads";
-    const pdfData = Buffer.from("%PDF-1.4 fake PDF content " + "x".repeat(1_100_000));
-    fetch.mockResolvedValueOnce(
-      new Response(pdfData, {
+  describe("file downloads", () => {
+    const directories: string[] = [];
+    afterEach(async () => {
+      await Promise.all(
+        directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+      );
+    });
+    async function downloadTarget() {
+      const directory = await mkdtemp(join(tmpdir(), "secret-downloads-"));
+      directories.push(directory);
+      const target: SecretDownloadTarget = {
+        directory: async () => directory,
+        publish: async (_hostPath, filename) => `downloads/${filename}`,
+      };
+      return { directory, target };
+    }
+    function fileResponse(body: BodyInit, headers: Record<string, string> = {}) {
+      return new Response(body, {
         status: 200,
-        headers: {
-          "content-type": "application/pdf",
-          "content-disposition": 'attachment; filename="form.pdf"',
+        headers: { "content-type": "application/pdf", ...headers },
+      });
+    }
+    function streamOf(...chunks: Uint8Array[]) {
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+          controller.close();
         },
-      }),
-    );
-    const result = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(result).toMatchObject({
-      file: {
-        path: expect.stringContaining("form.pdf"),
-        size: pdfData.length,
-        contentType: "application/pdf",
-        sha256: expect.any(String),
-        filename: "form.pdf",
-      },
-    });
-    const savedPath = (result as { file: { path: string } }).file.path;
-    const { readFile, unlink } = await import("node:fs/promises");
-    const { createHash } = await import("node:crypto");
-    const saved = await readFile(savedPath);
-    expect(saved).toEqual(pdfData);
-    expect((result as { file: { sha256: string } }).file.sha256).toBe(
-      createHash("sha256").update(pdfData).digest("hex"),
-    );
-    await unlink(savedPath);
-  });
-
-  it("rejects binary downloads over the configured cap", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads";
-    // Set a lower cap via env var for this test to avoid streaming 100+ MB in CI
-    const originalCap = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
-    process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = String(25 * 1024 * 1024);
-    try {
-      const largeData = Buffer.from("x".repeat(30 * 1024 * 1024));
-      fetch.mockResolvedValueOnce(
-        new Response(largeData, {
-          status: 200,
-          headers: { "content-type": "application/pdf" },
-        }),
-      );
-      expect(await requestWithBotSecret({ ...input, downloadsDir })).toMatchObject({
-        error: expect.stringContaining("exceeds the 26214400 byte file download limit"),
       });
-    } finally {
-      if (originalCap === undefined) {
-        delete process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
-      } else {
-        process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = originalCap;
-      }
     }
-  });
 
-  it("rejects binary downloads declared over the cap before streaming", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads";
-    // Set a lower cap for this test
-    const originalCap = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
-    process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = String(10 * 1024 * 1024);
-    try {
+    it("streams a binary response into the downloads folder and reports its metadata", async () => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      const pdf = Buffer.from(`%PDF-1.4 fake PDF content ${"x".repeat(1_100_000)}`);
       fetch.mockResolvedValueOnce(
-        new Response(Buffer.alloc(1), {
-          status: 200,
-          headers: {
-            "content-type": "application/pdf",
-            "content-length": String(30 * 1024 * 1024),
-          },
-        }),
+        fileResponse(pdf, { "content-disposition": 'attachment; filename="form.pdf"' }),
       );
-      const result = await requestWithBotSecret({ ...input, downloadsDir });
-      expect(result).toMatchObject({
-        error: expect.stringContaining(
-          "Response size 31457280 bytes exceeds the 10485760 byte file download limit",
-        ),
-      });
-    } finally {
-      if (originalCap === undefined) {
-        delete process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
-      } else {
-        process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = originalCap;
-      }
-    }
-  });
-
-  it("downloads text over 1 MB when the content type is not text/JSON", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads";
-    const largeText = "x".repeat(1_100_000);
-    fetch.mockResolvedValueOnce(
-      new Response(largeText, {
-        status: 200,
-        headers: { "content-type": "application/octet-stream" },
-      }),
-    );
-    const result = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(result).toMatchObject({
-      file: {
-        size: largeText.length,
-        contentType: "application/octet-stream",
-      },
-    });
-  });
-
-  it("gives distinct errors for timeout, non-2xx, and too-large text", async () => {
-    const { input, fetch } = await fixture();
-    const controller = new AbortController();
-    fetch.mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      throw new Error("timeout");
-    });
-    setTimeout(() => controller.abort(), 50);
-    expect(await requestWithBotSecret({ ...input, signal: controller.signal })).toMatchObject({
-      error: expect.stringContaining("timed out"),
-    });
-
-    fetch.mockResolvedValueOnce(new Response("Not Found", { status: 404 }));
-    expect(await requestWithBotSecret(input)).toMatchObject({
-      error: expect.stringContaining("HTTP 404"),
-    });
-
-    fetch.mockResolvedValueOnce(new Response("x".repeat(1_000_001)));
-    expect(await requestWithBotSecret(input)).toMatchObject({
-      error: expect.stringContaining("1000000 byte limit"),
-    });
-  });
-
-  it("redacts secrets in error snippets from non-2xx responses", async () => {
-    const { input, fetch } = await fixture();
-    fetch.mockResolvedValueOnce(new Response(`Error: invalid token ${secret}`, { status: 401 }));
-    const result = await requestWithBotSecret(input);
-    expect(JSON.stringify(result)).not.toContain(secret);
-    expect(result).toMatchObject({ error: expect.stringContaining("HTTP 401") });
-  });
-
-  it("refuses to download files without a workspace", async () => {
-    const { input, fetch } = await fixture();
-    fetch.mockResolvedValueOnce(
-      new Response(Buffer.from("binary data"), {
-        status: 200,
-        headers: { "content-type": "application/pdf" },
-      }),
-    );
-    expect(await requestWithBotSecret({ ...input, downloadsDir: undefined })).toMatchObject({
-      error: expect.stringContaining("File downloads require a bot workspace"),
-    });
-  });
-
-  it("gives distinct error for redirects including status and redacted target host", async () => {
-    const { input, fetch } = await fixture();
-    // Use a working Response mock with body instead of empty string which causes issues
-    fetch.mockResolvedValueOnce(
-      new Response("redirect", {
-        status: 302,
-        headers: { location: "https://redirect.example.com/target" },
-      }),
-    );
-    const result = await requestWithBotSecret(input);
-    expect(result).toMatchObject({
-      error: expect.stringMatching(/Redirect not followed \(HTTP 302 to redirect\.example\.com\)/),
-    });
-
-    // Test with secret in redirect location (should be redacted)
-    fetch.mockResolvedValueOnce(
-      new Response("redirect", {
-        status: 301,
-        headers: { location: `https://evil.com/${secret}` },
-      }),
-    );
-    const redactedResult = await requestWithBotSecret(input);
-    expect(JSON.stringify(redactedResult)).not.toContain(secret);
-    expect(redactedResult).toMatchObject({
-      error: expect.stringContaining("HTTP 301"),
-    });
-  });
-
-  it("rejects text/plain over 1 MB inline limit", async () => {
-    const { input, fetch } = await fixture();
-    const largeText = "x".repeat(1_100_000);
-    fetch.mockResolvedValueOnce(
-      new Response(largeText, {
-        status: 200,
-        headers: { "content-type": "text/plain" },
-      }),
-    );
-    const result = await requestWithBotSecret(input);
-    expect(result).toMatchObject({
-      error: expect.stringContaining("1000000 byte limit"),
-    });
-  });
-
-  it("rejects application/json over 1 MB inline limit", async () => {
-    const { input, fetch } = await fixture();
-    const largeJson = JSON.stringify({ data: "x".repeat(1_100_000) });
-    fetch.mockResolvedValueOnce(
-      new Response(largeJson, {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    const result = await requestWithBotSecret(input);
-    expect(result).toMatchObject({
-      error: expect.stringContaining("1000000 byte limit"),
-    });
-  });
-
-  it("prevents filename path escapes and dangerous characters", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads-escape";
-    const testCases = [
-      { disposition: 'filename="../../../etc/passwd"', expected: "etcpasswd" },
-      { disposition: 'filename="/absolute/path.txt"', expected: "absolutepath.txt" },
-      { disposition: 'filename="../../escape.pdf"', expected: "escape.pdf" },
-      { disposition: 'filename=".hidden"', expected: "hidden" },
-      { disposition: 'filename="pipe|.txt"', expected: "pipe.txt" },
-      {
-        disposition: 'filename="colon:slash/back\\\\danger.txt"',
-        expected: "colonslashback",
-      },
-    ];
-
-    for (const testCase of testCases) {
-      fetch.mockResolvedValueOnce(
-        new Response(Buffer.from("safe content"), {
-          status: 200,
-          headers: {
-            "content-type": "application/octet-stream",
-            "content-disposition": testCase.disposition,
-          },
-        }),
-      );
-      const result = await requestWithBotSecret({ ...input, downloadsDir });
-      expect(result).toMatchObject({
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
         file: {
-          filename: expect.stringContaining(testCase.expected),
+          path: "downloads/form.pdf",
+          filename: "form.pdf",
+          size: pdf.length,
+          contentType: "application/pdf",
+          sha256: createHash("sha256").update(pdf).digest("hex"),
         },
       });
-      const path = (result as { file: { path: string } }).file.path;
-      expect(path).toContain(downloadsDir);
-      expect(path).not.toContain("../");
-      expect(path).not.toContain("..");
-    }
+      expect(await readFile(join(directory, "form.pdf"))).toEqual(pdf);
+      expect(await readdir(directory)).toEqual(["form.pdf"]);
+    });
+
+    it("saves non-text responses over 1 MB as files instead of inlining them", async () => {
+      const { input, fetch } = await fixture();
+      const { target } = await downloadTarget();
+      const body = "x".repeat(1_100_000);
+      fetch.mockResolvedValueOnce(
+        fileResponse(body, { "content-type": "application/octet-stream" }),
+      );
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toMatchObject({
+        file: { size: body.length, contentType: "application/octet-stream" },
+      });
+    });
+
+    it("rejects a declared size over the cap before streaming", async () => {
+      vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES", String(10 * 1024 * 1024));
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      const cancel = vi.fn();
+      fetch.mockResolvedValueOnce(
+        fileResponse(new ReadableStream({ cancel }), {
+          "content-length": String(30 * 1024 * 1024),
+        }),
+      );
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Response size 31457280 bytes exceeds the 10485760 byte file download limit.",
+      });
+      expect(cancel).toHaveBeenCalled();
+      expect(await readdir(directory)).toEqual([]);
+    });
+
+    it("stops a stream that grows past the cap and leaves no partial file", async () => {
+      vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES", "1024");
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      fetch.mockResolvedValueOnce(fileResponse(streamOf(new Uint8Array(800), new Uint8Array(800))));
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Response exceeds the 1024 byte file download limit.",
+      });
+      expect(await readdir(directory)).toEqual([]);
+    });
+
+    it("defaults to a 100 MB file cap", async () => {
+      const { input, fetch } = await fixture();
+      const { target } = await downloadTarget();
+      fetch.mockResolvedValueOnce(
+        fileResponse(new ReadableStream(), { "content-length": String(100 * 1024 * 1024 + 1) }),
+      );
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Response size 104857601 bytes exceeds the 104857600 byte file download limit.",
+      });
+    });
+
+    it("reports a connection that drops mid-download", async () => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      fetch.mockResolvedValueOnce(
+        fileResponse(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(10));
+              controller.error(new Error(`socket closed ${secret}`));
+            },
+          }),
+        ),
+      );
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Network error: the connection closed mid-download.",
+      });
+      expect(await readdir(directory)).toEqual([]);
+    });
+
+    it("refuses file downloads without a bot workspace", async () => {
+      const { input, fetch } = await fixture();
+      const cancel = vi.fn();
+      fetch.mockResolvedValueOnce(fileResponse(new ReadableStream({ cancel })));
+      expect(await requestWithBotSecret(input)).toEqual({
+        error:
+          "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
+      });
+      expect(cancel).toHaveBeenCalled();
+    });
+
+    it("reports a downloads folder that cannot be prepared", async () => {
+      const { input, fetch } = await fixture();
+      fetch.mockResolvedValueOnce(fileResponse("data"));
+      const target: SecretDownloadTarget = {
+        directory: async () => {
+          throw new Error(`EACCES ${secret}`);
+        },
+        publish: async () => "unused",
+      };
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Could not prepare the downloads folder in the bot workspace.",
+      });
+    });
+
+    it("reports a file the workspace refuses to accept", async () => {
+      const { input, fetch } = await fixture();
+      const { directory } = await downloadTarget();
+      fetch.mockResolvedValueOnce(fileResponse("data"));
+      const target: SecretDownloadTarget = {
+        directory: async () => directory,
+        publish: async () => {
+          throw new Error(`upload rejected ${secret}`);
+        },
+      };
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toEqual({
+        error: "Could not save the downloaded file to the bot workspace.",
+      });
+    });
+
+    it.each([
+      ['filename="../../../etc/passwd"', "etcpasswd"],
+      ['filename="/absolute/path.txt"', "absolutepath.txt"],
+      ['filename=".hidden"', "hidden"],
+      ['filename="pipe|.txt"', "pipe.txt"],
+      ['filename="colon:slash/back\\\\danger.txt"', "colonslashbackdanger.txt"],
+      ["filename*=UTF-8''..%2F..%2Fencoded.pdf", "encoded.pdf"],
+    ])("keeps %s inside the downloads folder as %s", async (disposition, expected) => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      fetch.mockResolvedValueOnce(fileResponse("safe", { "content-disposition": disposition }));
+      expect(await requestWithBotSecret({ ...input, downloads: target })).toMatchObject({
+        file: { path: `downloads/${expected}`, filename: expected },
+      });
+      expect(await readdir(directory)).toEqual([expected]);
+    });
+
+    it("never overwrites an existing download", async () => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      const disposition = { "content-disposition": 'filename="report.pdf"' };
+      fetch.mockResolvedValueOnce(fileResponse("first", disposition));
+      fetch.mockResolvedValueOnce(fileResponse("second", disposition));
+      const first = await requestWithBotSecret({ ...input, downloads: target });
+      const second = await requestWithBotSecret({ ...input, downloads: target });
+      expect(first).toMatchObject({ file: { filename: "report.pdf" } });
+      expect(second).toMatchObject({
+        file: { filename: expect.stringMatching(/^report-\d+\.pdf$/) },
+      });
+      const secondName = (second as { file: { filename: string } }).file.filename;
+      expect(await readFile(join(directory, "report.pdf"), "utf8")).toBe("first");
+      expect(await readFile(join(directory, secondName), "utf8")).toBe("second");
+    });
+
+    it("keeps the credential out of the saved filename and metadata", async () => {
+      const { input, fetch } = await fixture();
+      const { directory, target } = await downloadTarget();
+      fetch.mockResolvedValueOnce(
+        fileResponse("content", {
+          "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(secret)}.pdf`,
+        }),
+      );
+      const result = await requestWithBotSecret({ ...input, downloads: target });
+      expect(result).toMatchObject({ file: { filename: "[REDACTED].pdf" } });
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect((await readdir(directory)).join()).not.toContain("fake-key");
+    });
   });
 
-  it("adds timestamp suffix to avoid overwriting existing files", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads-overwrite";
-    const pdfData1 = Buffer.from("First PDF content");
-    const pdfData2 = Buffer.from("Second PDF content");
+  describe("failure messages", () => {
+    it("reports a timeout with the configured duration", async () => {
+      vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_TIMEOUT_MS", "50");
+      const { input, fetch } = await fixture();
+      fetch.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+          ),
+      );
+      expect(await requestWithBotSecret(input)).toEqual({
+        error: "Request timed out after 1 second.",
+      });
+    });
 
-    // First download
-    fetch.mockResolvedValueOnce(
-      new Response(pdfData1, {
-        status: 200,
-        headers: {
-          "content-type": "application/pdf",
-          "content-disposition": 'filename="report.pdf"',
-        },
-      }),
-    );
-    const result1 = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(result1).toMatchObject({
-      file: {
-        filename: "report.pdf",
-        size: pdfData1.length,
+    it("defaults to a 120 second timeout", async () => {
+      const timeout = vi.spyOn(AbortSignal, "timeout");
+      try {
+        const { input } = await fixture();
+        await requestWithBotSecret(input);
+        expect(timeout).toHaveBeenCalledWith(120_000);
+      } finally {
+        timeout.mockRestore();
+      }
+    });
+
+    it("reports a cancelled run separately from a timeout", async () => {
+      const { input, fetch } = await fixture();
+      const controller = new AbortController();
+      fetch.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+          ),
+      );
+      const pending = requestWithBotSecret({ ...input, signal: controller.signal });
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+      controller.abort();
+      expect(await pending).toEqual({ error: "Request was cancelled before it finished." });
+    });
+
+    it("reports redirects with the status and target host, redacted", async () => {
+      const { input, fetch } = await fixture();
+      fetch.mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://redirect.example.test/target" },
+        }),
+      );
+      expect(await requestWithBotSecret(input)).toEqual({
+        error:
+          "Redirect not followed (HTTP 302 to redirect.example.test). Request the final URL directly.",
+      });
+      fetch.mockResolvedValueOnce(
+        new Response(null, {
+          status: 301,
+          headers: { location: `https://evil.example.test/${encodeURIComponent(secret)}` },
+        }),
+      );
+      expect(await requestWithBotSecret(input)).toEqual({
+        error:
+          "Redirect not followed (HTTP 301 to evil.example.test). Request the final URL directly.",
+      });
+    });
+
+    it("reports a destination blocked by network policy", async () => {
+      const { input, fetch } = await fixture();
+      input.remote.resolveHostname = async () => [{ address: "10.0.0.8", family: 4 }];
+      expect(await requestWithBotSecret(input)).toEqual({
+        error: "Destination is blocked by network policy.",
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("reports DNS failures by hostname", async () => {
+      const { input, fetch } = await fixture();
+      input.remote.resolveHostname = async () => {
+        throw Object.assign(new Error("getaddrinfo ENOTFOUND api.example.test"), {
+          code: "ENOTFOUND",
+        });
+      };
+      expect(await requestWithBotSecret(input)).toEqual({
+        error: "DNS lookup failed for api.example.test. Check the destination hostname.",
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it.each(["connect ECONNREFUSED 203.0.113.10:443", "read ECONNRESET", "connect ETIMEDOUT"])(
+      "reports the transport failure %s",
+      async (detail) => {
+        const { input, fetch } = await fixture();
+        fetch.mockRejectedValueOnce(new TypeError("fetch failed", { cause: new Error(detail) }));
+        expect(await requestWithBotSecret(input)).toEqual({
+          error: `Network error: Could not reach api.example.test: ${detail}.`,
+        });
       },
-    });
-
-    // Second download with same filename
-    fetch.mockResolvedValueOnce(
-      new Response(pdfData2, {
-        status: 200,
-        headers: {
-          "content-type": "application/pdf",
-          "content-disposition": 'filename="report.pdf"',
-        },
-      }),
     );
-    const result2 = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(result2).toMatchObject({
-      file: {
-        filename: expect.stringMatching(/^report-\d+\.pdf$/),
-        size: pdfData2.length,
-      },
+
+    it("redacts the credential from transport failures", async () => {
+      const { input, fetch } = await fixture();
+      fetch.mockRejectedValueOnce(new TypeError("fetch failed", { cause: new Error(secret) }));
+      const result = await requestWithBotSecret(input);
+      expect(result).toEqual({
+        error: "Network error: Could not reach api.example.test: [REDACTED].",
+      });
     });
 
-    // Verify both files exist with different content
-    const { readFile } = await import("node:fs/promises");
-    const path1 = (result1 as { file: { path: string } }).file.path;
-    const path2 = (result2 as { file: { path: string } }).file.path;
-    expect(path1).not.toBe(path2);
-    const content1 = await readFile(path1);
-    const content2 = await readFile(path2);
-    expect(content1).toEqual(pdfData1);
-    expect(content2).toEqual(pdfData2);
-  });
-
-  it("handles network and DNS errors with distinct messages", async () => {
-    const { input, fetch } = await fixture();
-
-    // DNS failure
-    fetch.mockRejectedValueOnce(new Error("getaddrinfo ENOTFOUND nonexistent.example.test"));
-    expect(await requestWithBotSecret(input)).toMatchObject({
-      error: expect.stringContaining("DNS resolution failed"),
+    it("reports non-2xx responses with a redacted snippet", async () => {
+      const { input, fetch } = await fixture();
+      fetch.mockResolvedValueOnce(new Response(`invalid token ${secret}`, { status: 401 }));
+      expect(await requestWithBotSecret(input)).toEqual({
+        error: "Request failed with HTTP 401: invalid token [REDACTED].",
+      });
     });
 
-    // Connection refused
-    fetch.mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:9999"));
-    expect(await requestWithBotSecret(input)).toMatchObject({
-      error: expect.stringMatching(/Network error.*ECONNREFUSED/),
+    it.each([
+      ["text/plain", "x".repeat(1_100_000)],
+      ["application/json", JSON.stringify({ data: "x".repeat(1_100_000) })],
+    ])("rejects %s bodies over the 1 MB inline limit", async (contentType, body) => {
+      const { input, fetch } = await fixture();
+      fetch.mockResolvedValueOnce(new Response(body, { headers: { "content-type": contentType } }));
+      expect(await requestWithBotSecret(input)).toEqual({
+        error: "Response body exceeds the 1000000 byte text limit.",
+      });
     });
 
-    // Connection timeout
-    fetch.mockRejectedValueOnce(new Error("connect ETIMEDOUT"));
-    expect(await requestWithBotSecret(input)).toMatchObject({
-      error: expect.stringMatching(/Network error.*ETIMEDOUT/),
+    it("names the invalid request field", async () => {
+      const { input, fetch } = await fixture();
+      expect(
+        await requestWithBotSecret({ ...input, request: { name: destination.name, url: "nope" } }),
+      ).toEqual({ error: expect.stringMatching(/^Invalid authenticated request — url: /) });
+      expect(fetch).not.toHaveBeenCalled();
     });
-
-    // Connection reset
-    fetch.mockRejectedValueOnce(new Error("read ECONNRESET"));
-    expect(await requestWithBotSecret(input)).toMatchObject({
-      error: expect.stringMatching(/Network error.*ECONNRESET/),
-    });
-  });
-
-  it("never exposes secrets in file metadata or errors", async () => {
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-downloads-redaction";
-
-    // Test 1: Secret in filename should be redacted in path/metadata
-    fetch.mockResolvedValueOnce(
-      new Response(Buffer.from("content"), {
-        status: 200,
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-disposition": `filename="${secret}.pdf"`,
-        },
-      }),
-    );
-    const fileResult = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(JSON.stringify(fileResult)).not.toContain(secret);
-
-    // Test 2: Secret in URL triggering redirect
-    const urlWithSecret = `${destination.origin}/path/${secret}`;
-    fetch.mockResolvedValueOnce(
-      new Response("redirect", {
-        status: 302,
-        headers: { location: `https://other.com/${secret}` },
-      }),
-    );
-    const redirectInput = {
-      ...input,
-      request: { ...input.request, url: urlWithSecret },
-    };
-    const redirectResult = await requestWithBotSecret(redirectInput);
-    expect(JSON.stringify(redirectResult)).not.toContain(secret);
-    expect(redirectResult).toMatchObject({
-      error: expect.stringContaining("Redirect not followed"),
-    });
-
-    // Test 3: Secret in error message during download
-    fetch.mockImplementation(async () => {
-      throw new Error(`Download failed: ${secret}`);
-    });
-    const errorResult = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(JSON.stringify(errorResult)).not.toContain(secret);
   });
 
   it("refuses an opted-in private destination that resolves publicly", async () => {
@@ -624,7 +602,7 @@ describe("authenticated secret requests", () => {
       registerRedactions: vi.fn(),
     };
     expect(await requestWithBotSecret(input)).toEqual({
-      error: "Destination is blocked by network policy (private or internal host).",
+      error: "Destination is blocked by network policy.",
     });
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -676,52 +654,6 @@ describe("normalizeSecretDestination", () => {
         auth: { type: "login" as const },
       }),
     ).toThrow(/Website logins require an HTTPS origin/);
-  });
-});
-
-describe("bot file access integration", () => {
-  it("downloaded files are accessible via bot file tools (list_files/read_file)", async () => {
-    // This test verifies that files downloaded to <home>/downloads/ are accessible
-    // to the bot's file tools, which use the same home directory path resolution
-    const { input, fetch } = await fixture();
-    const downloadsDir = "/tmp/test-bot-home/downloads";
-    const testContent = Buffer.from("Test file content for bot access verification");
-
-    fetch.mockResolvedValueOnce(
-      new Response(testContent, {
-        status: 200,
-        headers: {
-          // Use a non-text content type to trigger file download mode
-          "content-type": "application/octet-stream",
-          "content-disposition": 'filename="test-bot-file.txt"',
-        },
-      }),
-    );
-
-    const downloadResult = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(downloadResult).toMatchObject({
-      file: {
-        filename: "test-bot-file.txt",
-        path: expect.stringContaining("downloads/test-bot-file.txt"),
-      },
-    });
-
-    // Verify the file was written correctly and is readable
-    const savedPath = (downloadResult as { file: { path: string } }).file.path;
-    const { readFile } = await import("node:fs/promises");
-    const savedContent = await readFile(savedPath);
-    expect(savedContent).toEqual(testContent);
-
-    // Path structure verification:
-    // - On HOST: <home-root>/downloads/file.txt (e.g., /data/homes/<bot-id>/downloads/file.txt)
-    // - In CONTAINER: /home/cortexai-agent-hub/downloads/file.txt (for personal computers)
-    //                 /home/cortexai-agent-hub/bots/<bot-id>/downloads/file.txt (for team computers)
-    // - Bot file tools use resolveBotWorkspacePath which resolves "downloads/file.txt"
-    //   to the correct container path based on computer scope
-    // - Docker bind mount: <home-root> -> /home/cortexai-agent-hub
-    // Therefore, bot tools can access files in downloads/ subdirectory
-    expect(savedPath).toContain("downloads");
-    expect(savedPath).toContain("test-bot-file.txt");
   });
 });
 
