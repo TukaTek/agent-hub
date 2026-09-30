@@ -299,9 +299,7 @@ describe("authenticated secret requests", () => {
       );
       const result = await requestWithBotSecret({ ...input, downloadsDir });
       expect(result).toMatchObject({
-        error: expect.stringContaining(
-          "31457280 bytes exceeds the 10485760 byte file download limit",
-        ),
+        error: expect.stringContaining("Response size 31457280 bytes exceeds the 10485760 byte file download limit"),
       });
     } finally {
       if (originalCap === undefined) {
