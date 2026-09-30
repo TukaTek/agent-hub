@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { pipeline } from "node:stream/promises";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
 import {
   botSecretDestinationSchema,
@@ -275,7 +274,8 @@ export async function requestWithBotSecret(input: {
 
       if (!input.downloadsDir) {
         return {
-          error: "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
+          error:
+            "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
         };
       }
 

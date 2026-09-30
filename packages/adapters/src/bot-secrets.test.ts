@@ -245,10 +245,11 @@ describe("authenticated secret requests", () => {
     });
     const savedPath = (result as { file: { path: string } }).file.path;
     const { readFile, unlink } = await import("node:fs/promises");
+    const { createHash } = await import("node:crypto");
     const saved = await readFile(savedPath);
     expect(saved).toEqual(pdfData);
     expect((result as { file: { sha256: string } }).file.sha256).toBe(
-      require("node:crypto").createHash("sha256").update(pdfData).digest("hex"),
+      createHash("sha256").update(pdfData).digest("hex"),
     );
     await unlink(savedPath);
   });
@@ -282,7 +283,9 @@ describe("authenticated secret requests", () => {
     );
     const result = await requestWithBotSecret({ ...input, downloadsDir });
     expect(result).toMatchObject({
-      error: expect.stringContaining("31457280 bytes exceeds the 26214400 byte file download limit"),
+      error: expect.stringContaining(
+        "31457280 bytes exceeds the 26214400 byte file download limit",
+      ),
     });
   });
 
@@ -330,9 +333,7 @@ describe("authenticated secret requests", () => {
 
   it("redacts secrets in error snippets from non-2xx responses", async () => {
     const { input, fetch } = await fixture();
-    fetch.mockResolvedValueOnce(
-      new Response(`Error: invalid token ${secret}`, { status: 401 }),
-    );
+    fetch.mockResolvedValueOnce(new Response(`Error: invalid token ${secret}`, { status: 401 }));
     const result = await requestWithBotSecret(input);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(result).toMatchObject({ error: expect.stringContaining("HTTP 401") });
@@ -350,7 +351,6 @@ describe("authenticated secret requests", () => {
       error: expect.stringContaining("File downloads require a bot workspace"),
     });
   });
-
 
   it("refuses an opted-in private destination that resolves publicly", async () => {
     vi.stubEnv("CORTEXAI_AGENT_HUB_SECRETS_ALLOW_PRIVATE_HTTP", "1");
