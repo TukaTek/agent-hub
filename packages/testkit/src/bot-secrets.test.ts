@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
-import { ScriptedAgentRuntime } from "@cortexai-agent-hub/adapters";
+import { FakeSandboxProvider, ScriptedAgentRuntime } from "@cortexai-agent-hub/adapters";
 import { answerRunInput } from "@cortexai-agent-hub/db";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
 
@@ -21,13 +22,17 @@ describeIntegration("reusable credential lifecycle", () => {
   let handles: Awaited<ReturnType<typeof createApp>>;
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-secret-lifecycle-"));
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+  const echoAuth: typeof globalThis.fetch = async (_url, init) => {
     const auth = new Headers(init?.headers).get("Authorization");
     return Response.json({
       authenticated: auth === `Bearer ${key}` || auth === `Bearer ${key}-rotated`,
       echo: auth,
     });
-  });
+  };
+  const fetch = vi.fn<typeof globalThis.fetch>(echoAuth);
+  const resolveHostname = vi.fn(async (_hostname: string) => [
+    { address: "203.0.113.10", family: 4 as const },
+  ]);
 
   beforeAll(async () => {
     const { createApp } = await import("../../../apps/api/src/app.ts");
@@ -39,15 +44,17 @@ describeIntegration("reusable credential lifecycle", () => {
       wakeupDriver: "memory",
       defaultProvider: "scripted",
       defaultModel: "scripted",
-      remoteConnectors: {
-        fetch,
-        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
-      },
+      remoteConnectors: { fetch, resolveHostname },
     });
   });
   afterAll(async () => {
     await handles?.stop();
     rmSync(dataDir, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    fetch.mockImplementation(echoAuth);
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it.each([false, true])(
@@ -314,6 +321,315 @@ describeIntegration("reusable credential lifecycle", () => {
       }
     },
   );
+
+  describe("secret_request through the executor", () => {
+    const request = (path: string) => ({
+      name: "secret_request",
+      args: { name: destination.name, url: `${destination.origin}${path}` },
+    });
+    const pdf = "%PDF-1.4 fake quarterly report";
+    const pdfResponse = (body: BodyInit = pdf) =>
+      new Response(body, {
+        headers: {
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="report.pdf"',
+        },
+      });
+    const pendingUntilAborted: typeof globalThis.fetch = (_url, init) =>
+      new Promise((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+      );
+
+    async function seedWithCredential(label: string) {
+      const seeded = await seedRun(label, "Save the API credential");
+      // A non-scripted run needs a connected model; the mocked runtime never calls it.
+      await rpc(seeded.cookie, "models/connect", {
+        provider: "fixture-provider",
+        apiKey: "fake-model-key",
+        modelId: "fixture/model",
+      });
+      const runtime = vi
+        .spyOn(ScriptedAgentRuntime.prototype, "run")
+        .mockImplementation(async function* (runRequest): AsyncIterable<AgentRuntimeEvent> {
+          yield {
+            type: "tool",
+            name: "request_secret",
+            args: { label: "API key", purpose: "api_key", credential: destination },
+            executionId: `${runRequest.runId}:0`,
+          };
+          yield { type: "done", text: "Done" };
+        });
+      try {
+        await handles.executor.continueRun(seeded.run.id, "test-worker");
+        const message = await handles.prisma.message.findFirstOrThrow({
+          where: { runId: seeded.run.id, role: "bot" },
+          orderBy: { seq: "desc" },
+        });
+        await rpc(seeded.cookie, "threads/answer", {
+          botId: seeded.bot.id,
+          runId: seeded.run.id,
+          messageId: message.id,
+          answer: key,
+        });
+        await vi.waitFor(
+          async () =>
+            expect(
+              await handles.prisma.run.findUniqueOrThrow({ where: { id: seeded.run.id } }),
+            ).toMatchObject({ status: "completed", error: null }),
+          { timeout: 15_000 },
+        );
+      } finally {
+        runtime.mockRestore();
+      }
+      return seeded;
+    }
+
+    /** Runs the tools through the model-facing executeTool callback and returns what the model saw. */
+    async function runTools(
+      seeded: Awaited<ReturnType<typeof seedRun>>,
+      steps: Array<{
+        name: string;
+        args: Record<string, unknown>;
+        before?: (runId: string) => void | Promise<void>;
+      }>,
+    ) {
+      const results: unknown[] = [];
+      let finished = false;
+      const describeRuntime = ScriptedAgentRuntime.prototype.describe;
+      const modelFacing = vi
+        .spyOn(ScriptedAgentRuntime.prototype, "describe")
+        .mockImplementation(function (this: ScriptedAgentRuntime) {
+          const described = describeRuntime.call(this);
+          return { ...described, capabilities: { ...described.capabilities, scripted: false } };
+        });
+      const runtime = vi
+        .spyOn(ScriptedAgentRuntime.prototype, "run")
+        .mockImplementation(async function* (runRequest): AsyncIterable<AgentRuntimeEvent> {
+          try {
+            for (const [index, step] of steps.entries()) {
+              await step.before?.(runRequest.runId);
+              results.push(
+                await runRequest.executeTool!(step.name, step.args, `${runRequest.runId}:${index}`),
+              );
+            }
+          } finally {
+            finished = true;
+          }
+          yield { type: "done", text: "Done" };
+        });
+      try {
+        const task = await handles.prisma.task.create({
+          data: {
+            userId: seeded.me.userId,
+            spaceId: seeded.me.spaceId,
+            botId: seeded.bot.id,
+            threadId: seeded.thread.id,
+            prompt: "Use the saved credential",
+            status: "queued",
+          },
+        });
+        const run = await handles.prisma.run.create({
+          data: {
+            userId: seeded.me.userId,
+            spaceId: seeded.me.spaceId,
+            botId: seeded.bot.id,
+            threadId: seeded.thread.id,
+            taskId: task.id,
+            trigger: "user",
+            status: "queued",
+          },
+        });
+        await handles.executor.continueRun(run.id, "test-worker");
+        // A run waiting on the previous run's computer lease is retried by the background worker.
+        await vi.waitFor(() => expect(finished).toBe(true), { timeout: 15_000 });
+        await vi.waitFor(
+          async () =>
+            expect(
+              (await handles.prisma.run.findUniqueOrThrow({ where: { id: run.id } })).status,
+            ).not.toBe("queued"),
+          { timeout: 15_000 },
+        );
+        expect(runtime).toHaveBeenCalledOnce();
+        return { runId: run.id, results };
+      } finally {
+        runtime.mockRestore();
+        modelFacing.mockRestore();
+      }
+    }
+
+    it("saves a download the same run can list, read and attach, and keeps it after commit", async () => {
+      const seeded = await seedWithCredential("download-visible");
+      fetch.mockImplementation(async () => pdfResponse());
+      const { runId, results } = await runTools(seeded, [
+        request("/v1/reports/latest"),
+        { name: "list_files", args: { path: "downloads" } },
+        { name: "read_file", args: { path: "downloads/report.pdf" } },
+        { name: "attach_file", args: { path: "downloads/report.pdf" } },
+      ]);
+      expect(results).toEqual([
+        {
+          file: {
+            path: "downloads/report.pdf",
+            filename: "report.pdf",
+            size: pdf.length,
+            contentType: "application/pdf",
+            sha256: createHash("sha256").update(pdf).digest("hex"),
+          },
+        },
+        {
+          path: "downloads",
+          entries: [{ path: "downloads/report.pdf", kind: "file", size: pdf.length }],
+        },
+        { path: "downloads/report.pdf", content: pdf },
+        { ok: true, artifactId: expect.any(String), path: "downloads/report.pdf" },
+      ]);
+      await vi.waitFor(
+        async () =>
+          expect(
+            await handles.prisma.run.findUniqueOrThrow({ where: { id: runId } }),
+          ).toMatchObject({ status: "completed", error: null }),
+        { timeout: 15_000 },
+      );
+      const { artifactId } = results[3] as { artifactId: string };
+      const attached = await handles.prisma.message.findMany({ where: { runId, role: "bot" } });
+      expect(JSON.stringify(attached.map((message) => message.blocks))).toContain(artifactId);
+
+      const next = await runTools(seeded, [
+        { name: "read_file", args: { path: "downloads/report.pdf" } },
+      ]);
+      expect(next.results).toEqual([{ path: "downloads/report.pdf", content: pdf }]);
+    });
+
+    it("returns each failure class to the model as its specific, redacted message", async () => {
+      const seeded = await seedWithCredential("download-failures");
+      const { runId, results } = await runTools(seeded, [
+        {
+          ...request("/v1/too-large"),
+          before: () => {
+            vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES", "16");
+            fetch.mockImplementation(async () =>
+              pdfResponse(
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(new Uint8Array(64));
+                    controller.close();
+                  },
+                }),
+              ),
+            );
+          },
+        },
+        {
+          ...request("/v1/slow"),
+          before: () => {
+            vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_TIMEOUT_MS", "100");
+            fetch.mockImplementation(pendingUntilAborted);
+          },
+        },
+        {
+          ...request("/v1/moved"),
+          before: () => {
+            vi.unstubAllEnvs();
+            fetch.mockImplementation(
+              async () =>
+                new Response(null, {
+                  status: 302,
+                  headers: { location: `https://elsewhere.example.test/${key}` },
+                }),
+            );
+          },
+        },
+        {
+          ...request("/v1/blocked"),
+          before: () => {
+            resolveHostname.mockImplementationOnce(async () => [
+              { address: "10.0.0.8", family: 4 },
+            ]);
+          },
+        },
+        {
+          ...request("/v1/dns"),
+          before: () => {
+            resolveHostname.mockImplementationOnce(async () => {
+              throw Object.assign(new Error("getaddrinfo ENOTFOUND api.example.test"), {
+                code: "ENOTFOUND",
+              });
+            });
+          },
+        },
+        {
+          ...request("/v1/refused"),
+          before: () => {
+            fetch.mockImplementation(async () => {
+              throw new TypeError("fetch failed", {
+                cause: new Error(`connect ECONNREFUSED 203.0.113.10:443 ${key}`),
+              });
+            });
+          },
+        },
+        {
+          ...request("/v1/unsaved"),
+          before: () => {
+            fetch.mockImplementation(async () => pdfResponse());
+            vi.spyOn(FakeSandboxProvider.prototype, "writeFile").mockRejectedValueOnce(
+              new Error(`disk full ${key}`),
+            );
+          },
+        },
+      ]);
+      expect(results).toEqual([
+        { error: "Response exceeds the 16 byte file download limit." },
+        { error: "Request timed out after 1 second." },
+        {
+          error:
+            "Redirect not followed (HTTP 302 to elsewhere.example.test). Request the final URL directly.",
+        },
+        { error: "Destination is blocked by network policy." },
+        { error: "DNS lookup failed for api.example.test. Check the destination hostname." },
+        {
+          error:
+            "Network error: Could not reach api.example.test: connect ECONNREFUSED 203.0.113.10:443 [REDACTED].",
+        },
+        { error: "Could not save the downloaded file to the bot workspace." },
+      ]);
+      const effects = await handles.prisma.externalEffect.findMany({
+        where: { runId, kind: "secret_request" },
+      });
+      expect(effects).toHaveLength(results.length);
+      expect(JSON.stringify({ results, effects })).not.toContain(key);
+    });
+
+    it("reports a run cancelled mid-request as cancelled", async () => {
+      const seeded = await seedWithCredential("download-cancelled");
+      const heartbeats: Array<() => void> = [];
+      const realSetInterval = globalThis.setInterval;
+      vi.spyOn(globalThis, "setInterval").mockImplementation(((
+        callback: () => void,
+        ms?: number,
+      ) => {
+        if (ms === 60_000) heartbeats.push(callback);
+        return realSetInterval(callback, ms);
+      }) as typeof setInterval);
+      let cancelledRunId = "";
+      fetch.mockImplementation((url, init) => {
+        const pending = pendingUntilAborted(url, init);
+        // Another worker taking the lease is how a stopped run loses its tools.
+        void handles.prisma.run
+          .update({ where: { id: cancelledRunId }, data: { leaseOwner: "another-worker" } })
+          .then(() => heartbeats.at(-1)?.());
+        return pending;
+      });
+      const { results } = await runTools(seeded, [
+        {
+          ...request("/v1/export"),
+          before: (runId) => {
+            cancelledRunId = runId;
+          },
+        },
+      ]);
+      expect(results).toEqual([{ error: "Request was cancelled before it finished." }]);
+    });
+  });
 
   async function seedRun(
     label: string,
