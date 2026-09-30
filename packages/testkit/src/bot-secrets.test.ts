@@ -3,8 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
-import { FakeSandboxProvider, ScriptedAgentRuntime } from "@cortexai-agent-hub/adapters";
-import { answerRunInput } from "@cortexai-agent-hub/db";
+import {
+  FakeSandboxProvider,
+  LocalArtifactStore,
+  resolveBotWorkspacePath,
+  ScriptedAgentRuntime,
+} from "@cortexai-agent-hub/adapters";
+import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
+import { answerRunInput, parseComputerMode } from "@cortexai-agent-hub/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
@@ -328,11 +334,12 @@ describeIntegration("reusable credential lifecycle", () => {
       args: { name: destination.name, url: `${destination.origin}${path}` },
     });
     const pdf = "%PDF-1.4 fake quarterly report";
-    const pdfResponse = (body: BodyInit = pdf) =>
+    const pdfResponse = (body: BodyInit = pdf, headers: Record<string, string> = {}) =>
       new Response(body, {
         headers: {
           "content-type": "application/pdf",
           "content-disposition": 'attachment; filename="report.pdf"',
+          ...headers,
         },
       });
     const pendingUntilAborted: typeof globalThis.fetch = (_url, init) =>
@@ -500,6 +507,156 @@ describeIntegration("reusable credential lifecycle", () => {
       expect(next.results).toEqual([{ path: "downloads/report.pdf", content: pdf }]);
     });
 
+    /** The bot's files as the fake computer stores them, keyed by the path the bot uses. */
+    async function computerFiles(botId: string) {
+      const { computer } = await handles.prisma.bot.findUniqueOrThrow({
+        where: { id: botId },
+        include: { computer: true },
+      });
+      const box = (handles.sandbox as FakeSandboxProvider).boxes.get(`fake-${computer!.homeKey}`);
+      expect(box).toBeDefined();
+      const stored = (botPath: string) =>
+        resolveBotWorkspacePath(parseComputerMode(computer!.scope), botId, botPath);
+      return {
+        get: (botPath: string) => box!.files.get(stored(botPath)),
+        set: (botPath: string, content: Uint8Array) =>
+          box!.files.set(stored(botPath), { content, executable: false }),
+        has: (botPath: string) => box!.files.has(stored(botPath)),
+        storedPath: stored,
+        paths: () => [...box!.files.keys()],
+      };
+    }
+    const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+    it("keeps every byte value intact from the download through the computer to the attachment", async () => {
+      const seeded = await seedWithCredential("download-binary");
+      const body = Uint8Array.from({ length: 4096 }, (_, index) => index % 256);
+      fetch.mockImplementation(
+        async () =>
+          new Response(body, {
+            headers: {
+              "content-type": "application/pdf",
+              "content-disposition": 'attachment; filename="binary.pdf"',
+            },
+          }),
+      );
+      const { results } = await runTools(seeded, [
+        request("/v1/binary"),
+        { name: "list_files", args: { path: "downloads" } },
+        { name: "attach_file", args: { path: "downloads/binary.pdf" } },
+      ]);
+      expect(results).toEqual([
+        {
+          file: {
+            path: "downloads/binary.pdf",
+            filename: "binary.pdf",
+            size: body.byteLength,
+            contentType: "application/pdf",
+            sha256: sha256(body),
+          },
+        },
+        {
+          path: "downloads",
+          entries: [{ path: "downloads/binary.pdf", kind: "file", size: body.byteLength }],
+        },
+        { ok: true, artifactId: expect.any(String), path: "downloads/binary.pdf" },
+      ]);
+      const stored = (await computerFiles(seeded.bot.id)).get("downloads/binary.pdf");
+      expect(stored && sha256(stored.content)).toBe(sha256(body));
+      const artifact = await handles.prisma.artifact.findUniqueOrThrow({
+        where: { id: (results[2] as { artifactId: string }).artifactId },
+      });
+      const attached = await new LocalArtifactStore(dataDir).get(artifact.storageKey, {
+        operationId: "test",
+        traceId: "test",
+        spaceId: artifact.spaceId,
+        userId: artifact.userId,
+        signal: new AbortController().signal,
+      });
+      expect(sha256(attached)).toBe(sha256(body));
+      expect(artifact.hash).toBe(sha256(body));
+
+      (await computerFiles(seeded.bot.id)).set(
+        "downloads/large.pdf",
+        new Uint8Array(ATTACHMENT_MAX_BYTES + 1),
+      );
+      const oversized = await runTools(seeded, [
+        { name: "attach_file", args: { path: "downloads/large.pdf" } },
+      ]);
+      expect(oversized.results).toEqual([
+        { error: "file exceeds the 10 MiB attachment limit", path: "downloads/large.pdf" },
+      ]);
+    });
+
+    it("names an extensionless PDF endpoint so it can be attached", async () => {
+      const seeded = await seedWithCredential("download-extensionless");
+      fetch.mockImplementation(
+        async () => new Response(pdf, { headers: { "content-type": "application/pdf" } }),
+      );
+      const { results } = await runTools(seeded, [
+        request("/api/forms/abc/pdf"),
+        { name: "attach_file", args: { path: "downloads/pdf.pdf" } },
+      ]);
+      expect(results).toEqual([
+        {
+          file: expect.objectContaining({ path: "downloads/pdf.pdf", filename: "pdf.pdf" }),
+        },
+        { ok: true, artifactId: expect.any(String), path: "downloads/pdf.pdf" },
+      ]);
+    });
+
+    it("rejects over-cap downloads and leaves nothing in downloads/", async () => {
+      const seeded = await seedWithCredential("download-over-cap");
+      const overAttachmentCap = new Uint8Array(ATTACHMENT_MAX_BYTES + 1);
+      const { results } = await runTools(seeded, [
+        {
+          ...request("/v1/declared"),
+          before: () => {
+            fetch.mockImplementation(async () =>
+              pdfResponse(new ReadableStream(), {
+                "content-length": String(200 * 1024 * 1024),
+              }),
+            );
+          },
+        },
+        {
+          ...request("/v1/streamed"),
+          before: () => {
+            fetch.mockImplementation(async () =>
+              pdfResponse(
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(overAttachmentCap);
+                    controller.close();
+                  },
+                }),
+              ),
+            );
+          },
+        },
+        {
+          ...request("/v1/configured"),
+          before: () => {
+            vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES", "1024");
+            fetch.mockImplementation(async () => pdfResponse(new Uint8Array(2048)));
+          },
+        },
+        { name: "list_files", args: { path: "downloads" } },
+      ]);
+      expect(results).toEqual([
+        {
+          error:
+            "Response size 209715200 bytes exceeds the 10485760 byte file download limit for this computer.",
+        },
+        { error: "Response exceeds the 10485760 byte file download limit for this computer." },
+        { error: "Response exceeds the 1024 byte file download limit for this computer." },
+        { path: "downloads", entries: [] },
+      ]);
+      const files = await computerFiles(seeded.bot.id);
+      const downloads = files.storedPath("downloads/");
+      expect(files.paths().filter((file) => file.startsWith(downloads))).toEqual([]);
+    });
+
     it("returns each failure class to the model as its specific, redacted message", async () => {
       const seeded = await seedWithCredential("download-failures");
       const { runId, results } = await runTools(seeded, [
@@ -578,7 +735,7 @@ describeIntegration("reusable credential lifecycle", () => {
         },
       ]);
       expect(results).toEqual([
-        { error: "Response exceeds the 16 byte file download limit." },
+        { error: "Response exceeds the 16 byte file download limit for this computer." },
         { error: "Request timed out after 1 second." },
         {
           error:
