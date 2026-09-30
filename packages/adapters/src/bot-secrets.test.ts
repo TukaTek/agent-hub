@@ -284,21 +284,30 @@ describe("authenticated secret requests", () => {
   it("rejects binary downloads declared over the cap before streaming", async () => {
     const { input, fetch } = await fixture();
     const downloadsDir = "/tmp/test-downloads";
-    fetch.mockResolvedValueOnce(
-      new Response(null, {
-        status: 200,
-        headers: {
-          "content-type": "application/pdf",
-          "content-length": String(30 * 1024 * 1024),
-        },
-      }),
-    );
-    const result = await requestWithBotSecret({ ...input, downloadsDir });
-    expect(result).toMatchObject({
-      error: expect.stringContaining(
-        "31457280 bytes exceeds the 31457280 byte file download limit",
-      ),
-    });
+    // Set a lower cap for this test
+    const originalCap = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
+    process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = String(10 * 1024 * 1024);
+    try {
+      fetch.mockResolvedValueOnce(
+        new Response(Buffer.alloc(1), {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-length": String(30 * 1024 * 1024),
+          },
+        }),
+      );
+      const result = await requestWithBotSecret({ ...input, downloadsDir });
+      expect(result).toMatchObject({
+        error: expect.stringContaining("30720000 bytes exceeds the 10485760 byte file download limit"),
+      });
+    } finally {
+      if (originalCap === undefined) {
+        delete process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
+      } else {
+        process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = originalCap;
+      }
+    }
   });
 
   it("downloads text over 1 MB when the content type is not text/JSON", async () => {
