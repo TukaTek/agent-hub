@@ -158,6 +158,18 @@ export class HubRequestError extends Error {
     super("Hub access denied");
   }
 }
+/**
+ * Hub's sso-start has no fields for re-authentication or a login hint, so add the
+ * standard OIDC parameters to a direct authorization request. `prompt=login` keeps
+ * an IdP session left in a shared browser from silently signing the next person in
+ * after an Agent Hub sign-out. The browser can strip it, so Hub must also enforce it.
+ */
+function interactiveAuthorizeUrl(url: URL, email: string): URL {
+  if (!url.searchParams.has("client_id") || !url.searchParams.has("response_type")) return url;
+  url.searchParams.set("prompt", "login");
+  if (!url.searchParams.has("login_hint")) url.searchParams.set("login_hint", email);
+  return url;
+}
 /** Hub issues 300 s service tokens; renew this long before expiry. */
 const SERVICE_TOKEN_RENEW_MS = 45_000;
 /** Hub accepts `Bearer <token>` with no whitespace, up to 16384 characters. */
@@ -329,7 +341,7 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
       }
       const url = new URL(text(reply.authorizeUrl));
       if (url.protocol !== "https:") throw new Error("Invalid Hub response");
-      return url.href;
+      return interactiveAuthorizeUrl(url, body.email).href;
     },
     /** Hub consumes the code on every attempt, so callers must never retry with the same code. */
     async ssoExchange(code: string, codeVerifier: string, redirectUri: string) {

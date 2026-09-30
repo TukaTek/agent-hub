@@ -229,6 +229,45 @@ describe("Hub agent-hub-web SSO contract", () => {
     expect(startInit.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.token}`);
   });
 
+  it("asks the IdP for fresh credentials with the email as login_hint, sending Hub only its fields", async () => {
+    const direct =
+      "https://login.example.test/tenant/oauth2/v2.0/authorize?client_id=synthetic-client&response_type=code&scope=openid&state=opaque";
+    const { client, calls } = ssoSetup({ "sso-start": { authorizeUrl: direct } });
+    const body = web.ssoStartRequest.body;
+    const url = new URL(await client.ssoStart(`  ${body.email} `, body.state, body.codeChallenge));
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: "synthetic-client",
+      response_type: "code",
+      scope: "openid",
+      state: "opaque",
+      prompt: "login",
+      login_hint: body.email,
+    });
+    expect(url.origin + url.pathname).toBe(direct.split("?")[0]);
+    expect(JSON.parse(calls("sso-start")[0]![1].body)).toEqual(body);
+  });
+
+  it("overrides a weaker prompt but keeps Hub's own login_hint", async () => {
+    const { client } = ssoSetup({
+      "sso-start": {
+        authorizeUrl:
+          "https://login.example.test/authorize?client_id=c&response_type=code&prompt=none&login_hint=hub%40example.test",
+      },
+    });
+    const body = web.ssoStartRequest.body;
+    const url = new URL(await client.ssoStart(body.email, body.state, body.codeChallenge));
+    expect(url.searchParams.getAll("prompt")).toEqual(["login"]);
+    expect(url.searchParams.getAll("login_hint")).toEqual(["hub@example.test"]);
+  });
+
+  it("leaves an authorize URL that is not a direct OIDC request unchanged", async () => {
+    const { client } = ssoSetup();
+    const body = web.ssoStartRequest.body;
+    await expect(client.ssoStart(body.email, body.state, body.codeChallenge)).resolves.toBe(
+      web.ssoStartResponse.authorizeUrl,
+    );
+  });
+
   it("exchanges with Hub's published request shape and returns the native grant", async () => {
     const { client, calls } = ssoSetup();
     const body = web.exchangeRequest.body;

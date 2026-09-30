@@ -787,6 +787,94 @@ describe("Hub tenant Entra SSO", () => {
     for (const secret of secrets) expect(output).not.toContain(secret);
   });
 
+  it("makes the next Microsoft sign-in after an Agent Hub sign-out ask for credentials", async () => {
+    const { createHubClient: realClient } =
+      await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+    const email = "private@example.test";
+    const direct =
+      "https://login.example.test/tenant/oauth2/v2.0/authorize?client_id=synthetic-client&response_type=code&state=opaque";
+    const products = [{ id: "cortexai-agent-hub", enabled: true }];
+    const starts: unknown[] = [];
+    const revoked: unknown[] = [];
+    const hub = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (path === "/api/tenant-auth/lookup")
+        return Response.json({ tenantId: config.tenantId, idpType: "entra" });
+      if (path === "/api/agent-hub/service-token")
+        return Response.json({ token: "synthetic-token", tokenType: "Bearer", expiresIn: 300 });
+      if (path === "/api/tenant-auth/sso-start") {
+        starts.push(body);
+        return Response.json({ authorizeUrl: direct });
+      }
+      if (path === "/api/agent-hub/sso-exchange")
+        return Response.json({
+          success: true,
+          user: { id: "subject-1", tenantId: config.tenantId, displayName: "Fixture" },
+          accessToken: "access-secret-1",
+          accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+          refreshToken: "refresh-secret-1",
+          refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          products,
+          tenantId: config.tenantId,
+          deploymentId: ssoConfig.deploymentId,
+        });
+      if (path === "/api/tenant-auth/session")
+        return Response.json({ valid: true, userId: "subject-1", tenantId: config.tenantId });
+      if (path === "/api/tenant-auth/config")
+        return Response.json({ product: "cortexai-agent-hub", products });
+      if (path === "/api/tenant-auth/revoke") {
+        revoked.push(body);
+        return Response.json({ success: true });
+      }
+      throw new Error(`Unexpected Hub request ${path}`);
+    });
+    const logged: unknown[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args) => void logged.push(...args)),
+    );
+    try {
+      const f = fixture(realClient(ssoConfig, hub as typeof fetch), { sso: true });
+      const signIn = async () => {
+        const start = await f.request("/hub/sign-in/continue", "", { email });
+        const { url } = (await start.json()) as { url: string };
+        const state = /__Host-ah_sso=([^;]+)/.exec(start.headers.get("set-cookie") ?? "")![1]!;
+        const callback = await f.callback(`code=${code}&state=${state}`, `__Host-ah_sso=${state}`);
+        expect(callback.headers.get("location")).toBe("https://web.example.test/app");
+        return new URL(url);
+      };
+      const first = await signIn();
+      expect(first.searchParams.get("prompt")).toBe("login");
+      expect(first.searchParams.get("login_hint")).toBe(email);
+      const token = f.data.session![0]!.token;
+      await f.auth.api.signOut({ headers: new Headers({ authorization: `Bearer ${token}` }) });
+      expect(revoked).toEqual([{ refreshToken: "refresh-secret-1" }]);
+      expect(f.data.session).toHaveLength(0);
+
+      const again = await f.request("/hub/sign-in/continue", "", { email });
+      const next = new URL(((await again.json()) as { url: string }).url);
+      expect(next.searchParams.get("prompt")).toBe("login");
+      expect(next.searchParams.get("login_hint")).toBe(email);
+      expect(f.data.session).toHaveLength(0);
+      for (const sent of starts)
+        expect(Object.keys(sent as object).sort()).toEqual([
+          "codeChallenge",
+          "codeChallengeMethod",
+          "deploymentId",
+          "email",
+          "product",
+          "returnChannel",
+          "state",
+          "tenantId",
+        ]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    const output = JSON.stringify(logged.map(String));
+    for (const secret of [email, "synthetic-token", "access-secret-1", "refresh-secret-1"])
+      expect(output).not.toContain(secret);
+  });
+
   it("never logs the service secret or tokens while the real client renews and is rejected", async () => {
     const { createHubClient: realClient } =
       await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
