@@ -46,6 +46,13 @@ When Hub returns `401 invalid_service_token`, the cached token is dropped. A sta
 
 **Sessions and revocation.** SSO sessions are the same Hub sessions as password sign-in: 24-hour access tokens and 30-day rotating refresh tokens. Revoking a user or their assignment in Hub takes effect within the verification cache TTL plus one request, as described below. If Hub's session reports a product or deployment, it must be Agent Hub and this deployment; set `HUB_DEPLOYMENT_ID` whenever Hub has issued one, even with SSO off, or deployment-bound sessions are refused.
 
+**Sign-out and fresh credentials.** Signing out deletes the Agent Hub session and revokes its Hub refresh token, so nothing in Agent Hub can resume it. The browser can still hold a Microsoft session, though, and Microsoft would otherwise sign the next person at a shared machine straight back in. Hub's sso-start has no field for this yet. When Hub's `authorizeUrl` is a direct OIDC authorization request (it carries `client_id` and `response_type`), Agent Hub sets two standard parameters on it before sending the browser on:
+
+- `prompt=login` on every start, so Microsoft always asks for credentials. It replaces any weaker `prompt` Hub set.
+- `login_hint=<email>`, using the email entered on the sign-in page, so Microsoft skips or pre-fills its email step. A `login_hint` that Hub already set is kept.
+
+Forcing re-authentication on every start is simpler and safer than forcing it only after a sign-out: a marker cookie could be cleared, it wouldn't cover sessions that simply expired, and sign-ins are rare anyway (sessions last up to 30 days). The parameters are only in the URL, so someone at the browser could remove them. Hub must enforce re-authentication itself for this to hold against a deliberate attacker. The start request to Hub is unchanged, because Hub's schema rejects unknown fields. Other authorize URLs are passed through untouched.
+
 **Desktop.** The Electron app does not support SSO yet because it hands off-origin navigation to the system browser, which cannot complete an app sign-in. Entra users see a message pointing them to this deployment in their browser. Always Native users sign in on desktop as before. Mobile keeps its password form.
 
 ### Staging check
@@ -66,11 +73,12 @@ WEB_ORIGIN=<staging Agent Hub HTTPS origin>
 
 Then, in a browser:
 
-1. Sign in as an assigned Entra test user. Expect Microsoft sign-in, then `/app`.
+1. Sign in as an assigned Entra test user. Expect Microsoft to open with the email filled in, then `/app`.
 2. Sign in as an Entra test user without an Agent Hub assignment. Expect `/sign-in` with "Microsoft sign-in didn't finish".
 3. Reload the callback URL from step 1. Expect "Your sign-in expired".
 4. Set the first user to Always Native in Hub and sign in with their password. Expect the same account and data as step 1.
 5. Remove the first user's assignment in Hub while signed in. Expect access to stop within the verification cache TTL.
+6. Sign in as another assigned Entra test user, sign out of Agent Hub, and continue with the same email. Expect Microsoft to ask for the password again, with the email already filled in.
 
 ## Verification cache and revoke semantics
 
