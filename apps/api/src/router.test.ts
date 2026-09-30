@@ -598,6 +598,65 @@ describe("connections.begin", () => {
       json: { connectionId: "conn-old" },
     });
   });
+
+  it("sets up Composio connections with the same connector that runs tool calls", async () => {
+    const envComposio = {
+      begin: vi.fn().mockResolvedValue({ state: "gmail-state", authorizationUrl: null }),
+    };
+    const savedComposio = { begin: vi.fn() };
+    const resolve = vi.fn(async () => savedComposio);
+    const managed = vi.fn(() => envComposio);
+    const row = {
+      id: "conn-1",
+      connectorId: "composio",
+      provider: "gmail",
+      displayName: "Gmail",
+      status: "pending",
+      createdAt: new Date("2026-08-26T00:00:00.000Z"),
+    };
+    const prisma = {
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
+          connection: {
+            findMany: vi.fn().mockResolvedValue([]),
+            create: vi.fn().mockResolvedValue(row),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+        }),
+      ),
+    } as unknown as PrismaClient;
+    const deps = {
+      prisma,
+      composio: envComposio,
+      connectors: { managed },
+      integrationSettings: { resolve },
+      env: { webOrigin: "http://127.0.0.1:5173" },
+      dataDir: "/tmp/cortexai-agent-hub-router-test",
+    } as unknown as RouterDeps;
+    const actor = {
+      spaceId: "workspace-1",
+      userId: "user-1",
+      email: "user@cortexai-agent-hub.test",
+      isDeploymentOwner: true,
+    } satisfies Actor;
+    const { response } = await new RPCHandler(createRouter(deps)).handle(
+      new Request("http://127.0.0.1/rpc/connections/begin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          json: { connectorId: "composio", provider: "gmail", displayName: "Gmail" },
+        }),
+      }),
+      { prefix: "/rpc", context: { actor } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(envComposio.begin).toHaveBeenCalledOnce();
+    expect(savedComposio.begin).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(managed("composio")).toBe(envComposio);
+  });
 });
 
 describe("connections.complete", () => {

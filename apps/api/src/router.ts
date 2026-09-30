@@ -3960,10 +3960,12 @@ export function createRouter(deps: RouterDeps) {
       }),
       begin: authed.connections.begin.handler(async ({ context, input }) => {
         const connector =
-          deps.integrationSettings &&
-          (input.connectorId === "composio" || input.connectorId === "pipedream")
-            ? await deps.integrationSettings.resolve(input.connectorId)
-            : deps.connectors.managed(input.connectorId);
+          input.connectorId === "composio" && deps.composio
+            ? deps.composio
+            : deps.integrationSettings &&
+                (input.connectorId === "composio" || input.connectorId === "pipedream")
+              ? await deps.integrationSettings.resolve(input.connectorId)
+              : deps.connectors.managed(input.connectorId);
         if (!connector) {
           throw new ORPCError("BAD_REQUEST", {
             message: `Connector ${input.connectorId} is not configured`,
