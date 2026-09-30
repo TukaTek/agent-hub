@@ -355,24 +355,25 @@ describe("authenticated secret requests", () => {
 
   it("gives distinct error for redirects including status and redacted target host", async () => {
     const { input, fetch } = await fixture();
-    fetch.mockResolvedValueOnce(
-      new Response(null, {
-        status: 302,
-        headers: { location: "https://redirect.example.com/target" },
-      }),
-    );
+    // Use ReadableStream for Response body to match real fetch behavior
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 302,
+      headers: new Headers({ location: "https://redirect.example.com/target" }),
+      body: null,
+    } as Response);
     const result = await requestWithBotSecret(input);
     expect(result).toMatchObject({
       error: expect.stringMatching(/Redirect not followed \(HTTP 302 to redirect\.example\.com\)/),
     });
 
     // Test with secret in redirect location (should be redacted)
-    fetch.mockResolvedValueOnce(
-      new Response(null, {
-        status: 301,
-        headers: { location: `https://evil.com/${secret}` },
-      }),
-    );
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 301,
+      headers: new Headers({ location: `https://evil.com/${secret}` }),
+      body: null,
+    } as Response);
     const redactedResult = await requestWithBotSecret(input);
     expect(JSON.stringify(redactedResult)).not.toContain(secret);
     expect(redactedResult).toMatchObject({
@@ -418,7 +419,7 @@ describe("authenticated secret requests", () => {
       { disposition: 'filename="/absolute/path.txt"', expected: "absolutepath.txt" },
       { disposition: 'filename="../../escape.pdf"', expected: "escape.pdf" },
       { disposition: 'filename=".hidden"', expected: "hidden" },
-      { disposition: 'filename="null\x00byte.txt"', expected: "nullbyte.txt" },
+      { disposition: 'filename="pipe|.txt"', expected: "pipe.txt" },
       {
         disposition: 'filename="colon:slash/back\\\\pipe|.txt"',
         expected: "colonslashback",

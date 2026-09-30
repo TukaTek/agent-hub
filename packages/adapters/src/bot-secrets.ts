@@ -10,6 +10,7 @@ import {
   SecretHttpRequest,
 } from "@cortexai-agent-hub/contracts";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 
 import { combineSignals, redactConnectorPayload } from "./connector-safety.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
@@ -364,6 +365,8 @@ export async function requestWithBotSecret(input: {
       ) {
         return { error: `Network error: ${error.message}` };
       }
+      // Log unexpected errors for debugging
+      getLogger().error(`secret_request unexpected error: ${error.message}`);
     }
     return { error: "Authenticated request failed. Check the destination and credential." };
   } finally {
