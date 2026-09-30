@@ -2657,13 +2657,18 @@ export function createRunExecutor(deps: ExecutorDeps) {
             if (!deps.artifacts) return failAttach("artifact storage unavailable");
             const storedPath = resolveBotWorkspacePath(computerMode, bot.id, filePath);
             let bytes: Uint8Array;
+            const tooLarge = "file exceeds the 10 MiB attachment limit";
             try {
               bytes = await deps.sandbox.readFile(computer, storedPath, context, {
                 maxBytes: ATTACHMENT_MAX_BYTES,
               });
-            } catch {
+            } catch (error) {
+              if (error instanceof Error && /exceeds \d+ bytes/.test(error.message)) {
+                return failAttach(tooLarge);
+              }
               return failAttach("file not found or unreadable");
             }
+            if (bytes.byteLength > ATTACHMENT_MAX_BYTES) return failAttach(tooLarge);
             const mimeType = inferAttachmentMimeType(filePath);
             if (!mimeType) return failAttach("unsupported attachment type");
             try {
