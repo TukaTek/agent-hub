@@ -258,16 +258,27 @@ describe("authenticated secret requests", () => {
   it("rejects binary downloads over the configured cap", async () => {
     const { input, fetch } = await fixture();
     const downloadsDir = "/tmp/test-downloads";
-    const largeData = Buffer.from("x".repeat(30 * 1024 * 1024));
-    fetch.mockResolvedValueOnce(
-      new Response(largeData, {
-        status: 200,
-        headers: { "content-type": "application/pdf" },
-      }),
-    );
-    expect(await requestWithBotSecret({ ...input, downloadsDir })).toMatchObject({
-      error: expect.stringContaining("exceeds the 26214400 byte file download limit"),
-    });
+    // Set a lower cap via env var for this test to avoid streaming 100+ MB in CI
+    const originalCap = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
+    process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = String(25 * 1024 * 1024);
+    try {
+      const largeData = Buffer.from("x".repeat(30 * 1024 * 1024));
+      fetch.mockResolvedValueOnce(
+        new Response(largeData, {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        }),
+      );
+      expect(await requestWithBotSecret({ ...input, downloadsDir })).toMatchObject({
+        error: expect.stringContaining("exceeds the 26214400 byte file download limit"),
+      });
+    } finally {
+      if (originalCap === undefined) {
+        delete process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
+      } else {
+        process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES = originalCap;
+      }
+    }
   });
 
   it("rejects binary downloads declared over the cap before streaming", async () => {
@@ -285,7 +296,7 @@ describe("authenticated secret requests", () => {
     const result = await requestWithBotSecret({ ...input, downloadsDir });
     expect(result).toMatchObject({
       error: expect.stringContaining(
-        "31457280 bytes exceeds the 26214400 byte file download limit",
+        "31457280 bytes exceeds the 31457280 byte file download limit",
       ),
     });
   });
@@ -548,12 +559,12 @@ describe("authenticated secret requests", () => {
 
     // Test 2: Secret in URL triggering redirect
     const urlWithSecret = `${destination.origin}/path/${secret}`;
-    fetch.mockResolvedValueOnce({
-      ok: false,
-      status: 302,
-      headers: new Headers({ location: `https://other.com/${secret}` }),
-      body: null,
-    } as Response);
+    fetch.mockResolvedValueOnce(
+      new Response("", {
+        status: 302,
+        headers: { location: `https://other.com/${secret}` },
+      }),
+    );
     const redirectInput = {
       ...input,
       request: { ...input.request, url: urlWithSecret },

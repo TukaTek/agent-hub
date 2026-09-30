@@ -25,9 +25,16 @@ function scopeFields({ userId, spaceId, botId }: BotSecretScope): BotSecretScope
 
 function getFileDownloadCap(): number {
   const env = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
-  if (!env) return 25 * 1024 * 1024;
+  if (!env) return 100 * 1024 * 1024;
   const parsed = parseInt(env, 10);
-  return parsed > 0 ? parsed : 25 * 1024 * 1024;
+  return parsed > 0 ? parsed : 100 * 1024 * 1024;
+}
+
+function getRequestTimeoutMs(): number {
+  const env = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_TIMEOUT_MS;
+  if (!env) return 120_000; // 2 minutes default for 100 MB downloads
+  const parsed = parseInt(env, 10);
+  return parsed > 0 ? parsed : 120_000;
 }
 
 const TEXT_BODY_CAP = 1_000_000;
@@ -230,7 +237,7 @@ export async function requestWithBotSecret(input: {
   ].filter(Boolean);
   input.registerRedactions?.(redactions);
   const controller = new AbortController();
-  const signal = combineSignals(input.signal, controller.signal, AbortSignal.timeout(30_000));
+  const signal = combineSignals(input.signal, controller.signal, AbortSignal.timeout(getRequestTimeoutMs()));
   // The safe fetch refuses plain-HTTP and private hosts outright. A credential
   // saved under the owner's private-HTTP opt-in was validated against exactly
   // those rules at save time, and the request URL is pinned to its origin, so
@@ -340,7 +347,9 @@ export async function requestWithBotSecret(input: {
     };
   } catch (error) {
     if (signal.aborted) {
-      return { error: "Request timed out after 30 seconds." };
+      const timeoutMs = getRequestTimeoutMs();
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      return { error: `Request timed out after ${timeoutSec} seconds.` };
     }
     if (error instanceof Error) {
       if (error.message.includes("Response is too large")) {
