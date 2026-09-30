@@ -3321,7 +3321,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (name === "secret_request") {
             try {
-              const downloadsDir = path.join(deps.home.pathFor(run.botId), "downloads");
+              // Write to the bot's working directory so the file is visible to file tools
+              const downloadsDir = path.join(
+                resolveBotWorkspacePath(computerMode, bot.id, "downloads"),
+              );
               const result = await requestWithBotSecret({
                 prisma: deps.prisma,
                 secretStore: deps.secretStore,
@@ -3333,8 +3336,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 downloadsDir,
               });
               return finish(result);
-            } catch {
-              return finish({ error: "Invalid authenticated request." });
+            } catch (error) {
+              // requestWithBotSecret should never throw; if it does, preserve the message
+              const message =
+                error instanceof Error ? error.message : "Invalid authenticated request.";
+              return finish({ error: message });
             }
           }
           if (name === "request_secret") {

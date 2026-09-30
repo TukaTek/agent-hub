@@ -535,15 +535,29 @@ async function downloadToFile(
     } catch {
       /* Cleanup best-effort */
     }
-    if (error instanceof Error && error.message.includes("exceeds the")) {
-      // Redact any secret values that might be in the error message
-      let message = error.message;
+    if (error instanceof Error) {
+      if (error.message.includes("exceeds the")) {
+        // Size limit error - already has the right format
+        let message = error.message;
+        for (const value of redactions) {
+          message = message.replaceAll(value, "[REDACTED]");
+        }
+        return { error: message };
+      }
+      if (error.message.includes("aborted")) {
+        return { error: "Download aborted." };
+      }
+      if (error.message.includes("not readable")) {
+        return { error: "Response body is not readable." };
+      }
+      // Network/IO errors
+      let message = `Download failed: ${error.message}`;
       for (const value of redactions) {
         message = message.replaceAll(value, "[REDACTED]");
       }
       return { error: message };
     }
-    throw error;
+    return { error: "Download failed due to an unexpected error." };
   }
 }
 
