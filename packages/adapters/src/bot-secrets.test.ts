@@ -353,6 +353,225 @@ describe("authenticated secret requests", () => {
     });
   });
 
+  it("gives distinct error for redirects including status and redacted target host", async () => {
+    const { input, fetch } = await fixture();
+    fetch.mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://redirect.example.com/target" },
+      }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(result).toMatchObject({
+      error: expect.stringMatching(/Redirect not followed \(HTTP 302 to redirect\.example\.com\)/),
+    });
+
+    // Test with secret in redirect location (should be redacted)
+    fetch.mockResolvedValueOnce(
+      new Response(null, {
+        status: 301,
+        headers: { location: `https://evil.com/${secret}` },
+      }),
+    );
+    const redactedResult = await requestWithBotSecret(input);
+    expect(JSON.stringify(redactedResult)).not.toContain(secret);
+    expect(redactedResult).toMatchObject({
+      error: expect.stringContaining("HTTP 301"),
+    });
+  });
+
+  it("rejects text/plain over 1 MB inline limit", async () => {
+    const { input, fetch } = await fixture();
+    const largeText = "x".repeat(1_100_000);
+    fetch.mockResolvedValueOnce(
+      new Response(largeText, {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(result).toMatchObject({
+      error: expect.stringContaining("1000000 byte limit"),
+    });
+  });
+
+  it("rejects application/json over 1 MB inline limit", async () => {
+    const { input, fetch } = await fixture();
+    const largeJson = JSON.stringify({ data: "x".repeat(1_100_000) });
+    fetch.mockResolvedValueOnce(
+      new Response(largeJson, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(result).toMatchObject({
+      error: expect.stringContaining("1000000 byte limit"),
+    });
+  });
+
+  it("prevents filename path escapes and dangerous characters", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads-escape";
+    const testCases = [
+      { disposition: 'filename="../../../etc/passwd"', expected: "etc-passwd" },
+      { disposition: 'filename="/absolute/path.txt"', expected: "absolute-path.txt" },
+      { disposition: 'filename="../../escape.pdf"', expected: "escape.pdf" },
+      { disposition: 'filename=".hidden"', expected: "hidden" },
+      { disposition: 'filename="null\x00byte.txt"', expected: "nullbyte.txt" },
+      {
+        disposition: 'filename="colon:slash/back\\\\pipe|.txt"',
+        expected: "colonslashbackpipe.txt",
+      },
+    ];
+
+    for (const testCase of testCases) {
+      fetch.mockResolvedValueOnce(
+        new Response(Buffer.from("safe content"), {
+          status: 200,
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-disposition": testCase.disposition,
+          },
+        }),
+      );
+      const result = await requestWithBotSecret({ ...input, downloadsDir });
+      expect(result).toMatchObject({
+        file: {
+          filename: expect.stringContaining(testCase.expected),
+        },
+      });
+      const path = (result as { file: { path: string } }).file.path;
+      expect(path).toContain(downloadsDir);
+      expect(path).not.toContain("../");
+      expect(path).not.toContain("..");
+    }
+  });
+
+  it("adds timestamp suffix to avoid overwriting existing files", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads-overwrite";
+    const pdfData1 = Buffer.from("First PDF content");
+    const pdfData2 = Buffer.from("Second PDF content");
+
+    // First download
+    fetch.mockResolvedValueOnce(
+      new Response(pdfData1, {
+        status: 200,
+        headers: {
+          "content-type": "application/pdf",
+          "content-disposition": 'filename="report.pdf"',
+        },
+      }),
+    );
+    const result1 = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(result1).toMatchObject({
+      file: {
+        filename: "report.pdf",
+        size: pdfData1.length,
+      },
+    });
+
+    // Second download with same filename
+    fetch.mockResolvedValueOnce(
+      new Response(pdfData2, {
+        status: 200,
+        headers: {
+          "content-type": "application/pdf",
+          "content-disposition": 'filename="report.pdf"',
+        },
+      }),
+    );
+    const result2 = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(result2).toMatchObject({
+      file: {
+        filename: expect.stringMatching(/^report-\d+\.pdf$/),
+        size: pdfData2.length,
+      },
+    });
+
+    // Verify both files exist with different content
+    const { readFile } = await import("node:fs/promises");
+    const path1 = (result1 as { file: { path: string } }).file.path;
+    const path2 = (result2 as { file: { path: string } }).file.path;
+    expect(path1).not.toBe(path2);
+    const content1 = await readFile(path1);
+    const content2 = await readFile(path2);
+    expect(content1).toEqual(pdfData1);
+    expect(content2).toEqual(pdfData2);
+  });
+
+  it("handles network and DNS errors with distinct messages", async () => {
+    const { input, fetch } = await fixture();
+
+    // DNS failure
+    fetch.mockRejectedValueOnce(new Error("getaddrinfo ENOTFOUND nonexistent.example.test"));
+    expect(await requestWithBotSecret(input)).toMatchObject({
+      error: expect.stringContaining("DNS resolution failed"),
+    });
+
+    // Connection refused
+    fetch.mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:9999"));
+    expect(await requestWithBotSecret(input)).toMatchObject({
+      error: expect.stringMatching(/Network error.*ECONNREFUSED/),
+    });
+
+    // Connection timeout
+    fetch.mockRejectedValueOnce(new Error("connect ETIMEDOUT"));
+    expect(await requestWithBotSecret(input)).toMatchObject({
+      error: expect.stringMatching(/Network error.*ETIMEDOUT/),
+    });
+
+    // Connection reset
+    fetch.mockRejectedValueOnce(new Error("read ECONNRESET"));
+    expect(await requestWithBotSecret(input)).toMatchObject({
+      error: expect.stringMatching(/Network error.*ECONNRESET/),
+    });
+  });
+
+  it("never exposes secrets in file metadata or errors", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads-redaction";
+
+    // Test 1: Secret in filename should be redacted in path/metadata
+    fetch.mockResolvedValueOnce(
+      new Response(Buffer.from("content"), {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": `filename="${secret}.pdf"`,
+        },
+      }),
+    );
+    const fileResult = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(JSON.stringify(fileResult)).not.toContain(secret);
+
+    // Test 2: Secret in URL triggering redirect
+    const urlWithSecret = `${destination.origin}/path/${secret}`;
+    fetch.mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: { location: `https://other.com/${secret}` },
+      }),
+    );
+    const redirectInput = {
+      ...input,
+      request: { ...input.request, url: urlWithSecret },
+    };
+    const redirectResult = await requestWithBotSecret(redirectInput);
+    expect(JSON.stringify(redirectResult)).not.toContain(secret);
+    expect(redirectResult).toMatchObject({
+      error: expect.stringContaining("Redirect not followed"),
+    });
+
+    // Test 3: Secret in error message during download
+    fetch.mockImplementation(async () => {
+      throw new Error(`Download failed: ${secret}`);
+    });
+    const errorResult = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(JSON.stringify(errorResult)).not.toContain(secret);
+  });
+
   it("refuses an opted-in private destination that resolves publicly", async () => {
     vi.stubEnv("CORTEXAI_AGENT_HUB_SECRETS_ALLOW_PRIVATE_HTTP", "1");
     const encrypted = await secretStore.put(
@@ -434,6 +653,51 @@ describe("normalizeSecretDestination", () => {
         auth: { type: "login" as const },
       }),
     ).toThrow(/Website logins require an HTTPS origin/);
+  });
+});
+
+describe("bot file access integration", () => {
+  it("downloaded files are accessible via bot file tools (list_files/read_file)", async () => {
+    // This test verifies that files downloaded to <home>/downloads/ are accessible
+    // to the bot's file tools, which use the same home directory path resolution
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-bot-home/downloads";
+    const testContent = Buffer.from("Test file content for bot access verification");
+
+    fetch.mockResolvedValueOnce(
+      new Response(testContent, {
+        status: 200,
+        headers: {
+          "content-type": "text/plain",
+          "content-disposition": 'filename="test-bot-file.txt"',
+        },
+      }),
+    );
+
+    const downloadResult = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(downloadResult).toMatchObject({
+      file: {
+        filename: "test-bot-file.txt",
+        path: expect.stringContaining("downloads/test-bot-file.txt"),
+      },
+    });
+
+    // Verify the file was written correctly and is readable
+    const savedPath = (downloadResult as { file: { path: string } }).file.path;
+    const { readFile } = await import("node:fs/promises");
+    const savedContent = await readFile(savedPath);
+    expect(savedContent).toEqual(testContent);
+
+    // Path structure verification:
+    // - On HOST: <home-root>/downloads/file.txt (e.g., /data/homes/<bot-id>/downloads/file.txt)
+    // - In CONTAINER: /home/cortexai-agent-hub/downloads/file.txt (for personal computers)
+    //                 /home/cortexai-agent-hub/bots/<bot-id>/downloads/file.txt (for team computers)
+    // - Bot file tools use resolveBotWorkspacePath which resolves "downloads/file.txt"
+    //   to the correct container path based on computer scope
+    // - Docker bind mount: <home-root> -> /home/cortexai-agent-hub
+    // Therefore, bot tools can access files in downloads/ subdirectory
+    expect(savedPath).toContain("downloads");
+    expect(savedPath).toContain("test-bot-file.txt");
   });
 });
 

@@ -46,18 +46,26 @@ function sanitizeFilename(disposition: string | null, url: string): string {
   if (disposition) {
     const match = /filename\*?=["']?([^"';]+)["']?/i.exec(disposition);
     if (match) {
-      const name = match[1]!.trim();
-      if (name && !/[/\\]/.test(name)) return name;
+      let name = match[1]!.trim();
+      // Remove any path separators and null bytes
+      name = name.replace(/[/\\:\x00]/g, "");
+      // Remove leading dots to prevent hidden files
+      name = name.replace(/^\.+/, "");
+      // Limit length
+      if (name && name.length <= 255) return name;
     }
   }
   try {
     const path = new URL(url).pathname;
     const lastSegment = path.split("/").filter(Boolean).pop();
-    if (lastSegment && !/[/\\]/.test(lastSegment)) return lastSegment;
+    if (lastSegment) {
+      let name = lastSegment.replace(/[/\\:\x00]/g, "").replace(/^\.+/, "");
+      if (name && name.length <= 255) return name;
+    }
   } catch {
     /* Fall through */
   }
-  return `download-${Date.now()}`;
+  return `download-${Date.now()}.bin`;
 }
 
 const metadata = { name: true, origin: true, auth: true } as const;
@@ -248,15 +256,32 @@ export async function requestWithBotSecret(input: {
       signal,
     );
 
+    // Check redirects first with detailed error including status and redacted location
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      let targetHost = "";
+      if (location) {
+        try {
+          const targetUrl = new URL(location, url.href);
+          targetHost = targetUrl.hostname;
+          // Redact secret from target host if it somehow got included
+          for (const value of redactions) {
+            targetHost = targetHost.replaceAll(value, "[REDACTED]");
+          }
+        } catch {
+          targetHost = "[invalid]";
+        }
+      }
+      return {
+        error: `Redirect not followed (HTTP ${response.status}${targetHost ? ` to ${targetHost}` : ""}).`,
+      };
+    }
+
     if (!response.ok) {
       const snippet = await readBodySnippet(response, signal, redactions);
       return {
         error: `Request failed with HTTP ${response.status}${snippet ? `: ${snippet}` : ""}.`,
       };
-    }
-
-    if (response.status >= 300 && response.status < 400) {
-      return { error: "Redirects are not followed for authenticated requests." };
     }
 
     const contentType = response.headers.get("content-type");
@@ -375,9 +400,23 @@ async function downloadToFile(
   signal: AbortSignal,
   redactions: string[],
 ): Promise<unknown> {
-  const filename = sanitizeFilename(response.headers.get("content-disposition"), url);
-  const tempPath = join(downloadsDir, `.${filename}.tmp.${randomBytes(8).toString("hex")}`);
+  let filename = sanitizeFilename(response.headers.get("content-disposition"), url);
+
+  // Check if file exists and add timestamp suffix to avoid silent overwrite
   const finalPath = join(downloadsDir, filename);
+  const { access } = await import("node:fs/promises");
+  try {
+    await access(finalPath);
+    // File exists, add timestamp suffix before extension
+    const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
+    const base = ext ? filename.slice(0, -ext.length) : filename;
+    filename = `${base}-${Date.now()}${ext}`;
+  } catch {
+    // File doesn't exist, use original name
+  }
+
+  const tempPath = join(downloadsDir, `.${filename}.tmp.${randomBytes(8).toString("hex")}`);
+  const actualFinalPath = join(downloadsDir, filename);
 
   await mkdir(downloadsDir, { recursive: true });
 
@@ -415,19 +454,19 @@ async function downloadToFile(
       reader.releaseLock();
     }
 
-    await mkdir(dirname(finalPath), { recursive: true });
+    await mkdir(dirname(actualFinalPath), { recursive: true });
     try {
-      await unlink(finalPath);
+      await unlink(actualFinalPath);
     } catch {
       /* OK if it doesn't exist */
     }
 
     const { rename } = await import("node:fs/promises");
-    await rename(tempPath, finalPath);
+    await rename(tempPath, actualFinalPath);
 
     return {
       file: {
-        path: finalPath,
+        path: actualFinalPath,
         size: bytesWritten,
         contentType: contentType || "application/octet-stream",
         sha256: hash.digest("hex"),
