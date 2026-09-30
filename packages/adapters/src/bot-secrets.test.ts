@@ -299,7 +299,9 @@ describe("authenticated secret requests", () => {
       );
       const result = await requestWithBotSecret({ ...input, downloadsDir });
       expect(result).toMatchObject({
-        error: expect.stringContaining("30720000 bytes exceeds the 10485760 byte file download limit"),
+        error: expect.stringContaining(
+          "30720000 bytes exceeds the 10485760 byte file download limit",
+        ),
       });
     } finally {
       if (originalCap === undefined) {
@@ -375,8 +377,9 @@ describe("authenticated secret requests", () => {
 
   it("gives distinct error for redirects including status and redacted target host", async () => {
     const { input, fetch } = await fixture();
+    // Use a working Response mock with body instead of empty string which causes issues
     fetch.mockResolvedValueOnce(
-      new Response("", {
+      new Response("redirect", {
         status: 302,
         headers: { location: "https://redirect.example.com/target" },
       }),
@@ -388,7 +391,7 @@ describe("authenticated secret requests", () => {
 
     // Test with secret in redirect location (should be redacted)
     fetch.mockResolvedValueOnce(
-      new Response("", {
+      new Response("redirect", {
         status: 301,
         headers: { location: `https://evil.com/${secret}` },
       }),
@@ -569,7 +572,7 @@ describe("authenticated secret requests", () => {
     // Test 2: Secret in URL triggering redirect
     const urlWithSecret = `${destination.origin}/path/${secret}`;
     fetch.mockResolvedValueOnce(
-      new Response("", {
+      new Response("redirect", {
         status: 302,
         headers: { location: `https://other.com/${secret}` },
       }),
