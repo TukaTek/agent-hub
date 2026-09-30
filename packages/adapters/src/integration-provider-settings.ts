@@ -1,6 +1,7 @@
 import type {
   AdapterContext,
   ConnectorCall,
+  ConnectorProvider,
   ManagedConnectorProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
@@ -10,7 +11,11 @@ import {
   IntegrationProviderIdSchema,
 } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { ComposioConnector } from "./composio-connector.js";
+import {
+  ComposioConnector,
+  type ComposioProvider,
+  createConnectorStack,
+} from "./composio-connector.js";
 import { PipedreamConnector } from "./pipedream-connector.js";
 import type { EncryptedSecretStore } from "./secrets.js";
 
@@ -154,4 +159,20 @@ class ConfiguredIntegrationProvider implements ManagedConnectorProvider {
   async *execute(call: ConnectorCall, context: AdapterContext) {
     yield* (await this.required()).execute(call, context);
   }
+}
+
+/** A direct Composio provider replaces the settings-backed entry so the registry holds one composio id. */
+export function createIntegrationConnectorStack(
+  composio: ComposioProvider | undefined,
+  settings: IntegrationProviderSettings,
+  before: ConnectorProvider[],
+  after: ConnectorProvider[],
+) {
+  return createConnectorStack(false, composio, [
+    ...before,
+    ...settings
+      .providers()
+      .filter((provider) => !composio || provider.describe().id !== "composio"),
+    ...after,
+  ]);
 }
