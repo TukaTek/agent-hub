@@ -1,9 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { ComputerRef } from "@cortexai-agent-hub/adapter-kit";
+import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkpointComputerWorkspace,
+  createSecretDownloadTarget,
   ensureComputerWorkspaceLayout,
   restoreComputerWorkspace,
 } from "./computer-workspace.js";
@@ -75,6 +78,158 @@ describe("provider-neutral computer workspace", () => {
       ),
     ).toBe("portable");
   });
+});
+
+describe("secret download target", () => {
+  async function localHome() {
+    const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-download-home-"));
+    roots.push(root);
+    return new LocalAgentHomeStore(root);
+  }
+  const dockerComputer = (botId: string): ComputerRef => ({
+    id: `docker-${botId}`,
+    botId,
+    kind: "docker",
+    providerRef: `docker-${botId}`,
+    fresh: false,
+  });
+
+  it.each([
+    ["dedicated", "downloads"],
+    ["team", "bots/bot-1/downloads"],
+  ] as const)(
+    "streams a local Docker %s download straight into the mounted home at %s",
+    async (scope, workspaceDirectory) => {
+      const home = await localHome();
+      const target = createSecretDownloadTarget(
+        { home, sandbox: new FakeSandboxProvider() },
+        { homeKey: "home-key-1" },
+        dockerComputer("bot-1"),
+        scope,
+        "bot-1",
+        context,
+      );
+      const directory = await target.directory();
+      expect(directory).toBe(
+        await realpath(path.join(home.pathFor("home-key-1"), workspaceDirectory)),
+      );
+      await writeFile(path.join(directory, "report.pdf"), "pdf");
+      expect(await target.publish(path.join(directory, "report.pdf"), "report.pdf")).toBe(
+        "downloads/report.pdf",
+      );
+      await target.dispose();
+      expect(
+        await readFile(
+          path.join(home.pathFor("home-key-1"), workspaceDirectory, "report.pdf"),
+          "utf8",
+        ),
+      ).toBe("pdf");
+    },
+  );
+
+  it("caps local Docker downloads at the configured cap and other computers at 10 MiB", async () => {
+    const provider = new FakeSandboxProvider();
+    const remote = await provider.provision({ botId: "bot-1", homePath: "/ignored" }, context);
+    const target = (computer: ComputerRef) =>
+      createSecretDownloadTarget(
+        { home: new LocalAgentHomeStore("/unused"), sandbox: provider },
+        { homeKey: "home-key-1" },
+        computer,
+        "dedicated",
+        "bot-1",
+        context,
+      ).maxBytes;
+    expect(target(dockerComputer("bot-1"))).toBe(100 * 1024 * 1024);
+    expect(target(remote)).toBe(ATTACHMENT_MAX_BYTES);
+    vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES", "4096");
+    try {
+      expect(target(dockerComputer("bot-1"))).toBe(4096);
+      expect(target(remote)).toBe(4096);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("uses only timestamped names when the downloads folder cannot be listed", async () => {
+    const provider = new FakeSandboxProvider();
+    const computer = await provider.provision({ botId: "bot-1", homePath: "/ignored" }, context);
+    await provider.writeFile(
+      computer,
+      { path: "downloads/report.pdf", content: new TextEncoder().encode("old") },
+      context,
+    );
+    vi.spyOn(provider, "listFiles").mockRejectedValueOnce(new Error("listing unavailable"));
+    const target = createSecretDownloadTarget(
+      { home: await localHome(), sandbox: provider },
+      { homeKey: "home-key-1" },
+      computer,
+      "dedicated",
+      "bot-1",
+      context,
+    );
+    const staging = await target.directory();
+    await writeFile(path.join(staging, "report.pdf"), "new");
+    const published = await target.publish(path.join(staging, "report.pdf"), "report.pdf");
+    await target.dispose();
+    expect(published).toMatch(/^downloads\/report-\d+\.pdf$/);
+    const read = (file: string) =>
+      provider.readFile(computer, file, context).then((bytes) => new TextDecoder().decode(bytes));
+    expect(await read("downloads/report.pdf")).toBe("old");
+    expect(await read(published)).toBe("new");
+  });
+
+  it("refuses a downloads symlink that leaves the home", async () => {
+    const home = await localHome();
+    const outside = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-outside-"));
+    roots.push(outside);
+    await mkdir(home.pathFor("home-key-1"), { recursive: true });
+    await symlink(outside, path.join(home.pathFor("home-key-1"), "downloads"));
+    const target = createSecretDownloadTarget(
+      { home, sandbox: new FakeSandboxProvider() },
+      { homeKey: "home-key-1" },
+      dockerComputer("bot-1"),
+      "dedicated",
+      "bot-1",
+      context,
+    );
+    await expect(target.directory()).rejects.toThrow();
+  });
+
+  it.each([
+    ["dedicated", "downloads"],
+    ["team", "bots/bot-1/downloads"],
+  ] as const)(
+    "publishes a remote %s download into the computer at %s without replacing files",
+    async (scope, workspaceDirectory) => {
+      const provider = new FakeSandboxProvider();
+      const computer = await provider.provision({ botId: "bot-1", homePath: "/ignored" }, context);
+      await provider.writeFile(
+        computer,
+        { path: `${workspaceDirectory}/report.pdf`, content: new TextEncoder().encode("old") },
+        context,
+      );
+      const target = createSecretDownloadTarget(
+        { home: await localHome(), sandbox: provider },
+        { homeKey: "home-key-1" },
+        computer,
+        scope,
+        "bot-1",
+        context,
+      );
+      const staging = await target.directory();
+      await writeFile(path.join(staging, "report.pdf"), "new");
+      const published = await target.publish(path.join(staging, "report.pdf"), "report.pdf");
+      expect(published).toMatch(/^downloads\/report-\d+\.pdf$/);
+      const read = (file: string) =>
+        provider
+          .readFile(computer, `${workspaceDirectory}/${file}`, context)
+          .then((bytes) => new TextDecoder().decode(bytes));
+      expect(await read("report.pdf")).toBe("old");
+      expect(await read(published.slice("downloads/".length))).toBe("new");
+      await target.dispose();
+      await expect(stat(staging)).rejects.toThrow();
+    },
+  );
 });
 
 describe("Team run checkpoints", () => {

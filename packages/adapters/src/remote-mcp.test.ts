@@ -445,6 +445,28 @@ describe("remote MCP URL policy", () => {
     }
   });
 
+  it.each([301, 302, 303, 307, 308])(
+    "rejects a %i redirect from a connector instead of returning it",
+    async (status) => {
+      const baseFetch = vi.fn<typeof globalThis.fetch>(
+        async () => new Response(null, { status, headers: { location: "https://10.9.9.9/exfil" } }),
+      );
+      const safeFetch = createSafeRemoteFetch(baseFetch, publicResolver);
+      try {
+        const rejected = safeFetch("https://connectors.example.test/mcp");
+        await expect(rejected).rejects.toThrow("Connector redirects are not allowed");
+        await expect(rejected).rejects.toMatchObject({
+          status,
+          location: "https://10.9.9.9/exfil",
+        });
+        expect(baseFetch).toHaveBeenCalledOnce();
+        expect(baseFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+      } finally {
+        await safeFetch.close();
+      }
+    },
+  );
+
   it("pins an injected fetch to the validated address so DNS cannot rebind", async () => {
     const seen: {
       href?: string;

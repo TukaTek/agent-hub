@@ -236,7 +236,8 @@ async function containedWritePath(root: string, rel: string) {
   }
 }
 
-async function ensureContainedDirectory(root: string, candidate: string) {
+/** Creates `candidate` under `root`, refusing any path or symlink that resolves outside it. */
+export async function ensureContainedDirectory(root: string, candidate: string) {
   await mkdir(root, { recursive: true });
   const lexicalRoot = path.resolve(root);
   const lexicalCandidate = path.resolve(candidate);

@@ -209,7 +209,10 @@ import {
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
 import { observationToolResult, parseComputerActions } from "./computer-tools.js";
-import { checkpointRunComputerWorkspace } from "./computer-workspace.js";
+import {
+  checkpointRunComputerWorkspace,
+  createSecretDownloadTarget,
+} from "./computer-workspace.js";
 import { redactConnectorPayload, sanitizeConnectorError } from "./connector-safety.js";
 import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
@@ -2654,13 +2657,18 @@ export function createRunExecutor(deps: ExecutorDeps) {
             if (!deps.artifacts) return failAttach("artifact storage unavailable");
             const storedPath = resolveBotWorkspacePath(computerMode, bot.id, filePath);
             let bytes: Uint8Array;
+            const tooLarge = "file exceeds the 10 MiB attachment limit";
             try {
               bytes = await deps.sandbox.readFile(computer, storedPath, context, {
                 maxBytes: ATTACHMENT_MAX_BYTES,
               });
-            } catch {
+            } catch (error) {
+              if (error instanceof Error && /exceeds \d+ bytes/.test(error.message)) {
+                return failAttach(tooLarge);
+              }
               return failAttach("file not found or unreadable");
             }
+            if (bytes.byteLength > ATTACHMENT_MAX_BYTES) return failAttach(tooLarge);
             const mimeType = inferAttachmentMimeType(filePath);
             if (!mimeType) return failAttach("unsupported attachment type");
             try {
@@ -3319,6 +3327,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return finish(await forgetBotSecret(deps.prisma, run, parsed.data));
           }
           if (name === "secret_request") {
+            const downloads = createSecretDownloadTarget(
+              deps,
+              storedComputer,
+              computer,
+              computerMode,
+              bot.id,
+              context,
+            );
             try {
               const result = await requestWithBotSecret({
                 prisma: deps.prisma,
@@ -3328,10 +3344,23 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 signal: context.signal,
                 remote: deps.secretHttp,
                 registerRedactions: registerRunSecrets,
+                downloads: {
+                  maxBytes: downloads.maxBytes,
+                  directory: downloads.directory,
+                  publish: (hostPath, filename) => {
+                    workspaceCheckpoint.markDirty();
+                    return downloads.publish(hostPath, filename);
+                  },
+                },
               });
               return finish(result);
-            } catch {
-              return finish({ error: "Invalid authenticated request." });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return finish({
+                error: `Authenticated request failed: ${redactSecrets(message, runSecrets)}`,
+              });
+            } finally {
+              await downloads.dispose();
             }
           }
           if (name === "request_secret") {
