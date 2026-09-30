@@ -52,6 +52,16 @@ export interface SafeRemoteFetch {
   close(): Promise<void>;
 }
 
+export class RemoteRedirectError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly location: string | null,
+  ) {
+    super(message);
+  }
+}
+
 const resolveHostname: ResolveHostname = (hostname) =>
   lookup(hostname, { all: true, verbatim: true });
 
@@ -230,7 +240,11 @@ export function createSafeRemoteFetch(
       });
     }
     if (response.status >= 300 && response.status < 400) {
-      throw new Error("Connector redirects are not allowed");
+      throw new RemoteRedirectError(
+        "Connector redirects are not allowed",
+        response.status,
+        response.headers.get("location"),
+      );
     }
     return response;
   };
@@ -298,7 +312,11 @@ export function createPrivateNetworkFetch(
       });
     }
     if (response.status >= 300 && response.status < 400) {
-      throw new Error("Private fetch redirects are not allowed");
+      throw new RemoteRedirectError(
+        "Private fetch redirects are not allowed",
+        response.status,
+        response.headers.get("location"),
+      );
     }
     return response;
   };
