@@ -379,7 +379,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "secret_request",
     description:
-      "Make an authenticated HTTPS request using a saved credential name. The backend injects authentication only at its saved origin. Redirects are rejected; response echoes of the credential are redacted. Use normal request URLs and bodies without secret placeholders.",
+      "Make an authenticated HTTPS request using a saved credential name. The backend injects authentication only at its saved origin. Redirects are rejected; response echoes of the credential are redacted. Use normal request URLs and bodies without secret placeholders. Binary responses (like PDFs or images) are saved to files in the workspace; text and JSON are returned inline. File downloads are capped at 25 MB by default; text/JSON at 1 MB.",
     inputSchema: z.toJSONSchema(SecretHttpRequest, { io: "input" }),
   },
   {

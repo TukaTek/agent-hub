@@ -220,6 +220,138 @@ describe("authenticated secret requests", () => {
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${secret}`);
   });
 
+  it("downloads binary responses to a file in the workspace", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads";
+    const pdfData = Buffer.from("%PDF-1.4 fake PDF content " + "x".repeat(1_100_000));
+    fetch.mockResolvedValueOnce(
+      new Response(pdfData, {
+        status: 200,
+        headers: {
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="form.pdf"',
+        },
+      }),
+    );
+    const result = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(result).toMatchObject({
+      file: {
+        path: expect.stringContaining("form.pdf"),
+        size: pdfData.length,
+        contentType: "application/pdf",
+        sha256: expect.any(String),
+        filename: "form.pdf",
+      },
+    });
+    const savedPath = (result as { file: { path: string } }).file.path;
+    const { readFile, unlink } = await import("node:fs/promises");
+    const saved = await readFile(savedPath);
+    expect(saved).toEqual(pdfData);
+    expect((result as { file: { sha256: string } }).file.sha256).toBe(
+      require("node:crypto").createHash("sha256").update(pdfData).digest("hex"),
+    );
+    await unlink(savedPath);
+  });
+
+  it("rejects binary downloads over the configured cap", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads";
+    const largeData = Buffer.from("x".repeat(30 * 1024 * 1024));
+    fetch.mockResolvedValueOnce(
+      new Response(largeData, {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      }),
+    );
+    expect(await requestWithBotSecret({ ...input, downloadsDir })).toMatchObject({
+      error: expect.stringContaining("exceeds the 26214400 byte file download limit"),
+    });
+  });
+
+  it("rejects binary downloads declared over the cap before streaming", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads";
+    fetch.mockResolvedValueOnce(
+      new Response(null, {
+        status: 200,
+        headers: {
+          "content-type": "application/pdf",
+          "content-length": String(30 * 1024 * 1024),
+        },
+      }),
+    );
+    const result = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(result).toMatchObject({
+      error: expect.stringContaining("31457280 bytes exceeds the 26214400 byte file download limit"),
+    });
+  });
+
+  it("downloads text over 1 MB when the content type is not text/JSON", async () => {
+    const { input, fetch } = await fixture();
+    const downloadsDir = "/tmp/test-downloads";
+    const largeText = "x".repeat(1_100_000);
+    fetch.mockResolvedValueOnce(
+      new Response(largeText, {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+    );
+    const result = await requestWithBotSecret({ ...input, downloadsDir });
+    expect(result).toMatchObject({
+      file: {
+        size: largeText.length,
+        contentType: "application/octet-stream",
+      },
+    });
+  });
+
+  it("gives distinct errors for timeout, non-2xx, and too-large text", async () => {
+    const { input, fetch } = await fixture();
+    const controller = new AbortController();
+    fetch.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      throw new Error("timeout");
+    });
+    setTimeout(() => controller.abort(), 50);
+    expect(await requestWithBotSecret({ ...input, signal: controller.signal })).toMatchObject({
+      error: expect.stringContaining("timed out"),
+    });
+
+    fetch.mockResolvedValueOnce(new Response("Not Found", { status: 404 }));
+    expect(await requestWithBotSecret(input)).toMatchObject({
+      error: expect.stringContaining("HTTP 404"),
+    });
+
+    fetch.mockResolvedValueOnce(new Response("x".repeat(1_000_001)));
+    expect(await requestWithBotSecret(input)).toMatchObject({
+      error: expect.stringContaining("1000000 byte limit"),
+    });
+  });
+
+  it("redacts secrets in error snippets from non-2xx responses", async () => {
+    const { input, fetch } = await fixture();
+    fetch.mockResolvedValueOnce(
+      new Response(`Error: invalid token ${secret}`, { status: 401 }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(result).toMatchObject({ error: expect.stringContaining("HTTP 401") });
+  });
+
+  it("refuses to download files without a workspace", async () => {
+    const { input, fetch } = await fixture();
+    fetch.mockResolvedValueOnce(
+      new Response(Buffer.from("binary data"), {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      }),
+    );
+    expect(await requestWithBotSecret({ ...input, downloadsDir: undefined })).toMatchObject({
+      error: expect.stringContaining("File downloads require a bot workspace"),
+    });
+  });
+
+
   it("refuses an opted-in private destination that resolves publicly", async () => {
     vi.stubEnv("CORTEXAI_AGENT_HUB_SECRETS_ALLOW_PRIVATE_HTTP", "1");
     const encrypted = await secretStore.put(

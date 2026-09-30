@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type {
   AdapterContext,
   AgentHomeStore,
@@ -3320,6 +3321,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (name === "secret_request") {
             try {
+              const downloadsDir = path.join(deps.home.pathFor(run.botId), "downloads");
               const result = await requestWithBotSecret({
                 prisma: deps.prisma,
                 secretStore: deps.secretStore,
@@ -3328,6 +3330,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 signal: context.signal,
                 remote: deps.secretHttp,
                 registerRedactions: registerRunSecrets,
+                downloadsDir,
               });
               return finish(result);
             } catch {

@@ -1,4 +1,8 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdir, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
 import {
   botSecretDestinationSchema,
@@ -17,6 +21,44 @@ import { readBodyCapped, withAbort } from "./web-ssrf.js";
 export type BotSecretScope = { userId: string; spaceId: string; botId: string };
 function scopeFields({ userId, spaceId, botId }: BotSecretScope): BotSecretScope {
   return { userId, spaceId, botId };
+}
+
+function getFileDownloadCap(): number {
+  const env = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
+  if (!env) return 25 * 1024 * 1024;
+  const parsed = parseInt(env, 10);
+  return parsed > 0 ? parsed : 25 * 1024 * 1024;
+}
+
+const TEXT_BODY_CAP = 1_000_000;
+
+function isTextOrJsonContentType(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const lower = contentType.toLowerCase();
+  return (
+    lower.includes("text/") ||
+    lower.includes("application/json") ||
+    lower.includes("application/javascript") ||
+    lower.includes("+json")
+  );
+}
+
+function sanitizeFilename(disposition: string | null, url: string): string {
+  if (disposition) {
+    const match = /filename\*?=["']?([^"';]+)["']?/i.exec(disposition);
+    if (match) {
+      const name = match[1]!.trim();
+      if (name && !/[/\\]/.test(name)) return name;
+    }
+  }
+  try {
+    const path = new URL(url).pathname;
+    const lastSegment = path.split("/").filter(Boolean).pop();
+    if (lastSegment && !/[/\\]/.test(lastSegment)) return lastSegment;
+  } catch {
+    /* Fall through */
+  }
+  return `download-${Date.now()}`;
 }
 
 const metadata = { name: true, origin: true, auth: true } as const;
@@ -151,6 +193,7 @@ export async function requestWithBotSecret(input: {
   signal: AbortSignal;
   remote?: RemoteTransportDependencies;
   registerRedactions?: (values: string[]) => void;
+  downloadsDir?: string;
 }): Promise<unknown> {
   const request = SecretHttpRequest.parse(input.request);
   const row = await input.prisma.botSecret.findFirst({
@@ -205,7 +248,55 @@ export async function requestWithBotSecret(input: {
       }),
       signal,
     );
-    const bytes = await readBodyCapped(response, 1_000_000, signal);
+
+    if (!response.ok) {
+      const snippet = await readBodySnippet(response, signal);
+      return {
+        error: `Request failed with HTTP ${response.status}${snippet ? `: ${snippet}` : ""}.`,
+      };
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      return { error: "Redirects are not followed for authenticated requests." };
+    }
+
+    const contentType = response.headers.get("content-type");
+    const contentLength = response.headers.get("content-length");
+    const declaredSize = contentLength ? parseInt(contentLength, 10) : undefined;
+
+    // Binary/file mode: non-text/JSON content types
+    if (!isTextOrJsonContentType(contentType)) {
+      const fileCap = getFileDownloadCap();
+      if (declaredSize !== undefined && declaredSize > fileCap) {
+        return {
+          error: `Response size ${declaredSize} bytes exceeds the ${fileCap} byte file download limit.`,
+        };
+      }
+
+      if (!input.downloadsDir) {
+        return {
+          error: "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
+        };
+      }
+
+      return await downloadToFile(
+        response,
+        url.href,
+        contentType,
+        fileCap,
+        input.downloadsDir,
+        signal,
+      );
+    }
+
+    // Text/JSON mode
+    if (declaredSize !== undefined && declaredSize > TEXT_BODY_CAP) {
+      return {
+        error: `Response size ${declaredSize} bytes exceeds the ${TEXT_BODY_CAP} byte text body limit.`,
+      };
+    }
+
+    const bytes = await readBodyCapped(response, TEXT_BODY_CAP, signal);
     const text = new TextDecoder().decode(bytes);
     let body: unknown = text;
     try {
@@ -220,11 +311,124 @@ export async function requestWithBotSecret(input: {
       body: safe.length > 20_000 ? safe.slice(0, 20_000) : JSON.parse(safe),
       truncated: safe.length > 20_000,
     };
-  } catch {
+  } catch (error) {
+    if (signal.aborted) {
+      return { error: "Request timed out after 30 seconds." };
+    }
+    if (error instanceof Error) {
+      if (error.message.includes("Response is too large")) {
+        return {
+          error: `Response body exceeds the ${TEXT_BODY_CAP} byte limit. Use a streaming endpoint or request file mode support.`,
+        };
+      }
+      if (
+        error.message.includes("private") ||
+        error.message.includes("internal") ||
+        error.message.includes("blocked")
+      ) {
+        return { error: "Destination is blocked by network policy (private or internal host)." };
+      }
+      if (error.message.includes("ENOTFOUND") || error.message.includes("EAI_AGAIN")) {
+        return { error: "DNS resolution failed. Check the destination hostname." };
+      }
+      if (
+        error.message.includes("ECONNREFUSED") ||
+        error.message.includes("ETIMEDOUT") ||
+        error.message.includes("ECONNRESET")
+      ) {
+        return { error: `Network error: ${error.message}` };
+      }
+    }
     return { error: "Authenticated request failed. Check the destination and credential." };
   } finally {
     controller.abort();
     await withAbort(fetch.close(), AbortSignal.timeout(1000)).catch(() => undefined);
+  }
+}
+
+async function readBodySnippet(response: Response, signal?: AbortSignal): Promise<string> {
+  try {
+    const bytes = await readBodyCapped(response, 200, signal);
+    return new TextDecoder().decode(bytes).trim();
+  } catch {
+    return "";
+  }
+}
+
+async function downloadToFile(
+  response: Response,
+  url: string,
+  contentType: string | null,
+  maxBytes: number,
+  downloadsDir: string,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const filename = sanitizeFilename(response.headers.get("content-disposition"), url);
+  const tempPath = join(downloadsDir, `.${filename}.tmp.${randomBytes(8).toString("hex")}`);
+  const finalPath = join(downloadsDir, filename);
+
+  await mkdir(downloadsDir, { recursive: true });
+
+  const hash = createHash("sha256");
+  let bytesWritten = 0;
+
+  try {
+    const writeStream = createWriteStream(tempPath);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Response body is not readable");
+
+    try {
+      while (true) {
+        if (signal.aborted) throw new Error("Download aborted");
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        bytesWritten += value.length;
+        if (bytesWritten > maxBytes) {
+          throw new Error(
+            `Response size exceeds the ${maxBytes} byte file download limit (received ${bytesWritten} bytes so far).`,
+          );
+        }
+
+        hash.update(value);
+        writeStream.write(value);
+      }
+
+      writeStream.end();
+      await new Promise<void>((resolve, reject) => {
+        writeStream.on("finish", () => resolve());
+        writeStream.on("error", reject);
+      });
+    } finally {
+      reader.releaseLock();
+    }
+
+    await mkdir(dirname(finalPath), { recursive: true });
+    try {
+      await unlink(finalPath);
+    } catch {
+      /* OK if it doesn't exist */
+    }
+
+    const { rename } = await import("node:fs/promises");
+    await rename(tempPath, finalPath);
+
+    return {
+      file: {
+        path: finalPath,
+        size: bytesWritten,
+        contentType: contentType || "application/octet-stream",
+        sha256: hash.digest("hex"),
+        filename,
+      },
+    };
+  } catch (error) {
+    try {
+      await unlink(tempPath);
+    } catch {
+      /* Cleanup best-effort */
+    }
+    throw error;
   }
 }
 
