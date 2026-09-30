@@ -249,7 +249,7 @@ export async function requestWithBotSecret(input: {
     );
 
     if (!response.ok) {
-      const snippet = await readBodySnippet(response, signal);
+      const snippet = await readBodySnippet(response, signal, redactions);
       return {
         error: `Request failed with HTTP ${response.status}${snippet ? `: ${snippet}` : ""}.`,
       };
@@ -286,6 +286,7 @@ export async function requestWithBotSecret(input: {
         fileCap,
         input.downloadsDir,
         signal,
+        redactions,
       );
     }
 
@@ -346,10 +347,20 @@ export async function requestWithBotSecret(input: {
   }
 }
 
-async function readBodySnippet(response: Response, signal?: AbortSignal): Promise<string> {
+async function readBodySnippet(
+  response: Response,
+  signal?: AbortSignal,
+  redactions?: string[],
+): Promise<string> {
   try {
     const bytes = await readBodyCapped(response, 200, signal);
-    return new TextDecoder().decode(bytes).trim();
+    let snippet = new TextDecoder().decode(bytes).trim();
+    if (redactions) {
+      for (const value of redactions) {
+        snippet = snippet.replaceAll(value, "[REDACTED]");
+      }
+    }
+    return snippet;
   } catch {
     return "";
   }
@@ -362,6 +373,7 @@ async function downloadToFile(
   maxBytes: number,
   downloadsDir: string,
   signal: AbortSignal,
+  redactions: string[],
 ): Promise<unknown> {
   const filename = sanitizeFilename(response.headers.get("content-disposition"), url);
   const tempPath = join(downloadsDir, `.${filename}.tmp.${randomBytes(8).toString("hex")}`);
@@ -427,6 +439,14 @@ async function downloadToFile(
       await unlink(tempPath);
     } catch {
       /* Cleanup best-effort */
+    }
+    if (error instanceof Error && error.message.includes("exceeds the")) {
+      // Redact any secret values that might be in the error message
+      let message = error.message;
+      for (const value of redactions) {
+        message = message.replaceAll(value, "[REDACTED]");
+      }
+      return { error: message };
     }
     throw error;
   }
