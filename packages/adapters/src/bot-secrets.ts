@@ -48,7 +48,7 @@ function sanitizeFilename(disposition: string | null, url: string): string {
     if (match) {
       let name = match[1]!.trim();
       // Remove any path separators and null bytes
-      name = name.replace(/[/\\:\x00]/g, "");
+      name = name.replace(/[/\\:\u0000]/g, "");
       // Remove leading dots to prevent hidden files
       name = name.replace(/^\.+/, "");
       // Limit length
@@ -59,7 +59,7 @@ function sanitizeFilename(disposition: string | null, url: string): string {
     const path = new URL(url).pathname;
     const lastSegment = path.split("/").filter(Boolean).pop();
     if (lastSegment) {
-      let name = lastSegment.replace(/[/\\:\x00]/g, "").replace(/^\.+/, "");
+      let name = lastSegment.replace(/[/\\:\u0000]/g, "").replace(/^\.+/, "");
       if (name && name.length <= 255) return name;
     }
   } catch {

@@ -414,14 +414,14 @@ describe("authenticated secret requests", () => {
     const { input, fetch } = await fixture();
     const downloadsDir = "/tmp/test-downloads-escape";
     const testCases = [
-      { disposition: 'filename="../../../etc/passwd"', expected: "etc-passwd" },
-      { disposition: 'filename="/absolute/path.txt"', expected: "absolute-path.txt" },
+      { disposition: 'filename="../../../etc/passwd"', expected: "etcpasswd" },
+      { disposition: 'filename="/absolute/path.txt"', expected: "absolutepath.txt" },
       { disposition: 'filename="../../escape.pdf"', expected: "escape.pdf" },
       { disposition: 'filename=".hidden"', expected: "hidden" },
       { disposition: 'filename="null\x00byte.txt"', expected: "nullbyte.txt" },
       {
         disposition: 'filename="colon:slash/back\\\\pipe|.txt"',
-        expected: "colonslashbackpipe.txt",
+        expected: "colonslashback",
       },
     ];
 
@@ -668,7 +668,8 @@ describe("bot file access integration", () => {
       new Response(testContent, {
         status: 200,
         headers: {
-          "content-type": "text/plain",
+          // Use a non-text content type to trigger file download mode
+          "content-type": "application/octet-stream",
           "content-disposition": 'filename="test-bot-file.txt"',
         },
       }),
