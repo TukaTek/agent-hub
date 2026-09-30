@@ -55,8 +55,28 @@ function sanitizeFilename(disposition: string | null, url: string): string {
     const match = /filename\*?=["']?([^"';]+)["']?/i.exec(disposition);
     if (match) {
       let name = match[1]!.trim();
-      // Remove any path separators, null bytes, and unsafe characters
-      name = name.replace(/[/\\:|<>*?"'\u0000]/g, "");
+      // Remove path separators, control characters, and unsafe characters
+      name = name
+        .split("")
+        .filter((char) => {
+          const code = char.charCodeAt(0);
+          // Remove control characters (0x00-0x1F), DEL (0x7F), path separators, and unsafe chars
+          return (
+            code > 0x1f &&
+            code !== 0x7f &&
+            char !== "/" &&
+            char !== "\\" &&
+            char !== ":" &&
+            char !== "|" &&
+            char !== "<" &&
+            char !== ">" &&
+            char !== "*" &&
+            char !== "?" &&
+            char !== '"' &&
+            char !== "'"
+          );
+        })
+        .join("");
       // Remove leading dots to prevent hidden files
       name = name.replace(/^\.+/, "");
       // Limit length
@@ -67,7 +87,27 @@ function sanitizeFilename(disposition: string | null, url: string): string {
     const path = new URL(url).pathname;
     const lastSegment = path.split("/").filter(Boolean).pop();
     if (lastSegment) {
-      let name = lastSegment.replace(/[/\\:|<>*?"'\u0000]/g, "").replace(/^\.+/, "");
+      let name = lastSegment
+        .split("")
+        .filter((char) => {
+          const code = char.charCodeAt(0);
+          return (
+            code > 0x1f &&
+            code !== 0x7f &&
+            char !== "/" &&
+            char !== "\\" &&
+            char !== ":" &&
+            char !== "|" &&
+            char !== "<" &&
+            char !== ">" &&
+            char !== "*" &&
+            char !== "?" &&
+            char !== '"' &&
+            char !== "'"
+          );
+        })
+        .join("")
+        .replace(/^\.+/, "");
       if (name && name.length <= 255) return name;
     }
   } catch {
@@ -237,7 +277,11 @@ export async function requestWithBotSecret(input: {
   ].filter(Boolean);
   input.registerRedactions?.(redactions);
   const controller = new AbortController();
-  const signal = combineSignals(input.signal, controller.signal, AbortSignal.timeout(getRequestTimeoutMs()));
+  const signal = combineSignals(
+    input.signal,
+    controller.signal,
+    AbortSignal.timeout(getRequestTimeoutMs()),
+  );
   // The safe fetch refuses plain-HTTP and private hosts outright. A credential
   // saved under the owner's private-HTTP opt-in was validated against exactly
   // those rules at save time, and the request URL is pinned to its origin, so
@@ -266,19 +310,19 @@ export async function requestWithBotSecret(input: {
 
     // Check redirects first with detailed error including status and redacted location
     if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
       let targetHost = "";
-      if (location) {
-        try {
+      try {
+        const location = response.headers.get("location");
+        if (location) {
           const targetUrl = new URL(location, url.href);
           targetHost = targetUrl.hostname;
           // Redact secret from target host if it somehow got included
           for (const value of redactions) {
             targetHost = targetHost.replaceAll(value, "[REDACTED]");
           }
-        } catch {
-          targetHost = "[invalid]";
         }
+      } catch {
+        targetHost = "[invalid]";
       }
       return {
         error: `Redirect not followed (HTTP ${response.status}${targetHost ? ` to ${targetHost}` : ""}).`,
