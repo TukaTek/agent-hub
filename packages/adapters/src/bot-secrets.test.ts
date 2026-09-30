@@ -299,7 +299,9 @@ describe("authenticated secret requests", () => {
       );
       const result = await requestWithBotSecret({ ...input, downloadsDir });
       expect(result).toMatchObject({
-        error: expect.stringContaining("Response size 31457280 bytes exceeds the 10485760 byte file download limit"),
+        error: expect.stringContaining(
+          "Response size 31457280 bytes exceeds the 10485760 byte file download limit",
+        ),
       });
     } finally {
       if (originalCap === undefined) {
@@ -373,8 +375,7 @@ describe("authenticated secret requests", () => {
     });
   });
 
-  // Skipped: vitest Response mock with redirect status throws before redirect check can run
-  it.skip("gives distinct error for redirects including status and redacted target host", async () => {
+  it("gives distinct error for redirects including status and redacted target host", async () => {
     const { input, fetch } = await fixture();
     // Use a working Response mock with body instead of empty string which causes issues
     fetch.mockResolvedValueOnce(
@@ -551,8 +552,7 @@ describe("authenticated secret requests", () => {
     });
   });
 
-  // Skipped: vitest Response mock throws exception before redirect check runs
-  it.skip("never exposes secrets in file metadata or errors", async () => {
+  it("never exposes secrets in file metadata or errors", async () => {
     const { input, fetch } = await fixture();
     const downloadsDir = "/tmp/test-downloads-redaction";
 
