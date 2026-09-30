@@ -355,25 +355,24 @@ describe("authenticated secret requests", () => {
 
   it("gives distinct error for redirects including status and redacted target host", async () => {
     const { input, fetch } = await fixture();
-    // Use ReadableStream for Response body to match real fetch behavior
-    fetch.mockResolvedValueOnce({
-      ok: false,
-      status: 302,
-      headers: new Headers({ location: "https://redirect.example.com/target" }),
-      body: null,
-    } as Response);
+    fetch.mockResolvedValueOnce(
+      new Response("", {
+        status: 302,
+        headers: { location: "https://redirect.example.com/target" },
+      }),
+    );
     const result = await requestWithBotSecret(input);
     expect(result).toMatchObject({
       error: expect.stringMatching(/Redirect not followed \(HTTP 302 to redirect\.example\.com\)/),
     });
 
     // Test with secret in redirect location (should be redacted)
-    fetch.mockResolvedValueOnce({
-      ok: false,
-      status: 301,
-      headers: new Headers({ location: `https://evil.com/${secret}` }),
-      body: null,
-    } as Response);
+    fetch.mockResolvedValueOnce(
+      new Response("", {
+        status: 301,
+        headers: { location: `https://evil.com/${secret}` },
+      }),
+    );
     const redactedResult = await requestWithBotSecret(input);
     expect(JSON.stringify(redactedResult)).not.toContain(secret);
     expect(redactedResult).toMatchObject({
@@ -421,7 +420,7 @@ describe("authenticated secret requests", () => {
       { disposition: 'filename=".hidden"', expected: "hidden" },
       { disposition: 'filename="pipe|.txt"', expected: "pipe.txt" },
       {
-        disposition: 'filename="colon:slash/back\\\\pipe|.txt"',
+        disposition: 'filename="colon:slash/back\\\\danger.txt"',
         expected: "colonslashback",
       },
     ];
@@ -549,12 +548,12 @@ describe("authenticated secret requests", () => {
 
     // Test 2: Secret in URL triggering redirect
     const urlWithSecret = `${destination.origin}/path/${secret}`;
-    fetch.mockResolvedValueOnce(
-      new Response(null, {
-        status: 302,
-        headers: { location: `https://other.com/${secret}` },
-      }),
-    );
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 302,
+      headers: new Headers({ location: `https://other.com/${secret}` }),
+      body: null,
+    } as Response);
     const redirectInput = {
       ...input,
       request: { ...input.request, url: urlWithSecret },
