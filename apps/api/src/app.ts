@@ -308,9 +308,7 @@ export async function createApp(
   const installed = new InstalledConnectorProvider(prisma, secrets, remoteConnectors);
   const composioProvider =
     composioOverride ??
-    (isComposioEnabled(env.composioApiKey)
-      ? new ComposioConnector(env.composioApiKey)
-      : undefined);
+    (isComposioEnabled(env.composioApiKey) ? new ComposioConnector(env.composioApiKey) : undefined);
   const integrationSettings = new IntegrationProviderSettings(prisma, secrets, env.encryptionKey, {
     composio: composioProvider,
     pipedream,
