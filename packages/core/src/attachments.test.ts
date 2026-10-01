@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest";
+import { ATTACHMENT_ALLOWED_MIME_TYPES } from "@cortexai-agent-hub/contracts";
 import {
+  ATTACHMENT_ACCEPT,
   AttachmentValidationError,
+  attachmentExtensionForMimeType,
   attachmentsForBot,
   blocksToAgentHistoryText,
   decodeAttachmentBase64,
   inferAttachmentMimeType,
   promptTextForAttachments,
+  supportedAttachmentExtensions,
   userTurnMessageForRun,
   validateAttachmentMimeType,
 } from "./attachments.js";
 
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
 describe("attachment helpers", () => {
   it("rejects unsupported mime types and empty payloads", () => {
-    expect(() => validateAttachmentMimeType("application/zip")).toThrow(AttachmentValidationError);
+    expect(() => validateAttachmentMimeType("application/x-msdownload")).toThrow(AttachmentValidationError);
     expect(() => decodeAttachmentBase64("")).toThrow(AttachmentValidationError);
     expect(() => decodeAttachmentBase64("aGVsbG8=trailing-junk")).toThrow(
       AttachmentValidationError,
@@ -67,8 +75,68 @@ describe("attachment helpers", () => {
     expect(inferAttachmentMimeType("notes.pdf", "")).toBe("application/pdf");
     expect(inferAttachmentMimeType("notes.md", "")).toBe("text/markdown");
     expect(inferAttachmentMimeType("notes.markdown", "text/plain")).toBe("text/markdown");
-    expect(inferAttachmentMimeType("notes.md", "application/pdf")).toBe("application/pdf");
-    expect(inferAttachmentMimeType("archive.zip", "")).toBeNull();
+    expect(inferAttachmentMimeType("notes.md", "application/pdf")).toBe("text/markdown");
+  });
+
+  it("maps Office and zip extensions", () => {
+    expect(inferAttachmentMimeType("Report.XLSX")).toBe(XLSX);
+    expect(inferAttachmentMimeType("brief.docx")).toBe(DOCX);
+    expect(inferAttachmentMimeType("deck.pptx")).toBe(PPTX);
+    expect(inferAttachmentMimeType("old.xls")).toBe("application/vnd.ms-excel");
+    expect(inferAttachmentMimeType("old.doc")).toBe("application/msword");
+    expect(inferAttachmentMimeType("old.ppt")).toBe("application/vnd.ms-powerpoint");
+    expect(inferAttachmentMimeType("bundle.zip")).toBe("application/zip");
+  });
+
+  it("keeps macro-enabled and auto-run Office files out", () => {
+    for (const name of [
+      "m.xlsm",
+      "m.docm",
+      "m.pptm",
+      "m.xlsb",
+      "s.ppsx",
+      "s.ppsm",
+      "t.xltm",
+      "t.dotm",
+      "t.potm",
+    ]) {
+      expect(inferAttachmentMimeType(name)).toBeNull();
+    }
+  });
+
+  it("trusts a known extension over the browser-reported type", () => {
+    // Windows reports .csv as Excel and .zip as x-zip-compressed.
+    expect(inferAttachmentMimeType("data.csv", "application/vnd.ms-excel")).toBe("text/csv");
+    expect(inferAttachmentMimeType("b.zip", "application/x-zip-compressed")).toBe(
+      "application/zip",
+    );
+    expect(inferAttachmentMimeType("notes.md", "text/plain")).toBe("text/markdown");
+    expect(inferAttachmentMimeType("a.xlsx", "application/octet-stream")).toBe(XLSX);
+  });
+
+  it("falls back to an allowed reported type when the extension is unknown", () => {
+    expect(inferAttachmentMimeType("scan", "application/pdf")).toBe("application/pdf");
+    expect(
+      inferAttachmentMimeType("scan", "application/vnd.ms-excel.sheet.macroEnabled.12"),
+    ).toBeNull();
+    expect(inferAttachmentMimeType("m.xlsm", XLSX)).toBeNull();
+  });
+
+  it("gives every allowed type an extension that round-trips", () => {
+    for (const mimeType of ATTACHMENT_ALLOWED_MIME_TYPES) {
+      const extension = attachmentExtensionForMimeType(mimeType);
+      expect(extension).toMatch(/^\.[a-z]+$/);
+      expect(inferAttachmentMimeType(`f${extension}`)).toBe(mimeType);
+    }
+    for (const extension of supportedAttachmentExtensions()) {
+      expect(ATTACHMENT_ALLOWED_MIME_TYPES).toContain(inferAttachmentMimeType(`f${extension}`));
+    }
+  });
+
+  it("lists types and extensions for file pickers", () => {
+    expect(ATTACHMENT_ACCEPT.split(",")).toEqual(
+      expect.arrayContaining([XLSX, DOCX, PPTX, ".xlsx", ".docx", ".pptx", ".zip"]),
+    );
   });
 
   it("scopes current-turn images to user-triggered runs", () => {
