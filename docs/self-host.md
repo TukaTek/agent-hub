@@ -275,9 +275,10 @@ screenshot computer tools stay available. Existing connections default to disabl
 managed endpoints, the deployment-wide fallback remains
 `CORTEXAI_AGENT_HUB_OPENAI_COMPATIBLE_VISION_MODELS=gpt4o-vision,llava`.
 
-Remote MCP defaults to public HTTPS. The deployment owner can attach a server on localhost, the
-same LAN, or a Docker network. Set `MCP_ALLOW_PRIVATE_ENDPOINT=true` on the API and worker to allow it for
-every user. Cloud metadata addresses stay blocked. Leave the flag unset on public installs.
+Remote MCP servers and installed API / GraphQL connectors default to public HTTPS. The deployment
+owner can attach one on localhost, the same LAN, or a Docker network. Set
+`MCP_ALLOW_PRIVATE_ENDPOINT=true` on the API and worker to allow these for every user. Cloud
+metadata addresses stay blocked. Leave the flag unset on public installs.
 
 For servers that accept standard `reasoning_effort`, enable **Supports thinking** under
 **Advanced** when connecting. The setting is saved on the connection (no env var or restart).
@@ -413,7 +414,15 @@ curl --fail https://app.example.com/health
 registry serves, so the commands above build `api`, `worker`, and `web` from the checkout you just
 cloned. The opt-in command under [Updater sidecar](#updater-sidecar) builds `updater` when needed.
 
-Passing `GIT_SHA` is what makes `GET /health` report a `"revision"`; a locally built image has no
+The public `/health` only reports liveness. Runtime, sandbox, and revision details stay on the API
+port at `/internal/health`, which the edge does not route:
+
+```bash
+docker compose --env-file .env -f infra/compose/docker-compose.prod.yml exec api \
+  node -e "fetch('http://127.0.0.1:3100/internal/health').then(r=>r.text()).then(console.log)"
+```
+
+Passing `GIT_SHA` is what makes `/internal/health` report a `"revision"`; a locally built image has no
 other way to know its commit. Prebuilt images from the registry bake it in at publish time, so when
 you switch to a release tag you should leave `GIT_SHA` unset — a value in `.env` would override what
 the image already knows.
@@ -443,6 +452,15 @@ checkout's `.env` and production Compose file. If the stack was started with a c
 set the same `COMPOSE_PROJECT_NAME` in that file. For a manual run, export these variables instead.
 When updating an existing backup installation, reinstall both the script and service unit,
 then run `systemctl daemon-reload`.
+
+To deploy from CI, install `infra/compose/deploy-main.sh` as `/usr/local/sbin/cortexai-agent-hub-deploy-main`
+and give CI a key restricted to it in the deploy user's `authorized_keys`
+(`restrict,command="/usr/local/sbin/cortexai-agent-hub-deploy-main" ssh-ed25519 …`). It builds `origin/main`,
+restarts the stack, waits for `https://$CORTEXAI_AGENT_HUB_HOST/health`, and rolls back on failure. Build and
+start are time-limited so a stuck build fails the deploy instead of holding its lock; a deploy that
+finds the lock held exits non-zero. For a checkout outside `/srv/cortexai-agent-hub`, put
+`CORTEXAI_AGENT_HUB_DEPLOY_DIR=/absolute/path` in a root-owned `/etc/cortexai-agent-hub/deploy.env` readable by the
+deploy user.
 
 ### Docker computers on the production stack
 

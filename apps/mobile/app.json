@@ -5,7 +5,7 @@
     "scheme": "cortexai-agent-hub",
     "version": "1.0.3",
     "orientation": "default",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
     "plugins": [
       [
