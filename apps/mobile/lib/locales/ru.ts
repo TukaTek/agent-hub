@@ -283,7 +283,10 @@ export const RU_MESSAGES: Record<string, string> = {
   "Describe what this bot does": "Опишите, что делает этот бот",
   "Don’t have an account?": "Нет аккаунта?",
   Done: "Готово",
+  "Disconnect {name}?": "Отключить {name}?",
   Disconnect: "Отключить",
+  "This removes the connection from every space.":
+    "Подключение будет удалено во всех пространствах.",
   "Disconnecting…": "Отключение…",
   Email: "Электронная почта",
   Embedded: "Встроенная",
@@ -374,6 +377,7 @@ export const RU_MESSAGES: Record<string, string> = {
   "No apps match your search.": "Нет приложений, соответствующих вашему запросу.",
   "No tools available.": "Нет доступных инструментов.",
   "No matching bots": "Нет подходящих ботов",
+  "No matching models": "Нет подходящих моделей",
   "No messages yet": "Сообщений пока нет",
   "No results": "Нет результатов",
   "Not connected": "Не подключено",
@@ -451,6 +455,7 @@ export const RU_MESSAGES: Record<string, string> = {
   "Scheduled tasks": "Запланированные задачи",
   Search: "Поиск",
   "Search apps": "Поиск приложений",
+  "Search models": "Поиск моделей",
   "Search conversations, files, and routines": "Поиск диалогов, файлов и задач",
   Searching: "Поиск",
   "Searching…": "Поиск…",
@@ -636,6 +641,21 @@ export const RU_MESSAGES: Record<string, string> = {
     "Встроенный голос телефона. Бесплатно, без аккаунта",
   "Could not save that preference": "Не удалось сохранить эту настройку",
   Username: "Имя пользователя",
+  // app/models.tsx
+  "A sign-in page opened — enter this code there:":
+    "Открылась страница входа — введите там этот код:",
+  "All providers": "Все провайдеры",
+  Copied: "Скопировано",
+  "Could not disconnect this provider": "Не удалось отключить этого провайдера",
+  "Default ({level})": "По умолчанию ({level})",
+  "Disconnected {provider}.": "{provider} отключён.",
+  "Save limits": "Сохранить лимиты",
+  "Sign in again": "Войти снова",
+  "Thinking: {level}": "Рассуждение: {level}",
+  "Waiting for sign-in — the code expires in about {minutes} minutes.":
+    "Ожидание входа — срок действия кода истекает примерно через {minutes} мин.",
+  "Waiting for sign-in — the link expires in about {minutes} minutes.":
+    "Ожидание входа — срок действия ссылки истекает примерно через {minutes} мин.",
   "On a call with {name}": "Звонок с {name}",
   Call: "Позвонить",
   Settings: "Настройки",

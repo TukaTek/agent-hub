@@ -68,6 +68,7 @@ import {
   SpaceSchema,
   TaughtSkillSchema,
   TeachRecordingEventSchema,
+  ThinkingLevelSchema,
   ThreadMessagePageSchema,
   ThreadSnapshotSchema,
   UpdateAgentSkillInput,
@@ -216,6 +217,7 @@ export const appContract = {
           provider: z.string(),
           label: z.string().optional(),
           modelId: z.string().optional(),
+          thinkingLevel: ThinkingLevelSchema.nullable().optional(),
         }),
       )
       .output(ModelOAuthBeginSchema),
@@ -236,7 +238,16 @@ export const appContract = {
       .input(z.object({ loginId: z.string() }))
       .output(z.object({ ok: z.literal(true) })),
     setDefault: oc
-      .input(z.object({ provider: z.string(), modelId: z.string() }))
+      .input(
+        z.object({
+          provider: z.string(),
+          modelId: z.string(),
+          thinkingLevel: ThinkingLevelSchema.nullable().optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    disconnect: oc
+      .input(z.object({ provider: z.string().trim().min(1) }))
       .output(z.object({ ok: z.literal(true) })),
   },
   bots: {

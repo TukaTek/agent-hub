@@ -145,7 +145,7 @@ async function main() {
   const stack = createIntegrationConnectorStack(
     composio,
     integrationSettings,
-    [new InstalledConnectorProvider(prisma, secrets)],
+    [new InstalledConnectorProvider(prisma, secrets, {}, allowPrivateEndpoint)],
     [mcp],
   );
   const connector = stack.destination;

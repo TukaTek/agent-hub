@@ -41,22 +41,25 @@ describeWithDatabase("Composio in the API connector stack", () => {
       agentRuntime: "scripted",
       composioApiKey,
     });
-    const health = await (await handles.app.request("/health")).json();
+    const publicHealth = await (await handles.app.request("/health")).json();
+    const health = await (await handles.app.request("/internal/health")).json();
     const composioEntries = handles.connectors
       .managedProviders()
       .filter((provider) => provider.describe().id === "composio");
-    return { handles, health, composioEntries };
+    return { handles, publicHealth, health, composioEntries };
   }
 
-  it("registers the env-key Composio connector once and reports it on /health", async () => {
-    const { handles, health, composioEntries } = await start("ck_fake");
+  it("registers the env-key Composio connector once and reports it internally", async () => {
+    const { handles, publicHealth, health, composioEntries } = await start("ck_fake");
+    expect(publicHealth).toEqual({ ok: true });
     expect(handles.composio).toBeInstanceOf(ComposioConnector);
     expect(composioEntries).toEqual([handles.composio]);
     expect(health).toMatchObject({ composio: true });
   });
 
   it("reports no Composio connector without the env key", async () => {
-    const { handles, health, composioEntries } = await start(undefined);
+    const { handles, publicHealth, health, composioEntries } = await start(undefined);
+    expect(publicHealth).toEqual({ ok: true });
     expect(handles.composio).toBeUndefined();
     expect(composioEntries).toHaveLength(1);
     expect(composioEntries[0]).not.toBeInstanceOf(ComposioConnector);

@@ -233,7 +233,6 @@ import {
   CATALOG_EXECUTE,
   uniquifyInstalledToolName,
 } from "./lazy-tool-catalog.js";
-import { actorMayUsePrivateRemoteMcp } from "./mcp-private-endpoint.js";
 import {
   buildMcpCredentialBlob,
   needsOAuthProbe,
@@ -278,6 +277,7 @@ import {
   renderPlotSpecToSvg,
   searchChartCatalog,
 } from "./plot-tool.js";
+import { actorMayUsePrivateEndpoint } from "./private-endpoint.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import { assertSafeRemoteUrl } from "./remote-mcp.js";
 import { loadReplyContext, messageToAgentHistoryText } from "./reply-context.js";
@@ -920,7 +920,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
       contextWindow: resolved.contextWindow,
       acceptsImages: resolved.acceptsImages,
       maxImagesPerPrompt: resolved.maxImagesPerPrompt,
-      thinkingLevel: resolved.thinkingLevel ?? null,
+      thinkingLevel:
+        ((credential.defaultModel === modelId
+          ? credential.thinkingLevel
+          : null) as AgentRunRequest["model"]["thinkingLevel"]) ??
+        resolved.thinkingLevel ??
+        null,
       oauth: resolved.oauth
         ? {
             credential: resolved.oauth,
@@ -1010,6 +1015,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
         where: { id: routine.botId },
         include: { thread: true },
       });
+      if (bot?.archivedAt) {
+        // Archiving pauses a bot's routines; re-pause one that slipped back to active.
+        await deps.prisma.routine.updateMany({
+          where: { id: routine.id, active: true },
+          data: { active: false, nextRunAt: null },
+        });
+        return;
+      }
       if (!bot?.thread) return;
       const targetThread = routine.threadId
         ? await deps.prisma.thread.findFirst({
@@ -1049,7 +1062,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
       const routinePrompt = expandSkillReferencesInPrompt(routine.prompt, skillRecords);
       const claimed = await deps.prisma.$transaction(async (tx) => {
         const updated = await tx.routine.updateMany({
-          where: { id: routine.id, active: true, nextRunAt: scheduledAt },
+          where: {
+            id: routine.id,
+            active: true,
+            nextRunAt: scheduledAt,
+            bot: { archivedAt: null },
+          },
           data: {
             lastRunAt: new Date(),
             nextRunAt,
@@ -3081,7 +3099,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             if (parsed.endpoint) {
               try {
                 await assertSafeRemoteUrl(parsed.endpoint, deps.secretHttp?.resolveHostname, {
-                  allowPrivateEndpoint: await actorMayUsePrivateRemoteMcp(
+                  allowPrivateEndpoint: await actorMayUsePrivateEndpoint(
                     deps.prisma,
                     run.userId,
                     deps.mcpAllowPrivateEndpoint === true,
