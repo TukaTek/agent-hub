@@ -100,11 +100,34 @@ describeAttachments("chat attachments", () => {
     });
     expect(fetched.contentBase64).toBe(tinyPng.toString("base64"));
 
+    for (const [name, mimeType] of [
+      ["report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+      ["brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      ["deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+      ["bundle.zip", "application/zip"],
+    ] as const) {
+      const content = Buffer.from(`PK ${name}`).toString("base64");
+      const office = await rpc<{ id: string; mimeType: string }>(app, cookie, "artifacts/create", {
+        botId: bot.id,
+        name,
+        mimeType,
+        contentBase64: content,
+      });
+      expect(office.mimeType).toBe(mimeType);
+      const downloaded = await rpc<{ mimeType: string; contentBase64: string }>(
+        app,
+        cookie,
+        "artifacts/get",
+        { botId: bot.id, artifactId: office.id },
+      );
+      expect(downloaded).toMatchObject({ mimeType, contentBase64: content });
+    }
+
     const badMime = await raw(app, cookie, "artifacts/create", {
       botId: bot.id,
-      name: "evil.zip",
-      mimeType: "application/zip",
-      contentBase64: Buffer.from("zip").toString("base64"),
+      name: "macro.xlsm",
+      mimeType: "application/vnd.ms-excel.sheet.macroEnabled.12",
+      contentBase64: Buffer.from("PK").toString("base64"),
     });
     expect(badMime.status).toBeGreaterThanOrEqual(400);
 
