@@ -26,7 +26,7 @@ With `HUB_SSO_ENABLED=true` the API refuses to start unless all of these are set
 | `HUB_DEPLOYMENT_ID` | The deployment UUID Hub issued for this installation, registered against the same credential as `HUB_SERVICE_API_ID` |
 | `HUB_SERVICE_API_ID` | The service credential's API id (up to 256 characters) |
 | `HUB_SERVICE_SECRET_FILE` | Path to a file holding the service credential's secret (up to 4096 characters, trimmed) |
-| `BETTER_AUTH_URL` | This deployment's HTTPS origin |
+| `BETTER_AUTH_URL` | This deployment's HTTPS origin, the same origin as `WEB_ORIGIN` |
 
 The secret is read from a file so it never sits in the process environment or `.env`. Hub must register `HUB_DEPLOYMENT_ID` against the same credential as `HUB_SERVICE_API_ID`: for the `agent-hub-web` channel, sso-start and sso-exchange reject any service token whose credential differs from the deployment's registered product credential with `401 invalid_service_token`, which shows up as a start failure at Continue. The callback URL registered with Hub for the deployment is `<BETTER_AUTH_URL>/api/auth/hub/sso/callback`.
 

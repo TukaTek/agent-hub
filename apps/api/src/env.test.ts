@@ -49,6 +49,21 @@ describe("loadEnv", () => {
         expect(() => loadEnv({ ...sso, [key]: "" })).toThrow(`requires ${key}`);
       }
       expect(() => loadEnv({ ...sso, AUTH_MODE: "local" })).toThrow("requires AUTH_MODE=hub");
+      const split = {
+        BETTER_AUTH_URL: "https://api.example.test",
+        WEB_ORIGIN: "https://app.example.test",
+      };
+      expect(() => loadEnv({ ...sso, ...split })).toThrow(
+        "HUB_SSO_ENABLED requires BETTER_AUTH_URL and WEB_ORIGIN to be the same origin",
+      );
+      expect(
+        loadEnv({
+          ...sso,
+          BETTER_AUTH_URL: "https://app.example.test/",
+          WEB_ORIGIN: "https://app.example.test",
+        }).hubAuth?.sso,
+      ).toBeDefined();
+      expect(loadEnv({ ...sso, ...split, HUB_SSO_ENABLED: "false" }).hubAuth?.sso).toBeUndefined();
       expect(() => loadEnv({ ...sso, HUB_SERVICE_SECRET_FILE: `${secretFile}.missing` })).toThrow(
         "HUB_SERVICE_SECRET_FILE could not be read",
       );
