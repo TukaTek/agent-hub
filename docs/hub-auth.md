@@ -76,7 +76,7 @@ WEB_ORIGIN=<staging Agent Hub HTTPS origin>
 Then, in a browser:
 
 1. Sign in as an assigned Entra test user. Expect Microsoft to open with the email filled in, then `/app`.
-2. Sign in as an Entra test user without an Agent Hub assignment. Expect `/sign-in` with "Microsoft sign-in didn't finish".
+2. Sign in as an Entra test user without an Agent Hub assignment. If Hub refuses at Continue, expect "Microsoft sign-in didn't finish. Try again, or ask your admin for access." on the email step. If Hub refuses after Microsoft, expect Hub's own `/tenant-sso-error` page. Either way, no Agent Hub session is created.
 3. Reload the callback URL from step 1. Expect "Your sign-in expired".
 4. Set the first user to Always Native in Hub and sign in with their password. Expect the same account and data as step 1.
 5. Remove the first user's assignment in Hub while signed in. Expect access to stop within the verification cache TTL.
