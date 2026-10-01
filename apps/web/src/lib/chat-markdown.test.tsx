@@ -23,6 +23,41 @@ describe("ChatMarkdown", () => {
     expect(html).not.toContain("javascript:");
   });
 
+  it("renders workspace and other non-web links as text, not dead anchors", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown>
+        {[
+          "[report](pilot_sample_2026-10-01/report.xlsx)",
+          "[relative](./out/r.xlsx)",
+          "[parent](../r.docx)",
+          "[absolute](/home/cortexai-agent-hub/deck.pptx)",
+          "[route](/app/settings)",
+          "[file](file:///tmp/r.xlsx)",
+        ].join(" ")}
+      </ChatMarkdown>,
+    );
+
+    expect(html).not.toContain("<a");
+    for (const label of ["report", "relative", "parent", "absolute", "route", "file"]) {
+      expect(html).toContain(`<span>${label}</span>`);
+    }
+  });
+
+  it("opens web links in a new tab and keeps in-page anchors in place", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown>
+        {"[docs](https://example.com/docs) [jump](#usage) Fact[^1]\n\n[^1]: Source"}
+      </ChatMarkdown>,
+    );
+
+    expect(html).toContain(
+      '<a href="https://example.com/docs" target="_blank" rel="noreferrer noopener">docs</a>',
+    );
+    expect(html).toContain('<a href="#usage">jump</a>');
+    expect(html).toMatch(/<a href="#user-content-fn-1"[^>]*>1<\/a>/);
+    expect(html).not.toMatch(/href="#[^"]*"[^>]*target="_blank"/);
+  });
+
   it("renders incomplete streaming code fences as code", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown streaming>{"```ts\nconst live = true;"}</ChatMarkdown>,

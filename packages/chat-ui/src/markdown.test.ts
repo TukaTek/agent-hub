@@ -107,11 +107,17 @@ describe("plainTextLinkParts", () => {
 });
 
 describe("sanitizeMarkdownUrl", () => {
-  it("allows normal external links and optionally allows local links", () => {
+  it("allows normal external links and optionally allows in-page anchors", () => {
     expect(sanitizeMarkdownUrl("https://example.com/docs")).toBe("https://example.com/docs");
     expect(sanitizeMarkdownUrl("mailto:hello@example.com")).toBe("mailto:hello@example.com");
-    expect(sanitizeMarkdownUrl("/docs", true)).toBe("/docs");
     expect(sanitizeMarkdownUrl("#section", true)).toBe("#section");
+    expect(sanitizeMarkdownUrl("#section")).toBeUndefined();
+  });
+
+  it("rejects relative and workspace paths, which no chat surface can open", () => {
+    for (const path of ["/docs", "./r.xlsx", "../r.xlsx", "out/r.xlsx", "/app/settings"]) {
+      expect(sanitizeMarkdownUrl(path, true)).toBeUndefined();
+    }
   });
 
   it("rejects executable and embedded-data URLs", () => {
