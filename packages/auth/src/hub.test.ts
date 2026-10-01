@@ -794,6 +794,37 @@ describe("Hub tenant Entra SSO", () => {
     expect(f.data.verification).toHaveLength(0);
   });
 
+  it("fails a callback that carries the IdP's error without exchanging", async () => {
+    const reasons: string[] = [];
+    const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+    const { state, cookie } = await f.startSso();
+    await expectRejected(
+      f,
+      await f.callback(`error=access_denied&state=${state}`, cookie),
+      "sso_failed",
+    );
+    expect(reasons).toEqual(["callback:idp_error"]);
+    expect(f.client.ssoExchange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["revoke succeeds", undefined],
+    ["revoke fails", new Error("Hub unavailable")],
+  ])("revokes Hub's grant when the session cannot be created (%s)", async (_case, failure) => {
+    const f = fixture(undefined, { sso: true });
+    if (failure) f.client.revoke.mockRejectedValue(failure);
+    f.prisma.hubSession.create = async () => {
+      throw new Error("database unavailable");
+    };
+    const { state, cookie } = await f.startSso();
+    const response = await f.callback(`code=${code}&state=${state}`, cookie);
+    expect(response.headers.get("location")).toBe(
+      "https://web.example.test/sign-in?error=sso_failed",
+    );
+    expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+    expect(f.data.session).toHaveLength(0);
+  });
+
   it("drops an SSO session within the verify TTL after Hub disables the user", async () => {
     const f = fixture(undefined, { sso: true });
     const { state, cookie } = await f.startSso();

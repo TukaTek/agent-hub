@@ -292,6 +292,7 @@ export function createHubAuth(
                   return ctx.redirect(new URL(`/sign-in?error=${error}`, env.webOrigin).href);
                 };
                 const query = new URL(ctx.request?.url ?? "http://invalid").searchParams;
+                if (query.has("error")) throw fail("sso_failed", "idp_error");
                 const code = query.get("code");
                 const state = query.get("state");
                 if (
@@ -321,6 +322,7 @@ export function createHubAuth(
                 try {
                   await completeHubGrant(ctx, grant);
                 } catch {
+                  await client.revoke(grant.refreshToken).catch(() => undefined);
                   throw fail("sso_failed", "session");
                 }
                 throw ctx.redirect(new URL("/app", env.webOrigin).href);
