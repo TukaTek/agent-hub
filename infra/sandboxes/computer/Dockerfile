@@ -71,6 +71,13 @@ RUN set -eux; \
   rm -f "$archive"; \
   uv --version; \
   uvx --version
+# Bots build Office files with these instead of hand-writing OOXML. Hash-pinned wheels only:
+# the image has no compiler, and a mismatched download fails the build.
+COPY --chmod=644 office-requirements.txt /tmp/office-requirements.txt
+RUN uv pip install --system --break-system-packages --require-hashes --only-binary :all: --no-cache \
+    -r /tmp/office-requirements.txt \
+  && rm /tmp/office-requirements.txt \
+  && python3 -c "import docx, openpyxl, pptx"
 # Bookworm has no gh package; pin the upstream binary and verify sha256, same as uv.
 ARG GH_VERSION=2.100.0
 RUN set -eux; \
@@ -115,6 +122,7 @@ COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
 # Login shells source this after Debian's /etc/profile resets PATH. The home
 # volume hides /etc/skel, so ~/.local/bin has to be restored from the image.
 COPY --chmod=644 cortexai-agent-hub-local-bin.sh /etc/profile.d/cortexai-agent-hub-local-bin.sh
+COPY --chmod=644 office_smoke.py /usr/local/share/cortexai-agent-hub-office-smoke.py
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
   && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-page-browser \
