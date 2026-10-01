@@ -1,4 +1,7 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { constants } from "node:fs";
+import { link, open, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
 import {
   botSecretDestinationSchema,
@@ -6,17 +9,109 @@ import {
   isPrivateNetworkHost,
   SecretHttpRequest,
 } from "@cortexai-agent-hub/contracts";
+import { attachmentExtensionForMimeType, inferAttachmentMimeType } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 
 import { combineSignals, redactConnectorPayload } from "./connector-safety.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
-import { createPrivateNetworkFetch, createSafeRemoteFetch } from "./remote-mcp.js";
+import {
+  createPrivateNetworkFetch,
+  createSafeRemoteFetch,
+  RemoteRedirectError,
+} from "./remote-mcp.js";
 import type { EncryptedSecretStore } from "./secrets.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
 export type BotSecretScope = { userId: string; spaceId: string; botId: string };
 function scopeFields({ userId, spaceId, botId }: BotSecretScope): BotSecretScope {
   return { userId, spaceId, botId };
+}
+
+export function getFileDownloadCap(): number {
+  const env = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_FILE_CAP_BYTES;
+  if (!env) return 100 * 1024 * 1024;
+  const parsed = parseInt(env, 10);
+  return parsed > 0 ? parsed : 100 * 1024 * 1024;
+}
+
+function getRequestTimeoutMs(): number {
+  const env = process.env.CORTEXAI_AGENT_HUB_SECRET_REQUEST_TIMEOUT_MS;
+  if (!env) return 120_000; // 2 minutes default for 100 MB downloads
+  const parsed = parseInt(env, 10);
+  return parsed > 0 ? parsed : 120_000;
+}
+
+const TEXT_BODY_CAP = 1_000_000;
+
+function isTextOrJsonContentType(contentType: string | null): boolean {
+  // Untyped responses stay inline text, bounded by the text cap.
+  if (!contentType) return true;
+  const lower = contentType.toLowerCase();
+  return (
+    lower.includes("text/") ||
+    lower.includes("application/json") ||
+    lower.includes("application/javascript") ||
+    lower.includes("+json")
+  );
+}
+
+const UNSAFE_FILENAME_CHARACTERS = new Set(["/", "\\", ":", "|", "<", ">", "*", "?", '"', "'"]);
+
+function safeFilename(raw: string, redact: (text: string) => string): string | undefined {
+  let decoded = redact(raw);
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    /* Keep the raw name when it is not percent-encoded. */
+  }
+  // Redacted after decoding too, so an encoded credential never becomes a visible filename.
+  const name = [...redact(decoded).trim()]
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return code > 0x1f && code !== 0x7f && !UNSAFE_FILENAME_CHARACTERS.has(char);
+    })
+    .join("")
+    .replace(/^\.+/, "");
+  return name && name.length <= 255 ? name : undefined;
+}
+
+function sanitizeFilename(
+  disposition: string | null,
+  url: URL,
+  contentType: string | null,
+  redact: (text: string) => string,
+): string {
+  const fromDisposition =
+    /filename\*\s*=\s*(?:[\w-]+'[^']*')?([^;]+)/i.exec(disposition ?? "")?.[1] ??
+    /filename\s*=\s*(?:"([^"]*)"|([^;]+))/i
+      .exec(disposition ?? "")
+      ?.slice(1)
+      .find(Boolean);
+  const fromUrl = redact(url.pathname).split("/").filter(Boolean).pop();
+  const name =
+    (fromDisposition && safeFilename(fromDisposition, redact)) ||
+    (fromUrl && safeFilename(fromUrl, redact)) ||
+    `download-${Date.now()}`;
+  return withContentTypeExtension(name, contentType);
+}
+
+/** Extensionless endpoints like `/forms/<id>/pdf` get the extension attach_file recognizes. */
+function withContentTypeExtension(name: string, contentType: string | null): string {
+  const mimeType = contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  const extension = attachmentExtensionForMimeType(mimeType);
+  if (!extension || inferAttachmentMimeType(name) === mimeType) return name;
+  return `${name.slice(0, 255 - extension.length)}${extension}`;
+}
+
+/** The saved name first, then timestamped variants, so a download never replaces a file. */
+export function* downloadFilenameCandidates(filename: string): Generator<string> {
+  yield filename;
+  const dot = filename.lastIndexOf(".");
+  const [base, ext] = dot > 0 ? [filename.slice(0, dot), filename.slice(dot)] : [filename, ""];
+  const stamp = Date.now();
+  yield `${base}-${stamp}${ext}`;
+  for (let attempt = 2; attempt <= 20; attempt++) yield `${base}-${stamp}-${attempt}${ext}`;
 }
 
 const metadata = { name: true, origin: true, auth: true } as const;
@@ -142,6 +237,19 @@ export async function forgetBotSecret(prisma: PrismaClient, scope: BotSecretScop
   return { removed: true };
 }
 
+/** Where a binary response is saved so the bot's file tools and computer can open it. */
+export interface SecretDownloadTarget {
+  /** Largest file this computer can receive. */
+  maxBytes: number;
+  /** Host directory the response streams into. */
+  directory(): Promise<string>;
+  /** Makes a finished file visible to the bot and returns its path relative to the bot home. */
+  publish(hostPath: string, filename: string): Promise<string>;
+}
+
+/** A failure whose message is already safe and specific enough to show the bot. */
+class SecretRequestFailure extends Error {}
+
 /** Credentials are resolved only inside this destination-bound HTTP boundary. */
 export async function requestWithBotSecret(input: {
   prisma: PrismaClient;
@@ -151,8 +259,19 @@ export async function requestWithBotSecret(input: {
   signal: AbortSignal;
   remote?: RemoteTransportDependencies;
   registerRedactions?: (values: string[]) => void;
+  downloads?: SecretDownloadTarget;
 }): Promise<unknown> {
-  const request = SecretHttpRequest.parse(input.request);
+  const parsed = SecretHttpRequest.safeParse(input.request);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`)
+      .join("; ");
+    return { error: `Invalid authenticated request — ${detail}` };
+  }
+  const request = parsed.data;
+  if (!URL.canParse(request.url)) {
+    return { error: "Invalid authenticated request — url: must be an absolute URL" };
+  }
   const row = await input.prisma.botSecret.findFirst({
     where: { ...scopeFields(input.scope), name: request.name },
   });
@@ -178,8 +297,12 @@ export async function requestWithBotSecret(input: {
     ]),
   ].filter(Boolean);
   input.registerRedactions?.(redactions);
+  const redact = (text: string) =>
+    redactions.reduce((result, value) => result.replaceAll(value, "[REDACTED]"), text);
   const controller = new AbortController();
-  const signal = combineSignals(input.signal, controller.signal, AbortSignal.timeout(30_000));
+  const timeoutMs = getRequestTimeoutMs();
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = combineSignals(input.signal, controller.signal, timeout);
   // The safe fetch refuses plain-HTTP and private hosts outright. A credential
   // saved under the owner's private-HTTP opt-in was validated against exactly
   // those rules at save time, and the request URL is pinned to its origin, so
@@ -205,7 +328,54 @@ export async function requestWithBotSecret(input: {
       }),
       signal,
     );
-    const bytes = await readBodyCapped(response, 1_000_000, signal);
+
+    if (!response.ok) {
+      const snippet = await readBodySnippet(response, signal, redactions);
+      return {
+        error: `Request failed with HTTP ${response.status}${snippet ? `: ${snippet}` : ""}.`,
+      };
+    }
+
+    const contentType = response.headers.get("content-type");
+    const contentLength = response.headers.get("content-length");
+    const declaredSize = contentLength ? parseInt(contentLength, 10) : undefined;
+
+    // Binary/file mode: non-text/JSON content types
+    if (!isTextOrJsonContentType(contentType)) {
+      if (!input.downloads) {
+        await response.body?.cancel().catch(() => undefined);
+        return {
+          error:
+            "File downloads require a bot workspace. Use text/JSON endpoints or request support.",
+        };
+      }
+      const fileCap = input.downloads.maxBytes;
+      if (declaredSize !== undefined && declaredSize > fileCap) {
+        await response.body?.cancel().catch(() => undefined);
+        return {
+          error: `Response size ${declaredSize} bytes exceeds the ${fileCap} byte file download limit for this computer.`,
+        };
+      }
+
+      return await downloadToFile(response, {
+        url,
+        contentType,
+        maxBytes: fileCap,
+        target: input.downloads,
+        signal,
+        redact,
+      });
+    }
+
+    // Text/JSON mode
+    if (declaredSize !== undefined && declaredSize > TEXT_BODY_CAP) {
+      await response.body?.cancel().catch(() => undefined);
+      return {
+        error: `Response size ${declaredSize} bytes exceeds the ${TEXT_BODY_CAP} byte text body limit.`,
+      };
+    }
+
+    const bytes = await readBodyCapped(response, TEXT_BODY_CAP, signal);
     const text = new TextDecoder().decode(bytes);
     let body: unknown = text;
     try {
@@ -220,12 +390,164 @@ export async function requestWithBotSecret(input: {
       body: safe.length > 20_000 ? safe.slice(0, 20_000) : JSON.parse(safe),
       truncated: safe.length > 20_000,
     };
-  } catch {
-    return { error: "Authenticated request failed. Check the destination and credential." };
+  } catch (error) {
+    return {
+      error: redact(secretRequestFailureMessage(error, url, timeout, input.signal, timeoutMs)),
+    };
   } finally {
     controller.abort();
     await withAbort(fetch.close(), AbortSignal.timeout(1000)).catch(() => undefined);
   }
+}
+
+async function readBodySnippet(
+  response: Response,
+  signal?: AbortSignal,
+  redactions?: string[],
+): Promise<string> {
+  try {
+    const bytes = await readBodyCapped(response, 200, signal);
+    let snippet = new TextDecoder().decode(bytes).trim();
+    if (redactions) {
+      for (const value of redactions) {
+        snippet = snippet.replaceAll(value, "[REDACTED]");
+      }
+    }
+    return snippet;
+  } catch {
+    return "";
+  }
+}
+
+function secretRequestFailureMessage(
+  error: unknown,
+  url: URL,
+  timeout: AbortSignal,
+  cancel: AbortSignal,
+  timeoutMs: number,
+): string {
+  if (timeout.aborted) {
+    const seconds = Math.ceil(timeoutMs / 1000);
+    return `Request timed out after ${seconds} second${seconds === 1 ? "" : "s"}.`;
+  }
+  if (cancel.aborted) return "Request was cancelled before it finished.";
+  if (error instanceof RemoteRedirectError) {
+    let target = "";
+    if (error.location) {
+      try {
+        target = ` to ${new URL(error.location, url).hostname}`;
+      } catch {
+        target = " to an invalid location";
+      }
+    }
+    return `Redirect not followed (HTTP ${error.status}${target}). Request the final URL directly.`;
+  }
+  if (error instanceof SecretRequestFailure) return error.message;
+  const message = error instanceof Error ? error.message : "";
+  const code = error instanceof Error && "code" in error ? String(error.code) : "";
+  if (message === "Response is too large") {
+    return `Response body exceeds the ${TEXT_BODY_CAP} byte text limit.`;
+  }
+  if (/private|must use HTTPS/i.test(message)) {
+    return "Destination is blocked by network policy.";
+  }
+  if (/ENOTFOUND|EAI_AGAIN/.test(`${code} ${message}`)) {
+    return `DNS lookup failed for ${url.hostname}. Check the destination hostname.`;
+  }
+  if (message.startsWith("Could not reach")) return `Network error: ${message}.`;
+  getLogger().error(`secret_request unexpected error: ${message || String(error)}`);
+  return "Authenticated request failed. Check the destination and credential.";
+}
+
+async function downloadToFile(
+  response: Response,
+  {
+    url,
+    contentType,
+    maxBytes,
+    target,
+    signal,
+    redact,
+  }: {
+    url: URL;
+    contentType: string | null;
+    maxBytes: number;
+    target: SecretDownloadTarget;
+    signal: AbortSignal;
+    redact: (text: string) => string;
+  },
+): Promise<unknown> {
+  const directory = await target.directory().catch((error: unknown) => {
+    getLogger().error("secret_request download directory", error);
+    throw new SecretRequestFailure("Could not prepare the downloads folder in the bot workspace.");
+  });
+  const saveFailed = (error: unknown): never => {
+    if (error instanceof SecretRequestFailure) throw error;
+    getLogger().error("secret_request save download", error);
+    throw new SecretRequestFailure("Could not save the downloaded file to the bot workspace.");
+  };
+  const temp = join(directory, `.${randomBytes(8).toString("hex")}.download`);
+  const hash = createHash("sha256");
+  let size = 0;
+  try {
+    const handle = await open(
+      temp,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o666,
+    ).catch(saveFailed);
+    try {
+      const reader = response.body?.getReader();
+      try {
+        while (reader) {
+          const { done, value } = await withAbort(reader.read(), signal).catch(() => {
+            throw new SecretRequestFailure("Network error: the connection closed mid-download.");
+          });
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) {
+            throw new SecretRequestFailure(
+              `Response exceeds the ${maxBytes} byte file download limit for this computer.`,
+            );
+          }
+          hash.update(value);
+          await handle.write(value).catch(saveFailed);
+        }
+      } finally {
+        await reader?.cancel().catch(() => undefined);
+      }
+    } finally {
+      await handle.close();
+    }
+    const filename = await linkWithoutReplacing(
+      temp,
+      directory,
+      sanitizeFilename(response.headers.get("content-disposition"), url, contentType, redact),
+    ).catch(saveFailed);
+    const path = await target.publish(join(directory, filename), filename).catch(saveFailed);
+    return {
+      file: {
+        path,
+        filename: path.split("/").pop() ?? filename,
+        size,
+        contentType: contentType || "application/octet-stream",
+        sha256: hash.digest("hex"),
+      },
+    };
+  } finally {
+    await unlink(temp).catch(() => undefined);
+  }
+}
+
+async function linkWithoutReplacing(source: string, directory: string, filename: string) {
+  for (const candidate of downloadFilenameCandidates(filename)) {
+    try {
+      await link(source, join(directory, candidate));
+      return candidate;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+  }
+  throw new SecretRequestFailure("Could not choose a free filename in downloads/.");
 }
 
 export type LoginField = "username" | "password";

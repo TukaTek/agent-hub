@@ -10,7 +10,7 @@ import {
   CodexCatalogCache,
   createBackgroundJobHandlers,
   createCloudAgentConnection,
-  createConnectorStack,
+  createIntegrationConnectorStack,
   createJobReconciler,
   createMessagingContextLoader,
   createPostgresReconciliationLeadership,
@@ -133,22 +133,21 @@ async function main() {
   })
     ? new ChatSdkMessagingSurface(messagingPlatforms)
     : undefined;
+  const composio = isComposioEnabled(process.env.COMPOSIO_API_KEY)
+    ? new ComposioConnector(process.env.COMPOSIO_API_KEY)
+    : undefined;
   const integrationSettings = new IntegrationProviderSettings(
     prisma,
     secrets,
     resolveEncryptionKey(process.env),
-    {
-      composio: isComposioEnabled(process.env.COMPOSIO_API_KEY)
-        ? new ComposioConnector(process.env.COMPOSIO_API_KEY)
-        : undefined,
-      pipedream,
-    },
+    { composio, pipedream },
   );
-  const stack = createConnectorStack(false, undefined, [
-    new InstalledConnectorProvider(prisma, secrets),
-    ...integrationSettings.providers(),
-    mcp,
-  ]);
+  const stack = createIntegrationConnectorStack(
+    composio,
+    integrationSettings,
+    [new InstalledConnectorProvider(prisma, secrets)],
+    [mcp],
+  );
   const connector = stack.destination;
   await connector.start();
   integrationSettings.warmDirectories();
@@ -189,7 +188,7 @@ async function main() {
     connector: stack.connector,
     connectors: stack.connector,
     listConnectedPluginSlugs: async (userId) => {
-      const provider = await integrationSettings.resolve("composio");
+      const provider = composio ?? (await integrationSettings.resolve("composio"));
       if (!provider) return [];
       return provider.listConnectedExternalIds({
         userId,

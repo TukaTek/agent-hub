@@ -22,7 +22,7 @@ import {
   ComposioConnector,
   createBackgroundJobHandlers,
   createCloudAgentConnection,
-  createConnectorStack,
+  createIntegrationConnectorStack,
   createJobReconciler,
   createMessagingContextLoader,
   createMessagingTeamChatSender,
@@ -306,21 +306,19 @@ export async function createApp(
       ? new SmtpEmailProvider({ url: env.smtpUrl, from: env.emailFrom ?? "" })
       : localEmailEmulator);
   const installed = new InstalledConnectorProvider(prisma, secrets, remoteConnectors);
+  const composioProvider =
+    composioOverride ??
+    (isComposioEnabled(env.composioApiKey) ? new ComposioConnector(env.composioApiKey) : undefined);
   const integrationSettings = new IntegrationProviderSettings(prisma, secrets, env.encryptionKey, {
-    composio:
-      composioOverride ??
-      (isComposioEnabled(env.composioApiKey)
-        ? new ComposioConnector(env.composioApiKey)
-        : undefined),
+    composio: composioProvider,
     pipedream,
   });
-  const stack = createConnectorStack(false, composioOverride, [
-    installed,
-    ...integrationSettings
-      .providers()
-      .filter((provider) => !composioOverride || provider.describe().id !== "composio"),
-    mcp,
-  ]);
+  const stack = createIntegrationConnectorStack(
+    composioProvider,
+    integrationSettings,
+    [installed],
+    [mcp],
+  );
   const connector = stack.destination;
   await connector.start();
   integrationSettings.warmDirectories();
@@ -410,7 +408,7 @@ export async function createApp(
     connector: stack.connector,
     connectors: stack.connector,
     listConnectedPluginSlugs: async (userId) => {
-      const provider = await integrationSettings.resolve("composio");
+      const provider = composioProvider ?? (await integrationSettings.resolve("composio"));
       if (!provider) return [];
       return provider.listConnectedExternalIds({
         userId,
