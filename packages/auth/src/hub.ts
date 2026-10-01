@@ -1,5 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { SignInContinueResponse, SsoCallbackError } from "@cortexai-agent-hub/core";
+import {
+  HUB_SSO_ACCESS_DENIED,
+  type SignInContinueResponse,
+  type SsoCallbackError,
+} from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 import { APIError, createAuthEndpoint } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
@@ -28,6 +32,8 @@ const SSO_COOKIE_OPTIONS = {
 } as const;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const SSO_STATE_PREFIX = "hub-sso:";
+/** Hub sso-start codes that mean this user may not use Agent Hub, not that Hub is down. */
+const HUB_START_DENIALS = new Set(["access_denied", "product_not_enabled", "tenant_mismatch"]);
 
 /**
  * Per client address, as resolved from the reverse proxy's single X-Forwarded-For value.
@@ -92,6 +98,12 @@ function signInContinueEndpoint(
           const code = error instanceof HubRequestError ? error.code : undefined;
           if (code === "user_always_native") return ctx.json({ next: "password" });
           sso.onError?.(`start:${code ?? "unavailable"}`);
+          if (code && HUB_START_DENIALS.has(code)) {
+            throw new APIError("FORBIDDEN", {
+              code: HUB_SSO_ACCESS_DENIED,
+              message: "Ask your admin for access",
+            });
+          }
           throw new APIError("BAD_GATEWAY", { message: "Could not continue" });
         }
         // Abandoned sign-ins are never consumed, so expire them here.

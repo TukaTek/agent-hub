@@ -203,6 +203,21 @@ it("refuses a non-HTTPS authorize URL", async () => {
   expect(assign).not.toHaveBeenCalled();
 });
 
+it.each([
+  [
+    { code: "HUB_SSO_ACCESS_DENIED", message: "Ask your admin for access" },
+    "Microsoft sign-in didn't finish. Try again, or ask your admin for access.",
+  ],
+  [{ message: "Invalid sign-in origin" }, "Could not continue"],
+])("explains a refused Continue (%j)", async (reply, shown) => {
+  stubServer("hub", reply, 403);
+  await render();
+  await continueWithEmail();
+  await until(() => container.querySelector('[role="alert"]'));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(shown);
+  expect(passwordInput()).toBeNull();
+});
+
 it("points desktop Microsoft users to the browser instead of redirecting", async () => {
   const assign = vi.fn();
   vi.stubGlobal("location", {

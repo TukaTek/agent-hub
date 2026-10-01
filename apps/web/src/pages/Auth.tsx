@@ -1,4 +1,5 @@
 import {
+  HUB_SSO_ACCESS_DENIED,
   readBoundedJsonResponse,
   type SignInContinueResponse,
   type SsoCallbackError,
@@ -128,6 +129,16 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email }),
         });
+        if (response.status === 403) {
+          const refusal = await readBoundedJsonResponse<{ code?: unknown }>(
+            response,
+            MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+          ).catch(() => undefined);
+          setError(
+            refusal?.code === HUB_SSO_ACCESS_DENIED ? ssoErrors.sso_failed : t`Could not continue`,
+          );
+          return;
+        }
         const result = response.ok
           ? await readBoundedJsonResponse<SignInContinueResponse>(
               response,

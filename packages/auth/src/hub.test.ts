@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { HUB_SSO_ACCESS_DENIED } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -645,6 +646,21 @@ describe("Hub tenant Entra SSO", () => {
       expect.stringMatching(/^hub-sso:[0-9a-f]{64}$/),
     ]);
   });
+
+  it.each(["access_denied", "product_not_enabled", "tenant_mismatch"])(
+    "refuses Continue with an admin hint when Hub's start says %s",
+    async (hubCode) => {
+      const reasons: string[] = [];
+      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+      f.client.ssoStart.mockRejectedValue(new HubRequestError(403, hubCode));
+      const { response } = await f.startSso();
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: HUB_SSO_ACCESS_DENIED });
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(f.data.verification).toHaveLength(0);
+      expect(reasons).toEqual([`start:${hubCode}`]);
+    },
+  );
 
   it("fails Continue without a cookie or pending row when Hub cannot start", async () => {
     const f = fixture(undefined, { sso: true });
