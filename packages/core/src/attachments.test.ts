@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { ATTACHMENT_ALLOWED_MIME_TYPES } from "@cortexai-agent-hub/contracts";
+import { describe, expect, it } from "vitest";
 import {
   ATTACHMENT_ACCEPT,
   AttachmentValidationError,
@@ -20,7 +20,9 @@ const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.prese
 
 describe("attachment helpers", () => {
   it("rejects unsupported mime types and empty payloads", () => {
-    expect(() => validateAttachmentMimeType("application/x-msdownload")).toThrow(AttachmentValidationError);
+    expect(() => validateAttachmentMimeType("application/x-msdownload")).toThrow(
+      AttachmentValidationError,
+    );
     expect(() => decodeAttachmentBase64("")).toThrow(AttachmentValidationError);
     expect(() => decodeAttachmentBase64("aGVsbG8=trailing-junk")).toThrow(
       AttachmentValidationError,
