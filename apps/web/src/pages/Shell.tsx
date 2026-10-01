@@ -148,6 +148,13 @@ import { CallCard } from "../components/call/CallCard";
 import { VoiceChatCard } from "../components/call/VoiceChatCard";
 import { ComputerWorkspace } from "../components/computer/ComputerWorkspace";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
+import {
+  LIVE_TOOL_STEP_WINDOW,
+  StandaloneToolActivity,
+  ToolActivityDisclosure,
+  ToolOnlyNarration,
+  ToolSteps,
+} from "../components/ToolActivityDisclosure";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -208,6 +215,14 @@ import {
   threadRunError,
   userHoldsComputerControl,
 } from "../lib/thread-events";
+import { getToolActivityEnabled, subscribeToolActivity } from "../lib/tool-activity-preference";
+import {
+  isToolOnlyNarration,
+  messageHasVisibleBlocks,
+  renderableMessageBlocks,
+  shouldRenderToolCard,
+  toolStepCount,
+} from "../lib/tool-activity-view";
 import {
   transcriptCanSnapAfterFrame,
   transcriptIsNearEnd,
@@ -410,6 +425,11 @@ export function ShellPage() {
   );
   const streamResponsesRef = useRef(streamResponses);
   streamResponsesRef.current = streamResponses;
+  const showToolActivity = useSyncExternalStore(
+    subscribeToolActivity,
+    getToolActivityEnabled,
+    () => true,
+  );
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [replyTarget, setReplyTarget] = useState<ThreadMessage | null>(null);
   const [replyQuote, setReplyQuote] = useState<string | null>(null);
@@ -3470,6 +3490,7 @@ export function ShellPage() {
             onScrollRequestHandled={clearScrollRequest}
             artifactTarget={transcriptArtifactTarget}
             messages={transcriptMessages}
+            showToolActivity={showToolActivity}
             olderCursor={activeSnapshot?.olderCursor ?? null}
             loadingOlder={loadingOlder}
             answerableAskMessageId={answerableAskMessageId}
@@ -4533,6 +4554,7 @@ const Transcript = memo(function Transcript({
   onScrollRequestHandled,
   artifactTarget,
   messages,
+  showToolActivity,
   olderCursor,
   loadingOlder,
   answerableAskMessageId,
@@ -4561,6 +4583,7 @@ const Transcript = memo(function Transcript({
   onScrollRequestHandled: () => void;
   artifactTarget: ArtifactTarget;
   messages: ThreadMessage[];
+  showToolActivity: boolean;
   olderCursor: number | null;
   loadingOlder: boolean;
   answerableAskMessageId: string | null;
@@ -4851,7 +4874,7 @@ const Transcript = memo(function Transcript({
             );
           }
           const message = item.message;
-          if (!message.blocks.some((block) => !isToolActivityBlock(block))) return null;
+          if (!messageHasVisibleBlocks(message.blocks, showToolActivity)) return null;
           const peerReceipt = isPeerReceiptBlocks(message.blocks);
           const messageReactions = reactionView.reactions.get(message.id);
           return (
@@ -4924,6 +4947,7 @@ const Transcript = memo(function Transcript({
                     speaking={speakingMessageId === message.id}
                     onSpeak={() => onSpeak(message)}
                     onOpenComputer={onOpenComputer}
+                    showToolActivity={showToolActivity}
                   />
                   {peerReceipt ? null : (
                     <MessageHoverActions
@@ -6073,6 +6097,7 @@ const MessageView = memo(function MessageView({
   speaking,
   onSpeak,
   onOpenComputer,
+  showToolActivity,
 }: {
   artifactTarget: ArtifactTarget;
   canAnswer: boolean;
@@ -6093,6 +6118,7 @@ const MessageView = memo(function MessageView({
   speaking: boolean;
   onSpeak: () => void;
   onOpenComputer: (botId?: string) => void;
+  showToolActivity: boolean;
 }) {
   const { t } = useLingui();
   const isNarration =
@@ -6103,7 +6129,7 @@ const MessageView = memo(function MessageView({
     );
   const isLive = message.id.startsWith("progress:");
   const quoteMessageId = message.id.includes(":") ? undefined : message.id;
-  const visibleNarrationBlocks = message.blocks.filter((block) => !isToolActivityBlock(block));
+  const visibleNarrationBlocks = renderableMessageBlocks(message.blocks, showToolActivity);
   const parentJumpId = replyPreview?.id ?? replyToMessageId;
   const speakerBot = message.botId ? peerBot?.(message.botId) : undefined;
   const speakerColorDef = useMemo(
@@ -6154,6 +6180,14 @@ const MessageView = memo(function MessageView({
   );
   if (isNarration) {
     if (visibleNarrationBlocks.length === 0) return null;
+    if (isToolOnlyNarration(message.blocks, showToolActivity)) {
+      return (
+        <>
+          {messageContext}
+          <ToolOnlyNarration blocks={visibleNarrationBlocks} live={isLive} />
+        </>
+      );
+    }
     return (
       <>
         {messageContext}
@@ -6164,6 +6198,22 @@ const MessageView = memo(function MessageView({
             dir="auto"
           >
             {visibleNarrationBlocks.map((block, i) => {
+              if (block.kind === "steps") {
+                return (
+                  <ToolActivityDisclosure
+                    key={i}
+                    live={isLive}
+                    stepCount={toolStepCount(block.steps)}
+                    durationMs={block.durationMs}
+                  >
+                    <ToolSteps
+                      steps={block.steps}
+                      currentIndex={isLive ? block.steps.length - 1 : undefined}
+                      limit={isLive ? LIVE_TOOL_STEP_WINDOW : undefined}
+                    />
+                  </ToolActivityDisclosure>
+                );
+              }
               if (block.kind === "text" || block.kind === "progress") {
                 return (
                   <div
@@ -6195,6 +6245,17 @@ const MessageView = memo(function MessageView({
     <>
       {messageContext}
       {message.blocks.map((block, i) => {
+        if (block.kind === "steps" && shouldRenderToolCard(block, showToolActivity)) {
+          return (
+            <StandaloneToolActivity
+              key={i}
+              live={isLive}
+              steps={block.steps}
+              stepCount={toolStepCount(block.steps)}
+              durationMs={block.durationMs}
+            />
+          );
+        }
         if (isToolActivityBlock(block)) return null;
         if (block.kind === "handoff") {
           const from = memberName?.(block.fromBotId) ?? t`bot`;

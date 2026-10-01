@@ -92,6 +92,7 @@ export async function modelCredentialAuthKindsForSpace(
       select: {
         id: true,
         modelId: true,
+        thinkingLevel: true,
         isDefault: true,
         updatedAt: true,
         credential: {
@@ -157,7 +158,10 @@ export async function modelCredentialAuthKindsForSpace(
     select: { id: true, ciphertext: true },
   });
   const ciphertextById = new Map(secrets.map((secret) => [secret.id, secret.ciphertext]));
-  const readKind = (secretId: string): ModelCredentialAuthKind | undefined => {
+  // Every catalog model of a connected provider shares one secret, and each decrypt runs a
+  // synchronous scrypt, so decrypt each secret once rather than once per model.
+  const kindBySecretId = new Map<string, ModelCredentialAuthKind | undefined>();
+  const decryptKind = (secretId: string): ModelCredentialAuthKind | undefined => {
     const ciphertext = ciphertextById.get(secretId);
     if (!ciphertext) return undefined;
     try {
@@ -165,6 +169,10 @@ export async function modelCredentialAuthKindsForSpace(
     } catch {
       return undefined;
     }
+  };
+  const readKind = (secretId: string): ModelCredentialAuthKind | undefined => {
+    if (!kindBySecretId.has(secretId)) kindBySecretId.set(secretId, decryptKind(secretId));
+    return kindBySecretId.get(secretId);
   };
 
   const auth: SpaceCatalogAuth = {
@@ -356,23 +364,29 @@ export function selectConfiguredModel(input: {
   // The override provider, model and credential must win together.
   const useOverride = Boolean(hasOverride && overrideCredential);
   const credential = useOverride ? overrideCredential : defaultCredential;
+  const id =
+    usableModelId(useOverride ? bot!.modelId : null) ??
+    usableModelId(credential?.defaultModel) ??
+    (credential ? defaultCatalogModelId(credential.provider) : null) ??
+    usableModelId(settings?.defaultModelId) ??
+    usableModelId(deployment?.model);
+  // A preference's thinking level is bound to its stored modelId, so it only applies
+  // when that model is the one being run.
+  const credentialThinkingLevel =
+    credential && id && credential.defaultModel === id ? credential.thinkingLevel : null;
   return {
     provider:
       (useOverride ? bot!.modelProvider : null) ??
       credential?.provider ??
       settings?.defaultModelProvider ??
       deployment?.provider,
-    id:
-      usableModelId(useOverride ? bot!.modelId : null) ??
-      usableModelId(credential?.defaultModel) ??
-      (credential ? defaultCatalogModelId(credential.provider) : null) ??
-      usableModelId(settings?.defaultModelId) ??
-      usableModelId(deployment?.model),
+    id,
     credential,
     // Preserve bot thinking for the Space default; drop it for an unavailable override.
     thinkingLevel:
       hasOverride && !useOverride
         ? null
-        : ((bot?.thinkingLevel as AgentRunRequest["model"]["thinkingLevel"]) ?? null),
+        : (((bot?.thinkingLevel ??
+            credentialThinkingLevel) as AgentRunRequest["model"]["thinkingLevel"]) ?? null),
   };
 }
