@@ -367,6 +367,8 @@ container logs, default no-new-privileges, and the kernel NAT path instead of Do
    `CADDYFILE_PATH` to that absolute path. The example drops application requests that do not come
    from Cloudflare's [published IP ranges](https://www.cloudflare.com/ips/); reconcile those ranges
    whenever Cloudflare publishes a change. A Cloudflare Tunnel can replace the public web listeners.
+   A same-host front proxy such as Tailscale serve should target Caddy through loopback, so
+   `Caddyfile.prod` passes its `X-Forwarded-For` client address to the API's per-client sign-in limits.
 2. Clone the repository on the VM and create a root `.env` with production-only values. At minimum set
    `POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, `SCREEN_PROXY_SECRET`,
    `OPENROUTER_API_KEY`, the API key for your selected sandbox provider,

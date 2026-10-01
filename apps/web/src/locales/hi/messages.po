@@ -2453,7 +2453,15 @@ msgid "Microphone failed"
 msgstr "माइक्रोफ़ोन विफल"
 
 #: src/pages/Auth.tsx
+msgid "Microsoft sign-in didn't finish. Try again, or ask your admin for access."
+msgstr ""
+
+#: src/pages/Auth.tsx
 msgid "Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
+#: src/pages/Auth.tsx
+msgid "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser."
 msgstr ""
 
 #: src/pages/ModelSettingsOverlay.tsx
@@ -4092,6 +4100,10 @@ msgstr "आपका ईमेल पता"
 #: src/pages/Auth.tsx
 msgid "Your name"
 msgstr "आपका नाम"
+
+#: src/pages/Auth.tsx
+msgid "Your sign-in expired. Try again."
+msgstr ""
 
 #: src/pages/Welcome.tsx
 msgid "Your team of always-on agents<0/>that you can give real work to."

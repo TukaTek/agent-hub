@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   resolveCloudAgentProvider,
   resolveDeploymentModel,
@@ -104,15 +105,24 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const deploymentModel = resolveDeploymentModel(source);
   const updaterUrl = optional(source.CORTEXAI_AGENT_HUB_UPDATER_URL);
   const updaterToken = optional(source.CORTEXAI_AGENT_HUB_UPDATER_TOKEN);
+  const hubAuth = hubAuthFromEnv(source, { readSecretFile: (path) => readFileSync(path, "utf8") });
+  const webOrigin = source.WEB_ORIGIN ?? "http://127.0.0.1:5173";
+  const authUrl = source.BETTER_AUTH_URL ?? webOrigin;
+  // The SSO state cookie is set through the web origin and read at the auth callback.
+  if (hubAuth?.sso && new URL(authUrl).origin !== new URL(webOrigin).origin) {
+    throw new Error(
+      "HUB_SSO_ENABLED requires BETTER_AUTH_URL and WEB_ORIGIN to be the same origin",
+    );
+  }
   return {
-    hubAuth: hubAuthFromEnv(source),
+    hubAuth,
     nodeEnv: source.NODE_ENV ?? "",
     databaseUrl: required(source, "DATABASE_URL"),
     realtimeDatabaseUrl: source.REALTIME_DATABASE_URL ?? required(source, "DATABASE_URL"),
     desktopStackToken: optional(source.CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN),
     authSecret,
-    authUrl: source.BETTER_AUTH_URL ?? source.WEB_ORIGIN ?? "http://127.0.0.1:5173",
-    webOrigin: source.WEB_ORIGIN ?? "http://127.0.0.1:5173",
+    authUrl,
+    webOrigin,
     privacyPolicyUrl: optional(source.PRIVACY_POLICY_URL),
     apiUrl: source.API_URL ?? "http://127.0.0.1:3100",
     apiHost: source.API_HOST ?? "127.0.0.1",

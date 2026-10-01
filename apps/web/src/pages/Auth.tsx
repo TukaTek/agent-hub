@@ -1,6 +1,8 @@
 import {
+  HUB_SSO_ACCESS_DENIED,
   readBoundedJsonResponse,
   type SignInContinueResponse,
+  type SsoCallbackError,
   signupRequiresEmailVerification,
 } from "@cortexai-agent-hub/core";
 import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
@@ -9,11 +11,15 @@ import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth";
+import { desktopBridge } from "../lib/desktop";
 import { clearSpaceSelection } from "../lib/rpc";
 import { WelcomePage } from "./Welcome";
 
 type AuthMode = "in" | "up" | "forgot";
-type SignInStep = "email" | SignInContinueResponse["next"];
+type SignInStep =
+  | "email"
+  | Exclude<SignInContinueResponse["next"], "redirect">
+  | "desktop_sso_unavailable";
 type PasswordResetCapabilities = {
   passwordReset: boolean;
   resetUrl: string | null;
@@ -35,7 +41,14 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const ssoErrors: Record<SsoCallbackError, string> = {
+    sso_expired: t`Your sign-in expired. Try again.`,
+    sso_failed: t`Microsoft sign-in didn't finish. Try again, or ask your admin for access.`,
+  };
+  const [error, setError] = useState<string | null>(() => {
+    const code = searchParams.get("error");
+    return code && Object.hasOwn(ssoErrors, code) ? ssoErrors[code as SsoCallbackError] : null;
+  });
   const [pending, setPending] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   // Signup triggers a session refresh that remounts the anonymous auth page.
@@ -46,7 +59,9 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [step, setStep] = useState<SignInStep>("email");
   const signInStep = mode === "in" ? step : null;
   const signInUnavailable =
-    signInStep === "sso_unavailable" || signInStep === "other_sso_unavailable";
+    signInStep === "sso_unavailable" ||
+    signInStep === "other_sso_unavailable" ||
+    signInStep === "desktop_sso_unavailable";
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
@@ -114,15 +129,35 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email }),
         });
-        const next = response.ok
-          ? (
-              await readBoundedJsonResponse<SignInContinueResponse>(
-                response,
-                MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
-              )
-            ).next
+        if (response.status === 403) {
+          const refusal = await readBoundedJsonResponse<{ code?: unknown }>(
+            response,
+            MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+          ).catch(() => undefined);
+          setError(
+            refusal?.code === HUB_SSO_ACCESS_DENIED ? ssoErrors.sso_failed : t`Could not continue`,
+          );
+          return;
+        }
+        const result = response.ok
+          ? await readBoundedJsonResponse<SignInContinueResponse>(
+              response,
+              MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+            )
           : undefined;
-        if (next === "password" || next === "sso_unavailable" || next === "other_sso_unavailable")
+        const next = result?.next;
+        if (result?.next === "redirect") {
+          // Electron hands off-origin navigation to the system browser, which
+          // cannot complete an app sign-in, so desktop SSO waits for CAAH-44.
+          if (desktopBridge()) setStep("desktop_sso_unavailable");
+          else if (URL.canParse(result.url) && new URL(result.url).protocol === "https:")
+            window.location.assign(result.url);
+          else setError(t`Could not continue`);
+        } else if (
+          next === "password" ||
+          next === "sso_unavailable" ||
+          next === "other_sso_unavailable"
+        )
           setStep(next);
         else setError(t`Could not continue`);
         return;
@@ -283,6 +318,17 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your
                 admin to enable password sign-in for your account.
               </Trans>
+            </p>
+          ) : null}
+          {signInStep === "desktop_sso_unavailable" ? (
+            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+              <Trans>
+                Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your
+                browser.
+              </Trans>{" "}
+              <span className="select-all font-medium text-foreground">
+                {window.location.origin}
+              </span>
             </p>
           ) : null}
           {signInStep === "other_sso_unavailable" ? (

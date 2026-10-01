@@ -1,0 +1,85 @@
+{
+  "contractVersion": 1,
+  "synthetic": true,
+  "product": "cortexai-agent-hub",
+  "returnChannel": "agent-hub-web",
+  "callbackPath": "/api/auth/hub/sso/callback",
+  "ssoStartRequest": {
+    "headers": {
+      "authorization": "Bearer <Agent Hub service token for tenantId>"
+    },
+    "body": {
+      "tenantId": "fixture-tenant",
+      "email": "user@example.test",
+      "product": "cortexai-agent-hub",
+      "returnChannel": "agent-hub-web",
+      "deploymentId": "11111111-1111-4111-8111-111111111111",
+      "state": "synthetic-client-state-0123456789",
+      "codeChallenge": "nxmX2B1cCsr_Z7j1fwMjR37FfPNrcPxaZRnXgVrmQTM",
+      "codeChallengeMethod": "S256"
+    }
+  },
+  "ssoStartResponse": {
+    "authorizeUrl": "https://login.microsoftonline.com/synthetic-tenant/oauth2/v2.0/authorize?state=opaque"
+  },
+  "callbackRedirect": "https://agent.example.invalid/api/auth/hub/sso/callback?code=ccccccccccccccccccccccccccccccccccccccccccc&state=synthetic-client-state-0123456789",
+  "exchangeRequest": {
+    "headers": {
+      "authorization": "Bearer <Agent Hub service token for tenantId>"
+    },
+    "body": {
+      "code": "ccccccccccccccccccccccccccccccccccccccccccc",
+      "codeVerifier": "synthetic-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "returnChannel": "agent-hub-web",
+      "redirectUri": "https://agent.example.invalid/api/auth/hub/sso/callback"
+    }
+  },
+  "exchangeResponse": {
+    "success": true,
+    "user": {
+      "id": "fixture-user",
+      "email": "user@example.test",
+      "displayName": "Fixture User",
+      "role": "user",
+      "tenantId": "fixture-tenant"
+    },
+    "accessToken": "synthetic-opaque-access-token",
+    "accessTokenExpiresAt": "2030-01-02T00:00:00.000Z",
+    "refreshToken": "synthetic-opaque-refresh-token",
+    "refreshTokenExpiresAt": "2030-01-31T00:00:00.000Z",
+    "returnUrl": null,
+    "products": [
+      {
+        "id": "cortexai-agent-hub",
+        "name": "CortexAI Agent Hub",
+        "enabled": true,
+        "role": "user"
+      }
+    ],
+    "tenantId": "fixture-tenant",
+    "deploymentId": "11111111-1111-4111-8111-111111111111"
+  },
+  "errorPage": "/tenant-sso-error?reason=access_denied&returnChannel=agent-hub-web",
+  "pendingTtlSeconds": 600,
+  "codeTtlSeconds": 180,
+  "stateMinLength": 16,
+  "stateMaxLength": 256,
+  "errors": [
+    { "endpoint": "sso-start", "status": 400, "error": "invalid_request" },
+    { "endpoint": "sso-start", "status": 400, "error": "invalid_state" },
+    { "endpoint": "sso-start", "status": 401, "error": "invalid_service_token" },
+    { "endpoint": "sso-start", "status": 403, "error": "tenant_mismatch" },
+    { "endpoint": "sso-start", "status": 403, "error": "access_denied" },
+    { "endpoint": "sso-start", "status": 403, "error": "deployment_mismatch" },
+    { "endpoint": "sso-start", "status": 403, "error": "product_not_enabled" },
+    { "endpoint": "sso-start", "status": 404, "error": "agent_hub_not_registered" },
+    { "endpoint": "sso-exchange", "status": 400, "error": "invalid_request" },
+    { "endpoint": "sso-exchange", "status": 400, "error": "redirect_uri_mismatch" },
+    { "endpoint": "sso-exchange", "status": 400, "error": "invalid_verifier" },
+    { "endpoint": "sso-exchange", "status": 401, "error": "invalid_code" },
+    { "endpoint": "sso-exchange", "status": 401, "error": "invalid_service_token" },
+    { "endpoint": "sso-exchange", "status": 403, "error": "tenant_mismatch" },
+    { "endpoint": "sso-exchange", "status": 403, "error": "product_not_enabled" },
+    { "endpoint": "sso-exchange", "status": 403, "error": "access_denied" }
+  ]
+}
