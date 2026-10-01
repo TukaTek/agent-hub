@@ -5,6 +5,7 @@
   "{0, plural, one {# model} other {# models}}": "{0, plural, one {# model} other {# model}}",
   "{0} (max {ATTACHMENT_MAX_COUNT} attachments)": "{0} (en fazla {ATTACHMENT_MAX_COUNT} ek)",
   "{0} (over 10 MiB)": "{0} (10 MiB üzeri)",
+  "{0} (unsupported type)": "{0} (desteklenmeyen tür)",
   "{0} {unitLabel}": "{0} {unitLabel}",
   "{0} connection": "{0} bağlantısı",
   "{0} is using it": "{0} bunu kullanıyor",

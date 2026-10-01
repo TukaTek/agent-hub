@@ -5,6 +5,7 @@
   "{0, plural, one {# model} other {# models}}": "{0, plural, one {# modelo} other {# modelos}}",
   "{0} (max {ATTACHMENT_MAX_COUNT} attachments)": "{0} (máx. {ATTACHMENT_MAX_COUNT} archivos adjuntos)",
   "{0} (over 10 MiB)": "{0} (más de 10 MiB)",
+  "{0} (unsupported type)": "{0} (tipo no admitido)",
   "{0} {unitLabel}": "{0} {unitLabel}",
   "{0} connection": "Conexión {0}",
   "{0} KB": "{0} KB",

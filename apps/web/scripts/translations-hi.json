@@ -5,6 +5,7 @@
   "{0, plural, one {# model} other {# models}}": "{0, plural, one {# मॉडल} other {# मॉडल}}",
   "{0} (max {ATTACHMENT_MAX_COUNT} attachments)": "{0} (अधिकतम {ATTACHMENT_MAX_COUNT} अटैचमेंट)",
   "{0} (over 10 MiB)": "{0} (10 MiB से अधिक)",
+  "{0} (unsupported type)": "{0} (असमर्थित प्रकार)",
   "{0} {unitLabel}": "{0} {unitLabel}",
   "{0} connection": "{0} कनेक्शन",
   "{0} is using it": "{0} इसका उपयोग कर रहा है",
