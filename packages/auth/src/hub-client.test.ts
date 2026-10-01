@@ -184,7 +184,7 @@ describe("Hub agent-hub-web SSO contract", () => {
     deploymentId: web.ssoStartRequest.body.deploymentId,
     sso: { apiId: sso.serviceTokenRequest.apiId, secret: sso.serviceTokenRequest.secret },
   };
-  function ssoSetup(overrides: Record<string, unknown> = {}) {
+  function ssoSetup(overrides: Record<string, unknown> = {}, configOverrides = {}) {
     const replies: Record<string, unknown> = {
       "service-token": sso.serviceTokenResponse,
       "sso-start": web.ssoStartResponse,
@@ -209,7 +209,7 @@ describe("Hub agent-hub-web SSO contract", () => {
     });
     const calls = (name: string) =>
       fetcher.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith(`/${name}`));
-    return { client: createHubClient(config, fetcher), fetcher, calls };
+    return { client: createHubClient({ ...config, ...configOverrides }, fetcher), fetcher, calls };
   }
   const redirectUri = new URL(web.exchangeRequest.body.redirectUri).href;
 
@@ -288,6 +288,26 @@ describe("Hub agent-hub-web SSO contract", () => {
     expect(sso.returnChannel).toBe(web.returnChannel);
     expect(calls("session")).toHaveLength(1);
     expect(calls("config")).toHaveLength(1);
+  });
+
+  it("accepts an exchange grant and session that name this deployment in upper case", async () => {
+    const body = web.exchangeRequest.body;
+    const deploymentId = "abcdef01-2345-4789-8abc-def012345678";
+    const { client } = ssoSetup(
+      {
+        "sso-exchange": { ...web.exchangeResponse, deploymentId: deploymentId.toUpperCase() },
+        session: {
+          valid: true,
+          userId: web.exchangeResponse.user.id,
+          tenantId: web.exchangeResponse.tenantId,
+          deploymentId: deploymentId.toUpperCase(),
+        },
+      },
+      { deploymentId },
+    );
+    await expect(
+      client.ssoExchange(body.code, body.codeVerifier, redirectUri),
+    ).resolves.toMatchObject({ subject: web.exchangeResponse.user.id });
   });
 
   it.each([
@@ -541,6 +561,7 @@ describe("Hub session product and deployment binding", () => {
   it.each([
     [{ product: "cortexai-workbench" }],
     [{ deploymentId: "22222222-2222-4222-8222-222222222222" }],
+    [{ deploymentId: 42 }],
   ])("rejects %j", async (session) => {
     const client = createHubClient({ origin, deploymentId }, replies(session));
     await expect(client.verify("opaque", identity)).rejects.toThrow();

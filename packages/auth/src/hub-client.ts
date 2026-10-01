@@ -202,6 +202,9 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     }
     return record(await readBoundedJsonResponse(response, limit, signal));
   }
+  /** UUIDs are case-insensitive; the configured id is stored lowercase. */
+  const isThisDeployment = (value: unknown) =>
+    typeof value === "string" && value.toLowerCase() === config.deploymentId;
   function identity(subject: unknown, tenant: unknown): HubIdentity {
     const result = { subject: text(subject), tenant: text(tenant) };
     if (config.tenantId && result.tenant !== config.tenantId) throw new Error("Hub access denied");
@@ -216,7 +219,7 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     // Hub binds SSO sessions to a product and deployment; password sessions carry neither.
     if (session.product != null && session.product !== PRODUCT)
       throw new Error("Hub access denied");
-    if (session.deploymentId != null && session.deploymentId !== config.deploymentId)
+    if (session.deploymentId != null && !isThisDeployment(session.deploymentId))
       throw new Error("Hub access denied");
     // The config payload can contain credentials. Consume only its entitlement;
     // never expose, persist, or log this response as browser authentication state.
@@ -352,7 +355,7 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
         returnChannel: RETURN_CHANNEL,
         redirectUri,
       });
-      if (reply.tenantId !== config.tenantId || reply.deploymentId !== config.deploymentId)
+      if (reply.tenantId !== config.tenantId || !isThisDeployment(reply.deploymentId))
         throw new Error("Hub access denied");
       return grant(reply, config.tenantId);
     },
