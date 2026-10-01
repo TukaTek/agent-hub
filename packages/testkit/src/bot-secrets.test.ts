@@ -4,12 +4,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
 import {
+  attachFailure,
   FakeSandboxProvider,
   LocalArtifactStore,
   resolveBotWorkspacePath,
   ScriptedAgentRuntime,
+  unsupportedAttachmentError,
+  WORKSPACE_DELIVERY_INSTRUCTION,
 } from "@cortexai-agent-hub/adapters";
-import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
+import { ATTACHMENT_MAX_BYTES, type MessageBlock } from "@cortexai-agent-hub/contracts";
 import { answerRunInput, parseComputerMode } from "@cortexai-agent-hub/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
@@ -402,6 +405,7 @@ describeIntegration("reusable credential lifecycle", () => {
     ) {
       const results: unknown[] = [];
       let finished = false;
+      let instructions = "";
       const describeRuntime = ScriptedAgentRuntime.prototype.describe;
       const modelFacing = vi
         .spyOn(ScriptedAgentRuntime.prototype, "describe")
@@ -412,6 +416,7 @@ describeIntegration("reusable credential lifecycle", () => {
       const runtime = vi
         .spyOn(ScriptedAgentRuntime.prototype, "run")
         .mockImplementation(async function* (runRequest): AsyncIterable<AgentRuntimeEvent> {
+          instructions = runRequest.instructions;
           try {
             for (const [index, step] of steps.entries()) {
               await step.before?.(runRequest.runId);
@@ -457,7 +462,7 @@ describeIntegration("reusable credential lifecycle", () => {
           { timeout: 15_000 },
         );
         expect(runtime).toHaveBeenCalledOnce();
-        return { runId: run.id, results };
+        return { runId: run.id, results, instructions };
       } finally {
         runtime.mockRestore();
         modelFacing.mockRestore();
@@ -584,8 +589,42 @@ describeIntegration("reusable credential lifecycle", () => {
         { name: "attach_file", args: { path: "downloads/large.pdf" } },
       ]);
       expect(oversized.results).toEqual([
-        { error: "file exceeds the 10 MiB attachment limit", path: "downloads/large.pdf" },
+        {
+          error: attachFailure("file exceeds the 10 MiB attachment limit"),
+          path: "downloads/large.pdf",
+        },
       ]);
+    });
+
+    it("attaches Office files and explains refused types without linking the path", async () => {
+      const seeded = await seedWithCredential("attach-office");
+      const files = await computerFiles(seeded.bot.id);
+      const workbook = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+      files.set("out/report.xlsx", workbook);
+      files.set("out/macro.xlsm", workbook);
+      const { runId, results, instructions } = await runTools(seeded, [
+        { name: "attach_file", args: { path: "out/report.xlsx" } },
+        { name: "attach_file", args: { path: "out/macro.xlsm" } },
+        { name: "attach_file", args: { path: "out/missing.docx" } },
+      ]);
+      expect(results).toEqual([
+        { ok: true, artifactId: expect.any(String), path: "out/report.xlsx" },
+        { error: unsupportedAttachmentError("out/macro.xlsm"), path: "out/macro.xlsm" },
+        { error: attachFailure("file not found or unreadable"), path: "out/missing.docx" },
+      ]);
+      expect(instructions).toContain(WORKSPACE_DELIVERY_INSTRUCTION);
+      const artifact = await handles.prisma.artifact.findUniqueOrThrow({
+        where: { id: (results[0] as { artifactId: string }).artifactId },
+      });
+      expect(artifact).toMatchObject({
+        name: "report.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        size: workbook.byteLength,
+      });
+      const attached = await handles.prisma.message.findMany({ where: { runId, role: "bot" } });
+      expect(attached.flatMap((message) => message.blocks as MessageBlock[])).toContainEqual(
+        expect.objectContaining({ kind: "file", artifactId: artifact.id, name: "report.xlsx" }),
+      );
     });
 
     it("names an extensionless PDF endpoint so it can be attached", async () => {

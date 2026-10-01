@@ -150,6 +150,7 @@ import {
   settleUncertainEffect,
   uncertainEffectResult,
 } from "./approval-effect.js";
+import { attachFailure, unsupportedAttachmentError } from "./attach-file-errors.js";
 import {
   autoReviewTimeoutMs,
   deploymentAutoReviewDefault,
@@ -1734,10 +1735,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const computerInstruction = dockerToolInstruction
           ? `${baseComputerInstruction} ${dockerToolInstruction}`
           : baseComputerInstruction;
-        const workspaceInstruction =
+        const workspaceInstruction = `${
           computerMode === "team"
             ? `Your Team Computer home is ${teamBotWorkspaceDirectory(bot.id)}. Relative file paths and shell working directories start there. Put intentionally shared work under shared/. Other bots' folders are visible under bots/; treat them as their working areas.`
-            : "This entire computer workspace is your private home. Relative file paths and shell working directories start at its root.";
+            : "This entire computer workspace is your private home. Relative file paths and shell working directories start at its root."
+        } ${WORKSPACE_DELIVERY_INSTRUCTION}`;
 
         let assembled = "";
         let currentTextSegment = "";
@@ -2668,9 +2670,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (name === "attach_file") {
             const filePath = String(args.path ?? "");
-            const failAttach = async (error: string) => {
+            // The activity log shows the short reason; the model also gets the delivery guidance.
+            const failAttach = async (error: string, modelError = attachFailure(error)) => {
               await recordComputerAction("attach_file", filePath, { error });
-              return finish({ error, path: filePath });
+              return finish({ error: modelError, path: filePath });
             };
             if (!deps.artifacts) return failAttach("artifact storage unavailable");
             const storedPath = resolveBotWorkspacePath(computerMode, bot.id, filePath);
@@ -2688,7 +2691,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
             }
             if (bytes.byteLength > ATTACHMENT_MAX_BYTES) return failAttach(tooLarge);
             const mimeType = inferAttachmentMimeType(filePath);
-            if (!mimeType) return failAttach("unsupported attachment type");
+            if (!mimeType) {
+              return failAttach(
+                "unsupported attachment type",
+                unsupportedAttachmentError(filePath),
+              );
+            }
             try {
               const attached = await attachWorkspaceFileToThread(
                 { prisma: deps.prisma, artifacts: deps.artifacts },
@@ -4975,6 +4983,9 @@ export function filterPageBrowserTools<T extends { name: string }>(
   if (pageBrowserAllowed) return tools;
   return tools.filter((tool) => !PAGE_BROWSER_TOOL_NAMES.has(tool.name));
 }
+
+export const WORKSPACE_DELIVERY_INSTRUCTION =
+  "Workspace paths are not links the user can open: share files with attach_file.";
 
 export function dockerComputerToolInstruction(computerKind: string): string | undefined {
   if (computerKind !== "docker") return undefined;
