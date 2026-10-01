@@ -1,7 +1,15 @@
-import type { AdapterContext, ManagedConnectorProvider } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  ConnectorProvider,
+  ManagedConnectorProvider,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
-import { IntegrationProviderSettings } from "./integration-provider-settings.js";
+import { ComposioConnector } from "./composio-connector.js";
+import {
+  createIntegrationConnectorStack,
+  IntegrationProviderSettings,
+} from "./integration-provider-settings.js";
 import { EncryptedSecretStore } from "./secrets.js";
 
 const context: AdapterContext = {
@@ -111,5 +119,38 @@ describe("integration provider settings", () => {
     await settings.save({ provider: "composio", apiKey: "fake-warm-key" }, context);
     settings.warmDirectories();
     await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
+  });
+});
+
+describe("createIntegrationConnectorStack", () => {
+  const stub = (id: string) => ({ describe: () => ({ id }) }) as unknown as ConnectorProvider;
+  const composioEntries = (stack: ReturnType<typeof createIntegrationConnectorStack>) =>
+    stack.connector.managedProviders().filter((provider) => provider.describe().id === "composio");
+
+  it.each([
+    ["api", [stub("installed")], [stub("mcp")]],
+    ["worker", [stub("installed")], [stub("mcp")]],
+  ])("builds the %s stack with exactly one env Composio provider", (_, before, after) => {
+    const composio = new ComposioConnector("ck_fake");
+    const stack = createIntegrationConnectorStack(composio, fixture().settings, before, after);
+    expect(stack.composio).toBe(composio);
+    expect(composioEntries(stack)).toEqual([composio]);
+    expect(stack.connector.managed("composio")).toBe(composio);
+    expect(stack.connector.managed("pipedream")).toBeDefined();
+  });
+
+  it("does not register a duplicate composio id when settings also provide one", () => {
+    const settings = fixture().settings;
+    expect(settings.providers().map((provider) => provider.describe().id)).toContain("composio");
+    expect(() =>
+      createIntegrationConnectorStack(new ComposioConnector("ck_fake"), settings, [], []),
+    ).not.toThrow();
+  });
+
+  it("without a key keeps only the settings-backed Composio entry", () => {
+    const stack = createIntegrationConnectorStack(undefined, fixture().settings, [], []);
+    expect(stack.composio).toBeUndefined();
+    expect(composioEntries(stack)).toHaveLength(1);
+    expect(composioEntries(stack)[0]).not.toBeInstanceOf(ComposioConnector);
   });
 });
