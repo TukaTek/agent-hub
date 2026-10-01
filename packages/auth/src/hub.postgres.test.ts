@@ -175,7 +175,17 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
       ).toBe(200);
       const passwordUser = await db.prisma.user.findUniqueOrThrow({ where: { id } });
 
+      const abandoned = `hub-sso:abandoned-${randomUUID()}`;
+      await db.prisma.verification.create({
+        data: {
+          id: abandoned,
+          identifier: abandoned,
+          value: "synthetic",
+          expiresAt: new Date(Date.now() - 1000),
+        },
+      });
       const { state, cookie } = await startSso();
+      expect(await db.prisma.verification.count({ where: { id: abandoned } })).toBe(0);
       const pending = await db.prisma.verification.findMany({
         where: { id: { startsWith: "hub-sso:" } },
       });

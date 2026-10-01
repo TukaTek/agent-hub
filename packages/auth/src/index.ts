@@ -19,6 +19,7 @@ import { bearer, organization } from "better-auth/plugins";
 import {
   createHubAuth,
   HUB_SESSION_PATHS,
+  HUB_SIGN_IN_RATE_LIMITS,
   localSignInPlugin,
   rejectHubAccountMutation,
 } from "./hub.js";
@@ -236,6 +237,8 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     secret: env.secret,
     baseURL: env.baseURL,
     trustedOrigins: buildTrustedOrigins(env),
+    // Better Auth's strict /sign-in* rule does not match the Hub endpoints.
+    rateLimit: { customRules: HUB_SIGN_IN_RATE_LIMITS },
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     emailAndPassword: {
       enabled: !hub,

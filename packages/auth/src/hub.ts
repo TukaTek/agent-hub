@@ -27,6 +27,18 @@ const SSO_COOKIE_OPTIONS = {
   path: "/",
 } as const;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const SSO_STATE_PREFIX = "hub-sso:";
+
+/**
+ * Per client address, as resolved from the reverse proxy's single X-Forwarded-For value.
+ * Loose enough that a proxy hop which collapses every user into one address slows
+ * sign-in instead of locking a team out; Hub enforces its own login lockout.
+ */
+const HUB_SIGN_IN_RATE_LIMIT = { window: 60, max: 30 } as const;
+export const HUB_SIGN_IN_RATE_LIMITS = {
+  "/hub/sign-in": HUB_SIGN_IN_RATE_LIMIT,
+  "/hub/sign-in/continue": HUB_SIGN_IN_RATE_LIMIT,
+} as const;
 
 function assertTrustedOrigin(ctx: {
   headers?: Headers;
@@ -40,7 +52,7 @@ function assertTrustedOrigin(ctx: {
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
 /** Rows are keyed by a hash so the database never holds a usable state value. */
-const ssoStateKey = (state: string) => `hub-sso:${sha256(state).toString("hex")}`;
+const ssoStateKey = (state: string) => `${SSO_STATE_PREFIX}${sha256(state).toString("hex")}`;
 
 /** Without a Hub client (local auth) every email continues to the password step. */
 function signInContinueEndpoint(
@@ -82,6 +94,10 @@ function signInContinueEndpoint(
           sso.onError?.(`start:${code ?? "unavailable"}`);
           throw new APIError("BAD_GATEWAY", { message: "Could not continue" });
         }
+        // Abandoned sign-ins are never consumed, so expire them here.
+        await sso.prisma.verification.deleteMany({
+          where: { identifier: { startsWith: SSO_STATE_PREFIX }, expiresAt: { lt: new Date() } },
+        });
         const key = ssoStateKey(state);
         await sso.prisma.verification.create({
           data: {

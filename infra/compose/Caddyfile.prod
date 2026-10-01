@@ -1,6 +1,20 @@
+{
+	servers {
+		# A same-host front proxy such as Tailscale serve reaches Caddy from loopback or the Docker
+		# bridge. Its X-Forwarded-For names the real client; every other peer's value is replaced.
+		trusted_proxies static 127.0.0.0/8 ::1 172.16.0.0/12
+		trusted_proxies_strict
+	}
+}
+
 (deploy_retry) {
 	lb_try_duration 10s
 	lb_try_interval 250ms
+}
+
+# The API rate-limits sign-in per address and trusts only a single X-Forwarded-For value.
+(forward_client_ip) {
+	header_up X-Forwarded-For {client_ip}
 }
 
 {$CORTEXAI_AGENT_HUB_HOST:app.example.com} {
@@ -15,12 +29,14 @@
 	handle /api/* {
 		reverse_proxy api:3100 {
 			import deploy_retry
+			import forward_client_ip
 		}
 	}
 
 	handle /rpc/* {
 		reverse_proxy api:3100 {
 			import deploy_retry
+			import forward_client_ip
 		}
 	}
 

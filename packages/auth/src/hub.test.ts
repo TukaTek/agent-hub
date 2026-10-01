@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
 import {
   createHubClient,
   HubRequestError,
@@ -133,7 +134,12 @@ function fixture(
       findUnique: async ({ where }: any) => data.verification!.find((row) => row.id === where.id),
       deleteMany: async ({ where }: any) => {
         const before = data.verification!.length;
-        data.verification = data.verification!.filter((row) => row.id !== where.id);
+        const matches = (row: any) =>
+          where.id !== undefined
+            ? row.id === where.id
+            : row.identifier.startsWith(where.identifier.startsWith) &&
+              row.expiresAt < where.expiresAt.lt;
+        data.verification = data.verification!.filter((row) => !matches(row));
         return { count: before - data.verification.length };
       },
     },
@@ -496,6 +502,52 @@ describe("Hub authentication through real auth endpoints", () => {
   });
 });
 
+describe("Hub sign-in rate limits", () => {
+  // The limiter's memory store is process-wide, so each case uses its own client addresses.
+  async function limited() {
+    const f = fixture(undefined, { sso: true });
+    (await f.auth.$context).rateLimit.enabled = true;
+    const post = (path: string, forwardedFor: string, body: unknown) =>
+      f.auth.handler(
+        new Request(`https://web.example.test/api/auth${path}`, {
+          method: "POST",
+          headers: {
+            origin: "https://web.example.test",
+            "content-type": "application/json",
+            "x-forwarded-for": forwardedFor,
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    return { f, post };
+  }
+
+  it.each([
+    ["/hub/sign-in", { email: "user@example.test", password: "test-password" }, "203.0.113.1"],
+    ["/hub/sign-in/continue", { email: "user@example.test" }, "203.0.113.3"],
+  ] as const)("limits %s per forwarded client address", async (path, body, client) => {
+    const { post } = await limited();
+    const { max } = HUB_SIGN_IN_RATE_LIMITS[path];
+    for (let attempt = 0; attempt < max; attempt++) {
+      expect((await post(path, client, body)).status).not.toBe(429);
+    }
+    expect((await post(path, client, body)).status).toBe(429);
+    // Another person behind the same proxy keeps their own budget.
+    expect((await post(path, "203.0.113.200", body)).status).not.toBe(429);
+  });
+
+  it("buckets by the single client address the reverse proxy forwards", async () => {
+    const { post } = await limited();
+    const body = { email: "user@example.test" };
+    const { max } = HUB_SIGN_IN_RATE_LIMITS["/hub/sign-in/continue"];
+    for (let attempt = 0; attempt < max; attempt++) {
+      await post("/hub/sign-in/continue", "100.101.102.103", body);
+    }
+    expect((await post("/hub/sign-in/continue", "100.101.102.103", body)).status).toBe(429);
+    expect((await post("/hub/sign-in/continue", "100.64.0.7", body)).status).toBe(200);
+  });
+});
+
 describe("Hub tenant Entra SSO", () => {
   const code = "c".repeat(43);
   const redirectUri = "https://web.example.test/api/auth/hub/sso/callback";
@@ -575,6 +627,23 @@ describe("Hub tenant Entra SSO", () => {
     );
     expect(hidden).toEqual(native);
     expect(f.client.ssoStart).not.toHaveBeenCalled();
+  });
+
+  it("removes expired SSO rows, and only those, when a new sign-in starts", async () => {
+    const f = fixture(undefined, { sso: true });
+    const past = new Date(Date.now() - 1000);
+    const future = new Date(Date.now() + 60_000);
+    f.data.verification!.push(
+      { id: "hub-sso:expired", identifier: "hub-sso:expired", value: "x", expiresAt: past },
+      { id: "hub-sso:pending", identifier: "hub-sso:pending", value: "x", expiresAt: future },
+      { id: "reset-expired", identifier: "reset-password:x", value: "x", expiresAt: past },
+    );
+    await f.startSso();
+    expect(f.data.verification!.map((row) => row.id)).toEqual([
+      "hub-sso:pending",
+      "reset-expired",
+      expect.stringMatching(/^hub-sso:[0-9a-f]{64}$/),
+    ]);
   });
 
   it("fails Continue without a cookie or pending row when Hub cannot start", async () => {
