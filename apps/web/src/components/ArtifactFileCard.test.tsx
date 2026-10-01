@@ -74,6 +74,7 @@ describe("ArtifactFileCard", () => {
     );
     expect(container.querySelector("iframe, embed, object")).toBeNull();
     expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toBe("report10 B");
     await act(async () => buttons[0]?.click());
     expect(downloadArtifact).toHaveBeenCalledWith({ botId: "bot_1" }, "art_1", "report", mimeType);
   });
