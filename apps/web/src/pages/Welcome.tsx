@@ -33,10 +33,10 @@ export function WelcomePage() {
         </p>
         <button
           type="button"
-          onClick={() => navigate("/sign-up")}
+          onClick={() => navigate("/sign-in")}
           className="app-no-drag rounded-full bg-brand px-[34px] py-[15px] text-[19px] font-medium text-brand-foreground transition hover:scale-[1.04] hover:bg-brand/90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brand"
         >
-          <Trans>Sign up</Trans>&nbsp;&nbsp;→
+          <Trans>Sign in</Trans>&nbsp;&nbsp;→
         </button>
       </div>
     </div>
