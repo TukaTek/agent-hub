@@ -1,13 +1,13 @@
 import type { TaughtSkill } from "@cortexai-agent-hub/contracts";
 import {
   DEFAULT_COMPUTER_SCREEN,
-  extractFieldMetadata,
   mapTeachPointer,
   teachCaptureKey,
 } from "@cortexai-agent-hub/core";
 import { useEffect, useRef } from "react";
 import { rpc } from "../../lib/rpc";
 import { enqueueTeachComputerInput } from "./teach-computer-input-chain";
+import { extractFieldMetadata } from "./extract-field-metadata";
 
 export function TeachCaptureOverlay({
   botId,
