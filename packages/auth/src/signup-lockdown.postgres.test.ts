@@ -124,7 +124,7 @@ describe("signup lockdown", () => {
       );
 
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error?: string };
       expect(body.error).toMatch(/registration is closed/i);
     });
 
