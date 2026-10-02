@@ -39,7 +39,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [searchParams, setSearchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const ssoErrors: Record<SsoCallbackError, string> = {
     sso_expired: t`Your sign-in expired. Try again.`,
@@ -69,8 +68,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     <Trans>Check your email</Trans>
   ) : mode === "in" ? (
     <Trans>Sign in to CortexAI Agent Hub</Trans>
-  ) : mode === "up" ? (
-    <Trans>Create your CortexAI Agent Hub</Trans>
   ) : (
     <Trans>Reset your password</Trans>
   );
