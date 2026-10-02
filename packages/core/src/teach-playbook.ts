@@ -301,6 +301,14 @@ export function formatSkillRunPrompt(name: string, playbook: SkillPlaybook, test
   const safety = test
     ? "This is a safe test run. Do not send, spend, delete, or publish anything."
     : "";
+  const placeholderInstructions = [
+    "When you see {{secret:<label>}} or {{input:<label>}} placeholders in the steps:",
+    "1. {{secret:<label>}}: Ask the user for the <label> value at runtime (e.g. 'Please provide the password')",
+    "2. {{input:<label>}}: Ask the user for the <label> value before typing it",
+    "3. [redacted input]: This was typed via Protected input; ask the user for the value",
+    "Never use or guess placeholder values; always prompt the user for secret/protected input.",
+  ].join("\n");
+  
   return [
     `Run taught skill: ${name}`,
     safety,
@@ -308,6 +316,7 @@ export function formatSkillRunPrompt(name: string, playbook: SkillPlaybook, test
     playbook.inputs.length ? `Inputs: ${playbook.inputs.join("; ")}` : undefined,
     "Steps:",
     ...playbook.steps.map((step, index) => `${index + 1}. ${step}`),
+    placeholderInstructions,
     `How to check: ${playbook.howToCheck}`,
     `Return: ${playbook.whatToReturn}`,
     `Approval boundaries: ${playbook.approvalBoundaries}`,

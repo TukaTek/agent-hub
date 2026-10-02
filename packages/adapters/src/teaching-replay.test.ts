@@ -99,4 +99,24 @@ describe("teach me replay secret protection", () => {
     const steps = playbook.steps.join(" ");
     expect(steps).not.toMatch(/\bpass\b/i);
   });
+
+  it("includes placeholder resolution instructions in the formatted prompt", () => {
+    const passwordEvents: TeachRecordingEvent[] = [
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "P", fieldType: "password", fieldLabel: "password" },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "a", fieldType: "password", fieldLabel: "password" },
+    ];
+
+    const playbook = buildPlaybookFromRecording("Sign in", passwordEvents);
+    const prompt = formatSkillRunPrompt("Sign in to dashboard", playbook, false);
+
+    // Prompt should instruct agent to ask user for placeholder values
+    expect(prompt).toContain("{{secret:<label>}}");
+    expect(prompt).toContain("{{input:<label>}}");
+    expect(prompt).toContain("Ask the user for the <label> value");
+    expect(prompt).toContain("[redacted input]");
+    expect(prompt).toContain("Never use or guess placeholder values");
+    
+    // And should still contain the actual placeholder
+    expect(prompt).toContain("{{secret:password}}");
+  });
 });
