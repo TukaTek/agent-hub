@@ -9,6 +9,7 @@ import {
   isMessagingEmail,
   parseAllowlist,
   signupPolicyFromEnv,
+  withHubSignupPolicy,
 } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 
@@ -37,6 +38,11 @@ export {
   type HubPolicyStatus,
 } from "./hub-policy.js";
 export { HUB_MANAGED_SETTINGS, HubPolicyError } from "./hub-policy-contract.js";
+export {
+  type HubPolicyRuntime,
+  hubPolicyLogEntry,
+  startHubPolicyRuntime,
+} from "./hub-policy-runtime.js";
 export {
   type HubPolicyStore,
   memoryHubPolicyStore,
@@ -81,13 +87,14 @@ export async function resolveSignupPolicy(
     where: { id: "default" },
     select: { signupsEnabled: true, signupAllowlist: true, signupPolicyInitialized: true },
   });
+  // Hub's signup policy wins over the persisted and environment ones (CAAH-36).
   if (settings?.signupPolicyInitialized) {
-    return {
+    return withHubSignupPolicy({
       enabled: settings.signupsEnabled,
       allowlist: parseAllowlist(settings.signupAllowlist),
-    };
+    });
   }
-  return signupPolicyFromEnv(env);
+  return withHubSignupPolicy(signupPolicyFromEnv(env));
 }
 
 const signupGates = new Map<string, Array<() => Promise<void>>>();

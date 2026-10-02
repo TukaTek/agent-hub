@@ -37,6 +37,7 @@ function stubServer(
   mode: "hub" | "local",
   next: unknown = { next: "password" },
   continueStatus = 200,
+  signIn: { body: unknown; status: number } = { body: { message: "Access denied" }, status: 401 },
 ) {
   fetchMock = vi.fn(async (url: string) => {
     if (url === "/api/auth/capabilities")
@@ -44,7 +45,7 @@ function stubServer(
     if (url === "/api/auth/hub/sign-in/continue")
       return Response.json(next, { status: continueStatus });
     if (url === "/api/auth/hub/sign-in")
-      return Response.json({ message: "Access denied" }, { status: 401 });
+      return Response.json(signIn.body, { status: signIn.status });
     throw new Error(`Unexpected request ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -259,6 +260,43 @@ it.each([
   await until(passwordInput);
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
+
+const hubUnavailable = "Sign-in is temporarily unavailable, CortexAI Hub can't be reached";
+const hubRefusals: Array<[string, number, string]> = [
+  ["HUB_UNAVAILABLE", 503, hubUnavailable],
+  ["HUB_CONFIG_INVALID", 503, hubUnavailable],
+  ["HUB_CONFIG_RESTART_REQUIRED", 503, hubUnavailable],
+  ["TENANT_DISABLED", 403, hubUnavailable],
+  ["HUB_ACCESS_DENIED", 403, "Ask your admin for access"],
+];
+
+it.each(hubRefusals)("explains a Continue refused with %s", async (code, status, shown) => {
+  stubServer("hub", { code, message: "server copy" }, status);
+  await render();
+  await continueWithEmail();
+  await until(() => container.querySelector('[role="alert"]'));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(shown);
+  expect(passwordInput()).toBeNull();
+});
+
+it.each(hubRefusals)("explains a password sign-in refused with %s", async (code, status, shown) => {
+  stubServer("hub", { next: "password" }, 200, { body: { code, message: "server copy" }, status });
+  await render();
+  await continueWithEmail();
+  await type(await until(passwordInput), "test-password");
+  await click(button("Sign in"));
+  await until(() => container.querySelector('[role="alert"]'));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(shown);
+});
+
+it.each(hubRefusals)(
+  "shows a fixed message for the %s SSO callback error",
+  async (code, _s, shown) => {
+    stubServer("hub");
+    await render(`/sign-in?error=${code.toLowerCase()}`);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(shown);
+  },
+);
 
 it("ignores unknown callback errors", async () => {
   stubServer("hub");

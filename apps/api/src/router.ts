@@ -139,6 +139,8 @@ import {
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
+  withHubModelDefaults,
+  withHubSignupPolicy,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
@@ -5733,7 +5735,9 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
 async function modelSetup(deps: RouterDeps, actor: Actor) {
   const [credential, settings] = await Promise.all([
     findDefaultModelCredential(deps.prisma, actor),
-    deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+    deps.prisma.deploymentSettings
+      .findUnique({ where: { id: "default" } })
+      .then(withHubModelDefaults),
   ]);
   const hasDeployment = Boolean(deps.env.deploymentModelKey);
   return {
@@ -6012,13 +6016,18 @@ async function computerScreenContext(
 }
 
 async function deploymentDto(prisma: PrismaClient, sandboxProvider: string) {
-  const settings = await prisma.deploymentSettings.findUnique({ where: { id: "default" } });
+  // Read back what is in effect: Hub-managed values win over the persisted ones.
+  const settings = withHubModelDefaults(
+    await prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+  );
+  const signup = withHubSignupPolicy({
+    enabled: settings?.signupsEnabled ?? true,
+    allowlist: settings?.signupAllowlist ? settings.signupAllowlist.split(",").filter(Boolean) : [],
+  });
   return {
     ownerUserId: settings?.ownerUserId ?? null,
-    signupsEnabled: settings?.signupsEnabled ?? true,
-    signupAllowlist: settings?.signupAllowlist
-      ? settings.signupAllowlist.split(",").filter(Boolean)
-      : [],
+    signupsEnabled: signup.enabled,
+    signupAllowlist: signup.allowlist,
     hasDeploymentModelCredential: Boolean(settings?.deploymentModelCredentialCipher),
     defaultProvider: settings?.defaultModelProvider ?? null,
     defaultModel: settings?.defaultModelId ?? null,

@@ -1,6 +1,12 @@
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
 import { ComposioConnector, IntegrationProviderSettings } from "@cortexai-agent-hub/adapters";
-import { createUserWorkAuthorizer, hubAuthFromEnv } from "@cortexai-agent-hub/auth";
+import {
+  createUserWorkAuthorizer,
+  hubAuthFromEnv,
+  hubPolicyLogEntry,
+  prismaHubPolicyStore,
+  startHubPolicyRuntime,
+} from "@cortexai-agent-hub/auth";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
@@ -73,6 +79,23 @@ async function main() {
     poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 8),
     applicationName: "cortexai-agent-hub-worker",
   });
+  // CAAH-36: before anything reads settings, apply the Hub revision the API stored.
+  // The worker never contacts Hub; it uses the same revision as the API.
+  const hubConfig = hubAuthFromEnv(process.env);
+  if (hubConfig && !hubConfig.tenantId) throw new Error("Hub mode requires HUB_AUTH_TENANT_ID");
+  const hubPolicy = hubConfig?.tenantId
+    ? await startHubPolicyRuntime({
+        store: prismaHubPolicyStore(prisma, resolveEncryptionKey(process.env)),
+        tenantId: hubConfig.tenantId,
+        env: process.env,
+        deploymentSettings: () =>
+          prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+        log: (signal) => {
+          const entry = hubPolicyLogEntry(signal);
+          logger[entry.level](entry.message, entry.attributes);
+        },
+      })
+    : undefined;
   const realtime = new PostgresRealtimeFanout({
     connectionString: process.env.REALTIME_DATABASE_URL ?? databaseUrl,
     publisher: pool,
@@ -163,7 +186,6 @@ async function main() {
     });
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
-  const hubConfig = hubAuthFromEnv(process.env);
   const executor = createRunExecutor({
     authorizeUserWork: createUserWorkAuthorizer(
       prisma,
@@ -173,6 +195,7 @@ async function main() {
         ? {
             verifyCacheTtlMs: hubConfig.verifyCacheTtlMs,
             verifyCacheEnabled: hubConfig.verifyCacheEnabled,
+            policy: hubPolicy?.policy,
           }
         : {},
     ),

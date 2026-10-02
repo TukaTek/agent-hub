@@ -8,12 +8,15 @@ import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
+import { startApiHubPolicy } from "./hub-policy.js";
 
 const logger = createRootLogger(SERVICE_NAMES.api);
 
 try {
+  // Before loadEnv: Hub-managed settings replace their local inputs (CAAH-36).
+  const hubPolicy = await startApiHubPolicy(process.env, logger);
   const env = loadEnv();
-  const { app, stop } = await createApp({ ...env, logger });
+  const { app, stop } = await createApp({ ...env, logger, hubPolicy: hubPolicy?.policy });
   const server = serve({ fetch: app.fetch, port: env.port, hostname: env.apiHost }, () => {
     logger.info("api listening", { "http.host": env.apiHost, "http.port": env.port });
   });
@@ -39,6 +42,7 @@ try {
     await closed;
     clearTimeout(grace);
     await stop();
+    await hubPolicy?.close();
     await logger.flush({ timeoutMs: 2_000 });
   };
   process.once("SIGTERM", () => void shutdown());

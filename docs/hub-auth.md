@@ -1,6 +1,6 @@
 # CortexAI Hub authentication
 
-Set `AUTH_MODE=hub` and `HUB_AUTH_ORIGIN=https://hub.example.test`. The origin is server configuration, never a login input. `HUB_AUTH_TENANT_ID` is an optional deployment restriction; tenant discovery works without it. OAuth client credentials, audience and callback registration are not required.
+Set `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN=https://hub.example.test` and `HUB_AUTH_TENANT_ID`. The origin is server configuration, never a login input. The tenant pins the deployment to the one tenant whose Agent Hub policy it uses (see [Hub policy](#hub-policy)). The API also needs `HUB_SERVICE_API_ID` and `HUB_SERVICE_SECRET_FILE` to read that policy, whether or not SSO is enabled. OAuth client credentials, audience and callback registration are not required.
 
 Web and the shared desktop renderer ask for the email first, like Workbench. `POST /api/auth/hub/sign-in/continue` runs the same `/api/tenant-auth/lookup` that password sign-in uses. It answers `{ "next": "password" }` for native sign-in, `{ "next": "sso_unavailable" }` for Entra, and `{ "next": "other_sso_unavailable" }` for Google. Hub resolves an unprovisioned email by its domain when the domain belongs to a configured tenant, so that email follows the tenant's IdP. Other-tenant, invalid and failed lookups get the same password response as native users. The response can reveal an Always Native override within an SSO tenant. Mobile keeps its single email/password form. Agent Hub's server signs in through `/api/tenant-auth/login` and verifies the authenticated identity and Agent Hub product entitlement. Non-native tenant IdPs are currently unsupported, matching Workbench; Always Native users sign in with their password.
 
@@ -81,6 +81,40 @@ Then, in a browser:
 4. Set the first user to Always Native in Hub and sign in with their password. Expect the same account and data as step 1.
 5. Remove the first user's assignment in Hub while signed in. Expect access to stop within the verification cache TTL.
 6. Sign in as another assigned Entra test user, sign out of Agent Hub, and continue with the same email. Expect Microsoft to ask for the password again, with the email already filled in.
+
+## Hub policy
+
+In Hub mode, CortexAI Hub is the source of truth for this deployment's Agent Hub settings (CAAH-36). The API reads `GET /api/agent-hub/service-config?schemaVersion=agent-hub-settings-v1` with its service token. It validates the schema version, the product (`cortexai-agent-hub`, the audience), the tenant (it must be `HUB_AUTH_TENANT_ID`), the revision and every field. Hub does not sign the document; it is bound by TLS to `HUB_AUTH_ORIGIN` and by the tenant-scoped service token. Anything outside the known catalog, including branding, surfaces and budget fields Hub does not manage yet, makes the document invalid rather than being ignored.
+
+**Shared last-known-good.** The API stores the accepted document encrypted in the `hub_policy_snapshot` table with its revision, ETag, when it was fetched, when Hub was last reached, and whether it came from Hub or is being kept after a failed refresh (`source`: `hub` or `last_known_good`). It asks Hub at startup and every 60 seconds. The worker never contacts Hub: it applies the snapshot the API stored (waiting up to 60 seconds for the first one), so both processes run the same revision. A failed refresh keeps the last-known-good document. An older revision from Hub is accepted, because Hub wins, and logged as a rollback.
+
+**Precedence.** Hub wins over the environment and over persisted deployment settings for every setting it manages. At startup each process replaces the environment inputs Hub manages, and Hub's model and signup defaults replace the persisted ones when they are read; the stored local values are kept but ignored. Local values still apply to settings Hub does not manage. Users' own model credentials and per-bot model choices are user data, not deployment settings, and are unchanged. Each override is logged as an operator signal that carries the setting path, Hub's revision and the overridden source, never a value:
+
+```json
+{ "event": "hub_policy_override", "key": "model.defaultProvider", "hubRevision": 7, "overriddenSource": "env:PI_DEFAULT_PROVIDER" }
+```
+
+The source is `env:<NAME>` or `deployment_settings.<field>`. Other signals are `hub_policy_rollback`, `hub_policy_refresh_failed` (a code and a fixed reason), `hub_policy_assignments_unknown` and `hub_policy_restart_required`.
+
+**Restarts.** Hub's settings are applied when a process starts, as Hub's delivery contract requires. When Hub publishes a revision that changes them, a process still running the earlier one refuses new sign-ins with `HUB_CONFIG_RESTART_REQUIRED` and refuses new work until it restarts. Restart the API, then the worker. A revision that changes only product assignments or toolkit status needs no restart.
+
+**Sign-in is fail-closed.** Every path that can create a session asks Hub first: email-first Continue (web and desktop), password sign-in (web, desktop and mobile), and the Microsoft SSO start and callback. There is no local or break-glass bypass. Refusals use stable codes:
+
+| Code | When | HTTP |
+| --- | --- | --- |
+| `HUB_UNAVAILABLE` | Hub cannot be reached: timeout, DNS or connection failure, `408`, `429` or `5xx`, including during the password or SSO exchange | 503 |
+| `HUB_CONFIG_INVALID` | Hub's document is malformed, for another tenant or product, or uses an unknown schema, field or value | 503 |
+| `TENANT_DISABLED` | Hub refuses the service credential for the tenant (`401` or `403`) | 403 |
+| `HUB_CONFIG_RESTART_REQUIRED` | The process has not applied Hub's current revision | 503 |
+| `HUB_ACCESS_DENIED` | Hub's assignments do not include this user, or the grant is for another tenant | 403 |
+
+The first four carry the message "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"; `HUB_ACCESS_DENIED` carries "Ask your admin for access". The SSO callback redirects to `/sign-in?error=` with the code in lower case. No user, session or SSO state is created for a refused sign-in.
+
+**Active sessions** keep working on last-known-good only within the verification cache window described below. On the next Hub verification after it, the stored policy must still admit the session like a new sign-in: the last refresh succeeded, the process runs Hub's revision and the user is still assigned. Otherwise the request is refused. The session is not deleted, so it resumes when Hub recovers. New work (runs and tool calls) needs the user to be assigned in the stored policy and stops at once when Hub disables the tenant, removes the assignment, or a restart is required.
+
+**Assignments (CAH-204).** An empty or unattributable `access.productAssignments` is treated as unknown, never as "no access". The last configured assignments are kept when there are any. With none, sign-in is allowed but no product or tool access is granted, and `/internal/health` reports `assignments: "pending"`. Until Hub sends Agent Hub assignments as `{ tenantUserId, productId: "cortexai-agent-hub" }`, every user is in this state.
+
+**Status.** `/internal/health` includes `hubPolicy` with the state, code, tenant, Hub revision, applied revision, fetch and check times, source, and assignment and toolkit status. It never includes a setting value.
 
 ## Verification cache and revoke semantics
 

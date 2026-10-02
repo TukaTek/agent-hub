@@ -3,6 +3,7 @@ import {
   hubManagedDeploymentSettings,
   setHubManagedDeploymentSettings,
   withHubModelDefaults,
+  withHubSignupPolicy,
 } from "./hub-managed-deployment.js";
 
 const row = {
@@ -37,6 +38,26 @@ describe("Hub-managed deployment settings", () => {
     expect(withHubModelDefaults(null)).toEqual({
       defaultModelProvider: "anthropic",
       defaultModelId: null,
+    });
+  });
+
+  it("drops the persisted model when Hub replaces only the provider", () => {
+    setHubManagedDeploymentSettings({ defaultModelProvider: "anthropic" });
+    expect(withHubModelDefaults(row)).toMatchObject({
+      defaultModelProvider: "anthropic",
+      defaultModelId: null,
+    });
+  });
+
+  it("applies Hub's signup policy over the persisted one", () => {
+    expect(withHubSignupPolicy({ enabled: true, allowlist: ["local.test"] })).toEqual({
+      enabled: true,
+      allowlist: ["local.test"],
+    });
+    setHubManagedDeploymentSettings({ signupsEnabled: false, signupAllowlist: "hub.test,b.test" });
+    expect(withHubSignupPolicy({ enabled: true, allowlist: ["local.test"] })).toEqual({
+      enabled: false,
+      allowlist: ["hub.test", "b.test"],
     });
   });
 

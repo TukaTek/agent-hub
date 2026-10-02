@@ -1,3 +1,4 @@
+import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildTrustedOrigins,
@@ -108,6 +109,26 @@ describe("passwordResetEmail", () => {
 });
 
 describe("resolveSignupPolicy", () => {
+  it("uses Hub's signup policy over a conflicting persisted one (CAAH-36)", async () => {
+    setHubManagedDeploymentSettings({ signupsEnabled: false, signupAllowlist: "hub.test" });
+    try {
+      const prisma = {
+        deploymentSettings: {
+          findUnique: vi.fn().mockResolvedValue({
+            signupsEnabled: true,
+            signupAllowlist: "local.test",
+            signupPolicyInitialized: true,
+          }),
+        },
+      };
+      await expect(
+        resolveSignupPolicy(prisma as never, { signupsEnabled: "true", signupAllowlist: "" }),
+      ).resolves.toEqual({ enabled: false, allowlist: ["hub.test"] });
+    } finally {
+      setHubManagedDeploymentSettings({});
+    }
+  });
+
   it("uses environment defaults before deployment settings exist", async () => {
     const prisma = {
       deploymentSettings: { findUnique: vi.fn().mockResolvedValue(null) },
