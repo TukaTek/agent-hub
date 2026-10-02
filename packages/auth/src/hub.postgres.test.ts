@@ -5,8 +5,15 @@ import { describe, expect, it, vi } from "vitest";
 import contract from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import { hubUserId } from "./hub-client.js";
-import { createHubSessionAuthorizer } from "./hub-sessions.js";
+import { hubPolicyForTests } from "./hub-policy-testing.js";
+import { createHubSessionAuthorizer, type HubSessionPolicy } from "./hub-sessions.js";
 import { createAuth } from "./index.js";
+
+/** The grant-rotation test covers CAAH-40 locking; Hub policy is covered in hub.test.ts. */
+const admitAll: HubSessionPolicy = {
+  sessionAllowed: async () => true,
+  workAllowed: async () => true,
+};
 
 const describePostgres =
   process.env.VERIFY_DATABASE === "1" && process.env.DATABASE_URL ? describe : describe.skip;
@@ -52,6 +59,7 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
         baseURL: "http://web.example.test",
         webOrigin: "http://web.example.test",
         hub: config,
+        hubPolicy: hubPolicyForTests(config.tenantId, []).policy,
         signupsEnabled: "false",
         signupAllowlist: "",
       });
@@ -141,6 +149,7 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
       baseURL: origin,
       webOrigin: origin,
       hub: config,
+      hubPolicy: hubPolicyForTests(config.tenantId, []).policy,
       signupsEnabled: "false",
       signupAllowlist: "",
     });
@@ -300,6 +309,7 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
       revoke: vi.fn(async () => undefined),
       ssoStart: vi.fn(async () => "https://login.example.test/authorize"),
       ssoExchange: refresh,
+      serviceConfig: vi.fn(async () => ({ status: 304 as const })),
     };
     try {
       await db.prisma.user.create({
@@ -324,8 +334,10 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
           },
         },
       });
-      const api = createHubSessionAuthorizer(db.prisma, config, key, client);
-      const worker = createHubSessionAuthorizer(db.prisma, config, key, client);
+      const api = createHubSessionAuthorizer(db.prisma, config, key, client, { policy: admitAll });
+      const worker = createHubSessionAuthorizer(db.prisma, config, key, client, {
+        policy: admitAll,
+      });
       expect(await Promise.all([api(id, id), worker(id, id)])).toEqual([true, true]);
       expect(refresh).toHaveBeenCalledExactlyOnceWith("original-refresh");
       const stored = await db.prisma.hubSession.findUniqueOrThrow({ where: { sessionId: id } });

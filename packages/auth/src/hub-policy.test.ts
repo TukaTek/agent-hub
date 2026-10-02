@@ -190,6 +190,16 @@ describe("Hub policy last-known-good cache", () => {
     await api.check();
     expect(fetchConfig).toHaveBeenCalledTimes(2);
   });
+
+  it("asks Hub again on the next sign-in after a refusal, so recovery is immediate", async () => {
+    const fetchConfig = ok(configured());
+    const { api } = await start(fetchConfig);
+    vi.useFakeTimers({ now: Date.now() + 10_000 });
+    fetchConfig.mockRejectedValueOnce(dnsFailure());
+    expect(await codeOf(api.check())).toBe("HUB_UNAVAILABLE");
+    expect(await codeOf(api.admit(assigned))).toBe("admitted");
+    expect(fetchConfig).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("CAH-204 product assignment guard", () => {

@@ -3,7 +3,13 @@ import { createDb } from "@cortexai-agent-hub/db";
 import { symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHubClient } from "./hub-client.js";
-import { createHubSessionAuthorizer } from "./hub-sessions.js";
+import { createHubSessionAuthorizer, type HubSessionPolicy } from "./hub-sessions.js";
+
+/** These tests cover the CAAH-40 verify cache; Hub policy is covered in hub.test.ts. */
+const admitAll: HubSessionPolicy = {
+  sessionAllowed: async () => true,
+  workAllowed: async () => true,
+};
 
 describe("Hub session authorizer with verify cache", () => {
   beforeEach(() => {
@@ -58,6 +64,7 @@ describe("Hub session authorizer with verify cache", () => {
         const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
           verifyCacheTtlMs: 30_000,
           verifyCacheEnabled: true,
+          policy: admitAll,
         });
 
         // First call: cache miss, should verify
@@ -124,6 +131,7 @@ describe("Hub session authorizer with verify cache", () => {
         const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
           verifyCacheTtlMs: 10_000,
           verifyCacheEnabled: true,
+          policy: admitAll,
         });
 
         // First call: verify
@@ -191,6 +199,7 @@ describe("Hub session authorizer with verify cache", () => {
         const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
           verifyCacheTtlMs: 30_000,
           verifyCacheEnabled: true,
+          policy: admitAll,
         });
 
         // First call: succeeds and caches
@@ -264,6 +273,7 @@ describe("Hub session authorizer with verify cache", () => {
         const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
           verifyCacheTtlMs: 30_000,
           verifyCacheEnabled: true,
+          policy: admitAll,
         });
 
         // First call: verify and cache (token still valid)
@@ -328,7 +338,7 @@ describe("Hub session authorizer with verify cache", () => {
           config,
           key,
           client,
-          { verifyCacheTtlMs: 60_000, verifyCacheEnabled: true }, // Long TTL
+          { verifyCacheTtlMs: 60_000, verifyCacheEnabled: true, policy: admitAll }, // Long TTL
         );
 
         // First call: verify and cache
@@ -393,7 +403,7 @@ describe("Hub session authorizer with verify cache", () => {
           config,
           key,
           client,
-          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: false }, // Disabled
+          { verifyCacheTtlMs: 30_000, verifyCacheEnabled: false, policy: admitAll }, // Disabled
         );
 
         // First call: verify
@@ -461,6 +471,7 @@ describe("Hub session authorizer with verify cache", () => {
         const authorizer = createHubSessionAuthorizer(db.prisma, config, key, client, {
           verifyCacheTtlMs: 30_000,
           verifyCacheEnabled: true,
+          policy: admitAll,
         });
 
         // First call: should record latency
@@ -522,6 +533,7 @@ describe("Hub session authorizer with verify cache", () => {
           key,
           {
             verifyCacheEnabled: false,
+            policy: admitAll,
             verifyCacheTtlMs: 30_000,
           },
           client,
@@ -590,6 +602,7 @@ describe("Hub session authorizer with verify cache", () => {
           key,
           {
             verifyCacheEnabled: true,
+            policy: admitAll,
             verifyCacheTtlMs: 0,
           },
           client,
@@ -654,6 +667,7 @@ describe("Hub session authorizer with verify cache", () => {
           key,
           {
             verifyCacheEnabled: true,
+            policy: admitAll,
             verifyCacheTtlMs: 2_000, // 2 second TTL
           },
           client,

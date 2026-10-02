@@ -1,3 +1,5 @@
+import { HUB_CONFIG_INVALID, type HubSignInRefusalCode } from "@cortexai-agent-hub/core";
+
 /**
  * Hub's server-scoped Agent Hub policy (`GET /api/agent-hub/service-config`,
  * schema `agent-hub-settings-v1`). The catalog mirrors Hub's field list and its
@@ -8,18 +10,15 @@
 export const HUB_POLICY_SCHEMA = "agent-hub-settings-v1";
 export const HUB_POLICY_PRODUCT = "cortexai-agent-hub";
 
-/** Stable sign-in refusal codes. Clients map them to copy; operators read them in logs. */
-export const HUB_UNAVAILABLE = "HUB_UNAVAILABLE";
-export const HUB_CONFIG_INVALID = "HUB_CONFIG_INVALID";
-export const TENANT_DISABLED = "TENANT_DISABLED";
-export const HUB_CONFIG_RESTART_REQUIRED = "HUB_CONFIG_RESTART_REQUIRED";
-export const HUB_ACCESS_DENIED = "HUB_ACCESS_DENIED";
-export type HubPolicyCode =
-  | typeof HUB_UNAVAILABLE
-  | typeof HUB_CONFIG_INVALID
-  | typeof TENANT_DISABLED
-  | typeof HUB_CONFIG_RESTART_REQUIRED
-  | typeof HUB_ACCESS_DENIED;
+/** Stable sign-in refusal codes, shared with the clients through core. */
+export {
+  HUB_ACCESS_DENIED,
+  HUB_CONFIG_INVALID,
+  HUB_CONFIG_RESTART_REQUIRED,
+  HUB_UNAVAILABLE,
+  TENANT_DISABLED,
+} from "@cortexai-agent-hub/core";
+export type HubPolicyCode = HubSignInRefusalCode;
 
 /** `reason` is a fixed token or a setting path. It never carries a setting value. */
 export class HubPolicyError extends Error {

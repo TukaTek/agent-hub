@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { HUB_SSO_ACCESS_DENIED } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt } from "better-auth/crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
 import {
   createHubClient,
@@ -10,6 +10,9 @@ import {
   HubUnsupportedIdpError,
   hubUserId,
 } from "./hub-client.js";
+import { applyHubPolicyAtStartup, createHubPolicy, type HubPolicy } from "./hub-policy.js";
+import { memoryHubPolicyStore } from "./hub-policy-store.js";
+import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
 import { createUserWorkAuthorizer } from "./hub-sessions.js";
 import { createAuth } from "./index.js";
 
@@ -42,11 +45,19 @@ const ssoConfig = {
   deploymentId: "11111111-1111-4111-8111-111111111111",
   sso: { apiId: "fixture-api-id", secret: "service-secret-not-real" },
 };
+const MOBILE_ORIGIN = "cortexai-agent-hub://";
 const authorizeUrl = "https://login.microsoftonline.com/synthetic-tenant/oauth2/v2.0/authorize";
 function fixture(
   hubClient?: ReturnType<typeof createHubClient>,
-  options: { sso?: boolean; onHubSsoError?: (reason: string) => void } = {},
+  options: {
+    sso?: boolean;
+    onHubSsoError?: (reason: string) => void;
+    policy?: HubPolicy;
+    assigned?: readonly string[];
+  } = {},
 ) {
+  const gate = hubPolicyForTests(config.tenantId, options.assigned);
+  const policy = options.policy ?? gate.policy;
   const data: Record<string, any[]> = { user: [], account: [], session: [], verification: [] };
   const identities = new Map<string, any>();
   const grants = new Map<string, any>();
@@ -76,6 +87,7 @@ function fixture(
       async (_email: string, _state: string, _challenge: string): Promise<string> => authorizeUrl,
     ),
     ssoExchange: vi.fn(async (_code: string, _verifier: string, _redirectUri: string) => grant),
+    serviceConfig: vi.fn(async () => ({ status: 304 as const })),
   };
   vi.mocked(createHubClient).mockReturnValue(hubClient ?? client);
   let transaction = Promise.resolve();
@@ -155,12 +167,14 @@ function fixture(
     signupsEnabled: "true",
     signupAllowlist: "",
     onHubSsoError: options.onHubSsoError,
+    hubPolicy: policy,
+    extraOrigins: [MOBILE_ORIGIN],
   });
-  const request = (path: string, cookie = "", body?: unknown) =>
+  const request = (path: string, cookie = "", body?: unknown, origin = web) =>
     auth.handler(
       new Request(`${web}/api/auth${path}`, {
         method: body ? "POST" : "GET",
-        headers: { cookie, origin: web, "content-type": "application/json" },
+        headers: { cookie, origin, "content-type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );
@@ -184,7 +198,22 @@ function fixture(
     return { response, setCookie, state, cookie: `__Host-ah_sso=${state}` };
   }
   const callback = (query: string, cookie = "") => request(`/hub/sso/callback?${query}`, cookie);
-  return { auth, request, login, startSso, callback, data, identities, grants, client, prisma };
+  const work = createUserWorkAuthorizer(prisma, config, encryptionKey, { policy });
+  return {
+    auth,
+    request,
+    login,
+    startSso,
+    callback,
+    data,
+    identities,
+    grants,
+    client,
+    prisma,
+    policy,
+    hub: gate.hub,
+    work,
+  };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -192,7 +221,9 @@ beforeEach(() => vi.clearAllMocks());
 describe("Hub authentication through real auth endpoints", () => {
   it("requires an active Hub grant for background work and never falls back to native users", async () => {
     const f = fixture();
-    const authorize = createUserWorkAuthorizer(f.prisma, config, encryptionKey);
+    const authorize = createUserWorkAuthorizer(f.prisma, config, encryptionKey, {
+      policy: f.policy,
+    });
     expect(await authorize(userId)).toBe(false);
     expect(await authorize("local-user")).toBe(false);
     await f.login();
@@ -1042,5 +1073,342 @@ describe("Hub tenant Entra SSO", () => {
     const output = JSON.stringify([...logged.map(String), ...reasons]);
     for (const secret of [ssoConfig.sso.secret, ...tokens, code, state, email])
       expect(output).not.toContain(secret);
+  });
+});
+
+describe("Hub policy gate on every sign-in path (CAAH-36)", () => {
+  const branded = "Sign-in is temporarily unavailable, CortexAI Hub can't be reached";
+  const code = "c".repeat(43);
+  const dnsFailure = () =>
+    Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } });
+  const timeout = () =>
+    new DOMException("The operation was aborted due to timeout", "TimeoutError");
+  type Reply = Awaited<ReturnType<ReturnType<typeof hubPolicyForTests>["hub"]["reply"]>>;
+  const failures: Array<[string, () => Promise<Reply>, string, number]> = [
+    ["Hub DNS failure", async () => Promise.reject(dnsFailure()), "HUB_UNAVAILABLE", 503],
+    ["Hub timeout", async () => Promise.reject(timeout()), "HUB_UNAVAILABLE", 503],
+    [
+      "Hub 5xx",
+      async () => Promise.reject(new HubRequestError(503, "unavailable")),
+      "HUB_UNAVAILABLE",
+      503,
+    ],
+    [
+      "malformed config",
+      async () => ({ status: 200, body: { schemaVersion: "agent-hub-settings-v1" } }),
+      "HUB_CONFIG_INVALID",
+      503,
+    ],
+    [
+      "cross-tenant config",
+      async () => ({ status: 200, body: hubPolicyBodyForTests("tenant-2", ["subject-1"]) }),
+      "HUB_CONFIG_INVALID",
+      503,
+    ],
+    [
+      "disabled tenant",
+      async () => Promise.reject(new HubRequestError(403, "tenant_disabled")),
+      "TENANT_DISABLED",
+      403,
+    ],
+  ];
+
+  async function expectRefused(response: Response, expected: string, status: number) {
+    expect(response.status).toBe(status);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie") ?? "").not.toContain("session_token");
+    expect(await response.json()).toMatchObject({ code: expected, message: branded });
+  }
+
+  describe.each(failures)("when Hub policy fails with %s", (_case, reply, expected, status) => {
+    it("refuses email-first Continue before asking Hub about the email", async () => {
+      const f = fixture();
+      f.hub.reply = reply;
+      const response = await f.request("/hub/sign-in/continue", "", { email: "user@example.test" });
+      await expectRefused(response, expected, status);
+      expect(f.client.lookup).not.toHaveBeenCalled();
+    });
+
+    it("refuses Microsoft SSO start without a state cookie or pending row", async () => {
+      const f = fixture(undefined, { sso: true });
+      f.hub.reply = reply;
+      const { response } = await f.startSso();
+      await expectRefused(response, expected, status);
+      expect(f.client.ssoStart).not.toHaveBeenCalled();
+      expect(f.data.verification).toHaveLength(0);
+    });
+
+    it.each([
+      ["web", undefined],
+      ["mobile", MOBILE_ORIGIN],
+    ])("refuses password sign-in from %s without creating a session", async (_client, origin) => {
+      const f = fixture();
+      f.hub.reply = reply;
+      const response = await f.request(
+        "/hub/sign-in",
+        "",
+        { email: "user@example.test", password: "test-password" },
+        origin,
+      );
+      await expectRefused(response, expected, status);
+      expect(f.client.login).not.toHaveBeenCalled();
+      expect(f.data.session).toHaveLength(0);
+      expect(f.data.user).toHaveLength(0);
+    });
+
+    it("refuses the SSO callback before exchanging the code", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, cookie } = await f.startSso();
+      f.hub.reply = reply;
+      // The user spends longer at Microsoft than sign-in reuses Hub's last answer.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6_000 });
+      const response = await f.callback(`code=${code}&state=${state}`, cookie);
+      vi.useRealTimers();
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe(
+        `https://web.example.test/sign-in?error=${expected.toLowerCase()}`,
+      );
+      expect(f.client.ssoExchange).not.toHaveBeenCalled();
+      expect(f.data.session).toHaveLength(0);
+      expect(f.data.user).toHaveLength(0);
+    });
+  });
+
+  it("admits sign-in again as soon as Hub returns", async () => {
+    const f = fixture();
+    const healthy = f.hub.reply;
+    f.hub.reply = async () => Promise.reject(dnsFailure());
+    await expectRefused(
+      await f.request("/hub/sign-in", "", { email: "user@example.test", password: "x" }),
+      "HUB_UNAVAILABLE",
+      503,
+    );
+    f.hub.reply = healthy;
+    await f.login();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it.each([
+    ["a connection failure", dnsFailure()],
+    ["a timeout", timeout()],
+    ["a Hub 502", new HubRequestError(502, "bad_gateway")],
+  ])("answers HUB_UNAVAILABLE when the password exchange itself hits %s", async (_case, error) => {
+    const f = fixture();
+    f.client.login.mockRejectedValue(error);
+    await expectRefused(
+      await f.request("/hub/sign-in", "", { email: "user@example.test", password: "x" }),
+      "HUB_UNAVAILABLE",
+      503,
+    );
+  });
+
+  it("keeps the ordinary refusal for a wrong password", async () => {
+    const f = fixture();
+    f.client.login.mockRejectedValue(new HubRequestError(401, "invalid_credentials"));
+    const response = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "wrong",
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      message: "Could not sign in through CortexAI Hub",
+    });
+  });
+
+  it("sends an SSO callback whose exchange cannot reach Hub to hub_unavailable", async () => {
+    const f = fixture(undefined, { sso: true });
+    f.client.ssoExchange.mockRejectedValue(dnsFailure());
+    const { state, cookie } = await f.startSso();
+    const response = await f.callback(`code=${code}&state=${state}`, cookie);
+    expect(response.headers.get("location")).toBe(
+      "https://web.example.test/sign-in?error=hub_unavailable",
+    );
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("refuses a password user Hub has not assigned to Agent Hub, creating nothing", async () => {
+    const f = fixture(undefined, { assigned: ["subject-2"] });
+    const response = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "HUB_ACCESS_DENIED",
+      message: "Ask your admin for access",
+    });
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+  });
+
+  it("refuses an unassigned SSO user and revokes the grant Hub issued", async () => {
+    const f = fixture(undefined, { sso: true, assigned: ["subject-2"] });
+    const { state, cookie } = await f.startSso();
+    const response = await f.callback(`code=${code}&state=${state}`, cookie);
+    expect(response.headers.get("location")).toBe(
+      "https://web.example.test/sign-in?error=hub_access_denied",
+    );
+    expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+  });
+
+  it("refuses a grant for another tenant even when its subject is assigned", async () => {
+    const f = fixture();
+    f.client.login.mockResolvedValue({
+      subject: "subject-1",
+      tenant: "tenant-2",
+      accessToken: "access-secret-1",
+      refreshToken: "refresh-secret-1",
+      accessUntil: new Date(Date.now() + 900_000),
+    });
+    const response = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "HUB_ACCESS_DENIED" });
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("lets a user in while assignments are pending (CAH-204) but grants no work", async () => {
+    const f = fixture(undefined, { assigned: [] });
+    await f.login();
+    expect(await f.work(userId)).toBe(false);
+    expect(await f.policy.status()).toMatchObject({ state: "ok", assignments: "pending" });
+  });
+
+  it("refuses sign-in until both processes restart onto a changed startup setting", async () => {
+    const store = memoryHubPolicyStore();
+    let body = hubPolicyBodyForTests(config.tenantId, ["subject-1"], 1);
+    const fetchConfig = async () => ({ status: 200 as const, body });
+    const applied = await applyHubPolicyAtStartup({
+      store,
+      tenantId: config.tenantId,
+      env: {},
+      fetchConfig,
+      log: () => undefined,
+    });
+    const policy = createHubPolicy({
+      store,
+      tenantId: config.tenantId,
+      fetchConfig,
+      applied,
+      log: () => undefined,
+    });
+    const f = fixture(undefined, { policy });
+    await f.login();
+    body = {
+      ...hubPolicyBodyForTests(config.tenantId, ["subject-1"], 2),
+      overrides: { autoReview: { defaultEnabled: true } },
+    };
+    await policy.refresh();
+    const response = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      code: "HUB_CONFIG_RESTART_REQUIRED",
+      message: branded,
+    });
+    expect(await f.work(userId)).toBe(false);
+  });
+
+  it("never sends Hub-delivered secrets to the browser", async () => {
+    const store = memoryHubPolicyStore();
+    const body = {
+      ...hubPolicyBodyForTests(config.tenantId, ["subject-1"], 3),
+      overrides: { model: { credentials: { anthropic: "hub-model-secret-not-real" } } },
+    };
+    const fetchConfig = async () => ({ status: 200 as const, body });
+    const env: NodeJS.ProcessEnv = {};
+    const applied = await applyHubPolicyAtStartup({
+      store,
+      tenantId: config.tenantId,
+      env,
+      fetchConfig,
+      log: () => undefined,
+    });
+    const policy = createHubPolicy({
+      store,
+      tenantId: config.tenantId,
+      fetchConfig,
+      applied,
+      log: () => undefined,
+    });
+    const f = fixture(undefined, { policy });
+    const continued = await f.request("/hub/sign-in/continue", "", { email: "user@example.test" });
+    const { response, headers } = await f.login();
+    const session = await f.auth.api.getSession({ headers });
+    for (const text of [await continued.text(), await response.text(), JSON.stringify(session)])
+      expect(text).not.toContain("hub-model-secret-not-real");
+    expect(JSON.stringify(await policy.status())).not.toContain("hub-model-secret-not-real");
+  });
+});
+
+describe("Active sessions while Hub policy is degraded (CAAH-36)", () => {
+  async function signedIn() {
+    const f = fixture();
+    const { headers } = await f.login();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    return { f, headers };
+  }
+  afterEach(() => vi.useRealTimers());
+
+  it("keeps last-known-good within the CAAH-40 window, then fails closed until Hub returns", async () => {
+    const { f, headers } = await signedIn();
+    expect(await f.work(userId)).toBe(true);
+    const healthy = f.hub.reply;
+    f.hub.reply = async () => Promise.reject(new HubRequestError(503, "unavailable"));
+    await f.policy.refresh();
+    vi.setSystemTime(Date.now() + 29_000);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(await f.work(userId)).toBe(true);
+    vi.setSystemTime(Date.now() + 1_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(await f.work(userId)).toBe(false);
+    // Policy refusal is not a Hub revocation: the session comes back with Hub.
+    expect(f.data.session).toHaveLength(1);
+    f.hub.reply = healthy;
+    await f.policy.refresh();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  });
+
+  it("stops new work at once when Hub disables the tenant, and the session after the window", async () => {
+    const { f, headers } = await signedIn();
+    f.hub.reply = async () => Promise.reject(new HubRequestError(403, "tenant_disabled"));
+    await f.policy.refresh();
+    expect(await f.work(userId)).toBe(false);
+    vi.setSystemTime(Date.now() + 30_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+  });
+
+  it("drops the session after the window when Hub removes the user's assignment", async () => {
+    const { f, headers } = await signedIn();
+    f.hub.reply = async () => ({
+      status: 200,
+      body: hubPolicyBodyForTests(config.tenantId, ["subject-2"], 2),
+    });
+    await f.policy.refresh();
+    expect(await f.work(userId)).toBe(false);
+    vi.setSystemTime(Date.now() + 30_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+  });
+
+  it("checks policy again when an expired access token is refreshed", async () => {
+    const { f, headers } = await signedIn();
+    f.hub.reply = async () => Promise.reject(new HubRequestError(403, "tenant_disabled"));
+    await f.policy.refresh();
+    [...f.grants.values()][0].accessUntil = new Date(0);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.client.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("refuses work for a user with no Hub session or no stored policy", async () => {
+    const f = fixture();
+    expect(await f.work(userId)).toBe(false);
+    expect(await f.work("local-user")).toBe(false);
   });
 });

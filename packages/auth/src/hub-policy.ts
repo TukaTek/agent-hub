@@ -63,7 +63,7 @@ export interface HubPolicyStatus {
   toolkits: "configured" | "unknown";
 }
 
-/** Sign-in reuses a Hub answer this recent instead of asking again. */
+/** Sign-in reuses an accepting Hub answer this recent instead of asking again. */
 const SIGN_IN_REUSE_MS = 5_000;
 
 const defaultLog = (signal: HubPolicySignal) =>
@@ -271,7 +271,9 @@ export function createHubPolicy(options: {
   /** Every sign-in asks Hub (fail closed); the worker cannot, so it never admits one. */
   async function liveRecord(): Promise<HubPolicyRecord> {
     if (!fetchConfig) throw new HubPolicyError(HUB_UNAVAILABLE, "no_hub_access");
-    if (last && Date.now() - last.at < SIGN_IN_REUSE_MS && !pending) return last.record;
+    // Only acceptance is reused, so a sign-in after a refusal asks Hub again.
+    if (last?.record.state === "ok" && Date.now() - last.at < SIGN_IN_REUSE_MS && !pending)
+      return last.record;
     return refresh();
   }
 
