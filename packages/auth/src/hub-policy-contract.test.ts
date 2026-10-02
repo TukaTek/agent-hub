@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/agent-hub-service-config.v1.json" with { type: "json" };
-import { HubPolicyError, parseHubPolicy } from "./hub-policy-contract.js";
+import {
+  HUB_ASSIGNMENTS_CONTRACT,
+  HUB_POLICY_PRODUCT,
+  HubPolicyError,
+  parseHubPolicy,
+} from "./hub-policy-contract.js";
 
 const TENANT = "tenant-a";
 const clone = <T>(value: T): T => structuredClone(value);
@@ -147,5 +152,88 @@ describe("Hub service-config contract (agent-hub-settings-v1)", () => {
     const error = reject(raw);
     expect(`${error.message} ${error.reason}`).not.toContain("42");
     expect(`${error.message} ${error.reason}`).not.toContain("hub-model-secret");
+  });
+});
+
+describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-204)", () => {
+  const row = (tenantUserId: string, role = "user") => ({
+    tenantUserId,
+    productId: HUB_POLICY_PRODUCT,
+    role,
+  });
+  const withAccess = (access: Record<string, unknown>) => {
+    const raw: any = clone(fixture.cases.configured);
+    raw.access = access;
+    return raw;
+  };
+  const marked = (productAssignments: unknown[], extra: Record<string, unknown> = {}) =>
+    withAccess({
+      status: "configured",
+      contract: HUB_ASSIGNMENTS_CONTRACT,
+      productAssignments,
+      ...extra,
+    });
+
+  it("names the agreed contract", () => {
+    expect(HUB_ASSIGNMENTS_CONTRACT).toBe("agent-hub-assignments.v1");
+  });
+
+  it("reads an empty list under the marker as nobody assigned, not as pending", () => {
+    expect(parseHubPolicy(marked([]), TENANT).assignments).toEqual({
+      status: "configured",
+      subjects: [],
+    });
+  });
+
+  it("admits only the users listed under the marker", () => {
+    const policy = parseHubPolicy(fixture.cases["assignments-contract"], TENANT);
+    expect(policy.assignments).toEqual({
+      status: "configured",
+      subjects: ["subject-1", "subject-3"],
+    });
+  });
+
+  it("parses rows with exactly tenantUserId, productId and role", () => {
+    const rows = [row("subject-1"), row("subject-2", "admin")];
+    for (const entry of rows)
+      expect(Object.keys(entry).sort()).toEqual(["productId", "role", "tenantUserId"]);
+    for (const raw of [
+      marked(rows),
+      withAccess({ status: "configured", productAssignments: rows }),
+    ])
+      expect(parseHubPolicy(raw, TENANT).assignments).toEqual({
+        status: "configured",
+        subjects: ["subject-1", "subject-2"],
+      });
+  });
+
+  it("keeps the CAH-204 guard for an empty list without the marker", () => {
+    const raw = withAccess({ status: "configured", productAssignments: [] });
+    expect(parseHubPolicy(raw, TENANT).assignments).toEqual({ status: "unknown", subjects: [] });
+  });
+
+  it("keeps the CAH-204 guard when the marker arrives with a status other than configured", () => {
+    const raw = marked([], { status: "pending" });
+    expect(parseHubPolicy(raw, TENANT).assignments).toEqual({ status: "unknown", subjects: [] });
+  });
+
+  it.each([
+    ["a newer version", "agent-hub-assignments.v2"],
+    ["an empty string", ""],
+    ["null", null],
+    ["a number", 1],
+    ["an object", { name: HUB_ASSIGNMENTS_CONTRACT }],
+  ])("rejects a contract marker that is %s, even when it would grant access", (_name, contract) => {
+    for (const rows of [[], [row("subject-1")]]) {
+      const error = reject(marked(rows, { contract }));
+      expect(error.code).toBe("HUB_CONFIG_INVALID");
+      expect(error.reason).toBe("assignments_contract");
+    }
+  });
+
+  it("still rejects marked rows that belong to another tenant", () => {
+    expect(reject(marked([{ ...row("subject-1"), tenantId: "tenant-b" }])).reason).toBe(
+      "tenant_mismatch",
+    );
   });
 });

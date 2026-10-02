@@ -13,6 +13,7 @@ import {
 } from "./hub-policy.js";
 import { HubPolicyError } from "./hub-policy-contract.js";
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
+import { hubPolicyBodyForTests } from "./hub-policy-testing.js";
 
 const TENANT = "tenant-a";
 const assigned = { tenant: TENANT, subject: "subject-1" };
@@ -244,6 +245,65 @@ describe("CAH-204 product assignment guard", () => {
     const other = { tenant: TENANT, subject: "subject-9" };
     expect(await codeOf(api.admit(other))).toBe("HUB_ACCESS_DENIED");
     expect(await worker.sessionAllowed(other)).toBe(false);
+    expect(await worker.workAllowed(other)).toBe(false);
+  });
+});
+
+describe("Agent Hub assignment contract marker (agent-hub-assignments.v1)", () => {
+  const marked = (subjects: string[], revision: number) =>
+    hubPolicyBodyForTests(TENANT, subjects, revision, { contract: true });
+  const other = { tenant: TENANT, subject: "subject-2" };
+
+  it("admits only the users Hub lists", async () => {
+    const { api, worker } = await start(ok(marked(["subject-1"], 1)));
+    expect(await api.admit(assigned)).toBe("assigned");
+    expect(await worker.workAllowed(assigned)).toBe(true);
+    expect(await codeOf(api.admit(other))).toBe("HUB_ACCESS_DENIED");
+    expect(await worker.sessionAllowed(other)).toBe(false);
+    expect(await worker.workAllowed(other)).toBe(false);
+  });
+
+  it("denies everyone on an empty list instead of keeping last-known-good", async () => {
+    const fetchConfig = ok(marked(["subject-1"], 1));
+    const { api, worker, store, signals } = await start(fetchConfig);
+    expect(await worker.workAllowed(assigned)).toBe(true);
+    fetchConfig.mockResolvedValue({ status: 200, body: marked([], 2), etag: '"nobody"' });
+    await api.refresh();
+    const record = await store.read(TENANT);
+    expect(record?.assignmentsSource).toBe("hub");
+    expect(record?.document?.assignments).toEqual({ status: "configured", subjects: [] });
+    expect(await codeOf(api.admit(assigned))).toBe("HUB_ACCESS_DENIED");
+    for (const process of [api, worker]) {
+      expect(await process.sessionAllowed(assigned)).toBe(false);
+      expect(await process.workAllowed(assigned)).toBe(false);
+    }
+    expect((await api.status()).assignments).toBe("configured");
+    expect(signals.map((signal) => signal.event)).not.toContain("hub_policy_assignments_unknown");
+  });
+
+  it("moves from pending to denied when Hub's first marked list is empty", async () => {
+    const fetchConfig = ok(hubPolicyBodyForTests(TENANT, [], 1));
+    const { api, worker } = await start(fetchConfig);
+    expect(await api.admit(assigned)).toBe("pending");
+    expect(await worker.sessionAllowed(assigned)).toBe(true);
+    fetchConfig.mockResolvedValue({ status: 200, body: marked([], 2), etag: '"nobody"' });
+    await api.refresh();
+    expect(await codeOf(api.admit(assigned))).toBe("HUB_ACCESS_DENIED");
+    expect(await worker.sessionAllowed(assigned)).toBe(false);
+    expect(await worker.workAllowed(assigned)).toBe(false);
+    expect((await api.status()).assignments).toBe("configured");
+  });
+
+  it("keeps last-known-good and grants nothing when Hub sends an unknown marker", async () => {
+    const fetchConfig = ok(marked(["subject-1"], 1));
+    const { api, worker, store } = await start(fetchConfig);
+    const unknown: any = marked(["subject-1", "subject-2"], 2);
+    unknown.access.contract = "agent-hub-assignments.v2";
+    fetchConfig.mockResolvedValue({ status: 200, body: unknown, etag: '"v2"' });
+    await api.refresh();
+    expect((await store.read(TENANT))?.revision).toBe(1);
+    expect(await codeOf(api.admit(other))).toBe("HUB_CONFIG_INVALID");
+    expect(await codeOf(api.admit(assigned))).toBe("HUB_CONFIG_INVALID");
     expect(await worker.workAllowed(other)).toBe(false);
   });
 });

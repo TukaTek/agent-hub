@@ -54,9 +54,12 @@ function fixture(
     onHubSsoError?: (reason: string) => void;
     policy?: HubPolicy;
     assigned?: readonly string[];
+    contract?: boolean;
   } = {},
 ) {
-  const gate = hubPolicyForTests(config.tenantId, options.assigned);
+  const gate = hubPolicyForTests(config.tenantId, options.assigned, {
+    contract: options.contract,
+  });
   const policy = options.policy ?? gate.policy;
   const data: Record<string, any[]> = { user: [], account: [], session: [], verification: [] };
   const identities = new Map<string, any>();
@@ -1278,6 +1281,47 @@ describe("Hub policy gate on every sign-in path (CAAH-36)", () => {
     expect(await f.policy.status()).toMatchObject({ state: "ok", assignments: "pending" });
   });
 
+  it("refuses password sign-in when Hub's assignment contract lists nobody", async () => {
+    const f = fixture(undefined, { assigned: [], contract: true });
+    const response = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "HUB_ACCESS_DENIED",
+      message: "Ask your admin for access",
+    });
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+  });
+
+  it("refuses SSO sign-in when Hub's assignment contract lists nobody", async () => {
+    const f = fixture(undefined, { sso: true, assigned: [], contract: true });
+    const { state, cookie } = await f.startSso();
+    const response = await f.callback(`code=${code}&state=${state}`, cookie);
+    expect(response.headers.get("location")).toBe(
+      "https://web.example.test/sign-in?error=hub_access_denied",
+    );
+    expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+  });
+
+  it("admits only the users Hub's assignment contract lists", async () => {
+    const listed = fixture(undefined, { assigned: ["subject-1"], contract: true });
+    await listed.login();
+    expect(await listed.work(userId)).toBe(true);
+    const unlisted = fixture(undefined, { assigned: ["subject-2"], contract: true });
+    const response = await unlisted.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "HUB_ACCESS_DENIED" });
+    expect(unlisted.data.session).toHaveLength(0);
+  });
+
   it("refuses sign-in until both processes restart onto a changed startup setting", async () => {
     const store = memoryHubPolicyStore();
     let body = hubPolicyBodyForTests(config.tenantId, ["subject-1"], 1);
@@ -1392,6 +1436,38 @@ describe("Active sessions while Hub policy is degraded (CAAH-36)", () => {
       body: hubPolicyBodyForTests(config.tenantId, ["subject-2"], 2),
     });
     await f.policy.refresh();
+    expect(await f.work(userId)).toBe(false);
+    vi.setSystemTime(Date.now() + 30_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+  });
+
+  it("removes work at once and the session after the window when Hub's marked list empties", async () => {
+    const { f, headers } = await signedIn();
+    expect(await f.work(userId)).toBe(true);
+    f.hub.reply = async () => ({
+      status: 200,
+      body: hubPolicyBodyForTests(config.tenantId, [], 2, { contract: true }),
+    });
+    await f.policy.refresh();
+    expect(await f.work(userId)).toBe(false);
+    vi.setSystemTime(Date.now() + 29_000);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    vi.setSystemTime(Date.now() + 1_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+  });
+
+  it("drops a pending session after the window when Hub's first marked list is empty", async () => {
+    const f = fixture(undefined, { assigned: [] });
+    const { headers } = await f.login();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(await f.policy.status()).toMatchObject({ assignments: "pending" });
+    f.hub.reply = async () => ({
+      status: 200,
+      body: hubPolicyBodyForTests(config.tenantId, [], 2, { contract: true }),
+    });
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "ok", assignments: "configured" });
     expect(await f.work(userId)).toBe(false);
     vi.setSystemTime(Date.now() + 30_001);
     expect(await f.auth.api.getSession({ headers })).toBeNull();

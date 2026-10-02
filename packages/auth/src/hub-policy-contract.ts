@@ -9,6 +9,11 @@ import { HUB_CONFIG_INVALID, type HubSignInRefusalCode } from "@cortexai-agent-h
  */
 export const HUB_POLICY_SCHEMA = "agent-hub-settings-v1";
 export const HUB_POLICY_PRODUCT = "cortexai-agent-hub";
+/**
+ * `access.contract` marker for Hub's Agent Hub assignment projection (CAH-204). Under
+ * it the list is deduplicated, Agent Hub only, and authoritative: empty means nobody.
+ */
+export const HUB_ASSIGNMENTS_CONTRACT = "agent-hub-assignments.v1";
 
 /** Stable sign-in refusal codes, shared with the clients through core. */
 export {
@@ -172,7 +177,10 @@ export interface HubPolicyDocument {
   overrides: Readonly<Record<string, HubSettingValue>>;
   /** Composio toolkits for this product. Unknown means none, never all. */
   toolkits: { status: "configured" | "unknown"; allowed: readonly string[] };
-  /** Assigned Hub users. Empty or unattributable lists are unknown (CAH-204). */
+  /**
+   * Assigned Hub users. Under Hub's assignment contract the list is authoritative, so an
+   * empty one means nobody. Without it, empty or unattributable lists are unknown (CAH-204).
+   */
   assignments: { status: "configured" | "unknown"; subjects: readonly string[] };
 }
 
@@ -304,6 +312,10 @@ function parseAssignments(value: unknown, tenantId: string): HubPolicyDocument["
     !Array.isArray(value.productAssignments)
   )
     throw invalid("assignments");
+  // A contract this build does not know could mean anything, so it is never read as access.
+  if ("contract" in value && value.contract !== HUB_ASSIGNMENTS_CONTRACT)
+    throw invalid("assignments_contract");
+  const authoritative = value.contract === HUB_ASSIGNMENTS_CONTRACT;
   const subjects = new Set<string>();
   for (const row of value.productAssignments) {
     if (!isObject(row) || typeof row.tenantUserId !== "string" || !row.tenantUserId.trim())
@@ -313,8 +325,9 @@ function parseAssignments(value: unknown, tenantId: string): HubPolicyDocument["
     // rows explicitly attributed to Agent Hub count as an assignment.
     if (row.productId === HUB_POLICY_PRODUCT) subjects.add(row.tenantUserId);
   }
-  if (value.status !== "configured" || subjects.size === 0)
-    return { status: "unknown", subjects: [] };
+  if (value.status !== "configured") return { status: "unknown", subjects: [] };
+  // Hub's contract makes an empty list mean nobody; without it, empty stays unknown.
+  if (subjects.size === 0 && !authoritative) return { status: "unknown", subjects: [] };
   return { status: "configured", subjects: [...subjects].sort() };
 }
 
