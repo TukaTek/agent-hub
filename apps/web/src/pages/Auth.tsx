@@ -15,7 +15,7 @@ import { desktopBridge } from "../lib/desktop";
 import { clearSpaceSelection } from "../lib/rpc";
 import { WelcomePage } from "./Welcome";
 
-type AuthMode = "in" | "up" | "forgot";
+type AuthMode = "in" | "forgot";
 type SignInStep =
   | "email"
   | Exclude<SignInContinueResponse["next"], "redirect">
