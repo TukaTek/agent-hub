@@ -155,12 +155,22 @@ describe("Hub Workbench-style tenant authentication", () => {
     fetcher.mockResolvedValueOnce(new Response("denied", { status: 403 }));
     await expect(client.verify("opaque", identity)).rejects.toThrow();
   });
-  it("requires a configured trusted HTTPS origin with optional tenant restriction", async () => {
-    expect(hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin })).toEqual({ origin });
+  it("requires a configured trusted HTTPS origin and a pinned tenant", async () => {
+    expect(
+      hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin, HUB_AUTH_TENANT_ID: "t-1" }),
+    ).toEqual({ origin, tenantId: "t-1" });
     expect(hubAuthFromEnv({})).toBeUndefined();
     expect(() =>
-      hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: "http://hub.example.test" }),
+      hubAuthFromEnv({
+        AUTH_MODE: "hub",
+        HUB_AUTH_ORIGIN: "http://hub.example.test",
+        HUB_AUTH_TENANT_ID: "t-1",
+      }),
     ).toThrow();
+    // Hub policy is tenant-scoped, so Hub mode cannot run without a pinned tenant.
+    expect(() => hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin })).toThrow(
+      "AUTH_MODE=hub requires HUB_AUTH_TENANT_ID",
+    );
     const f = setup();
     await expect(
       createHubClient({ origin, tenantId: "other" }, f.fetcher).login(
@@ -212,6 +222,59 @@ describe("Hub agent-hub-web SSO contract", () => {
     return { client: createHubClient({ ...config, ...configOverrides }, fetcher), fetcher, calls };
   }
   const redirectUri = new URL(web.exchangeRequest.body.redirectUri).href;
+
+  it("reads Hub policy with the service bearer and Hub's schema version", async () => {
+    const { client, calls } = ssoSetup({
+      "service-config": () => Response.json({ revision: 3 }, { headers: { etag: '"etag-3"' } }),
+    });
+    await expect(client.serviceConfig()).resolves.toEqual({
+      status: 200,
+      body: { revision: 3 },
+      etag: '"etag-3"',
+    });
+    const [url, init] = calls("service-config")[0]!;
+    expect(new URL(String(url)).pathname).toBe("/api/agent-hub/service-config");
+    expect(new URL(String(url)).searchParams.get("schemaVersion")).toBe("agent-hub-settings-v1");
+    expect(init.method).toBe("GET");
+    expect(init.headers.authorization).toBe(`Bearer ${sso.serviceTokenResponse.token}`);
+    expect(init.headers["if-none-match"]).toBeUndefined();
+  });
+
+  it("revalidates Hub policy with If-None-Match and reports 304", async () => {
+    const { client, calls } = ssoSetup({
+      "service-config": () => new Response(null, { status: 304 }),
+    });
+    await expect(client.serviceConfig('"etag-3"')).resolves.toEqual({ status: 304 });
+    expect(calls("service-config")[0]![1].headers["if-none-match"]).toBe('"etag-3"');
+  });
+
+  it("reads Hub policy with a service credential even when SSO is off", async () => {
+    const { client, calls } = ssoSetup(
+      { "service-config": () => Response.json({}) },
+      { sso: undefined, service: config.sso },
+    );
+    await client.serviceConfig();
+    expect(calls("service-token")).toHaveLength(1);
+  });
+
+  it("surfaces Hub policy refusals as HubRequestError and retries one rejected token", async () => {
+    let reads = 0;
+    const { client, calls } = ssoSetup({
+      "service-config": () =>
+        ++reads === 1
+          ? Response.json({ error: "invalid_service_token" }, { status: 401 })
+          : Response.json({ error: "access_denied" }, { status: 403 }),
+    });
+    const error = await client.serviceConfig().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HubRequestError);
+    expect(error).toMatchObject({ status: 403, code: "access_denied" });
+    expect(calls("service-token")).toHaveLength(2);
+  });
+
+  it("reports a malformed policy body as invalid configuration, not as an outage", async () => {
+    const { client } = ssoSetup({ "service-config": () => new Response("{not json") });
+    await expect(client.serviceConfig()).rejects.toMatchObject({ code: "HUB_CONFIG_INVALID" });
+  });
 
   it("starts with Hub's published request shape and a service bearer", async () => {
     const { client, calls } = ssoSetup();
@@ -584,37 +647,45 @@ describe("Hub SSO configuration", () => {
   };
   const readSecretFile = vi.fn((_path: string) => "synthetic-service-secret\n");
 
-  it("defaults off and leaves hub mode exactly as before", () => {
-    expect(
-      hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin }, { readSecretFile }),
-    ).toEqual({ origin });
-    expect(
-      hubAuthFromEnv({ ...base, HUB_SSO_ENABLED: "false" }, { readSecretFile })?.sso,
-    ).toBeUndefined();
-    expect(readSecretFile).not.toHaveBeenCalled();
+  it("defaults SSO off but still reads the service credential Hub policy needs", () => {
+    const service = { apiId: "fixture-api-id", secret: "synthetic-service-secret" };
+    const off = hubAuthFromEnv({ ...base, HUB_SSO_ENABLED: "false" }, { readSecretFile });
+    expect(off?.sso).toBeUndefined();
+    expect(off?.service).toEqual(service);
+    const { HUB_SSO_ENABLED: _flag, HUB_DEPLOYMENT_ID: _deployment, ...plain } = base;
+    expect(hubAuthFromEnv(plain, { readSecretFile })).toEqual({
+      origin,
+      tenantId: "fixture-tenant",
+      service,
+    });
   });
 
   it("reads the service secret from its file only in the API process", () => {
+    const service = { apiId: "fixture-api-id", secret: "synthetic-service-secret" };
     expect(hubAuthFromEnv(base, { readSecretFile })).toEqual({
       origin,
       tenantId: "fixture-tenant",
       deploymentId: base.HUB_DEPLOYMENT_ID,
-      sso: { apiId: "fixture-api-id", secret: "synthetic-service-secret" },
+      service,
+      sso: service,
     });
     expect(readSecretFile).toHaveBeenCalledWith(base.HUB_SERVICE_SECRET_FILE);
     readSecretFile.mockClear();
-    expect(hubAuthFromEnv(base)?.sso).toBeUndefined();
+    const worker = hubAuthFromEnv(base);
+    expect(worker?.sso).toBeUndefined();
+    expect(worker?.service).toBeUndefined();
+    expect(worker?.tenantId).toBe("fixture-tenant");
     expect(readSecretFile).not.toHaveBeenCalled();
   });
 
   it.each([
     ["AUTH_MODE", "local", "HUB_SSO_ENABLED requires AUTH_MODE=hub"],
     ["AUTH_MODE", undefined, "HUB_SSO_ENABLED requires AUTH_MODE=hub"],
-    ["HUB_AUTH_TENANT_ID", undefined, "HUB_SSO_ENABLED requires HUB_AUTH_TENANT_ID"],
+    ["HUB_AUTH_TENANT_ID", undefined, "AUTH_MODE=hub requires HUB_AUTH_TENANT_ID"],
     ["HUB_DEPLOYMENT_ID", undefined, "HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID"],
     ["HUB_DEPLOYMENT_ID", "prod-1", "HUB_DEPLOYMENT_ID must be the deployment UUID"],
-    ["HUB_SERVICE_API_ID", " ", "HUB_SSO_ENABLED requires HUB_SERVICE_API_ID"],
-    ["HUB_SERVICE_SECRET_FILE", undefined, "HUB_SSO_ENABLED requires HUB_SERVICE_SECRET_FILE"],
+    ["HUB_SERVICE_API_ID", " ", "AUTH_MODE=hub requires HUB_SERVICE_API_ID"],
+    ["HUB_SERVICE_SECRET_FILE", undefined, "AUTH_MODE=hub requires HUB_SERVICE_SECRET_FILE"],
     ["HUB_SSO_ENABLED", "yes", "HUB_SSO_ENABLED must be true or false"],
     ["HUB_AUTH_TENANT_ID", "t".repeat(257), "HUB_AUTH_TENANT_ID must be at most 256 characters"],
     ["HUB_SERVICE_API_ID", "a".repeat(257), "HUB_SERVICE_API_ID must be at most 256 characters"],
