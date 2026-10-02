@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createDb } from "@cortexai-agent-hub/db";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hubUserId } from "./hub-client.js";
 import { createAuth } from "./index.js";
 import {
@@ -23,15 +23,21 @@ const origin = "http://web.example.test";
 const password = "fixture-password12";
 
 describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
-  const db = process.env.DATABASE_URL ? createDb(process.env.DATABASE_URL) : undefined;
-  const prisma = db?.prisma as NonNullable<typeof db>["prisma"];
-  const auth = createAuth(prisma, {
-    secret: "offline-auth-secret-at-least-32-characters",
-    baseURL: origin,
-    webOrigin: origin,
-    // Legacy inputs that used to open signup; they must change nothing.
-    signupsEnabled: "true",
-    signupAllowlist: "",
+  // Built in beforeAll: a skipped suite still runs this callback to collect tests.
+  let db: ReturnType<typeof createDb>;
+  let prisma: ReturnType<typeof createDb>["prisma"];
+  let auth: ReturnType<typeof createAuth>;
+  beforeAll(() => {
+    db = createDb(process.env.DATABASE_URL!);
+    prisma = db.prisma;
+    auth = createAuth(prisma, {
+      secret: "offline-auth-secret-at-least-32-characters",
+      baseURL: origin,
+      webOrigin: origin,
+      // Legacy inputs that used to open signup; they must change nothing.
+      signupsEnabled: "true",
+      signupAllowlist: "",
+    });
   });
   const request = (path: string, body: unknown, cookie?: string) =>
     auth.handler(
