@@ -76,23 +76,19 @@ describe("bootstrapUserSpace", () => {
 
     const { create, update } = prisma.deploymentSettings.upsert.mock.calls[0]![0];
     expect(create.id).toBe("default");
-    expect(create.ownerUserId).toBe("user-1");
+    expect(create.ownerUserId).toBeNull();
     expect(create.signupsEnabled).toBe(false);
     expect(create.signupAllowlist).toBe("a@example.com,b@example.com");
     expect(create.signupPolicyInitialized).toBe(true);
     expect(update).toEqual({});
   });
 
-  it("claims the deployment owner when settings exist without one", async () => {
+  it("never claims the deployment owner", async () => {
     const prisma = makePrisma({ id: "default", ownerUserId: null });
     await bootstrapUserSpace(prisma as unknown as PrismaClient, { id: "user-1" }, env);
 
-    // Conditional claim: the database predicate decides, so a concurrent
-    // claimant that already holds the seat is never overwritten.
-    expect(prisma.deploymentSettings.updateMany).toHaveBeenCalledWith({
-      where: { id: "default", ownerUserId: null },
-      data: { ownerUserId: "user-1" },
-    });
+    // Owner claim has been removed; updateMany is never called
+    expect(prisma.deploymentSettings.updateMany).not.toHaveBeenCalled();
   });
 
   it("leaves existing owned settings untouched", async () => {
@@ -101,31 +97,8 @@ describe("bootstrapUserSpace", () => {
 
     const { update } = prisma.deploymentSettings.upsert.mock.calls[0]![0];
     expect(update).toEqual({});
-    // The only owner write is the conditional claim, which excludes rows
-    // that already have an owner.
-    expect(prisma.deploymentSettings.updateMany).toHaveBeenCalledWith({
-      where: { id: "default", ownerUserId: null },
-      data: { ownerUserId: "user-1" },
-    });
-  });
-
-  it("never claims deployment ownership when claimDeploymentOwner is false", async () => {
-    const prisma = makePrisma({ id: "default", ownerUserId: null });
-    await bootstrapUserSpace(prisma as unknown as PrismaClient, { id: "user-1" }, env, {
-      claimDeploymentOwner: false,
-    });
-
+    // Owner claim removed; updateMany is never called
     expect(prisma.deploymentSettings.updateMany).not.toHaveBeenCalled();
-  });
-
-  it("seeds settings without an owner when claimDeploymentOwner is false", async () => {
-    const prisma = makePrisma(null);
-    await bootstrapUserSpace(prisma as unknown as PrismaClient, { id: "user-1" }, env, {
-      claimDeploymentOwner: false,
-    });
-
-    const { create } = prisma.deploymentSettings.upsert.mock.calls[0]![0];
-    expect(create.ownerUserId).toBeNull();
   });
 
   it("creates the user memory document and notification preference in the new workspace", async () => {
