@@ -96,7 +96,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppEnv } from "./env.js";
 import { loadEnv } from "./env.js";
-import { healthRoutes } from "./health.js";
+import { healthRoutes, hubPolicyHealth } from "./health.js";
 import { mountLocalSettings } from "./local-settings.js";
 import {
   createMessagingInboundHandler,
@@ -894,7 +894,7 @@ export async function createApp(
       realtime: realtime.describe().id,
       revision: env.gitSha ?? null,
       // Revision, freshness, source and state only; never a setting value.
-      hubPolicy: hubPolicy ? await hubPolicy.status() : null,
+      ...hubPolicyHealth(hubPolicy ? await hubPolicy.status() : null),
     })),
   );
 

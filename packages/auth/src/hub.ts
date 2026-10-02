@@ -21,7 +21,7 @@ import {
   HubUnsupportedIdpError,
   hubUserId,
 } from "./hub-client.js";
-import type { HubPolicy } from "./hub-policy.js";
+import { type HubPolicy, notConfiguredHubPolicy } from "./hub-policy.js";
 import { HubPolicyError } from "./hub-policy-contract.js";
 import { createHubSessionAuthorizer } from "./hub-sessions.js";
 
@@ -199,7 +199,11 @@ export function createHubAuth(
   },
   client = createHubClient(config),
 ) {
-  const policy = env.hubPolicy;
+  // Hub mode without its tenant or service credential admits nothing, whatever policy
+  // the caller passed: the config is the authority on whether Hub can be asked (F1).
+  const policy = config.notConfigured
+    ? notConfiguredHubPolicy({ missing: config.notConfigured.missing.map((item) => item.name) })
+    : env.hubPolicy;
   if (!policy) throw new Error("Hub mode requires the Hub policy gate");
   const encrypt = (data: string) => symmetricEncrypt({ key: env.tokenEncryptionKey, data });
   const redirectUri = new URL(`/api/auth${HUB_SSO_CALLBACK_PATH}`, env.baseURL).href;
@@ -335,6 +339,8 @@ export function createHubAuth(
             const { session, user } = await completeHubGrant(ctx, grant);
             return ctx.json({ token: session.token, user });
           } catch (error) {
+            // Nothing local holds this grant, so revoke it at Hub, as SSO does (F6).
+            await client.revoke(grant.refreshToken).catch(() => undefined);
             if (error instanceof HubPolicyError) throw hubRefusal(error);
             throw new APIError("UNAUTHORIZED", {
               message: "Could not sign in through CortexAI Hub",

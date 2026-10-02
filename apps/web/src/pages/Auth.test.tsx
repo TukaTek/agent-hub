@@ -267,6 +267,8 @@ const hubRefusals: Array<[string, number, string]> = [
   ["HUB_CONFIG_INVALID", 503, hubUnavailable],
   ["HUB_CONFIG_RESTART_REQUIRED", 503, hubUnavailable],
   ["TENANT_DISABLED", 403, hubUnavailable],
+  ["HUB_CREDENTIAL_INVALID", 503, hubUnavailable],
+  ["HUB_NOT_CONFIGURED", 503, hubUnavailable],
   ["HUB_ACCESS_DENIED", 403, "Ask your admin for access"],
 ];
 

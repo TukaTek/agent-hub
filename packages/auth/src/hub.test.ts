@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
 import {
   createHubClient,
+  type HubAuthConfig,
   HubRequestError,
   HubUnsupportedIdpError,
   hubUserId,
@@ -13,7 +14,7 @@ import {
 import { applyHubPolicyAtStartup, createHubPolicy, type HubPolicy } from "./hub-policy.js";
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
 import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
-import { createUserWorkAuthorizer } from "./hub-sessions.js";
+import { createHubSessionAuthorizer, createUserWorkAuthorizer } from "./hub-sessions.js";
 import { createAuth } from "./index.js";
 
 vi.mock("better-auth/adapters/prisma", async () => {
@@ -55,6 +56,7 @@ function fixture(
     policy?: HubPolicy;
     assigned?: readonly string[];
     contract?: boolean;
+    hub?: HubAuthConfig;
   } = {},
 ) {
   const gate = hubPolicyForTests(config.tenantId, options.assigned, {
@@ -166,7 +168,7 @@ function fixture(
     tokenEncryptionKey: encryptionKey,
     baseURL: web,
     webOrigin: web,
-    hub: options.sso ? ssoConfig : config,
+    hub: options.hub ?? (options.sso ? ssoConfig : config),
     signupsEnabled: "true",
     signupAllowlist: "",
     onHubSsoError: options.onHubSsoError,
@@ -201,7 +203,7 @@ function fixture(
     return { response, setCookie, state, cookie: `__Host-ah_sso=${state}` };
   }
   const callback = (query: string, cookie = "") => request(`/hub/sso/callback?${query}`, cookie);
-  const work = createUserWorkAuthorizer(prisma, config, encryptionKey, { policy });
+  const work = createUserWorkAuthorizer(prisma, options.hub ?? config, encryptionKey, { policy });
   return {
     auth,
     request,
@@ -1114,6 +1116,12 @@ describe("Hub policy gate on every sign-in path (CAAH-36)", () => {
       "TENANT_DISABLED",
       403,
     ],
+    [
+      "rejected service credential",
+      async () => Promise.reject(new HubRequestError(401, "invalid_credentials")),
+      "HUB_CREDENTIAL_INVALID",
+      503,
+    ],
   ];
 
   async function expectRefused(response: Response, expected: string, status: number) {
@@ -1240,6 +1248,8 @@ describe("Hub policy gate on every sign-in path (CAAH-36)", () => {
       code: "HUB_ACCESS_DENIED",
       message: "Ask your admin for access",
     });
+    // F6: the grant Hub just issued is revoked, as on the SSO path.
+    expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
     expect(f.data.session).toHaveLength(0);
     expect(f.data.user).toHaveLength(0);
   });
@@ -1388,6 +1398,95 @@ describe("Hub policy gate on every sign-in path (CAAH-36)", () => {
     for (const text of [await continued.text(), await response.text(), JSON.stringify(session)])
       expect(text).not.toContain("hub-model-secret-not-real");
     expect(JSON.stringify(await policy.status())).not.toContain("hub-model-secret-not-real");
+  });
+});
+
+describe("Hub mode started without its tenant or service credential (F1)", () => {
+  const branded = "Sign-in is temporarily unavailable, CortexAI Hub can't be reached";
+  const notConfigured: HubAuthConfig = {
+    origin: config.origin,
+    notConfigured: {
+      missing: [
+        { name: "HUB_AUTH_TENANT_ID", problem: "unset" },
+        { name: "HUB_SERVICE_SECRET_FILE", problem: "unset" },
+      ],
+    },
+  };
+  async function expectNotConfigured(response: Response) {
+    expect(response.status).toBe(503);
+    expect(response.headers.get("set-cookie") ?? "").not.toContain("session_token");
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "HUB_NOT_CONFIGURED", message: branded });
+    expect(JSON.stringify(body)).not.toContain("HUB_AUTH_TENANT_ID");
+  }
+
+  it("refuses email-first Continue without asking Hub", async () => {
+    const f = fixture(undefined, { hub: notConfigured });
+    await expectNotConfigured(
+      await f.request("/hub/sign-in/continue", "", { email: "user@example.test" }),
+    );
+    expect(f.client.lookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["web", undefined],
+    ["mobile", MOBILE_ORIGIN],
+  ])("refuses password sign-in from %s and creates nothing", async (_client, origin) => {
+    const f = fixture(undefined, { hub: notConfigured });
+    const response = await f.request(
+      "/hub/sign-in",
+      "",
+      { email: "user@example.test", password: "test-password" },
+      origin,
+    );
+    await expectNotConfigured(response);
+    expect(f.client.login).not.toHaveBeenCalled();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+  });
+
+  it("refuses even when a working policy is passed, because the config wins", async () => {
+    const f = fixture(undefined, {
+      hub: notConfigured,
+      policy: hubPolicyForTests("tenant-1").policy,
+    });
+    await expectNotConfigured(
+      await f.request("/hub/sign-in", "", {
+        email: "user@example.test",
+        password: "test-password",
+      }),
+    );
+    expect(f.client.login).not.toHaveBeenCalled();
+  });
+
+  it("keeps local email sign-up and sign-in closed", async () => {
+    const f = fixture(undefined, { hub: notConfigured });
+    for (const path of ["/sign-in/email", "/sign-up/email"]) {
+      const response = await f.request(path, "", {
+        email: "local@example.test",
+        password: "local-password-1",
+        name: "Local",
+      });
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    }
+    expect(f.data.user).toHaveLength(0);
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("admits no existing session and no work", async () => {
+    const f = fixture();
+    await f.login();
+    const sessionId = f.data.session![0]!.id;
+    const authorize = createHubSessionAuthorizer(f.prisma, notConfigured, encryptionKey, f.client, {
+      policy: f.policy,
+    });
+    expect(await authorize(sessionId, userId)).toBe(false);
+    expect(f.client.verify).not.toHaveBeenCalled();
+    const work = createUserWorkAuthorizer(f.prisma, notConfigured, encryptionKey, {
+      policy: f.policy,
+    });
+    expect(await work(userId)).toBe(false);
+    expect(f.data.session).toHaveLength(1);
   });
 });
 

@@ -187,6 +187,7 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-20
     expect(parseHubPolicy(marked([]), TENANT).assignments).toEqual({
       status: "configured",
       subjects: [],
+      contract: HUB_ASSIGNMENTS_CONTRACT,
     });
   });
 
@@ -195,6 +196,7 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-20
     expect(policy.assignments).toEqual({
       status: "configured",
       subjects: ["subject-1", "subject-3"],
+      contract: HUB_ASSIGNMENTS_CONTRACT,
     });
   });
 
@@ -202,14 +204,15 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-20
     const rows = [row("subject-1"), row("subject-2", "admin")];
     for (const entry of rows)
       expect(Object.keys(entry).sort()).toEqual(["productId", "role", "tenantUserId"]);
-    for (const raw of [
-      marked(rows),
-      withAccess({ status: "configured", productAssignments: rows }),
-    ])
-      expect(parseHubPolicy(raw, TENANT).assignments).toEqual({
-        status: "configured",
-        subjects: ["subject-1", "subject-2"],
-      });
+    expect(parseHubPolicy(marked(rows), TENANT).assignments).toEqual({
+      status: "configured",
+      subjects: ["subject-1", "subject-2"],
+      contract: HUB_ASSIGNMENTS_CONTRACT,
+    });
+    expect(
+      parseHubPolicy(withAccess({ status: "configured", productAssignments: rows }), TENANT)
+        .assignments,
+    ).toEqual({ status: "configured", subjects: ["subject-1", "subject-2"] });
   });
 
   it("keeps the CAH-204 guard for an empty list without the marker", () => {
@@ -224,6 +227,8 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-20
 
   it.each([
     ["a newer version", "agent-hub-assignments.v2"],
+    ["a case variant", "Agent-Hub-Assignments.v1"],
+    ["whitespace-padded", " agent-hub-assignments.v1 "],
     ["an empty string", ""],
     ["null", null],
     ["a number", 1],
@@ -234,6 +239,46 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-20
       expect(error.code).toBe("HUB_CONFIG_INVALID");
       expect(error.reason).toBe("assignments_contract");
     }
+  });
+
+  it("rejects a marked row for another product instead of ignoring it (F11)", () => {
+    const other = { ...row("subject-2"), productId: "00000000-0000-4000-8000-000000000001" };
+    for (const rows of [[other], [row("subject-1"), other]]) {
+      const error = reject(marked(rows));
+      expect(error.code).toBe("HUB_CONFIG_INVALID");
+      expect(error.reason).toBe("assignments_product");
+    }
+    // Without the marker, pre-CAH-204 rows for other products stay ignored (pending).
+    expect(parseHubPolicy(fixture.cases["raw-assignment-rows"], TENANT).assignments.status).toBe(
+      "unknown",
+    );
+  });
+
+  it("rejects unknown keys in access or in a row under the marker (F11)", () => {
+    expect(reject(marked([row("subject-1")], { assignedAt: "2026-01-01" })).reason).toBe(
+      "assignments_fields",
+    );
+    expect(reject(marked([{ ...row("subject-1"), expiresAt: null }])).reason).toBe(
+      "assignments_fields",
+    );
+    // The full row shape Hub sends under the marker is accepted.
+    expect(
+      parseHubPolicy(marked([{ ...row("subject-1"), tenantId: TENANT }]), TENANT).assignments
+        .subjects,
+    ).toEqual(["subject-1"]);
+  });
+
+  it("ignores extra keys without the marker, as pre-CAH-204 Hub sends them", () => {
+    expect(
+      parseHubPolicy(
+        withAccess({
+          status: "configured",
+          extra: true,
+          productAssignments: [{ ...row("subject-1"), createdAt: "2026-01-01" }],
+        }),
+        TENANT,
+      ).assignments,
+    ).toEqual({ status: "configured", subjects: ["subject-1"] });
   });
 
   it("still rejects marked rows that belong to another tenant", () => {
@@ -251,7 +296,11 @@ describe("Hub's published service-config sample (CAH-204)", () => {
     const policy = parseHubPolicy(clone(hubSample), hubSample.tenantId);
     expect(policy.tenantId).toBe(hubSample.tenantId);
     expect(policy.revision).toBe(hubSample.revision);
-    expect(policy.assignments).toEqual({ status: "configured", subjects: [...listed].sort() });
+    expect(policy.assignments).toEqual({
+      status: "configured",
+      subjects: [...listed].sort(),
+      contract: HUB_ASSIGNMENTS_CONTRACT,
+    });
   });
 
   it("denies everyone when the sample's list is emptied", () => {
@@ -260,10 +309,20 @@ describe("Hub's published service-config sample (CAH-204)", () => {
     expect(parseHubPolicy(raw, hubSample.tenantId).assignments).toEqual({
       status: "configured",
       subjects: [],
+      contract: HUB_ASSIGNMENTS_CONTRACT,
     });
   });
 
   it("is refused for any other tenant", () => {
     expect(reject(clone(hubSample), TENANT).reason).toBe("tenant_mismatch");
+  });
+
+  it("carries the document's tenant on every row, and a row for another tenant is refused", () => {
+    expect(
+      hubSample.access.productAssignments.every((r) => r.tenantId === hubSample.tenantId),
+    ).toBe(true);
+    const raw = clone(hubSample);
+    raw.access.productAssignments[0]!.tenantId = "another-tenant";
+    expect(reject(raw, hubSample.tenantId).reason).toBe("tenant_mismatch");
   });
 });

@@ -3,6 +3,7 @@ import fixture from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import {
   createHubClient,
+  HUB_CONFIG_DOC,
   HubRequestError,
   HubUnsupportedIdpError,
   hubAuthFromEnv,
@@ -167,10 +168,11 @@ describe("Hub Workbench-style tenant authentication", () => {
         HUB_AUTH_TENANT_ID: "t-1",
       }),
     ).toThrow();
-    // Hub policy is tenant-scoped, so Hub mode cannot run without a pinned tenant.
-    expect(() => hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin })).toThrow(
-      "AUTH_MODE=hub requires HUB_AUTH_TENANT_ID",
-    );
+    // Hub policy is tenant-scoped: without a pinned tenant Hub mode starts not configured.
+    expect(hubAuthFromEnv({ AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin })).toEqual({
+      origin,
+      notConfigured: { missing: [{ name: "HUB_AUTH_TENANT_ID", problem: "unset" }] },
+    });
     const f = setup();
     await expect(
       createHubClient({ origin, tenantId: "other" }, f.fetcher).login(
@@ -681,31 +683,67 @@ describe("Hub SSO configuration", () => {
   it.each([
     ["AUTH_MODE", "local", "HUB_SSO_ENABLED requires AUTH_MODE=hub"],
     ["AUTH_MODE", undefined, "HUB_SSO_ENABLED requires AUTH_MODE=hub"],
-    ["HUB_AUTH_TENANT_ID", undefined, "AUTH_MODE=hub requires HUB_AUTH_TENANT_ID"],
     ["HUB_DEPLOYMENT_ID", undefined, "HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID"],
     ["HUB_DEPLOYMENT_ID", "prod-1", "HUB_DEPLOYMENT_ID must be the deployment UUID"],
-    ["HUB_SERVICE_API_ID", " ", "AUTH_MODE=hub requires HUB_SERVICE_API_ID"],
-    ["HUB_SERVICE_SECRET_FILE", undefined, "AUTH_MODE=hub requires HUB_SERVICE_SECRET_FILE"],
     ["HUB_SSO_ENABLED", "yes", "HUB_SSO_ENABLED must be true or false"],
+    ["HUB_AUTH_ORIGIN", undefined, "AUTH_MODE=hub requires HUB_AUTH_ORIGIN"],
+    ["HUB_AUTH_ORIGIN", "not a url", "HUB_AUTH_ORIGIN must be an HTTPS origin"],
     ["HUB_AUTH_TENANT_ID", "t".repeat(257), "HUB_AUTH_TENANT_ID must be at most 256 characters"],
     ["HUB_SERVICE_API_ID", "a".repeat(257), "HUB_SERVICE_API_ID must be at most 256 characters"],
-  ])("refuses to start when %s is %s", (key, value, message) => {
-    const env: NodeJS.ProcessEnv = { ...base, [key]: value };
-    if (value === undefined) delete env[key];
-    expect(() => hubAuthFromEnv(env, { readSecretFile })).toThrow(message);
+  ])(
+    "refuses to start when %s is %s, naming the setting and the runbook",
+    (key, value, message) => {
+      const env: NodeJS.ProcessEnv = { ...base, [key]: value };
+      if (value === undefined) delete env[key];
+      expect(() => hubAuthFromEnv(env, { readSecretFile })).toThrow(message);
+      expect(() => hubAuthFromEnv(env, { readSecretFile })).toThrow(HUB_CONFIG_DOC);
+    },
+  );
+
+  it.each([
+    [["HUB_AUTH_TENANT_ID"], undefined],
+    [["HUB_AUTH_TENANT_ID"], "  "],
+    [["HUB_SERVICE_API_ID"], " "],
+    [["HUB_SERVICE_SECRET_FILE"], undefined],
+    [["HUB_AUTH_TENANT_ID", "HUB_SERVICE_API_ID", "HUB_SERVICE_SECRET_FILE"], undefined],
+  ])("starts Hub mode not configured when %j is %j, with SSO off", (keys, value) => {
+    const env: NodeJS.ProcessEnv = { ...base };
+    for (const key of keys) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+    const hub = hubAuthFromEnv(env, { readSecretFile });
+    expect(hub).toEqual({
+      origin,
+      notConfigured: { missing: keys.map((name) => ({ name, problem: "unset" })) },
+    });
+    // Nothing that could reach Hub or start SSO is configured.
+    expect(hub?.service).toBeUndefined();
+    expect(hub?.sso).toBeUndefined();
+    expect(hub?.tenantId).toBeUndefined();
   });
 
-  it("refuses an unreadable or empty secret file without echoing its contents", () => {
-    expect(() =>
-      hubAuthFromEnv(base, {
-        readSecretFile: () => {
-          throw new Error("ENOENT synthetic-service-secret");
-        },
-      }),
-    ).toThrow(/^HUB_SERVICE_SECRET_FILE could not be read$/);
-    expect(() => hubAuthFromEnv(base, { readSecretFile: () => " \n" })).toThrow(
-      "HUB_SERVICE_SECRET_FILE is empty",
-    );
+  it("starts the worker not configured only for a missing tenant", () => {
+    const { HUB_AUTH_TENANT_ID: _tenant, HUB_SERVICE_API_ID: _id, ...worker } = base;
+    expect(hubAuthFromEnv(worker)?.notConfigured).toEqual({
+      missing: [{ name: "HUB_AUTH_TENANT_ID", problem: "unset" }],
+    });
+    expect(hubAuthFromEnv({ ...worker, HUB_AUTH_TENANT_ID: "t-1" })?.notConfigured).toBeUndefined();
+  });
+
+  it("starts not configured for an unreadable or empty secret file without echoing it", () => {
+    const unreadable = hubAuthFromEnv(base, {
+      readSecretFile: () => {
+        throw new Error("ENOENT synthetic-service-secret");
+      },
+    });
+    expect(unreadable?.notConfigured).toEqual({
+      missing: [{ name: "HUB_SERVICE_SECRET_FILE", problem: "unreadable" }],
+    });
+    expect(JSON.stringify(unreadable)).not.toContain("synthetic-service-secret");
+    expect(hubAuthFromEnv(base, { readSecretFile: () => " \n" })?.notConfigured).toEqual({
+      missing: [{ name: "HUB_SERVICE_SECRET_FILE", problem: "empty" }],
+    });
     const oversized = "s".repeat(4097);
     const failure = (() => {
       try {
@@ -714,6 +752,8 @@ describe("Hub SSO configuration", () => {
         return String(error);
       }
     })();
-    expect(failure).toBe("Error: HUB_SERVICE_SECRET_FILE must hold at most 4096 characters");
+    expect(failure).toBe(
+      `Error: HUB_SERVICE_SECRET_FILE must hold at most 4096 characters. See ${HUB_CONFIG_DOC}`,
+    );
   });
 });

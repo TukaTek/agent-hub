@@ -32,6 +32,8 @@ export function createHubSessionAuthorizer(
   metricsTimer.unref();
 
   const authorize = async (sessionId: string, userId: string): Promise<boolean> => {
+    // Hub mode without its tenant or service credential admits no session (F1).
+    if (config.notConfigured) return false;
     try {
       return await prisma.$transaction(
         async (tx) => {
@@ -138,6 +140,8 @@ export function createUserWorkAuthorizer(
   client?: ReturnType<typeof createHubClient>,
 ) {
   const { policy } = options;
+  // Hub mode without its tenant or service credential admits no work (F1).
+  if (config?.notConfigured) return async (_userId: string): Promise<boolean> => false;
   if (config && !policy) throw new Error("Hub mode requires the Hub policy gate");
   const authorize =
     config && policy

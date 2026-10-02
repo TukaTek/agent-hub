@@ -1,8 +1,29 @@
+import { createHmac, randomBytes } from "node:crypto";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import type { HubPolicyDocument } from "./hub-policy-contract.js";
 
-export type HubPolicyState = "ok" | "unavailable" | "invalid" | "tenant_disabled";
+/**
+ * Keyed digest of the startup-bound overrides. The overrides include Hub-delivered
+ * secrets, so the stored digest is an HMAC under a server-side key, never a plain hash.
+ */
+export function hubPolicyDigest(
+  document: Pick<HubPolicyDocument, "overrides"> | null,
+  key: string,
+): string {
+  const overrides = document?.overrides ?? {};
+  const canonical = Object.keys(overrides)
+    .sort()
+    .map((path) => [path, overrides[path]]);
+  return createHmac("sha256", key).update(JSON.stringify(canonical)).digest("hex");
+}
+
+export type HubPolicyState =
+  | "ok"
+  | "unavailable"
+  | "invalid"
+  | "tenant_disabled"
+  | "credential_invalid";
 
 /**
  * The shared last-known-good Hub policy. API and worker read the same row, so both
@@ -31,12 +52,15 @@ export interface HubPolicyRecord {
 export interface HubPolicyStore {
   read(tenant: string): Promise<HubPolicyRecord | null>;
   write(record: HubPolicyRecord): Promise<void>;
+  /** The keyed overrides digest. Every process sharing the store computes the same one. */
+  digest(document: Pick<HubPolicyDocument, "overrides"> | null): string;
 }
 
 /** Process-local store for tests and single-process tools. */
-export function memoryHubPolicyStore(): HubPolicyStore {
+export function memoryHubPolicyStore(digestKey = randomBytes(32).toString("hex")): HubPolicyStore {
   const rows = new Map<string, HubPolicyRecord>();
   return {
+    digest: (document) => hubPolicyDigest(document, digestKey),
     read: async (tenant) => {
       const row = rows.get(tenant);
       return row ? structuredClone(row) : null;
@@ -49,7 +73,12 @@ export function memoryHubPolicyStore(): HubPolicyStore {
 
 /** The document holds Hub-delivered credentials, so it is stored encrypted. */
 export function prismaHubPolicyStore(prisma: PrismaClient, encryptionKey: string): HubPolicyStore {
+  // A purpose-bound subkey, so the digest never uses the encryption key directly.
+  const digestKey = createHmac("sha256", encryptionKey)
+    .update("cortexai-agent-hub/hub-policy-digest/v1")
+    .digest("hex");
   return {
+    digest: (document) => hubPolicyDigest(document, digestKey),
     async read(tenant) {
       const row = await prisma.hubPolicySnapshot.findUnique({ where: { tenant } });
       if (!row) return null;

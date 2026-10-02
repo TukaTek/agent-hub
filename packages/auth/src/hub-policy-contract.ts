@@ -20,6 +20,8 @@ export {
   HUB_ACCESS_DENIED,
   HUB_CONFIG_INVALID,
   HUB_CONFIG_RESTART_REQUIRED,
+  HUB_CREDENTIAL_INVALID,
+  HUB_NOT_CONFIGURED,
   HUB_UNAVAILABLE,
   TENANT_DISABLED,
 } from "@cortexai-agent-hub/core";
@@ -181,7 +183,15 @@ export interface HubPolicyDocument {
    * Assigned Hub users. Under Hub's assignment contract the list is authoritative, so an
    * empty one means nobody. Without it, empty or unattributable lists are unknown (CAH-204).
    */
-  assignments: { status: "configured" | "unknown"; subjects: readonly string[] };
+  assignments: {
+    status: "configured" | "unknown";
+    subjects: readonly string[];
+    /**
+     * Set when Hub sent this list under its assignment contract. Stored with the
+     * last-known-good document, so once seen a later list without it is invalid (F4).
+     */
+    contract?: typeof HUB_ASSIGNMENTS_CONTRACT;
+  };
 }
 
 type Json = Record<string, unknown>;
@@ -304,6 +314,9 @@ function parseToolkits(value: unknown): HubPolicyDocument["toolkits"] {
   return { status: "configured", allowed: allowed.filter((id) => enabled.includes(id)) };
 }
 
+const ASSIGNMENT_ACCESS_KEYS = new Set(["status", "contract", "productAssignments"]);
+const ASSIGNMENT_ROW_KEYS = new Set(["tenantUserId", "tenantId", "productId", "role"]);
+
 function parseAssignments(value: unknown, tenantId: string): HubPolicyDocument["assignments"] {
   if (value === undefined) return { status: "unknown", subjects: [] };
   if (
@@ -316,18 +329,31 @@ function parseAssignments(value: unknown, tenantId: string): HubPolicyDocument["
   if ("contract" in value && value.contract !== HUB_ASSIGNMENTS_CONTRACT)
     throw invalid("assignments_contract");
   const authoritative = value.contract === HUB_ASSIGNMENTS_CONTRACT;
+  // Under the versioned contract the shape is exact; a new field comes with a new version.
+  if (authoritative && !Object.keys(value).every((key) => ASSIGNMENT_ACCESS_KEYS.has(key)))
+    throw invalid("assignments_fields");
   const subjects = new Set<string>();
   for (const row of value.productAssignments) {
     if (!isObject(row) || typeof row.tenantUserId !== "string" || !row.tenantUserId.trim())
       throw invalid("assignments");
+    if (authoritative && !Object.keys(row).every((key) => ASSIGNMENT_ROW_KEYS.has(key)))
+      throw invalid("assignments_fields");
     if (row.tenantId !== undefined && row.tenantId !== tenantId) throw invalid("tenant_mismatch");
+    // Hub's contract projects Agent Hub rows only, so another product there is a Hub bug.
+    if (authoritative && row.productId !== HUB_POLICY_PRODUCT) throw invalid("assignments_product");
     // Pre-CAH-204 rows carry Hub's internal product id and cover every product, so only
     // rows explicitly attributed to Agent Hub count as an assignment.
     if (row.productId === HUB_POLICY_PRODUCT) subjects.add(row.tenantUserId);
   }
   if (value.status !== "configured") return { status: "unknown", subjects: [] };
   // Hub's contract makes an empty list mean nobody; without it, empty stays unknown.
-  if (subjects.size === 0 && !authoritative) return { status: "unknown", subjects: [] };
+  if (authoritative)
+    return {
+      status: "configured",
+      subjects: [...subjects].sort(),
+      contract: HUB_ASSIGNMENTS_CONTRACT,
+    };
+  if (subjects.size === 0) return { status: "unknown", subjects: [] };
   return { status: "configured", subjects: [...subjects].sort() };
 }
 

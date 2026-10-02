@@ -20,7 +20,22 @@ export interface HubAuthConfig {
   service?: HubServiceCredential;
   /** Present only when tenant Entra SSO is enabled; implies tenantId and deploymentId. */
   sso?: HubServiceCredential;
+  /**
+   * Hub mode without its tenant or service credential. The process still starts, but
+   * every sign-in is refused with HUB_NOT_CONFIGURED and no session or work is admitted.
+   * Only setting names are recorded, never values.
+   */
+  notConfigured?: { missing: readonly HubConfigProblem[] };
 }
+
+export interface HubConfigProblem {
+  name: "HUB_AUTH_TENANT_ID" | "HUB_SERVICE_API_ID" | "HUB_SERVICE_SECRET_FILE";
+  problem: "unset" | "unreadable" | "empty";
+}
+
+/** The runbook section every Hub boot error and the not-configured log point to. */
+export const HUB_CONFIG_DOC = "docs/hub-auth.md#configuring-hub-mode";
+const configError = (message: string) => new Error(`${message}. See ${HUB_CONFIG_DOC}`);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * The service credential is read only when `readSecretFile` is given, so processes
@@ -33,13 +48,20 @@ export function hubAuthFromEnv(
   const mode = source.AUTH_MODE ?? "local";
   const ssoFlag = source.HUB_SSO_ENABLED?.trim() || "false";
   if (ssoFlag !== "true" && ssoFlag !== "false") {
-    throw new Error("HUB_SSO_ENABLED must be true or false");
+    throw configError("HUB_SSO_ENABLED must be true or false");
   }
   const ssoEnabled = Boolean(options.readSecretFile) && ssoFlag === "true";
-  if (ssoEnabled && mode !== "hub") throw new Error("HUB_SSO_ENABLED requires AUTH_MODE=hub");
+  if (ssoEnabled && mode !== "hub") throw configError("HUB_SSO_ENABLED requires AUTH_MODE=hub");
   if (mode === "local") return undefined;
-  if (mode !== "hub") throw new Error("AUTH_MODE must be local or hub");
-  const url = new URL(source.HUB_AUTH_ORIGIN?.trim() || "");
+  if (mode !== "hub") throw configError("AUTH_MODE must be local or hub");
+  const rawOrigin = source.HUB_AUTH_ORIGIN?.trim();
+  if (!rawOrigin) throw configError("AUTH_MODE=hub requires HUB_AUTH_ORIGIN");
+  let url: URL;
+  try {
+    url = new URL(rawOrigin);
+  } catch {
+    throw configError("HUB_AUTH_ORIGIN must be an HTTPS origin");
+  }
   if (
     url.protocol !== "https:" ||
     url.username ||
@@ -48,19 +70,19 @@ export function hubAuthFromEnv(
     url.hash ||
     url.pathname !== "/"
   ) {
-    throw new Error("HUB_AUTH_ORIGIN must be an HTTPS origin");
+    throw configError("HUB_AUTH_ORIGIN must be an HTTPS origin");
   }
   let cacheTtlMs: number | undefined;
   if (source.HUB_VERIFY_CACHE_TTL_MS) {
     const raw = source.HUB_VERIFY_CACHE_TTL_MS.trim();
     // Reject malformed values like "30000junk" by checking the raw string matches /^\d+$/
     if (!/^\d+$/.test(raw)) {
-      throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative integer");
+      throw configError("HUB_VERIFY_CACHE_TTL_MS must be a non-negative integer");
     }
     cacheTtlMs = parseInt(raw, 10);
     // Reject Infinity and values outside safe integer range
     if (!Number.isSafeInteger(cacheTtlMs) || cacheTtlMs < 0) {
-      throw new Error("HUB_VERIFY_CACHE_TTL_MS must be a non-negative safe integer");
+      throw configError("HUB_VERIFY_CACHE_TTL_MS must be a non-negative safe integer");
     }
   }
 
@@ -69,33 +91,48 @@ export function hubAuthFromEnv(
       ? undefined
       : source.HUB_VERIFY_CACHE_ENABLED !== "false";
 
-  // Hub policy is tenant-scoped and read with the service credential (CAAH-36).
+  // Hub policy is tenant-scoped and read with the service credential (CAAH-36). Missing
+  // ones start Hub mode not configured (fail closed) instead of crashing; malformed
+  // values still stop the process, because they are typos rather than a rollout gap.
+  const missing: HubConfigProblem[] = [];
   const tenantId = source.HUB_AUTH_TENANT_ID?.trim();
-  if (!tenantId) throw new Error("AUTH_MODE=hub requires HUB_AUTH_TENANT_ID");
-  if (tenantId.length > 256) throw new Error("HUB_AUTH_TENANT_ID must be at most 256 characters");
+  if (!tenantId) missing.push({ name: "HUB_AUTH_TENANT_ID", problem: "unset" });
+  else if (tenantId.length > 256)
+    throw configError("HUB_AUTH_TENANT_ID must be at most 256 characters");
   const deploymentId = source.HUB_DEPLOYMENT_ID?.trim();
   if (deploymentId && !UUID.test(deploymentId)) {
-    throw new Error("HUB_DEPLOYMENT_ID must be the deployment UUID issued by CortexAI Hub");
+    throw configError("HUB_DEPLOYMENT_ID must be the deployment UUID issued by CortexAI Hub");
   }
-  if (ssoEnabled && !deploymentId) throw new Error("HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID");
+  if (ssoEnabled && !deploymentId) throw configError("HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID");
   let service: HubServiceCredential | undefined;
   if (options.readSecretFile) {
     const apiId = source.HUB_SERVICE_API_ID?.trim();
-    if (!apiId) throw new Error("AUTH_MODE=hub requires HUB_SERVICE_API_ID");
-    if (apiId.length > 256) throw new Error("HUB_SERVICE_API_ID must be at most 256 characters");
+    if (!apiId) missing.push({ name: "HUB_SERVICE_API_ID", problem: "unset" });
+    else if (apiId.length > 256)
+      throw configError("HUB_SERVICE_API_ID must be at most 256 characters");
     const secretFile = source.HUB_SERVICE_SECRET_FILE?.trim();
-    if (!secretFile) throw new Error("AUTH_MODE=hub requires HUB_SERVICE_SECRET_FILE");
-    let secret: string;
-    try {
-      secret = options.readSecretFile(secretFile).trim();
-    } catch {
-      throw new Error("HUB_SERVICE_SECRET_FILE could not be read");
+    let secret = "";
+    if (!secretFile) missing.push({ name: "HUB_SERVICE_SECRET_FILE", problem: "unset" });
+    else {
+      try {
+        secret = options.readSecretFile(secretFile).trim();
+        if (!secret) missing.push({ name: "HUB_SERVICE_SECRET_FILE", problem: "empty" });
+      } catch {
+        // Never echo the error: it can carry the path or file contents.
+        missing.push({ name: "HUB_SERVICE_SECRET_FILE", problem: "unreadable" });
+      }
     }
-    if (!secret) throw new Error("HUB_SERVICE_SECRET_FILE is empty");
     if (secret.length > 4096)
-      throw new Error("HUB_SERVICE_SECRET_FILE must hold at most 4096 characters");
-    service = { apiId, secret };
+      throw configError("HUB_SERVICE_SECRET_FILE must hold at most 4096 characters");
+    if (apiId && secret) service = { apiId, secret };
   }
+  if (missing.length)
+    return {
+      origin: url.origin,
+      ...(cacheTtlMs !== undefined ? { verifyCacheTtlMs: cacheTtlMs } : {}),
+      ...(cacheEnabled !== undefined ? { verifyCacheEnabled: cacheEnabled } : {}),
+      notConfigured: { missing },
+    };
 
   return {
     origin: url.origin,

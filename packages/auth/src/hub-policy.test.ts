@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   hubManagedDeploymentSettings,
   setHubManagedDeploymentSettings,
@@ -13,6 +14,8 @@ import {
   createHubPolicy,
   type HubConfigFetch,
   type HubPolicySignal,
+  hubPolicyDigest,
+  notConfiguredHubPolicy,
 } from "./hub-policy.js";
 import { HubPolicyError } from "./hub-policy-contract.js";
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
@@ -119,15 +122,36 @@ describe("Hub policy last-known-good cache", () => {
   });
 
   it.each([
-    [401, "invalid_service_token"],
-    [403, "access_denied"],
-  ])("treats Hub %i as TENANT_DISABLED and stops new work", async (status, code) => {
+    [
+      401,
+      "invalid_service_token",
+      "HUB_CREDENTIAL_INVALID",
+      "credential_invalid",
+      "invalid_service_token",
+    ],
+    [
+      401,
+      "invalid_credentials",
+      "HUB_CREDENTIAL_INVALID",
+      "credential_invalid",
+      "invalid_credentials",
+    ],
+    [401, "something_else", "HUB_CREDENTIAL_INVALID", "credential_invalid", "http_401"],
+    [403, "access_denied", "TENANT_DISABLED", "tenant_disabled", "access_denied"],
+    [403, "service_grant_missing", "TENANT_DISABLED", "tenant_disabled", "service_grant_missing"],
+    [403, "tenant_disabled", "TENANT_DISABLED", "tenant_disabled", "tenant_disabled"],
+    [403, "product_disabled", "TENANT_DISABLED", "tenant_disabled", "product_disabled"],
+    [403, "unexpected_code", "TENANT_DISABLED", "tenant_disabled", "access_denied"],
+  ])("treats Hub %i %s as %s and stops new work", async (status, code, expected, state, reason) => {
     const fetchConfig = ok(configured());
-    const { api, worker } = await start(fetchConfig);
+    const { api, worker, store } = await start(fetchConfig);
     expect(await worker.workAllowed(assigned)).toBe(true);
     fetchConfig.mockRejectedValue(new HubRequestError(status, code));
     vi.useFakeTimers({ now: Date.now() + 10_000 });
-    expect(await codeOf(api.check())).toBe("TENANT_DISABLED");
+    expect(await codeOf(api.check())).toBe(expected);
+    // The sub-code is for operators: it is the log reason only, never shown to users.
+    expect(await store.read(TENANT)).toMatchObject({ state, reason });
+    expect((await api.status()).code).toBe(expected);
     expect(await api.workAllowed(assigned)).toBe(false);
     expect(await worker.workAllowed(assigned)).toBe(false);
     expect(await worker.sessionAllowed(assigned)).toBe(false);
@@ -274,7 +298,11 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1)", () =
     await api.refresh();
     const record = await store.read(TENANT);
     expect(record?.assignmentsSource).toBe("hub");
-    expect(record?.document?.assignments).toEqual({ status: "configured", subjects: [] });
+    expect(record?.document?.assignments).toEqual({
+      status: "configured",
+      subjects: [],
+      contract: "agent-hub-assignments.v1",
+    });
     expect(await codeOf(api.admit(assigned))).toBe("HUB_ACCESS_DENIED");
     for (const process of [api, worker]) {
       expect(await process.sessionAllowed(assigned)).toBe(false);
@@ -351,6 +379,167 @@ describe("Hub's published service-config sample (CAH-204)", () => {
       expect(await api.sessionAllowed(user)).toBe(false);
       expect(await api.workAllowed(user)).toBe(false);
     }
+  });
+});
+
+describe("assignment contract marker is sticky once seen (F4)", () => {
+  const marked = (subjects: string[], revision: number) =>
+    hubPolicyBodyForTests(TENANT, subjects, revision, { contract: true });
+  const alice = { tenant: TENANT, subject: "subject-1" };
+
+  it.each([
+    ["an unmarked empty list", () => hubPolicyBodyForTests(TENANT, [], 2)],
+    ["an unmarked list", () => hubPolicyBodyForTests(TENANT, ["subject-1", "subject-2"], 2)],
+    [
+      "the marker with a status other than configured",
+      () => {
+        const body: any = marked(["subject-1"], 2);
+        body.access.status = "pending";
+        return body;
+      },
+    ],
+    [
+      "unattributable rows",
+      () => {
+        const body: any = hubPolicyBodyForTests(TENANT, [], 2);
+        body.access = { status: "configured", productAssignments: [{ tenantUserId: "subject-1" }] };
+        return body;
+      },
+    ],
+  ])("rejects %s after an authoritative list instead of keeping it", async (_name, next) => {
+    const fetchConfig = ok(marked(["subject-1"], 1));
+    const { api, worker, store, signals } = await start(fetchConfig);
+    expect(await api.admit(alice)).toBe("assigned");
+    fetchConfig.mockResolvedValue({ status: 200, body: next(), etag: '"lost"' });
+    vi.useFakeTimers({ now: Date.now() + 10_000 });
+    expect(await codeOf(api.admit(alice))).toBe("HUB_CONFIG_INVALID");
+    const record = await store.read(TENANT);
+    expect(record).toMatchObject({ state: "invalid", reason: "assignments_contract_missing" });
+    expect(record?.assignmentsSource).toBe("hub");
+    expect(await worker.sessionAllowed(alice)).toBe(false);
+    expect(signals).not.toContainEqual(
+      expect.objectContaining({ event: "hub_policy_assignments_unknown" }),
+    );
+  });
+
+  it("stays sticky across a restart because it is stored with last-known-good", async () => {
+    const store = memoryHubPolicyStore();
+    const fetchConfig = ok(marked(["subject-1"], 1));
+    await start(fetchConfig, store);
+    fetchConfig.mockResolvedValue({
+      status: 200,
+      body: hubPolicyBodyForTests(TENANT, [], 2),
+      etag: '"lost"',
+    });
+    const restarted = await start(fetchConfig, store);
+    expect(await codeOf(restarted.api.admit(alice))).toBe("HUB_CONFIG_INVALID");
+    expect((await store.read(TENANT))?.document?.assignments).toMatchObject({
+      contract: "agent-hub-assignments.v1",
+      subjects: ["subject-1"],
+    });
+  });
+
+  it("recovers as soon as Hub sends the marker again", async () => {
+    const fetchConfig = ok(marked(["subject-1"], 1));
+    const { api } = await start(fetchConfig);
+    fetchConfig.mockResolvedValue({ status: 200, body: hubPolicyBodyForTests(TENANT, [], 2) });
+    vi.useFakeTimers({ now: Date.now() + 10_000 });
+    expect(await codeOf(api.admit(alice))).toBe("HUB_CONFIG_INVALID");
+    fetchConfig.mockResolvedValue({ status: 200, body: marked(["subject-1"], 3) });
+    expect(await api.admit(alice)).toBe("assigned");
+  });
+
+  it("signals when an authoritative list is empty, so a lockout's cause is in the logs", async () => {
+    const fetchConfig = ok(marked(["subject-1"], 1));
+    const { api, signals } = await start(fetchConfig);
+    fetchConfig.mockResolvedValue({ status: 200, body: marked([], 2), etag: '"empty"' });
+    await api.refresh();
+    expect(signals).toContainEqual({ event: "hub_policy_assignments_empty", hubRevision: 2 });
+  });
+});
+
+describe("snapshot max age (F5)", () => {
+  it("refuses sessions and work on a snapshot older than three poll intervals", async () => {
+    const { worker } = await start(ok(configured()));
+    vi.useFakeTimers({ now: Date.now() + 179_000 });
+    expect(await worker.sessionAllowed(assigned)).toBe(true);
+    expect(await worker.workAllowed(assigned)).toBe(true);
+    vi.setSystemTime(Date.now() + 2_000);
+    expect(await worker.sessionAllowed(assigned)).toBe(false);
+    expect(await worker.workAllowed(assigned)).toBe(false);
+    expect(await worker.status()).toMatchObject({ state: "stale", code: "HUB_UNAVAILABLE" });
+  });
+
+  it("is refreshed by a 304, which counts as a successful Hub contact", async () => {
+    const fetchConfig = ok(configured());
+    const { api, worker } = await start(fetchConfig);
+    fetchConfig.mockResolvedValue({ status: 304 } as never);
+    vi.useFakeTimers({ now: Date.now() + 170_000 });
+    await api.refresh();
+    vi.setSystemTime(Date.now() + 170_000);
+    expect(await worker.workAllowed(assigned)).toBe(true);
+  });
+
+  it("re-asks Hub for a sign-in once the reused answer is older than five seconds", async () => {
+    const fetchConfig = ok(configured());
+    const { api } = await start(fetchConfig);
+    await api.check();
+    const calls = fetchConfig.mock.calls.length;
+    await api.check();
+    expect(fetchConfig).toHaveBeenCalledTimes(calls);
+    vi.useFakeTimers({ now: Date.now() + 5_001 });
+    await api.check();
+    expect(fetchConfig).toHaveBeenCalledTimes(calls + 1);
+  });
+});
+
+describe("Hub not configured (F1)", () => {
+  const missing = ["HUB_AUTH_TENANT_ID", "HUB_SERVICE_SECRET_FILE"];
+  const policy = notConfiguredHubPolicy({ missing });
+
+  it("refuses every sign-in with HUB_NOT_CONFIGURED", async () => {
+    expect(await codeOf(policy.check())).toBe("HUB_NOT_CONFIGURED");
+    expect(await codeOf(policy.admit(assigned))).toBe("HUB_NOT_CONFIGURED");
+  });
+
+  it("admits no session and no work", async () => {
+    expect(await policy.sessionAllowed(assigned)).toBe(false);
+    expect(await policy.workAllowed(assigned)).toBe(false);
+  });
+
+  it("reports degraded status naming only the missing settings", async () => {
+    expect(await policy.status()).toMatchObject({
+      state: "not_configured",
+      code: "HUB_NOT_CONFIGURED",
+      missing,
+      hubRevision: null,
+      appliedRevision: null,
+      assignments: "pending",
+      toolkits: "unknown",
+    });
+  });
+});
+
+describe("overrides digest (F10)", () => {
+  const document = { overrides: { "model.credentials.anthropic": "hub-model-secret-not-real" } };
+
+  it("is an HMAC under a server-side key, not a plain hash of the values", () => {
+    const plain = createHash("sha256")
+      .update(JSON.stringify([["model.credentials.anthropic", "hub-model-secret-not-real"]]))
+      .digest("hex");
+    const keyed = hubPolicyDigest(document, "offline-key-a-not-real");
+    expect(keyed).not.toBe(plain);
+    expect(keyed).toBe(hubPolicyDigest(document, "offline-key-a-not-real"));
+    expect(keyed).not.toBe(hubPolicyDigest(document, "offline-key-b-not-real"));
+  });
+
+  it("stores the keyed digest, which the worker reproduces from the same store", async () => {
+    const store = memoryHubPolicyStore("offline-key-a-not-real");
+    const { api, worker } = await start(ok(configured()), store);
+    const record = await store.read(TENANT);
+    expect(record?.digest).toBe(hubPolicyDigest(record!.document, "offline-key-a-not-real"));
+    expect(await api.workAllowed(assigned)).toBe(true);
+    expect(await worker.workAllowed(assigned)).toBe(true);
   });
 });
 

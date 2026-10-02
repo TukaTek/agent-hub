@@ -21,18 +21,26 @@ export const HUB_CONFIG_INVALID = "HUB_CONFIG_INVALID";
 export const TENANT_DISABLED = "TENANT_DISABLED";
 export const HUB_CONFIG_RESTART_REQUIRED = "HUB_CONFIG_RESTART_REQUIRED";
 export const HUB_ACCESS_DENIED = "HUB_ACCESS_DENIED";
+/** Hub rejected this deployment's service credential (a Hub `401`), not the tenant. */
+export const HUB_CREDENTIAL_INVALID = "HUB_CREDENTIAL_INVALID";
+/** Hub mode started without its tenant or service credential; see docs/hub-auth.md. */
+export const HUB_NOT_CONFIGURED = "HUB_NOT_CONFIGURED";
 export type HubSignInRefusalCode =
   | typeof HUB_UNAVAILABLE
   | typeof HUB_CONFIG_INVALID
   | typeof TENANT_DISABLED
   | typeof HUB_CONFIG_RESTART_REQUIRED
-  | typeof HUB_ACCESS_DENIED;
+  | typeof HUB_ACCESS_DENIED
+  | typeof HUB_CREDENTIAL_INVALID
+  | typeof HUB_NOT_CONFIGURED;
 export const HUB_SIGN_IN_REFUSAL_CODES: readonly HubSignInRefusalCode[] = [
   HUB_UNAVAILABLE,
   HUB_CONFIG_INVALID,
   TENANT_DISABLED,
   HUB_CONFIG_RESTART_REQUIRED,
   HUB_ACCESS_DENIED,
+  HUB_CREDENTIAL_INVALID,
+  HUB_NOT_CONFIGURED,
 ];
 /** Server copy for every refusal except HUB_ACCESS_DENIED, which asks for admin access. */
 export const HUB_SIGN_IN_UNAVAILABLE_MESSAGE =

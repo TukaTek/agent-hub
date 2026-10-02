@@ -1,4 +1,4 @@
-import { createHubPolicy, type HubConfigFetch, hubPolicyDigest } from "./hub-policy.js";
+import { createHubPolicy, type HubConfigFetch } from "./hub-policy.js";
 import {
   HUB_ASSIGNMENTS_CONTRACT,
   HUB_POLICY_PRODUCT,
@@ -67,7 +67,7 @@ export function hubPolicyForTests(
     store,
     tenantId,
     fetchConfig: (etag) => hub.reply(etag),
-    applied: { revision: null, digest: hubPolicyDigest(null) },
+    applied: { revision: null, digest: store.digest(null) },
     log: () => undefined,
   });
   return { policy, store, hub };

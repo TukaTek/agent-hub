@@ -40,16 +40,19 @@
     "productAssignments": [
       {
         "tenantUserId": "usr_alice_001",
+        "tenantId": "tnt_synthetic_demo",
         "productId": "cortexai-agent-hub",
         "role": "admin"
       },
       {
         "tenantUserId": "usr_bob_002",
+        "tenantId": "tnt_synthetic_demo",
         "productId": "cortexai-agent-hub",
         "role": "employee"
       },
       {
         "tenantUserId": "usr_charlie_003",
+        "tenantId": "tnt_synthetic_demo",
         "productId": "cortexai-agent-hub",
         "role": "employee"
       }

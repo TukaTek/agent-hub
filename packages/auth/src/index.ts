@@ -27,7 +27,12 @@ import {
 import { createHubClient, type HubAuthConfig } from "./hub-client.js";
 import type { HubConfigFetch, HubPolicy } from "./hub-policy.js";
 
-export { type HubAuthConfig, hubAuthFromEnv } from "./hub-client.js";
+export {
+  HUB_CONFIG_DOC,
+  type HubAuthConfig,
+  type HubConfigProblem,
+  hubAuthFromEnv,
+} from "./hub-client.js";
 export {
   type AppliedHubPolicy,
   applyHubPolicyAtStartup,
@@ -36,10 +41,14 @@ export {
   type HubPolicy,
   type HubPolicySignal,
   type HubPolicyStatus,
+  notConfiguredHubPolicy,
 } from "./hub-policy.js";
 export { HUB_MANAGED_SETTINGS, HubPolicyError } from "./hub-policy-contract.js";
 export {
+  type HubPolicyRestart,
   type HubPolicyRuntime,
+  hubNotConfiguredLogEntry,
+  hubPolicyAutoRestart,
   hubPolicyLogEntry,
   startHubPolicyRuntime,
 } from "./hub-policy-runtime.js";

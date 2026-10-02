@@ -52,6 +52,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     hub_config_invalid: hubUnavailable,
     hub_config_restart_required: hubUnavailable,
     tenant_disabled: hubUnavailable,
+    hub_credential_invalid: hubUnavailable,
+    hub_not_configured: hubUnavailable,
     hub_access_denied: t`Ask your admin for access`,
   };
   /** Fixed copy for a sign-in Hub policy refused (CAAH-36), or undefined. */
