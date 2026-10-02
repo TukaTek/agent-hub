@@ -1,0 +1,98 @@
+{
+  "contract": "GET /api/agent-hub/service-config?schemaVersion=agent-hub-settings-v1",
+  "notes": "Synthetic literal responses in the shape Hub serves. raw-assignment-rows is the shape Hub serves before CAH-204; projected-assignments is the CAH-204 projection.",
+  "cases": {
+    "empty": {
+      "schemaVersion": "agent-hub-settings-v1",
+      "product": "cortexai-agent-hub",
+      "tenantId": "tenant-a",
+      "revision": 0,
+      "updatedAt": null,
+      "overrides": {},
+      "composio": {
+        "tenantEnablement": { "status": "pending", "revision": 0, "enabledToolkitIds": [] },
+        "productAccess": { "status": "pending", "revision": 0, "allowedToolkitIds": [] }
+      },
+      "mcp": { "status": "pending", "available": [] },
+      "skills": { "status": "pending", "available": [] },
+      "access": { "status": "configured", "productAssignments": [] },
+      "onboarding": { "version": 1 }
+    },
+    "minimal": {
+      "schemaVersion": "agent-hub-settings-v1",
+      "product": "cortexai-agent-hub",
+      "tenantId": "tenant-a",
+      "revision": 0,
+      "updatedAt": null,
+      "overrides": {}
+    },
+    "configured": {
+      "schemaVersion": "agent-hub-settings-v1",
+      "product": "cortexai-agent-hub",
+      "tenantId": "tenant-a",
+      "revision": 7,
+      "updatedAt": "2026-10-01T12:00:00.000Z",
+      "overrides": {
+        "signup": { "enabled": false, "allowlist": ["example.test"] },
+        "model": {
+          "defaultProvider": "anthropic",
+          "defaultModel": "claude-sonnet-5",
+          "credentials": { "anthropic": "hub-model-secret-not-real" }
+        },
+        "computer": {
+          "provider": "e2b",
+          "e2b": { "apiKey": "hub-computer-secret-not-real" },
+          "idleMs": 120000
+        },
+        "cloudAgent": { "provider": "none" },
+        "connectors": { "composio": { "apiKey": "hub-composio-secret-not-real" } },
+        "mcp": { "stdioEnabled": false, "stdioAllowedCommands": [] },
+        "autoReview": {
+          "defaultEnabled": true,
+          "provider": "anthropic",
+          "model": "claude-haiku-5",
+          "timeoutMs": 2000
+        },
+        "messaging": { "openSignup": false }
+      },
+      "composio": {
+        "tenantEnablement": {
+          "status": "configured",
+          "revision": 3,
+          "enabledToolkitIds": ["github", "gmail"]
+        },
+        "productAccess": { "status": "configured", "revision": 2, "allowedToolkitIds": ["github"] }
+      },
+      "mcp": { "status": "pending", "available": [] },
+      "skills": { "status": "pending", "available": [] },
+      "access": {
+        "status": "configured",
+        "productAssignments": [
+          { "tenantUserId": "subject-1", "productId": "cortexai-agent-hub", "role": "user" },
+          { "tenantUserId": "subject-2", "productId": "cortexai-agent-hub", "role": "admin" }
+        ]
+      },
+      "onboarding": { "version": 1 }
+    },
+    "raw-assignment-rows": {
+      "schemaVersion": "agent-hub-settings-v1",
+      "product": "cortexai-agent-hub",
+      "tenantId": "tenant-a",
+      "revision": 1,
+      "updatedAt": "2026-09-30T12:00:00.000Z",
+      "overrides": {},
+      "access": {
+        "status": "configured",
+        "productAssignments": [
+          {
+            "id": "row-1",
+            "tenantUserId": "subject-1",
+            "productId": "00000000-0000-4000-8000-000000000001",
+            "tenantId": "tenant-a",
+            "createdAt": "2026-09-01T00:00:00.000Z"
+          }
+        ]
+      }
+    }
+  }
+}
