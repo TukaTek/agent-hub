@@ -228,6 +228,10 @@ export async function createApp(
     }
   }
 
+  await import("@cortexai-agent-hub/adapters").then(async (mod) => {
+    await mod.purgeTaughtSkillSecrets(prisma);
+  });
+
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
   // prismaOverride skips createDb, so there is no shared pool. The previous

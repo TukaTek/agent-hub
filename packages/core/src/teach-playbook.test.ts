@@ -188,3 +188,100 @@ describe("sanitizeTeachRecordingEvent", () => {
     expect(sanitizeTeachRecordingEvent(event)).toEqual(event);
   });
 });
+
+describe("secret field detection and redaction", () => {
+  it("treats password type fields as sensitive", () => {
+    const playbook = buildPlaybookFromRecording("Sign in", [
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "S", fieldType: "password" },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "u", fieldType: "password" },
+      { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "m", fieldType: "password" },
+      { at: "2026-01-01T00:00:03.000Z", kind: "key", key: "m", fieldType: "password" },
+      { at: "2026-01-01T00:00:04.000Z", kind: "key", key: "e", fieldType: "password" },
+      { at: "2026-01-01T00:00:05.000Z", kind: "key", key: "r", fieldType: "password" },
+      { at: "2026-01-01T00:00:06.000Z", kind: "key", key: "2", fieldType: "password" },
+      { at: "2026-01-01T00:00:07.000Z", kind: "key", key: "0", fieldType: "password" },
+      { at: "2026-01-01T00:00:08.000Z", kind: "key", key: "2", fieldType: "password" },
+      { at: "2026-01-01T00:00:09.000Z", kind: "key", key: "6", fieldType: "password" },
+      { at: "2026-01-01T00:00:10.000Z", kind: "key", key: "!", fieldType: "password" },
+    ]);
+    expect(playbook.steps.join(" ")).toContain("{{secret:");
+    expect(playbook.steps.join(" ")).not.toContain("Summer2026!");
+  });
+
+  it("treats autocomplete=current-password fields as sensitive", () => {
+    const playbook = buildPlaybookFromRecording("Sign in", [
+      {
+        at: "2026-01-01T00:00:00.000Z",
+        kind: "clipboard",
+        text: "MyP@ssw0rd!",
+        autocomplete: "current-password",
+      },
+    ]);
+    expect(playbook.steps.join(" ")).toContain("{{secret:");
+    expect(playbook.steps.join(" ")).not.toContain("MyP@ssw0rd!");
+  });
+
+  it("treats autocomplete=new-password fields as sensitive", () => {
+    const playbook = buildPlaybookFromRecording("Change password", [
+      {
+        at: "2026-01-01T00:00:00.000Z",
+        kind: "key",
+        key: "N",
+        autocomplete: "new-password",
+      },
+      {
+        at: "2026-01-01T00:00:01.000Z",
+        kind: "key",
+        key: "e",
+        autocomplete: "new-password",
+      },
+      {
+        at: "2026-01-01T00:00:02.000Z",
+        kind: "key",
+        key: "w",
+        autocomplete: "new-password",
+      },
+    ]);
+    expect(playbook.steps.join(" ")).toContain("{{secret:");
+    expect(playbook.steps.join(" ")).not.toContain("New");
+  });
+
+  it("treats autocomplete=one-time-code fields as sensitive", () => {
+    const playbook = buildPlaybookFromRecording("Enter MFA code", [
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "1", autocomplete: "one-time-code" },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "2", autocomplete: "one-time-code" },
+      { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "3", autocomplete: "one-time-code" },
+      { at: "2026-01-01T00:00:03.000Z", kind: "key", key: "4", autocomplete: "one-time-code" },
+      { at: "2026-01-01T00:00:04.000Z", kind: "key", key: "5", autocomplete: "one-time-code" },
+      { at: "2026-01-01T00:00:05.000Z", kind: "key", key: "6", autocomplete: "one-time-code" },
+    ]);
+    expect(playbook.steps.join(" ")).toContain("{{secret:");
+    expect(playbook.steps.join(" ")).not.toContain("123456");
+  });
+
+  it("stores regular text from non-sensitive fields", () => {
+    const playbook = buildPlaybookFromRecording("Search", [
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h", fieldType: "text" },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "i", fieldType: "text" },
+    ]);
+    expect(playbook.steps.join(" ")).toContain('"hi"');
+    expect(playbook.steps.join(" ")).not.toContain("{{secret:");
+  });
+
+  it("respects user-marked sensitive flag even without password type", () => {
+    const playbook = buildPlaybookFromRecording("Enter API key", [
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "s", sensitive: true },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "k", sensitive: true },
+    ]);
+    expect(playbook.steps.join(" ")).toContain("[redacted input]");
+    expect(playbook.steps.join(" ")).not.toContain("sk");
+  });
+
+  it("keeps Protected input working as before", () => {
+    const playbook = buildPlaybookFromRecording("Sign in", [
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h", sensitive: true },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "i", sensitive: true },
+    ]);
+    expect(playbook.steps).toContain('Type "[redacted input]".');
+  });
+});

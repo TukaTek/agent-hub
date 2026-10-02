@@ -9,13 +9,35 @@ export type TeachRecordingEvent = {
   text?: string;
   summary?: string;
   sensitive?: boolean;
+  fieldType?: string;
+  autocomplete?: string;
+  fieldLabel?: string;
 };
 
+function isPasswordField(event: TeachRecordingEvent): boolean {
+  if (event.fieldType === "password") return true;
+  if (event.autocomplete) {
+    const lower = event.autocomplete.toLowerCase();
+    if (lower.includes("password") || lower === "one-time-code") return true;
+  }
+  return false;
+}
+
+function isProtectedInput(event: TeachRecordingEvent): boolean {
+  return event.sensitive === true && !isPasswordField(event);
+}
+
+function secretPlaceholder(event: TeachRecordingEvent): string {
+  const label = event.fieldLabel || "field";
+  return `{{secret:${label}}}`;
+}
+
 export function sanitizeTeachRecordingEvent(event: TeachRecordingEvent): TeachRecordingEvent {
-  if (!event.sensitive) return event;
+  if (!event.sensitive && !isPasswordField(event)) return event;
   const sanitized = { ...event };
   delete sanitized.key;
   delete sanitized.text;
+  sanitized.sensitive = true;
   return sanitized;
 }
 
@@ -64,10 +86,32 @@ function describeScroll(event: TeachRecordingEvent): string {
 }
 
 const REDACTED_INPUT = "[redacted input]";
+const SECRET_PLACEHOLDER_PREFIX = "{{secret:";
+
+const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const BEARER = /\bBearer\s+[^\s"',;&]+/gi;
+const SECRET_ASSIGNMENT =
+  /\b([A-Za-z0-9_]*(?:password|secret|token|authorization|apikey|api_key)[A-Za-z0-9_]*)\s*[:=]\s*\S+/gi;
+const JSON_SECRET_FIELD =
+  /"(password|passwd|secret|token|authorization|apikey|api_key|accesstoken|refreshtoken|email|cookie)"\s*:\s*"(?:\\.|[^"\\])*"/gi;
+const BARE_SECRET =
+  /\b(?:sk-(?:or-v1-)?[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:ak_|ck_)[A-Za-z0-9]+)\b/g;
 
 function redactSensitiveText(text: string): string {
+  const REDACTED = "[Redacted]";
+  return text
+    .replace(EMAIL, REDACTED)
+    .replace(JSON_SECRET_FIELD, `"$1":"${REDACTED}"`)
+    .replace(BEARER, `Bearer ${REDACTED}`)
+    .replace(SECRET_ASSIGNMENT, (_match, key: string) => `${key}=${REDACTED}`)
+    .replace(BARE_SECRET, REDACTED);
+}
+
+function redactTypedText(text: string): string {
   const trimmed = text.trim();
   if (/password|secret|token|api[_-]?key/i.test(trimmed)) return REDACTED_INPUT;
+  const redacted = redactSensitiveText(trimmed);
+  if (redacted !== trimmed) return REDACTED_INPUT;
   return trimmed;
 }
 
@@ -83,12 +127,13 @@ export function buildPlaybookFromRecording(
   const steps: string[] = [];
   let typed = "";
   let typedSensitive = false;
+  let currentSecretEvent: TeachRecordingEvent | null = null;
   let drag: { button: string; fromX: number; fromY: number; toX: number; toY: number } | null =
     null;
 
   function flushTyped() {
     if (!typed) return;
-    const text = redactSensitiveText(typed);
+    const text = redactTypedText(typed);
     if (text) steps.push(`Type ${JSON.stringify(text)}.`);
     typed = "";
   }
@@ -99,9 +144,16 @@ export function buildPlaybookFromRecording(
     typedSensitive = false;
   }
 
+  function flushSecretField() {
+    if (!currentSecretEvent) return;
+    steps.push(`Type ${JSON.stringify(secretPlaceholder(currentSecretEvent))}.`);
+    currentSecretEvent = null;
+  }
+
   function flushPendingInput() {
     flushTyped();
     flushSensitiveTyped();
+    flushSecretField();
   }
 
   function flushDrag() {
@@ -117,20 +169,35 @@ export function buildPlaybookFromRecording(
 
   for (const event of events) {
     if (event.kind === "key") {
-      if (event.sensitive) {
-        flushDrag();
+      const key = event.key;
+      flushDrag();
+
+      if (isPasswordField(event)) {
         flushTyped();
+        flushSensitiveTyped();
+        if (!currentSecretEvent) currentSecretEvent = event;
+        if (key && isTypedCharacter(key)) continue;
+        flushSecretField();
+        if (key) steps.push(`Press key: ${key}.`);
+        continue;
+      }
+
+      if (isProtectedInput(event)) {
+        flushTyped();
+        flushSecretField();
         typedSensitive = true;
         continue;
       }
-      const key = event.key;
+
       if (!key) continue;
-      flushDrag();
+
       if (isTypedCharacter(key)) {
         flushSensitiveTyped();
+        flushSecretField();
         typed += key;
         continue;
       }
+
       flushPendingInput();
       steps.push(`Press key: ${key}.`);
       continue;
@@ -165,12 +232,16 @@ export function buildPlaybookFromRecording(
       steps.push(describePointer(event));
     } else if (event.kind === "clipboard") {
       flushDrag();
-      const text = event.sensitive
-        ? REDACTED_INPUT
-        : event.text
-          ? redactSensitiveText(event.text)
-          : "";
-      if (text) steps.push(`Paste or type: ${text}.`);
+      if (isPasswordField(event)) {
+        steps.push(`Paste or type: ${secretPlaceholder(event)}.`);
+      } else {
+        const text = isProtectedInput(event)
+          ? REDACTED_INPUT
+          : event.text
+            ? redactTypedText(event.text)
+            : "";
+        if (text) steps.push(`Paste or type: ${text}.`);
+      }
     } else if (event.kind === "scroll") {
       flushDrag();
       steps.push(describeScroll(event));
