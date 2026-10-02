@@ -29,13 +29,15 @@ if (cliArgs) {
     
     if (cliArgs.command === "provision-owner") {
       if (!cliArgs.email || !cliArgs.name) {
-        process.stderr.write("Usage: provision-owner --email <email> --name <name> [--secret-file <path>]\n");
+        process.stderr.write("Usage: provision-owner --email <email> --name <name> [--secret-file <path>] [--hub-user-id <id> --hub-tenant <tenant>]\n");
         process.exit(1);
       }
       result = await provisionOwner(prisma, env, {
         email: cliArgs.email,
         name: cliArgs.name,
         secretFile: cliArgs.secretFile,
+        hubUserId: cliArgs.hubUserId,
+        hubTenant: cliArgs.hubTenant,
       });
     } else if (cliArgs.command === "provision-user") {
       if (!cliArgs.email || !cliArgs.name) {
@@ -49,11 +51,13 @@ if (cliArgs) {
       });
     } else if (cliArgs.command === "transfer-owner") {
       if (!cliArgs.email) {
-        process.stderr.write("Usage: transfer-owner --email <email>\n");
+        process.stderr.write("Usage: transfer-owner --email <email> [--hub-user-id <id> --hub-tenant <tenant>]\n");
         process.exit(1);
       }
       result = await transferOwner(prisma, {
         email: cliArgs.email,
+        hubUserId: cliArgs.hubUserId,
+        hubTenant: cliArgs.hubTenant,
       });
     } else {
       process.stderr.write("Unknown command\n");
