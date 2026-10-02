@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapUserSpace, createDb, type PrismaClient } from "@cortexai-agent-hub/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AuthEnv } from "./index.js";
 import { createAuth } from "./index.js";
 
@@ -7,7 +7,9 @@ describe("signup lockdown", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    prisma = await createDb("postgres://cortexai-agent-hub:cortexai-agent-hub@127.0.0.1:5433/cortexai-agent-hub");
+    prisma = await createDb(
+      "postgres://cortexai-agent-hub:cortexai-agent-hub@127.0.0.1:5433/cortexai-agent-hub",
+    );
   });
 
   afterAll(async () => {

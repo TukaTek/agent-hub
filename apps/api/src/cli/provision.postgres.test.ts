@@ -1,12 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestPrisma, type PrismaClient } from "@cortexai-agent-hub/db";
-import {
-  provisionOwner,
-  provisionUser,
-  transferOwner,
-  parseProvisionArgs,
-} from "./provision.js";
 import * as readline from "node:readline";
+import { createTestPrisma, type PrismaClient } from "@cortexai-agent-hub/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseProvisionArgs, provisionOwner, provisionUser, transferOwner } from "./provision.js";
 
 describe("CLI provisioning commands", () => {
   let prisma: PrismaClient;
