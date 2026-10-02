@@ -183,8 +183,6 @@ export const appContract = {
     update: oc
       .input(
         z.object({
-          signupsEnabled: z.boolean().optional(),
-          signupAllowlist: z.array(z.string()).optional(),
           computerHost: z.enum(["docker", "this-mac"]).nullable().optional(),
         }),
       )
