@@ -30,20 +30,49 @@ run `bash install-images.sh`. Flags may be combined in either order: `--prepare-
 
 `SANDBOX_PROVIDER` defaults to `docker`. The images Compose file runs a sandbox supervisor
 (from the app image, on the internal network only) and pulls `ghcr.io/tukatek/agent-hub/computer`.
-Signup and local Docker computers work without an E2B account. Optional remote providers: set
+Local Docker computers work without an E2B account. Optional remote providers: set
 `SANDBOX_PROVIDER` to `e2b`, `daytona`, `createos`, or `box` and add the matching API key. The published-images
 Compose stack requires `SANDBOX_SUPERVISOR_TOKEN` for every provider; leave it empty and `compose up` fails closed.
 
-Optional: set `OPENROUTER_API_KEY` or connect a model in the UI after signup.
+Optional: set `OPENROUTER_API_KEY` or connect a model in the UI after sign-in.
 Auto Review uses that LLM checker by default. To use TypeSafe Jev instead, set
 `CORTEXAI_AGENT_HUB_AUTO_REVIEW_PROVIDER=jev` and `TYPESAFE_API_KEY`. Core still runs with neither.
 
 The example defaults to `edge` (main builds). Every publish is multi-arch (`amd64` + `arm64`), so
 arm64 hosts need no special tag. Do not assume `latest` is present until a stable release exists.
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The first registered user becomes the
-deployment owner. Put TLS in front of `:5173` for a public host and set the three public origins to
-that HTTPS URL.
+### First-time deployment owner provisioning
+
+Self-service signup is permanently disabled. The deployment owner must be provisioned explicitly
+via CLI commands before the application accepts sign-ins.
+
+1. Ensure the API and Postgres containers are running (`docker compose up -d api postgres`)
+2. Provision the deployment owner:
+   ```bash
+   docker compose exec api node dist/index.js provision-owner \
+     --email owner@example.com \
+     --name "Owner Name"
+   ```
+   Or with a password file:
+   ```bash
+   docker compose exec api node dist/index.js provision-owner \
+     --email owner@example.com \
+     --name "Owner Name" \
+     --secret-file /run/secrets/owner-password
+   ```
+   The command prompts for a password or reads from the specified file. Never pass passwords
+   via command arguments or environment variables.
+
+3. Provision additional users (optional):
+   ```bash
+   docker compose exec api node dist/index.js provision-user \
+     --email user@example.com \
+     --name "User Name"
+   ```
+
+4. Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and sign in with the provisioned credentials.
+
+For production: Put TLS in front of `:5173` and set the three public origins to that HTTPS URL.
 
 Images Compose binds web to loopback (`127.0.0.1:5173`). Terminate TLS on the host and proxy
 there. Vite preview same-origin-proxies `/api` and `/rpc`, so do not expose `:3100`. Set
