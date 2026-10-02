@@ -40,7 +40,10 @@ export function TeachRecordingChrome({
   }, [recording.expiresAt]);
 
   const protectedInput = (
-    <ProtectedTeachInput key={recording.id} botId={botId} skillId={recording.id} />
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <ProtectedTeachInput key={recording.id} botId={botId} skillId={recording.id} />
+      <KeptTeachInput key={`keep-${recording.id}`} botId={botId} skillId={recording.id} />
+    </div>
   );
 
   if (variant === "overlay") {
@@ -56,7 +59,8 @@ export function TeachRecordingChrome({
           <Trans>{remaining} left · Assistant is watching, not acting</Trans>
         </div>
         <div className="text-[12px] text-muted-foreground">
-          <Trans>Use Protected input for passwords.</Trans>
+          <Trans>Use Protected input for passwords.</Trans>{" "}
+          <Trans>Typed text is saved as a placeholder unless you use Keep text.</Trans>
         </div>
         {protectedInput}
       </div>
@@ -75,7 +79,8 @@ export function TeachRecordingChrome({
         <Trans>{remaining} left · Assistant is watching, not acting</Trans>
       </div>
       <div className="mt-2 text-[13px] text-muted-foreground">
-        <Trans>Use Protected input for passwords.</Trans>
+        <Trans>Use Protected input for passwords.</Trans>{" "}
+        <Trans>Typed text is saved as a placeholder unless you use Keep text.</Trans>
       </div>
       <div className="mt-2">{protectedInput}</div>
       <Button
@@ -121,13 +126,7 @@ function ProtectedTeachInput({ botId, skillId }: { botId: string; skillId: strin
         await rpc.computer.input({
           botId,
           kind: "clipboard",
-          payload: { 
-            text, 
-            sensitive: true, 
-            skillId: queuedSkillId,
-            fieldType: "password",
-            fieldLabel: "Protected input",
-          },
+          payload: { text, sensitive: true, skillId: queuedSkillId },
         });
         if (activeSkillIdRef.current !== queuedSkillId) return;
         setProtectedText((current) => (current === text ? "" : current));
@@ -144,7 +143,7 @@ function ProtectedTeachInput({ botId, skillId }: { botId: string; skillId: strin
   return (
     <form
       data-testid="teach-protected-input"
-      className="flex min-w-0 items-center gap-1"
+      className="flex min-w-0 flex-1 items-center gap-1"
       onSubmit={submitProtectedInput}
     >
       <Input
@@ -164,6 +163,82 @@ function ProtectedTeachInput({ botId, skillId }: { botId: string; skillId: strin
         size="icon-sm"
         aria-label={t`Type without recording`}
         disabled={!protectedText || pending}
+      >
+        <CornerDownLeft size={16} strokeWidth={1.8} />
+      </Button>
+    </form>
+  );
+}
+
+/**
+ * The explicit opt-in for literal text (CAAH-71). Everything typed straight into the screen is
+ * stored as a placeholder; text sent from here is typed the same way and kept in the skill.
+ */
+function KeptTeachInput({ botId, skillId }: { botId: string; skillId: string }) {
+  const { t } = useLingui();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const activeSkillIdRef = useRef<string | null>(skillId);
+  const pendingRef = useRef(false);
+  const [text, setText] = useState("");
+  const [pending, setPending] = useState(false);
+  activeSkillIdRef.current = skillId;
+
+  useEffect(() => {
+    return () => {
+      if (activeSkillIdRef.current === skillId) activeSkillIdRef.current = null;
+    };
+  }, [skillId]);
+
+  function submitKeptInput(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = text;
+    if (!value || pendingRef.current) return;
+    const queuedSkillId = skillId;
+    pendingRef.current = true;
+    setPending(true);
+    void enqueueTeachComputerInput(botId, async () => {
+      try {
+        if (activeSkillIdRef.current !== queuedSkillId) return;
+        await rpc.computer.input({
+          botId,
+          kind: "clipboard",
+          payload: { text: value, keepLiteral: true },
+        });
+        if (activeSkillIdRef.current !== queuedSkillId) return;
+        setText((current) => (current === value ? "" : current));
+      } catch {
+        if (activeSkillIdRef.current === queuedSkillId) inputRef.current?.focus();
+      } finally {
+        pendingRef.current = false;
+        if (activeSkillIdRef.current === queuedSkillId) setPending(false);
+      }
+    });
+    inputRef.current?.blur();
+  }
+
+  return (
+    <form
+      data-testid="teach-keep-text-input"
+      className="flex min-w-0 flex-1 items-center gap-1"
+      onSubmit={submitKeptInput}
+    >
+      <Input
+        ref={inputRef}
+        type="text"
+        autoComplete="off"
+        spellCheck={false}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder={t`Keep text`}
+        aria-label={t`Keep text`}
+        className="h-8 min-w-0 flex-1"
+      />
+      <Button
+        type="submit"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t`Type and keep in skill`}
+        disabled={!text || pending}
       >
         <CornerDownLeft size={16} strokeWidth={1.8} />
       </Button>
