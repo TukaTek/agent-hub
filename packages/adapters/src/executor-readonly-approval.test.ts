@@ -354,7 +354,10 @@ describe("connector read-only metadata and approval enforcement", () => {
       f.setCalls([{ args: { id: "item-1" }, executionId: "call-2" }]);
       await f.run();
       expect(f.execute).not.toHaveBeenCalled();
-      expect(f.results.at(-1)).toEqual({ error: "User denied this action." });
+      expect(f.results.at(-1)).toEqual({
+        error:
+          "The user denied this action. Do not retry or rephrase it; tell the user and ask what they want instead.",
+      });
       expect(f.pauseRunForInput).toHaveBeenCalledOnce();
     });
 

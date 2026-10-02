@@ -7,6 +7,7 @@ import {
   ATTACHMENT_MAX_BASE64_LENGTH,
   ATTACHMENT_MAX_COUNT,
 } from "./attachments.js";
+import { BotSecretMetadata, BotSecretPutInput, StoredBotSecretName } from "./bot-secrets.js";
 import {
   ActionApprovalRuleSchema,
   ActionAutoReviewSettingsSchema,
@@ -870,6 +871,13 @@ export const appContract = {
     list: oc.output(z.array(AgentSecretSchema)),
     put: oc.input(AgentSecretInputSchema).output(AgentSecretSchema),
     remove: oc.input(z.object({ id: Id })).output(z.object({ ok: z.literal(true) })),
+  },
+  botSecrets: {
+    list: oc.input(z.object({ botId: Id })).output(z.array(BotSecretMetadata)),
+    put: oc.input(BotSecretPutInput).output(BotSecretMetadata),
+    remove: oc
+      .input(z.object({ botId: Id, name: StoredBotSecretName }))
+      .output(z.object({ ok: z.literal(true) })),
   },
 };
 
