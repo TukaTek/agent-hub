@@ -408,21 +408,12 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
               if (env.email || !emailAllowed(user.email, policy.allowlist)) {
                 throw new APIError("FORBIDDEN", { message: "Email verification required" });
               }
-              // Mailbox ownership is not proved. The claim serializes the exemption
-              // so a second overlapping signup cannot take it as well.
-              const admitted = await claimUnverifiedFirstAccount(prisma, user.id);
-              if (!admitted || !ctx) {
-                throw new APIError("FORBIDDEN", { message: "Email verification required" });
-              }
-              await ctx.context.internalAdapter.updateUser(user.id, { emailVerified: true });
+              // Legacy allowlist verification without mailbox proof - only for existing users
+              throw new APIError("FORBIDDEN", { message: "Email verification required" });
             }
-            // Unverified signup must not provision resources or claim the
-            // deployment owner. Bootstrap only at the first admitted session.
+            // Bootstrap user space if not already done (e.g., operator-provisioned accounts)
             const membership = await prisma.spaceMember.findFirst({ where: { userId: user.id } });
             if (!membership) {
-              if (!policy.enabled || !emailAllowed(user.email, policy.allowlist)) {
-                throw new APIError("FORBIDDEN", { message: "Registration is closed" });
-              }
               await bootstrapUserSpace(prisma, user, env);
             }
           },
