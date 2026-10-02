@@ -351,16 +351,33 @@ export function promptInvokesSkill(prompt: string, name: string): boolean {
   return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(skill)}([^\\p{L}\\p{N}]|$)`, "u").test(text);
 }
 
-const PLACEHOLDER_GUIDANCE = [
-  "Placeholders: the steps never contain what the user typed during the demo.",
-  "- {{secret:<label>}} and [redacted input] stand for a password, one-time code or other secret. Use a saved login for this site when one exists (list_secrets, then browser_act fill_secret). Otherwise call request_secret so the user enters it in a protected card, or request_takeover for one-time codes and anything that needs the live screen. Never type the placeholder, never guess a value, and never ask for a secret in chat.",
-  "- {{input:<label>}} stands for ordinary text typed or pasted during the demo. Use the matching value from the user's request; if it is not there, ask the user before typing it.",
-].join("\n");
+const PLACEHOLDER_GUIDANCE_INTRO =
+  "Placeholders: the steps never contain what the user typed during the demo.";
+const SECRET_PLACEHOLDER_GUIDANCE =
+  "- {{secret:<label>}} and [redacted input] stand for a password, one-time code or other secret. Use a saved credential for this site when one exists (list_secrets, then browser_act fill_secret). Otherwise call request_secret so the user enters it in a protected card, or request_takeover for one-time codes and anything that needs the live screen. Never type the placeholder, never guess a value, and never ask for a secret in chat.";
+const INPUT_PLACEHOLDER_GUIDANCE =
+  "- {{input:<label>}} stands for ordinary text typed or pasted during the demo. Use the matching value from the user's request; if it is not there, ask the user before typing it.";
 
-const PLACEHOLDER_PATTERN = /\{\{(?:secret|input):[^}]*\}\}|\[redacted input\]/;
+const SECRET_PLACEHOLDER_PATTERN = /\{\{secret:[^}]*\}\}|\[redacted input\]/;
+const INPUT_PLACEHOLDER_PATTERN = /\{\{input:[^}]*\}\}/;
 
 export function playbookHasPlaceholders(playbook: SkillPlaybook): boolean {
-  return playbook.steps.some((step) => PLACEHOLDER_PATTERN.test(step));
+  return playbook.steps.some(
+    (step) => SECRET_PLACEHOLDER_PATTERN.test(step) || INPUT_PLACEHOLDER_PATTERN.test(step),
+  );
+}
+
+function placeholderGuidance(playbook: SkillPlaybook): string | undefined {
+  const secret = playbook.steps.some((step) => SECRET_PLACEHOLDER_PATTERN.test(step));
+  const input = playbook.steps.some((step) => INPUT_PLACEHOLDER_PATTERN.test(step));
+  if (!secret && !input) return undefined;
+  return [
+    PLACEHOLDER_GUIDANCE_INTRO,
+    secret ? SECRET_PLACEHOLDER_GUIDANCE : undefined,
+    input ? INPUT_PLACEHOLDER_GUIDANCE : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function formatSkillRunPrompt(name: string, playbook: SkillPlaybook, test = false): string {
@@ -374,7 +391,7 @@ export function formatSkillRunPrompt(name: string, playbook: SkillPlaybook, test
     playbook.inputs.length ? `Inputs: ${playbook.inputs.join("; ")}` : undefined,
     "Steps:",
     ...playbook.steps.map((step, index) => `${index + 1}. ${step}`),
-    playbookHasPlaceholders(playbook) ? PLACEHOLDER_GUIDANCE : undefined,
+    placeholderGuidance(playbook),
     `How to check: ${playbook.howToCheck}`,
     `Return: ${playbook.whatToReturn}`,
     `Approval boundaries: ${playbook.approvalBoundaries}`,

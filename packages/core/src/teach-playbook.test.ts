@@ -358,6 +358,14 @@ describe("formatSkillRunPrompt", () => {
     expect(prompt).not.toContain("alice");
   });
 
+  it("gives input-only playbooks input guidance without secret or sign-in wording", () => {
+    const playbook = buildPlaybookFromRecording("Search", [...typed("weekly report")]);
+    const prompt = formatSkillRunPrompt("Search", playbook);
+    expect(prompt).toContain("{{input:<label>}}");
+    expect(prompt).not.toContain("{{secret:<label>}}");
+    expect(prompt).not.toMatch(/login|sign in|take over|request_secret|fill_secret/i);
+  });
+
   it("adds no placeholder guidance to playbooks without placeholders", () => {
     const playbook = buildPlaybookFromRecording("Open", [
       { at: at(0), kind: "pointer", x: 1, y: 2, type: "click" },
