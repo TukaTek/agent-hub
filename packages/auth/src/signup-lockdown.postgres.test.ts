@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { bootstrapUserSpace, createTestPrisma, type PrismaClient } from "@cortexai-agent-hub/db";
+import { bootstrapUserSpace, createDb, type PrismaClient } from "@cortexai-agent-hub/db";
 import type { AuthEnv } from "./index.js";
 import { createAuth } from "./index.js";
 
@@ -7,7 +7,7 @@ describe("signup lockdown", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    prisma = await createTestPrisma();
+    prisma = await createDb("postgres://cortexai-agent-hub:cortexai-agent-hub@127.0.0.1:5433/cortexai-agent-hub");
   });
 
   afterAll(async () => {
@@ -70,7 +70,7 @@ describe("signup lockdown", () => {
       );
 
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error?: string };
       expect(body.error).toMatch(/registration is closed/i);
     });
 
@@ -199,9 +199,9 @@ describe("signup lockdown", () => {
       );
 
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = (await res.json()) as { user?: { email: string } };
       expect(body.user).toBeDefined();
-      expect(body.user.email).toBe("existing@example.test");
+      expect(body.user?.email).toBe("existing@example.test");
     });
 
     it("supports password reset for existing users", async () => {

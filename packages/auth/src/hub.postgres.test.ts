@@ -254,7 +254,6 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
             db.prisma,
             { id },
             { signupsEnabled: "false", signupAllowlist: "" },
-            { claimDeploymentOwner: false },
           ),
         ),
       );
