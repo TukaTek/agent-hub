@@ -1,3 +1,5 @@
+import { isNamedTeachKey } from "./teach-recording.js";
+
 export type TeachRecordingEvent = {
   at: string;
   kind: "pointer" | "key" | "clipboard" | "snapshot" | "scroll";
@@ -8,48 +10,80 @@ export type TeachRecordingEvent = {
   key?: string;
   text?: string;
   summary?: string;
+  /** Protected input: the user typed this through the Protected input box. */
   sensitive?: boolean;
+  /** Field metadata a client may report for the focused field. Never the field's value. */
   fieldType?: string;
   autocomplete?: string;
   fieldLabel?: string;
+  /** Set only by an explicit user action that asks to keep this text in the skill. */
   keepLiteral?: boolean;
+  /** The typed or pasted value was removed when the event was stored. */
+  redacted?: boolean;
 };
 
-function isPasswordField(event: TeachRecordingEvent): boolean {
-  if (event.fieldType === "password") return true;
-  if (event.autocomplete) {
-    const lower = event.autocomplete.toLowerCase();
-    if (lower.includes("password") || lower === "one-time-code") return true;
+type TeachFieldInfo = Pick<
+  TeachRecordingEvent,
+  "sensitive" | "fieldType" | "autocomplete" | "fieldLabel"
+>;
+
+const SECRET_FIELD_LABEL =
+  /\b(?:pass(?:word|code|phrase)?|pwd|pin|otp|one[- ]?time|2fa|mfa|totp|verification code|security code|secret|token|api[ _-]?key|cvv|cvc)\b/i;
+
+function autocompleteTokens(event: TeachFieldInfo): string[] {
+  return (event.autocomplete ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function isPasswordLikeField(event: TeachFieldInfo): boolean {
+  if (event.fieldType?.toLowerCase() === "password") return true;
+  if (
+    autocompleteTokens(event).some(
+      (token) => token.includes("password") || token === "one-time-code",
+    )
+  ) {
+    return true;
   }
-  return false;
+  return Boolean(event.fieldLabel && SECRET_FIELD_LABEL.test(event.fieldLabel));
 }
 
-function isProtectedInput(event: TeachRecordingEvent): boolean {
-  return event.sensitive === true && !isPasswordField(event);
+/**
+ * A field whose value must never be stored: Protected input, `type=password`, an
+ * autocomplete of `*password*` or `one-time-code`, or a sensitive-looking label.
+ */
+export function isSecretTeachField(event: TeachFieldInfo): boolean {
+  return event.sensitive === true || isPasswordLikeField(event);
 }
 
-function secretPlaceholder(event: TeachRecordingEvent): string {
-  const label = event.fieldLabel || "field";
-  return `{{secret:${label}}}`;
+function isTypedCharacter(key: string): boolean {
+  return key.length === 1;
 }
 
+/**
+ * What a recording may keep. Protected input loses its value exactly as before. Every other
+ * typed character and paste loses its value too, unless the user explicitly asked to keep it
+ * (`keepLiteral`) and the field is not a secret field. Named navigation keys are kept.
+ */
 export function sanitizeTeachRecordingEvent(event: TeachRecordingEvent): TeachRecordingEvent {
-  // Only keep literal text when explicitly opted in via keepLiteral flag
-  if (event.keepLiteral) return event;
-  
-  // Default: strip key/text from ALL input (passwords, Protected input, and regular fields)
-  if (event.kind === "key" || event.kind === "clipboard") {
+  if (event.kind !== "key" && event.kind !== "clipboard") return event;
+  if (event.sensitive) {
+    if (event.key === undefined && event.text === undefined && event.keepLiteral === undefined) {
+      return event;
+    }
     const sanitized = { ...event };
     delete sanitized.key;
     delete sanitized.text;
-    // Mark as sensitive if it's a password field or Protected input
-    if (event.sensitive || isPasswordField(event)) {
-      sanitized.sensitive = true;
-    }
+    delete sanitized.keepLiteral;
     return sanitized;
   }
-  
-  return event;
+  if (event.kind === "key" && event.key !== undefined && isNamedTeachKey(event.key)) return event;
+  const value = event.kind === "key" ? event.key : event.text;
+  if (value === undefined) return event;
+  if (event.keepLiteral === true && !isPasswordLikeField(event)) return event;
+  const sanitized = { ...event, redacted: true };
+  delete sanitized.key;
+  delete sanitized.text;
+  delete sanitized.keepLiteral;
+  return sanitized;
 }
 
 export type TeachSnapshot = {
@@ -97,41 +131,48 @@ function describeScroll(event: TeachRecordingEvent): string {
 }
 
 const REDACTED_INPUT = "[redacted input]";
-const SECRET_PLACEHOLDER_PREFIX = "{{secret:";
+const PLACEHOLDER_LABEL_MAX = 40;
 
-const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const BEARER = /\bBearer\s+[^\s"',;&]+/gi;
-const SECRET_ASSIGNMENT =
-  /\b([A-Za-z0-9_]*(?:password|secret|token|authorization|apikey|api_key)[A-Za-z0-9_]*)\s*[:=]\s*\S+/gi;
-const JSON_SECRET_FIELD =
-  /"(password|passwd|secret|token|authorization|apikey|api_key|accesstoken|refreshtoken|email|cookie)"\s*:\s*"(?:\\.|[^"\\])*"/gi;
-const BARE_SECRET =
-  /\b(?:sk-(?:or-v1-)?[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:ak_|ck_)[A-Za-z0-9]+)\b/g;
-
-function redactSensitiveText(text: string): string {
-  const REDACTED = "[Redacted]";
-  return text
-    .replace(EMAIL, REDACTED)
-    .replace(JSON_SECRET_FIELD, `"$1":"${REDACTED}"`)
-    .replace(BEARER, `Bearer ${REDACTED}`)
-    .replace(SECRET_ASSIGNMENT, (_match, key: string) => `${key}=${REDACTED}`)
-    .replace(BARE_SECRET, REDACTED);
+function redactLiteralText(text: string): string {
+  const trimmed = text.trim();
+  if (/password|secret|token|api[_-]?key/i.test(trimmed)) return REDACTED_INPUT;
+  return trimmed;
 }
 
-function redactTypedText(text: string, event?: TeachRecordingEvent): string {
-  // Only keep literal text when explicitly opted in via keepLiteral flag
-  if (event?.keepLiteral) {
-    const trimmed = text.trim();
-    const redacted = redactSensitiveText(trimmed);
-    if (redacted !== trimmed) return REDACTED_INPUT;
-    return trimmed;
-  }
-  // Default: return placeholder for ALL typed text (unless opted in)
-  return REDACTED_INPUT;
+function placeholderLabel(label: string | undefined): string | undefined {
+  const cleaned = label
+    ?.replace(/[{}"\\\n\r\t]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, PLACEHOLDER_LABEL_MAX)
+    .trim();
+  return cleaned || undefined;
 }
 
-function isTypedCharacter(key: string): boolean {
-  return key.length === 1;
+function secretPlaceholder(event: TeachFieldInfo): string {
+  const fallback = autocompleteTokens(event).includes("one-time-code")
+    ? "one-time code"
+    : "password";
+  return `{{secret:${placeholderLabel(event.fieldLabel) ?? fallback}}}`;
+}
+
+/** Is this event a typed value that the playbook may show literally? */
+function literalKey(event: TeachRecordingEvent): string | undefined {
+  if (event.keepLiteral !== true || event.redacted || !event.key) return undefined;
+  return isTypedCharacter(event.key) ? event.key : undefined;
+}
+
+type TypedRun =
+  | { kind: "literal"; text: string }
+  | { kind: "input"; label: string | undefined }
+  | { kind: "secret"; placeholder: string }
+  | { kind: "protected" };
+
+function sameRun(a: TypedRun, b: TypedRun): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "input" && b.kind === "input") return a.label === b.label;
+  if (a.kind === "secret" && b.kind === "secret") return a.placeholder === b.placeholder;
+  return true;
 }
 
 export function buildPlaybookFromRecording(
@@ -140,37 +181,47 @@ export function buildPlaybookFromRecording(
   snapshots: TeachSnapshot[] = [],
 ): SkillPlaybook {
   const steps: string[] = [];
-  let typed = "";
-  let typedEvent: TeachRecordingEvent | null = null;
-  let typedSensitive = false;
-  let currentSecretEvent: TeachRecordingEvent | null = null;
+  let run: TypedRun | null = null;
+  let typedCount = 0;
+  let pastedCount = 0;
   let drag: { button: string; fromX: number; fromY: number; toX: number; toY: number } | null =
     null;
 
+  function inputPlaceholder(label: string | undefined, source: "typed" | "pasted"): string {
+    if (label) return `{{input:${label}}}`;
+    if (source === "typed") {
+      typedCount += 1;
+      return `{{input:typed text ${typedCount}}}`;
+    }
+    pastedCount += 1;
+    return `{{input:pasted text ${pastedCount}}}`;
+  }
+
   function flushTyped() {
-    if (!typed) return;
-    const text = redactTypedText(typed, typedEvent ?? undefined);
-    if (text) steps.push(`Type ${JSON.stringify(text)}.`);
-    typed = "";
-    typedEvent = null;
+    if (!run) return;
+    const current = run;
+    run = null;
+    if (current.kind === "literal") {
+      const text = redactLiteralText(current.text);
+      if (text) steps.push(`Type ${JSON.stringify(text)}.`);
+      return;
+    }
+    const text =
+      current.kind === "protected"
+        ? REDACTED_INPUT
+        : current.kind === "secret"
+          ? current.placeholder
+          : inputPlaceholder(current.label, "typed");
+    steps.push(`Type ${JSON.stringify(text)}.`);
   }
 
-  function flushSensitiveTyped() {
-    if (!typedSensitive) return;
-    steps.push(`Type ${JSON.stringify(REDACTED_INPUT)}.`);
-    typedSensitive = false;
-  }
-
-  function flushSecretField() {
-    if (!currentSecretEvent) return;
-    steps.push(`Type ${JSON.stringify(secretPlaceholder(currentSecretEvent))}.`);
-    currentSecretEvent = null;
-  }
-
-  function flushPendingInput() {
+  function addToRun(next: TypedRun) {
+    if (run && sameRun(run, next)) {
+      if (run.kind === "literal" && next.kind === "literal") run.text += next.text;
+      return;
+    }
     flushTyped();
-    flushSensitiveTyped();
-    flushSecretField();
+    run = next;
   }
 
   function flushDrag() {
@@ -186,41 +237,32 @@ export function buildPlaybookFromRecording(
 
   for (const event of events) {
     if (event.kind === "key") {
-      const key = event.key;
       flushDrag();
-
-      if (isPasswordField(event)) {
+      // Protected input keeps its exact previous behavior: one redacted step per run.
+      if (event.sensitive && !isPasswordLikeField(event)) {
+        addToRun({ kind: "protected" });
+        continue;
+      }
+      const key = event.key;
+      if (key !== undefined && isNamedTeachKey(key)) {
         flushTyped();
-        flushSensitiveTyped();
-        if (!currentSecretEvent) currentSecretEvent = event;
-        if (key && isTypedCharacter(key)) continue;
-        flushSecretField();
-        if (key) steps.push(`Press key: ${key}.`);
+        steps.push(`Press key: ${key}.`);
         continue;
       }
-
-      if (isProtectedInput(event)) {
-        flushTyped();
-        flushSecretField();
-        typedSensitive = true;
+      if (key === undefined && !event.redacted && !event.sensitive) continue;
+      if (isSecretTeachField(event)) {
+        addToRun({ kind: "secret", placeholder: secretPlaceholder(event) });
         continue;
       }
-
-      if (!key) continue;
-
-      if (isTypedCharacter(key)) {
-        flushSensitiveTyped();
-        flushSecretField();
-        typed += key;
-        if (!typedEvent) typedEvent = event;
+      const literal = literalKey(event);
+      if (literal !== undefined) {
+        addToRun({ kind: "literal", text: literal });
         continue;
       }
-
-      flushPendingInput();
-      steps.push(`Press key: ${key}.`);
+      addToRun({ kind: "input", label: placeholderLabel(event.fieldLabel) });
       continue;
     }
-    flushPendingInput();
+    flushTyped();
     if (event.kind === "pointer") {
       const action = event.type ?? "click";
       const button = event.button ?? "left";
@@ -250,16 +292,17 @@ export function buildPlaybookFromRecording(
       steps.push(describePointer(event));
     } else if (event.kind === "clipboard") {
       flushDrag();
-      if (isPasswordField(event)) {
-        steps.push(`Paste or type: ${secretPlaceholder(event)}.`);
-      } else {
-        const text = isProtectedInput(event)
-          ? REDACTED_INPUT
-          : event.text && event.keepLiteral
-            ? redactTypedText(event.text, event)
-            : REDACTED_INPUT;
-        if (text) steps.push(`Paste or type: ${text}.`);
+      let text = "";
+      if (event.sensitive && !isPasswordLikeField(event)) {
+        text = REDACTED_INPUT;
+      } else if (isSecretTeachField(event)) {
+        text = secretPlaceholder(event);
+      } else if (event.keepLiteral === true && !event.redacted && event.text) {
+        text = redactLiteralText(event.text);
+      } else if (event.text || event.redacted) {
+        text = inputPlaceholder(placeholderLabel(event.fieldLabel), "pasted");
       }
+      if (text) steps.push(`Paste or type: ${text}.`);
     } else if (event.kind === "scroll") {
       flushDrag();
       steps.push(describeScroll(event));
@@ -267,7 +310,7 @@ export function buildPlaybookFromRecording(
       flushDrag();
     }
   }
-  flushPendingInput();
+  flushTyped();
   flushDrag();
 
   if (steps.length === 0) {
@@ -308,18 +351,22 @@ export function promptInvokesSkill(prompt: string, name: string): boolean {
   return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(skill)}([^\\p{L}\\p{N}]|$)`, "u").test(text);
 }
 
+const PLACEHOLDER_GUIDANCE = [
+  "Placeholders: the steps never contain what the user typed during the demo.",
+  "- {{secret:<label>}} and [redacted input] stand for a password, one-time code or other secret. Use a saved login for this site when one exists (list_secrets, then browser_act fill_secret). Otherwise call request_secret so the user enters it in a protected card, or request_takeover for one-time codes and anything that needs the live screen. Never type the placeholder, never guess a value, and never ask for a secret in chat.",
+  "- {{input:<label>}} stands for ordinary text typed or pasted during the demo. Use the matching value from the user's request; if it is not there, ask the user before typing it.",
+].join("\n");
+
+const PLACEHOLDER_PATTERN = /\{\{(?:secret|input):[^}]*\}\}|\[redacted input\]/;
+
+export function playbookHasPlaceholders(playbook: SkillPlaybook): boolean {
+  return playbook.steps.some((step) => PLACEHOLDER_PATTERN.test(step));
+}
+
 export function formatSkillRunPrompt(name: string, playbook: SkillPlaybook, test = false): string {
   const safety = test
     ? "This is a safe test run. Do not send, spend, delete, or publish anything."
     : "";
-  const placeholderInstructions = [
-    "When you see {{secret:<label>}} or {{input:<label>}} placeholders in the steps:",
-    "1. {{secret:<label>}}: Ask the user for the <label> value at runtime (e.g. 'Please provide the password')",
-    "2. {{input:<label>}}: Ask the user for the <label> value before typing it",
-    "3. [redacted input]: This was typed via Protected input; ask the user for the value",
-    "Never use or guess placeholder values; always prompt the user for secret/protected input.",
-  ].join("\n");
-  
   return [
     `Run taught skill: ${name}`,
     safety,
@@ -327,7 +374,7 @@ export function formatSkillRunPrompt(name: string, playbook: SkillPlaybook, test
     playbook.inputs.length ? `Inputs: ${playbook.inputs.join("; ")}` : undefined,
     "Steps:",
     ...playbook.steps.map((step, index) => `${index + 1}. ${step}`),
-    placeholderInstructions,
+    playbookHasPlaceholders(playbook) ? PLACEHOLDER_GUIDANCE : undefined,
     `How to check: ${playbook.howToCheck}`,
     `Return: ${playbook.whatToReturn}`,
     `Approval boundaries: ${playbook.approvalBoundaries}`,
