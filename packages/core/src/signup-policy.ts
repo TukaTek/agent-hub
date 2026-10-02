@@ -29,8 +29,8 @@ export function signupRequiresEmailVerification(response: unknown): boolean {
 }
 
 export function signupsOpen(enabled: string | undefined): boolean {
-  if (enabled === undefined) return true;
-  return enabled !== "false" && enabled !== "0";
+  // Self-service signup is permanently disabled
+  return false;
 }
 
 export function signupPolicyFromEnv(input: {
