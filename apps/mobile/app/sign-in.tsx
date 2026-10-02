@@ -113,25 +113,8 @@ export default function SignIn() {
         setResetSent(true);
         return;
       }
-      if (mode === "up") {
-        const trimmedEmail = email.trim();
-        const result = await signUp(
-          trimmedEmail,
-          password,
-          name.trim() || trimmedEmail.split("@")[0] || "User",
-        );
-        if (result.verificationRequired) {
-          setResetSent(true);
-          return;
-        }
-      } else {
-        await signIn(email.trim(), password, reset?.mode === "hub");
-      }
-      const setup =
-        mode === "up"
-          ? await rpc<IntegrationSetupState>("integrationSetup/get").catch(() => null)
-          : null;
-      router.replace(setup?.needsSetup ? "/integration-setup" : "/");
+      await signIn(email.trim(), password, reset?.mode === "hub");
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("Could not continue"));
     } finally {
@@ -172,9 +155,7 @@ export default function SignIn() {
                   ? t("Check your email")
                   : mode === "in"
                     ? t("Sign in to CortexAI Agent Hub")
-                    : mode === "up"
-                      ? t("Sign up for CortexAI Agent Hub")
-                      : t("Reset your password")}
+                    : t("Reset your password")}
               </Text>
               {!reset ? (
                 capabilitiesFailed ? (
@@ -200,22 +181,6 @@ export default function SignIn() {
                 </View>
               ) : (
                 <>
-                  {mode === "up" ? (
-                    <TextInput
-                      autoComplete="name"
-                      placeholder={t("Name")}
-                      placeholderTextColor={tokens.mutedForeground}
-                      value={name}
-                      onChangeText={setName}
-                      style={{
-                        marginTop: 28,
-                        backgroundColor: tokens.muted,
-                        borderRadius: 13,
-                        padding: 16,
-                        color: tokens.foreground,
-                      }}
-                    />
-                  ) : null}
                   <TextInput
                     autoCapitalize="none"
                     autoComplete="email"
@@ -225,7 +190,7 @@ export default function SignIn() {
                     value={email}
                     onChangeText={setEmail}
                     style={{
-                      marginTop: mode === "up" ? 12 : 28,
+                      marginTop: 28,
                       backgroundColor: tokens.muted,
                       borderRadius: 13,
                       padding: 16,
@@ -271,9 +236,7 @@ export default function SignIn() {
                         ? t("Working…")
                         : mode === "in"
                           ? t("Sign in")
-                          : mode === "up"
-                            ? t("Sign up")
-                            : t("Send reset link")}
+                          : t("Send reset link")}
                     </Text>
                   </Pressable>
                   {mode === "in" && reset?.passwordReset && reset.resetUrl ? (
