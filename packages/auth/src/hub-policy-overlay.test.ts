@@ -26,6 +26,7 @@ describe("Hub precedence over local environment and deployment settings", () => 
     ["features", "MESSAGING_OPEN_SIGNUP", "true", "false"],
     ["features", "SIGNUPS_ENABLED", "true", "false"],
     ["features", "SANDBOX_IDLE_MS", "600000", "120000"],
+    ["connections", "E2B_API_KEY", "local-computer-secret", "hub-computer-secret-not-real"],
   ])("%s: Hub replaces a conflicting %s", (_category, name, local, hub) => {
     const { env, signals } = overlayHubEnv({ [name]: local }, configured);
     expect(env[name]).toBe(hub);
