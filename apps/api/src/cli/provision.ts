@@ -113,9 +113,11 @@ export async function provisionOwner(
     email: string;
     name: string;
     secretFile?: string;
+    hubUserId?: string;
+    hubTenant?: string;
   },
 ): Promise<{ userId: string; email: string; success: boolean; message: string }> {
-  const { email, name, secretFile } = options;
+  const { email, name, secretFile, hubUserId, hubTenant } = options;
 
   // Read password securely
   const password = await readSecret(
