@@ -414,8 +414,14 @@ export function parseProvisionArgs(
     } else if (arg === "--secret-file" && i + 1 < args.length) {
       secretFile = args[i + 1];
       i++;
+    } else if (arg === "--hub-user-id" && i + 1 < args.length) {
+      hubUserId = args[i + 1];
+      i++;
+    } else if (arg === "--hub-tenant" && i + 1 < args.length) {
+      hubTenant = args[i + 1];
+      i++;
     }
   }
 
-  return { command, email, name, secretFile };
+  return { command, email, name, secretFile, hubUserId, hubTenant };
 }
