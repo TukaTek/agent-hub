@@ -29,7 +29,7 @@ if (cliArgs) {
     
     if (cliArgs.command === "provision-owner") {
       if (!cliArgs.email || !cliArgs.name) {
-        console.error("Usage: provision-owner --email <email> --name <name> [--secret-file <path>]");
+        process.stderr.write("Usage: provision-owner --email <email> --name <name> [--secret-file <path>]\n");
         process.exit(1);
       }
       result = await provisionOwner(prisma, env, {
@@ -39,7 +39,7 @@ if (cliArgs) {
       });
     } else if (cliArgs.command === "provision-user") {
       if (!cliArgs.email || !cliArgs.name) {
-        console.error("Usage: provision-user --email <email> --name <name> [--secret-file <path>]");
+        process.stderr.write("Usage: provision-user --email <email> --name <name> [--secret-file <path>]\n");
         process.exit(1);
       }
       result = await provisionUser(prisma, env, {
@@ -49,23 +49,23 @@ if (cliArgs) {
       });
     } else if (cliArgs.command === "transfer-owner") {
       if (!cliArgs.email) {
-        console.error("Usage: transfer-owner --email <email>");
+        process.stderr.write("Usage: transfer-owner --email <email>\n");
         process.exit(1);
       }
       result = await transferOwner(prisma, {
         email: cliArgs.email,
       });
     } else {
-      console.error("Unknown command");
+      process.stderr.write("Unknown command\n");
       process.exit(1);
     }
 
-    console.log(result.message);
+    process.stdout.write(`${result.message}\n`);
     await prisma.$disconnect();
     await logger.flush({ timeoutMs: 2_000 });
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    console.error("Provision command failed:", error);
+    process.stderr.write(`Provision command failed: ${error}\n`);
     await logger.flush({ timeoutMs: 2_000 });
     process.exit(1);
   }

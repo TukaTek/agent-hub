@@ -198,18 +198,12 @@ WEB_ORIGIN=https://app.example.com
 API_URL=https://app.example.com
 ```
 
-Cookies and CORS follow those origins. `SIGNUPS_ENABLED` seeds whether registration is open
-when the API starts for the first time and is not reapplied on restart. A non-empty
-`SIGNUP_ALLOWLIST` is applied on every API start, replacing the allowlist stored for the deployment.
-Leave it empty to keep that stored list.
+Cookies and CORS follow those origins. Self-service signup has been permanently removed for security.
+All accounts must be provisioned via operator CLI commands (see [First-time deployment owner provisioning](#first-time-deployment-owner-provisioning)).
 
-With a nonempty signup allowlist and SMTP configured, users—including existing accounts—must
-verify their email to sign in. On a fresh instance with no SMTP, the first allowlisted account
-can register without verification. That signup does not prove mailbox ownership, so create the
-account before exposing the service. Further accounts still need SMTP.
-
-For a public deployment, configure SMTP and an allowlist before the API's first start.
-Keep an installation without email on a trusted local network.
+Legacy `SIGNUP_ALLOWLIST` values in the database are ignored; stored signup settings remain for backward
+compatibility but have no effect. Password reset for existing local accounts still works and requires SMTP
+configuration.
 
 ### Verification and password recovery email
 
