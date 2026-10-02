@@ -242,9 +242,8 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     emailAndPassword: {
       enabled: !hub,
-      // Signup policy is mutable deployment state, so the request hook below
-      // enforces it instead of freezing an environment value at process start.
-      disableSignUp: false,
+      // Self-service signup is permanently disabled. Operator provisioning creates accounts.
+      disableSignUp: true,
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: 60 * 60,
       sendResetPassword: env.email
