@@ -128,4 +128,48 @@ describe("purgeTaughtSkillSecrets", () => {
     expect(result.scanned).toBe(1);
     expect(result.changed).toBe(0);
   });
+
+  it("purges legacy rows without fieldType by dropping ALL key/clipboard events", async () => {
+    const { prisma, updates } = makeMockPrisma([
+      {
+        id: "skill-legacy",
+        goal: "Old workflow",
+        status: "saved",
+        recording: {
+          events: [
+            { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "p" },
+            { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "a" },
+            { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "s" },
+            { at: "2026-01-01T00:00:03.000Z", kind: "clipboard", text: "password123" },
+            { at: "2026-01-01T00:00:04.000Z", kind: "pointer", x: 100, y: 200, button: "left", type: "click" },
+          ],
+          snapshots: [],
+        },
+        playbook: { steps: ['Type "pas".', 'Paste or type: password123.', 'Click left button at (100, 200).'] },
+      },
+    ]);
+
+    const result = await purgeTaughtSkillSecrets(prisma);
+    expect(result.scanned).toBe(1);
+    expect(result.changed).toBe(1);
+    expect(updates).toHaveLength(1);
+    const sanitized = updates[0];
+    expect(sanitized).toBeDefined();
+    const recording = sanitized.recording as { events: TeachRecordingEvent[] };
+    // All key events should have key stripped
+    expect(recording.events[0].key).toBeUndefined();
+    expect(recording.events[1].key).toBeUndefined();
+    expect(recording.events[2].key).toBeUndefined();
+    expect(recording.events[0].sensitive).toBe(true);
+    // Clipboard event should have text stripped
+    expect(recording.events[3].text).toBeUndefined();
+    expect(recording.events[3].sensitive).toBe(true);
+    // Pointer event should be unchanged
+    expect(recording.events[4].x).toBe(100);
+    expect(recording.events[4].y).toBe(200);
+    // Playbook should be rebuilt without the literal values
+    const playbook = sanitized.playbook as { steps: string[] };
+    expect(playbook.steps.join(" ")).not.toContain("password123");
+    expect(playbook.steps.join(" ")).not.toContain("pas");
+  });
 });

@@ -18,6 +18,23 @@ function parseRecording(value: unknown): TeachRecording {
   };
 }
 
+function legacySanitizeForPurge(event: TeachRecordingEvent, status: string): TeachRecordingEvent {
+  // For saved skills (not recording), aggressively drop all input unless explicitly opted in
+  if (status !== "recording" && status !== "drafting" && !event.keepLiteral) {
+    if (event.kind === "key" || event.kind === "clipboard") {
+      const sanitized = { ...event };
+      delete sanitized.key;
+      delete sanitized.text;
+      if (event.kind === "key" || event.kind === "clipboard") {
+        sanitized.sensitive = true;
+      }
+      return sanitized;
+    }
+  }
+  // For recording/drafting, use standard sanitization (password fields + Protected input)
+  return sanitizeTeachRecordingEvent(event);
+}
+
 export async function purgeTaughtSkillSecrets(prisma: PrismaClient): Promise<{ scanned: number; changed: number }> {
   const logger = getLogger();
   let scanned = 0;
@@ -39,7 +56,9 @@ export async function purgeTaughtSkillSecrets(prisma: PrismaClient): Promise<{ s
       scanned++;
       let needsUpdate = false;
       const recording = parseRecording(skill.recording);
-      const sanitizedEvents = recording.events.map(sanitizeTeachRecordingEvent);
+      const sanitizedEvents = recording.events.map((event) => 
+        legacySanitizeForPurge(event, skill.status)
+      );
       
       if (JSON.stringify(sanitizedEvents) !== JSON.stringify(recording.events)) {
         needsUpdate = true;
