@@ -198,29 +198,16 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         setResetSent(true);
         return;
       }
-      const result =
-        mode === "up"
-          ? await authClient.signUp.email({
-              email,
-              password,
-              name: name || email.split("@")[0] || "User",
-            })
-          : await authClient.signIn.email({ email, password });
+      const result = await authClient.signIn.email({ email, password });
       if (result.error) {
         setError(result.error.message ?? t`Could not continue`);
         return;
       }
-      if (mode === "up" && signupRequiresEmailVerification(result.data)) {
-        setSearchParams({ verify: "email" });
-        return;
-      }
       clearSpaceSelection();
       navigate(
-        mode === "up"
-          ? "/onboarding"
-          : searchParams.get("next") === "/integrations/setup"
-            ? "/integrations/setup"
-            : "/app",
+        searchParams.get("next") === "/integrations/setup"
+          ? "/integrations/setup"
+          : "/app",
       );
     } catch {
       setError(t`Could not reach the server`);
@@ -259,22 +246,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         </div>
       ) : (
         <>
-          {mode === "up" ? (
-            <div className="mb-4 w-full">
-              <Label htmlFor="name" className="text-muted-foreground">
-                <Trans>Name</Trans>
-              </Label>
-              <Input
-                id="name"
-                name="name"
-                autoComplete="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={t`Your name`}
-                className={fieldClass}
-              />
-            </div>
-          ) : null}
           <div className="w-full">
             <Label htmlFor="email" className="text-muted-foreground">
               <Trans>Email</Trans>
@@ -404,10 +375,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                   <Link to="/sign-up" className="font-medium text-foreground">
                     <Trans>Sign up</Trans>
                   </Link>
-                </>
-              ) : mode === "up" ? (
-                <>
-                  {/* Signup removed */}
                 </>
               ) : (
                 <Link to="/sign-in" className="font-medium text-foreground">

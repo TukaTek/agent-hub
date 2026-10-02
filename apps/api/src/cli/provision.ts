@@ -383,6 +383,8 @@ export function parseProvisionArgs(
   email?: string;
   name?: string;
   secretFile?: string;
+  hubUserId?: string;
+  hubTenant?: string;
 } | null {
   if (args.length < 1) return null;
 
@@ -397,6 +399,8 @@ export function parseProvisionArgs(
 
   let email: string | undefined;
   let name: string | undefined;
+  let hubUserId: string | undefined;
+  let hubTenant: string | undefined;
   let secretFile: string | undefined;
 
   for (let i = 1; i < args.length; i++) {
