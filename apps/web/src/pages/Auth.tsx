@@ -410,10 +410,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 </>
               ) : mode === "up" ? (
                 <>
-                  <Trans>Already have an account?</Trans>{" "}
-                  <Link to="/sign-in" className="font-medium text-foreground">
-                    <Trans>Sign in</Trans>
-                  </Link>
+                  {/* Signup removed */}
                 </>
               ) : (
                 <Link to="/sign-in" className="font-medium text-foreground">
