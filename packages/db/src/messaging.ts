@@ -93,9 +93,7 @@ export async function provisionMessagingIdentity(
   const spaceId =
     membership?.spaceId ??
     (
-      await bootstrapUserSpace(prisma, user, env, {
-        claimDeploymentOwner: false,
-      })
+      await bootstrapUserSpace(prisma, user, env)
     ).spaceId;
 
   // A previous attempt may have died between createBot and the identity row;

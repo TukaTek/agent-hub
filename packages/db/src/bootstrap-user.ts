@@ -92,20 +92,14 @@ export async function bootstrapUserSpace(
     where: { id: "default" },
     create: {
       id: "default",
-      ownerUserId: claimDeploymentOwner ? user.id : null,
+      ownerUserId: null,
       signupsEnabled: policy.enabled,
       signupAllowlist: policy.allowlist.join(","),
       signupPolicyInitialized: true,
     },
     update: {},
   });
-  if (claimDeploymentOwner) {
-    // Conditional claim: only the first concurrent claimant wins the seat.
-    await prisma.deploymentSettings.updateMany({
-      where: { id: "default", ownerUserId: null },
-      data: { ownerUserId: user.id },
-    });
-  }
+  // Deployment owner is never claimed here; operator commands set it explicitly.
   const hasMemory = await prisma.memoryDocument.findFirst({
     where: { spaceId: orgId, userId: user.id, scope: "user", path: "MEMORY.md" },
   });

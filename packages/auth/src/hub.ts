@@ -202,7 +202,6 @@ export function createHubAuth(
         prisma,
         user,
         { signupsEnabled: "false", signupAllowlist: undefined },
-        { claimDeploymentOwner: false },
       );
       const session = await ctx.context.internalAdapter.createSession(user.id);
       if (!session) throw new Error("Session creation failed");
