@@ -6,6 +6,7 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import { historyCompactJob } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   createLogger,
@@ -568,6 +569,24 @@ describe("compactHistory", () => {
     const [request] = harness.runtime.run.mock.calls[0]!;
     expect(request.prompt).toContain("[file: plan.pdf (application/pdf, 123 bytes)]");
     expect(request.prompt).toContain("[image: diagram.png]");
+  });
+
+  it("summarizes with Hub's deployment model over the persisted default (CAAH-36)", async () => {
+    setHubManagedDeploymentSettings({
+      defaultModelProvider: "anthropic",
+      defaultModelId: "claude-sonnet-5",
+    });
+    try {
+      const harness = compactionHarness({
+        settings: { defaultModelProvider: "openrouter", defaultModelId: "local-model" },
+        withMemoryProvider: false,
+      });
+      await compactHistory(harness.deps, "thread-1");
+      const [request] = harness.runtime.run.mock.calls[0]!;
+      expect(request.model).toMatchObject({ provider: "anthropic", id: "claude-sonnet-5" });
+    } finally {
+      setHubManagedDeploymentSettings({});
+    }
   });
 
   it("compacts locally without a semantic memory provider", async () => {

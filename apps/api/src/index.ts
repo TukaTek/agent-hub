@@ -8,12 +8,25 @@ import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
+import { HUB_POLICY_RESTART_EXIT_CODE, startApiHubPolicy } from "./hub-policy.js";
 
 const logger = createRootLogger(SERVICE_NAMES.api);
 
 try {
+  // Bound once shutdown exists; a restart before then simply exits.
+  let restartForHubPolicy: () => void = () => process.exit(HUB_POLICY_RESTART_EXIT_CODE);
+  // Before loadEnv: Hub-managed settings replace their local inputs (CAAH-36).
+  const hubPolicy = await startApiHubPolicy(process.env, logger, {
+    onRestartRequired: (restart) => {
+      logger.warn("hub policy changed a startup-bound setting; restarting to apply it", {
+        "hub.policy.applied_revision": restart.appliedRevision,
+        "hub.policy.hub_revision": restart.hubRevision,
+      });
+      restartForHubPolicy();
+    },
+  });
   const env = loadEnv();
-  const { app, stop } = await createApp({ ...env, logger });
+  const { app, stop } = await createApp({ ...env, logger, hubPolicy: hubPolicy?.policy });
   const server = serve({ fetch: app.fetch, port: env.port, hostname: env.apiHost }, () => {
     logger.info("api listening", { "http.host": env.apiHost, "http.port": env.port });
   });
@@ -39,10 +52,14 @@ try {
     await closed;
     clearTimeout(grace);
     await stop();
+    await hubPolicy?.close();
     await logger.flush({ timeoutMs: 2_000 });
   };
   process.once("SIGTERM", () => void shutdown());
   process.once("SIGINT", () => void shutdown());
+  // F3: drain, then exit non-zero so Compose or systemd restarts onto Hub's revision.
+  restartForHubPolicy = () =>
+    void shutdown().finally(() => process.exit(HUB_POLICY_RESTART_EXIT_CODE));
 } catch (error) {
   logger.error("api startup failed", error);
   await logger.flush({ timeoutMs: 2_000 });

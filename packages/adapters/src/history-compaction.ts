@@ -1,7 +1,7 @@
 import type { AgentRunRequest, AgentRuntime, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
 import { historyCompactJob } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { blocksToAgentHistoryText } from "@cortexai-agent-hub/core";
+import { blocksToAgentHistoryText, withHubModelDefaults } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger, unwrapJobPayload } from "@cortexai-agent-hub/logging";
 
@@ -342,9 +342,9 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
           apiKey: deps.deploymentModelKey,
         }
       : await (async () => {
-          const settings = await deps.prisma.deploymentSettings.findUnique({
-            where: { id: "default" },
-          });
+          const settings = withHubModelDefaults(
+            await deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+          );
           return {
             provider: settings?.defaultModelProvider ?? "scripted",
             id: settings?.defaultModelId ?? "scripted",

@@ -1,8 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  HUB_ACCESS_DENIED,
+  HUB_SIGN_IN_UNAVAILABLE_MESSAGE,
   HUB_SSO_ACCESS_DENIED,
+  HUB_UNAVAILABLE,
+  hubRefusalCallbackError,
   type SignInContinueResponse,
   type SsoCallbackError,
+  TENANT_DISABLED,
 } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 import { APIError, createAuthEndpoint } from "better-auth/api";
@@ -16,6 +21,8 @@ import {
   HubUnsupportedIdpError,
   hubUserId,
 } from "./hub-client.js";
+import { type HubPolicy, notConfiguredHubPolicy } from "./hub-policy.js";
+import { HubPolicyError } from "./hub-policy-contract.js";
 import { createHubSessionAuthorizer } from "./hub-sessions.js";
 
 type HubClient = ReturnType<typeof createHubClient>;
@@ -56,13 +63,51 @@ function assertTrustedOrigin(ctx: {
   }
 }
 
+/** Hub could not be reached: a connection failure, a timeout, or a Hub-side 5xx. */
+function hubUnreachable(error: unknown) {
+  if (error instanceof HubRequestError)
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  if (!(error instanceof Error)) return false;
+  return error.name === "TimeoutError" || error.name === "AbortError" || error instanceof TypeError;
+}
+
+/** The refusal a client sees when Hub policy stops a sign-in. Never carries a value. */
+function hubRefusal(error: HubPolicyError) {
+  if (error.code === HUB_ACCESS_DENIED)
+    return new APIError("FORBIDDEN", { code: error.code, message: "Ask your admin for access" });
+  return new APIError(error.code === TENANT_DISABLED ? "FORBIDDEN" : "SERVICE_UNAVAILABLE", {
+    code: error.code,
+    message: HUB_SIGN_IN_UNAVAILABLE_MESSAGE,
+  });
+}
+
+/** Policy refusals, and a Hub that dropped mid-sign-in, as the stable refusal error. */
+function asHubPolicyError(error: unknown): HubPolicyError | undefined {
+  if (error instanceof HubPolicyError) return error;
+  if (hubUnreachable(error)) return new HubPolicyError(HUB_UNAVAILABLE, "unreachable");
+  return undefined;
+}
+
+/** Runs the gate; a refusal becomes the client-facing error. */
+async function gate(policy: Pick<HubPolicy, "check">) {
+  try {
+    await policy.check();
+  } catch (error) {
+    throw hubRefusal(asHubPolicyError(error) ?? new HubPolicyError(HUB_UNAVAILABLE, "gate"));
+  }
+}
+
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
 /** Rows are keyed by a hash so the database never holds a usable state value. */
 const ssoStateKey = (state: string) => `${SSO_STATE_PREFIX}${sha256(state).toString("hex")}`;
 
-/** Without a Hub client (local auth) every email continues to the password step. */
+/**
+ * Without a Hub client (local auth) every email continues to the password step.
+ * With one, Hub policy must admit sign-in before Hub is asked about the email.
+ */
 function signInContinueEndpoint(
   client?: Pick<HubClient, "lookup" | "ssoStart">,
+  policy?: Pick<HubPolicy, "check">,
   sso?: {
     prisma: PrismaClient;
     encrypt: (data: string) => Promise<string>;
@@ -79,6 +124,8 @@ function signInContinueEndpoint(
       if (typeof body?.email !== "string" || !body.email.trim() || body.email.length > 320) {
         throw new APIError("BAD_REQUEST", { message: "Email is required" });
       }
+      if (client && !policy) throw new Error("Hub sign-in requires the Hub policy gate");
+      if (policy) await gate(policy);
       let idpType: Awaited<ReturnType<HubClient["lookup"]>>["idpType"] | undefined;
       if (client) {
         try {
@@ -147,9 +194,17 @@ export function createHubAuth(
     webOrigin: string;
     /** Receives fixed reason strings only; never codes, state, tokens or email. */
     onHubSsoError?: (reason: string) => void;
+    /** CAAH-36: Hub policy gates every sign-in and every continuing session. */
+    hubPolicy?: HubPolicy;
   },
   client = createHubClient(config),
 ) {
+  // Hub mode without its tenant or service credential admits nothing, whatever policy
+  // the caller passed: the config is the authority on whether Hub can be asked (F1).
+  const policy = config.notConfigured
+    ? notConfiguredHubPolicy({ missing: config.notConfigured.missing.map((item) => item.name) })
+    : env.hubPolicy;
+  if (!policy) throw new Error("Hub mode requires the Hub policy gate");
   const encrypt = (data: string) => symmetricEncrypt({ key: env.tokenEncryptionKey, data });
   const redirectUri = new URL(`/api/auth${HUB_SSO_CALLBACK_PATH}`, env.baseURL).href;
   if (config.sso && !redirectUri.startsWith("https://")) {
@@ -163,11 +218,16 @@ export function createHubAuth(
     {
       verifyCacheTtlMs: config.verifyCacheTtlMs,
       verifyCacheEnabled: config.verifyCacheEnabled,
+      policy,
     },
   );
 
-  /** Shared by password and SSO sign-in: one Hub identity maps to one local user. */
+  /**
+   * Shared by password and SSO sign-in: one Hub identity maps to one local user.
+   * Hub policy must admit this identity before anything local is created.
+   */
   async function completeHubGrant(ctx: EndpointContext, grant: HubGrant) {
+    await policy!.admit({ tenant: grant.tenant, subject: grant.subject });
     let sessionId: string | undefined;
     try {
       const id = hubUserId(config.origin, grant.tenant, grant.subject);
@@ -238,6 +298,7 @@ export function createHubAuth(
     endpoints: {
       signInContinue: signInContinueEndpoint(
         client,
+        policy,
         config.sso ? { prisma, encrypt, onError: env.onHubSsoError } : undefined,
       ),
       hubSignIn: createAuthEndpoint(
@@ -257,19 +318,30 @@ export function createHubAuth(
           ) {
             throw new APIError("BAD_REQUEST", { message: "Email and password are required" });
           }
+          await gate(policy);
+          let grant: HubGrant;
           try {
-            const { session, user } = await completeHubGrant(
-              ctx,
-              await client.login(body.email, body.password),
-            );
-            return ctx.json({ token: session.token, user });
+            grant = await client.login(body.email, body.password);
           } catch (error) {
+            if (hubUnreachable(error))
+              throw hubRefusal(new HubPolicyError(HUB_UNAVAILABLE, "unreachable"));
             if (error instanceof HubUnsupportedIdpError) {
               throw new APIError("BAD_REQUEST", {
                 code: "HUB_IDP_UNSUPPORTED",
                 message: error.message,
               });
             }
+            throw new APIError("UNAUTHORIZED", {
+              message: "Could not sign in through CortexAI Hub",
+            });
+          }
+          try {
+            const { session, user } = await completeHubGrant(ctx, grant);
+            return ctx.json({ token: session.token, user });
+          } catch (error) {
+            // Nothing local holds this grant, so revoke it at Hub, as SSO does (F6).
+            await client.revoke(grant.refreshToken).catch(() => undefined);
+            if (error instanceof HubPolicyError) throw hubRefusal(error);
             throw new APIError("UNAUTHORIZED", {
               message: "Could not sign in through CortexAI Hub",
             });
@@ -310,10 +382,22 @@ export function createHubAuth(
                   throw fail("sso_expired", "state_mismatch");
                 const verifier = await consumeSsoState(state);
                 if (!verifier) throw fail("sso_expired", "state_unknown");
+                const refuse = (error: HubPolicyError, step: string) =>
+                  fail(hubRefusalCallbackError(error.code), `${step}:${error.code.toLowerCase()}`);
+                try {
+                  await policy.check();
+                } catch (error) {
+                  throw refuse(
+                    asHubPolicyError(error) ?? new HubPolicyError(HUB_UNAVAILABLE, "gate"),
+                    "policy",
+                  );
+                }
                 let grant: HubGrant;
                 try {
                   grant = await client.ssoExchange(code, verifier, redirectUri);
                 } catch (error) {
+                  if (hubUnreachable(error))
+                    throw refuse(new HubPolicyError(HUB_UNAVAILABLE, "unreachable"), "exchange");
                   throw fail(
                     "sso_failed",
                     `exchange:${(error instanceof HubRequestError && error.code) || "rejected"}`,
@@ -321,8 +405,9 @@ export function createHubAuth(
                 }
                 try {
                   await completeHubGrant(ctx, grant);
-                } catch {
+                } catch (error) {
                   await client.revoke(grant.refreshToken).catch(() => undefined);
+                  if (error instanceof HubPolicyError) throw refuse(error, "admit");
                   throw fail("sso_failed", "session");
                 }
                 throw ctx.redirect(new URL("/app", env.webOrigin).href);

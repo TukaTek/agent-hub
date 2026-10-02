@@ -1,0 +1,27 @@
+# Optional overlay for AUTH_MODE=hub: mounts the Hub service credential secret into the API.
+# Layer it after the base file in every Compose invocation, for example:
+#
+#   docker compose --env-file .env \
+#     -f infra/compose/docker-compose.prod.yml \
+#     -f infra/compose/docker-compose.hub.yml \
+#     up -d --wait
+#
+# It works the same on docker-compose.images.yml. Set in .env:
+#   HUB_SERVICE_SECRET_HOST_FILE  host path of a file holding only the secret
+#   HUB_SERVICE_API_ID, HUB_AUTH_TENANT_ID, HUB_AUTH_ORIGIN, AUTH_MODE=hub
+# The API runs as the image's `node` user (uid 1000) and Compose bind-mounts the file with its
+# host owner and mode, so make it readable by that uid, e.g. `chown 1000:1000` and `chmod 0400`.
+# When the updater profile is enabled, mirror the file list into
+# CORTEXAI_AGENT_HUB_COMPOSE_FILE (see docs/self-host.md). See docs/hub-auth.md#configuring-hub-mode.
+
+services:
+  api:
+    secrets:
+      - hub_service_secret
+    environment:
+      # Fixed: this overlay owns the mount point, so a host path in .env can't leak in here.
+      HUB_SERVICE_SECRET_FILE: /run/secrets/hub_service_secret
+
+secrets:
+  hub_service_secret:
+    file: ${HUB_SERVICE_SECRET_HOST_FILE:?set HUB_SERVICE_SECRET_HOST_FILE to the host file holding the Hub service secret}

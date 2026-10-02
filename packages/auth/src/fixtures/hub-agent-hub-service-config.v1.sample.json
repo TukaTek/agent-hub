@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "agent-hub-settings-v1",
+  "product": "cortexai-agent-hub",
+  "tenantId": "tnt_synthetic_demo",
+  "revision": 2,
+  "updatedAt": "2026-10-01T18:30:00.000Z",
+  "overrides": {
+    "signup": {
+      "enabled": true,
+      "allowlist": ["@cortexai.com", "partner@example.com"]
+    },
+    "model": {
+      "defaultProvider": "anthropic",
+      "defaultModel": "claude-sonnet-4"
+    }
+  },
+  "composio": {
+    "tenantEnablement": {
+      "status": "configured",
+      "revision": 1,
+      "enabledToolkitIds": ["github", "linear", "slack"]
+    },
+    "productAccess": {
+      "status": "configured",
+      "revision": 1,
+      "allowedToolkitIds": ["github", "linear"]
+    }
+  },
+  "mcp": {
+    "status": "pending",
+    "available": []
+  },
+  "skills": {
+    "status": "pending",
+    "available": []
+  },
+  "access": {
+    "status": "configured",
+    "contract": "agent-hub-assignments.v1",
+    "productAssignments": [
+      {
+        "tenantUserId": "usr_alice_001",
+        "tenantId": "tnt_synthetic_demo",
+        "productId": "cortexai-agent-hub",
+        "role": "admin"
+      },
+      {
+        "tenantUserId": "usr_bob_002",
+        "tenantId": "tnt_synthetic_demo",
+        "productId": "cortexai-agent-hub",
+        "role": "employee"
+      },
+      {
+        "tenantUserId": "usr_charlie_003",
+        "tenantId": "tnt_synthetic_demo",
+        "productId": "cortexai-agent-hub",
+        "role": "employee"
+      }
+    ]
+  },
+  "onboarding": {
+    "status": "configured",
+    "revision": 0,
+    "suggestions": {}
+  }
+}

@@ -5,7 +5,6 @@ import type {
   ModelCredentialFailedState,
   ModelCredentialRetireReason,
 } from "@cortexai-agent-hub/adapter-kit";
-
 import {
   type EncryptedSecretStore,
   formatCurrentTimeInstruction,
@@ -14,6 +13,7 @@ import {
   serializeModelSecret,
   toOAuthCredential,
 } from "@cortexai-agent-hub/adapters";
+import { withHubModelDefaults } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   findDefaultModelCredential,
@@ -200,9 +200,9 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
       oauth?: AgentRunModel["oauth"];
     };
   } | null> {
-    const settings = await this.deps.prisma.deploymentSettings.findUnique({
-      where: { id: "default" },
-    });
+    const settings = withHubModelDefaults(
+      await this.deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+    );
     const scope = { userId: bot.userId, spaceId: bot.spaceId };
     const defaultCredential = await findDefaultModelCredential(this.deps.prisma, scope);
     const requestedProvider = this.deps.providerOverride ?? bot.modelProvider;
