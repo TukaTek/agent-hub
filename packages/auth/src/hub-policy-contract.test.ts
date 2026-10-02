@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/agent-hub-service-config.v1.json" with { type: "json" };
+// Verbatim from TukaTek/cortexai-hub docs/agent-hub-service-config.v1.sample.json at
+// c140bd6c3e017c6eec1036c1219d0fca5ce1b18e (CAH-204). See fixtures/README.md.
+import hubSample from "./fixtures/hub-agent-hub-service-config.v1.sample.json" with {
+  type: "json",
+};
 import {
   HUB_ASSIGNMENTS_CONTRACT,
   HUB_POLICY_PRODUCT,
@@ -235,5 +240,30 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1, CAH-20
     expect(reject(marked([{ ...row("subject-1"), tenantId: "tenant-b" }])).reason).toBe(
       "tenant_mismatch",
     );
+  });
+});
+
+describe("Hub's published service-config sample (CAH-204)", () => {
+  const listed = hubSample.access.productAssignments.map((row) => row.tenantUserId);
+
+  it("parses unchanged for its own tenant with exactly its assigned users", () => {
+    expect(listed.length).toBeGreaterThan(0);
+    const policy = parseHubPolicy(clone(hubSample), hubSample.tenantId);
+    expect(policy.tenantId).toBe(hubSample.tenantId);
+    expect(policy.revision).toBe(hubSample.revision);
+    expect(policy.assignments).toEqual({ status: "configured", subjects: [...listed].sort() });
+  });
+
+  it("denies everyone when the sample's list is emptied", () => {
+    const raw = clone(hubSample);
+    raw.access.productAssignments = [];
+    expect(parseHubPolicy(raw, hubSample.tenantId).assignments).toEqual({
+      status: "configured",
+      subjects: [],
+    });
+  });
+
+  it("is refused for any other tenant", () => {
+    expect(reject(clone(hubSample), TENANT).reason).toBe("tenant_mismatch");
   });
 });

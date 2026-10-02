@@ -4,6 +4,9 @@ import {
 } from "@cortexai-agent-hub/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/agent-hub-service-config.v1.json" with { type: "json" };
+import hubSample from "./fixtures/hub-agent-hub-service-config.v1.sample.json" with {
+  type: "json",
+};
 import { HubRequestError } from "./hub-client.js";
 import {
   applyHubPolicyAtStartup,
@@ -305,6 +308,49 @@ describe("Agent Hub assignment contract marker (agent-hub-assignments.v1)", () =
     expect(await codeOf(api.admit(other))).toBe("HUB_CONFIG_INVALID");
     expect(await codeOf(api.admit(assigned))).toBe("HUB_CONFIG_INVALID");
     expect(await worker.workAllowed(other)).toBe(false);
+  });
+});
+
+describe("Hub's published service-config sample (CAH-204)", () => {
+  it("admits its listed users and denies them once the list is emptied", async () => {
+    const tenant = hubSample.tenantId;
+    const store = memoryHubPolicyStore();
+    const fetchConfig = vi.fn<HubConfigFetch>(async () => ({
+      status: 200,
+      body: clone(hubSample),
+      etag: '"sample"',
+    }));
+    const applied = await applyHubPolicyAtStartup({
+      store,
+      tenantId: tenant,
+      fetchConfig,
+      env: {},
+      log: () => undefined,
+    });
+    const api = createHubPolicy({
+      store,
+      tenantId: tenant,
+      fetchConfig,
+      applied,
+      log: () => undefined,
+    });
+    const users = hubSample.access.productAssignments.map((row) => ({
+      tenant,
+      subject: row.tenantUserId,
+    }));
+    for (const user of users) expect(await api.admit(user)).toBe("assigned");
+    expect(await codeOf(api.admit({ tenant, subject: "usr_not_listed" }))).toBe(
+      "HUB_ACCESS_DENIED",
+    );
+    const emptied = clone(hubSample);
+    emptied.access.productAssignments = [];
+    fetchConfig.mockResolvedValue({ status: 200, body: emptied, etag: '"emptied"' });
+    await api.refresh();
+    for (const user of users) {
+      expect(await codeOf(api.admit(user))).toBe("HUB_ACCESS_DENIED");
+      expect(await api.sessionAllowed(user)).toBe(false);
+      expect(await api.workAllowed(user)).toBe(false);
+    }
   });
 });
 
