@@ -30,6 +30,7 @@ export interface AppEnv {
   signupAllowlist: string | undefined;
   encryptionKey: string;
   dataDir: string;
+  /** Opt-in Pi JSONL session recording under DATA_DIR/pi-sessions. Default off. */
   piSessionRecording: boolean;
   sandboxSupervisorUrl: string;
   sandboxSupervisorToken: string | undefined;
@@ -40,6 +41,7 @@ export interface AppEnv {
   cursorApiKey: string | undefined;
   agentRuntime: string;
   deploymentModelKey: string | undefined;
+  /** SKIP_TAUGHT_SKILLS_PURGE=true skips the CAAH-71 Teach Me purge at API start. */
   skipTaughtSkillsPurge: boolean;
   e2bApiKey: string | undefined;
   daytonaApiKey: string | undefined;

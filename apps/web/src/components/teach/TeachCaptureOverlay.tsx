@@ -7,7 +7,6 @@ import {
 import { useEffect, useRef } from "react";
 import { rpc } from "../../lib/rpc";
 import { enqueueTeachComputerInput } from "./teach-computer-input-chain";
-import { extractFieldMetadata } from "./extract-field-metadata";
 
 export function TeachCaptureOverlay({
   botId,
@@ -57,12 +56,7 @@ export function TeachCaptureOverlay({
     }
 
     async function sendKey(key: string) {
-      const metadata = extractFieldMetadata();
-      await rpc.computer.input({ 
-        botId, 
-        kind: "key", 
-        payload: { key, ...metadata } 
-      });
+      await rpc.computer.input({ botId, kind: "key", payload: { key } });
     }
 
     async function sendScroll(direction: "up" | "down", amount: number) {
