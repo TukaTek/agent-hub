@@ -234,7 +234,11 @@ import {
   readServerUpdateStatus,
   UpdaterProxyError,
 } from "./server-update.js";
-import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
+import {
+  assertTeachingSendAllowed,
+  createTaughtSkillsService,
+  teachFieldMetadata,
+} from "./taught-skills.js";
 import {
   isPeerRun,
   loadAllMessages,
@@ -2611,6 +2615,11 @@ export function createRouter(deps: RouterDeps) {
           sensitive && typeof input.payload.skillId === "string" && input.payload.skillId
             ? input.payload.skillId
             : undefined;
+        // CAAH-71: optional metadata about the focused field (never its value) and the
+        // explicit "keep this text" opt-in. Recording strips values unless both allow it.
+        const fieldMetadata = teachFieldMetadata(input.payload);
+        const keepLiteral =
+          input.kind === "clipboard" && !sensitive && input.payload.keepLiteral === true;
         const mapped = {
           ...(input.kind === "key"
             ? { kind: "key" as const, key: String(input.payload.key ?? ""), sensitive }
@@ -2639,6 +2648,8 @@ export function createRouter(deps: RouterDeps) {
                     sensitive,
                   }),
           ...(skillId ? { skillId } : {}),
+          ...fieldMetadata,
+          ...(keepLiteral ? { keepLiteral: true } : {}),
         };
         const outcome = await taughtSkills.recordInput(context.actor, bot.id, mapped);
         if (outcome === "stale") return { ok: true as const };

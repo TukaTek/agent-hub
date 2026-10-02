@@ -103,6 +103,7 @@ import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
 import { mountScreenTarget } from "./screen-proxy.js";
 import { noSniff } from "./security-headers.js";
+import { runTaughtSkillsSecretPurgeAtStartup } from "./taught-skills-purge-startup.js";
 import { isDeferredReservationLost, TeamChatBridge } from "./team-chat-bridge.js";
 import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
 import {
@@ -228,18 +229,9 @@ export async function createApp(
     }
   }
 
-  // Run taught_skills secret purge once per process start (production only, not tests)
-  if (env.nodeEnv !== "test" && !env.skipTaughtSkillsPurge) {
-    try {
-      const purgeModule = await import("@cortexai-agent-hub/adapters");
-      const result = await purgeModule.purgeTaughtSkillSecrets(prisma);
-      logger.info("taught_skills secret purge complete", { scanned: result.scanned, changed: result.changed });
-    } catch (error) {
-      // Log failure without crashing the API (purge is best-effort at startup)
-      logger.error("taught_skills secret purge failed", error);
-    }
-  }
-
+  // CAAH-71: scrub Teach Me secrets left by older builds. Idempotent and count-only; a
+  // failure is logged and never stops the API.
+  await runTaughtSkillsSecretPurgeAtStartup({ env, prisma, logger });
 
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;

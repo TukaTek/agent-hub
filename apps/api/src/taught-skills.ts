@@ -31,6 +31,7 @@ import {
   releaseTeachingComputerControlForBot,
   scheduleComputerControlExpiry,
   screenLeaseIdForRun,
+  scrubTaughtSkill,
   type TeachComputerInput,
   teachingControlLeaseExpiresAt,
 } from "@cortexai-agent-hub/adapters";
@@ -39,7 +40,6 @@ import {
   ACTIVE_RUN_STATUSES,
   buildPlaybookFromRecording,
   formatSkillRunPrompt,
-  sanitizeTeachRecordingEvent,
   type SkillPlaybook,
   type TeachRecordingEvent,
   teachRecordingTtlMs,
@@ -77,6 +77,28 @@ export interface TaughtSkillsDeps {
   sandbox: SandboxProvider;
   home: AgentHomeStore;
   dataDir: string;
+}
+
+function boundedString(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, max) : undefined;
+}
+
+/** Focused-field metadata a client may send with Teach Me input. Never the field's value. */
+export function teachFieldMetadata(payload: Record<string, unknown>): {
+  fieldType?: string;
+  autocomplete?: string;
+  fieldLabel?: string;
+} {
+  const fieldType = boundedString(payload.fieldType, 40);
+  const autocomplete = boundedString(payload.autocomplete, 200);
+  const fieldLabel = boundedString(payload.fieldLabel, 200);
+  return {
+    ...(fieldType ? { fieldType } : {}),
+    ...(autocomplete ? { autocomplete } : {}),
+    ...(fieldLabel ? { fieldLabel } : {}),
+  };
 }
 
 function computerContext(actor: Actor, botId: string, operationId: string): AdapterContext {
@@ -461,25 +483,20 @@ export function createTaughtSkillsService(deps: TaughtSkillsDeps) {
       if (skill.status !== "draft" && skill.status !== "saved") {
         throw new ORPCError("BAD_REQUEST", { message: "Skill is not editable yet" });
       }
-      
-      // Server-side enforcement: sanitize recording and rebuild playbook
-      const recording = parseRecording(skill.recording);
-      const sanitizedEvents = recording.events.map((event) =>
-        sanitizeTeachRecordingEvent(event as TeachRecordingEvent)
-      );
-      const sanitizedRecording = { ...recording, events: sanitizedEvents };
-      const rebuiltPlaybook = buildPlaybookFromRecording(
-        skill.goal,
-        sanitizedEvents,
-        recording.snapshots
-      );
-      
+      // CAAH-71: the client's playbook is kept (it is the user's edit) but goes through the
+      // same server-side scrub as everything else, and a recording that still holds raw
+      // input from an older build is stripped and its steps rebuilt.
+      const scrubbed = scrubTaughtSkill({
+        goal: skill.goal,
+        recording: skill.recording,
+        playbook: input.playbook,
+      });
       const row = await deps.prisma.taughtSkill.update({
         where: { id: skill.id },
         data: {
           name: input.name ?? skill.name,
-          recording: sanitizedRecording as never,
-          playbook: rebuiltPlaybook as never,
+          recording: scrubbed.recording as never,
+          playbook: scrubbed.playbook as never,
           status: skill.status === "saved" ? "saved" : "draft",
         },
       });
@@ -496,26 +513,14 @@ export function createTaughtSkillsService(deps: TaughtSkillsDeps) {
       if (skill.status !== "draft" && skill.status !== "saved") {
         throw new ORPCError("BAD_REQUEST", { message: "Finish recording before saving" });
       }
-      
-      // Server-side enforcement: sanitize recording and rebuild playbook
-      const recording = parseRecording(skill.recording);
-      const sanitizedEvents = recording.events.map((event) =>
-        sanitizeTeachRecordingEvent(event as TeachRecordingEvent)
-      );
-      const sanitizedRecording = { ...recording, events: sanitizedEvents };
-      const rebuiltPlaybook = buildPlaybookFromRecording(
-        skill.goal,
-        sanitizedEvents,
-        recording.snapshots
-      );
-      
+      const scrubbed = scrubTaughtSkill(skill);
       const row = await deps.prisma.taughtSkill.update({
         where: { id: skill.id },
         data: {
           status: "saved",
           name: name ?? (skill.name || skill.goal.slice(0, 80)),
-          recording: sanitizedRecording as never,
-          playbook: rebuiltPlaybook as never,
+          recording: scrubbed.recording as never,
+          playbook: scrubbed.playbook as never,
         },
       });
       const bot = await deps.prisma.bot.findUnique({
