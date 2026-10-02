@@ -39,6 +39,7 @@ import {
   ACTIVE_RUN_STATUSES,
   buildPlaybookFromRecording,
   formatSkillRunPrompt,
+  sanitizeTeachRecordingEvent,
   type SkillPlaybook,
   type TeachRecordingEvent,
   teachRecordingTtlMs,
@@ -460,11 +461,25 @@ export function createTaughtSkillsService(deps: TaughtSkillsDeps) {
       if (skill.status !== "draft" && skill.status !== "saved") {
         throw new ORPCError("BAD_REQUEST", { message: "Skill is not editable yet" });
       }
+      
+      // Server-side enforcement: sanitize recording and rebuild playbook
+      const recording = parseRecording(skill.recording);
+      const sanitizedEvents = recording.events.map((event) =>
+        sanitizeTeachRecordingEvent(event as TeachRecordingEvent)
+      );
+      const sanitizedRecording = { ...recording, events: sanitizedEvents };
+      const rebuiltPlaybook = buildPlaybookFromRecording(
+        skill.goal,
+        sanitizedEvents,
+        recording.snapshots
+      );
+      
       const row = await deps.prisma.taughtSkill.update({
         where: { id: skill.id },
         data: {
           name: input.name ?? skill.name,
-          playbook: input.playbook as never,
+          recording: sanitizedRecording as never,
+          playbook: rebuiltPlaybook as never,
           status: skill.status === "saved" ? "saved" : "draft",
         },
       });
@@ -481,11 +496,26 @@ export function createTaughtSkillsService(deps: TaughtSkillsDeps) {
       if (skill.status !== "draft" && skill.status !== "saved") {
         throw new ORPCError("BAD_REQUEST", { message: "Finish recording before saving" });
       }
+      
+      // Server-side enforcement: sanitize recording and rebuild playbook
+      const recording = parseRecording(skill.recording);
+      const sanitizedEvents = recording.events.map((event) =>
+        sanitizeTeachRecordingEvent(event as TeachRecordingEvent)
+      );
+      const sanitizedRecording = { ...recording, events: sanitizedEvents };
+      const rebuiltPlaybook = buildPlaybookFromRecording(
+        skill.goal,
+        sanitizedEvents,
+        recording.snapshots
+      );
+      
       const row = await deps.prisma.taughtSkill.update({
         where: { id: skill.id },
         data: {
           status: "saved",
           name: name ?? (skill.name || skill.goal.slice(0, 80)),
+          recording: sanitizedRecording as never,
+          playbook: rebuiltPlaybook as never,
         },
       });
       const bot = await deps.prisma.bot.findUnique({
