@@ -228,9 +228,18 @@ export async function createApp(
     }
   }
 
-  await import("@cortexai-agent-hub/adapters").then(async (mod) => {
-    await mod.purgeTaughtSkillSecrets(prisma);
-  });
+  // Run taught_skills secret purge once per process start (production only, not tests)
+  if (env.nodeEnv !== "test" && !env.skipTaughtSkillsPurge) {
+    try {
+      const purgeModule = await import("@cortexai-agent-hub/adapters");
+      const result = await purgeModule.purgeTaughtSkillSecrets(prisma);
+      logger.info("taught_skills secret purge complete", { scanned: result.scanned, changed: result.changed });
+    } catch (error) {
+      // Log failure without crashing the API (purge is best-effort at startup)
+      logger.error("taught_skills secret purge failed", error);
+    }
+  }
+
 
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
