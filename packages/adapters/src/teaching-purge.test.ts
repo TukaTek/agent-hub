@@ -31,8 +31,8 @@ describe("purgeTaughtSkillSecrets", () => {
         id: "skill-1",
         goal: "Search",
         status: "saved",
-        recording: { events: [{ at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h" }], snapshots: [] },
-        playbook: buildPlaybookFromRecording("Search", [{ at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h" }]),
+        recording: { events: [{ at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h", keepLiteral: true }], snapshots: [] },
+        playbook: buildPlaybookFromRecording("Search", [{ at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h", keepLiteral: true }]),
       },
     ]);
 

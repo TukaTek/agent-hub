@@ -29,7 +29,7 @@ describe("buildPlaybookFromRecording", () => {
       "Export weekly CRM list",
       [
         { at: "2026-01-01T00:00:00.000Z", kind: "pointer", x: 120, y: 40, type: "click" },
-        { at: "2026-01-01T00:00:01.000Z", kind: "clipboard", text: "weekly-export.csv" },
+        { at: "2026-01-01T00:00:01.000Z", kind: "clipboard", text: "weekly-export.csv", keepLiteral: true },
       ],
       [{ at: "2026-01-01T00:00:02.000Z", summary: "Export dialog open" }],
     );
@@ -59,10 +59,10 @@ describe("buildPlaybookFromRecording", () => {
 
   it("coalesces consecutive typed characters and keeps repeated keys", () => {
     const playbook = buildPlaybookFromRecording("Search", [
-      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "b" },
-      { at: "2026-01-01T00:00:00.100Z", kind: "key", key: "o" },
-      { at: "2026-01-01T00:00:00.200Z", kind: "key", key: "o" },
-      { at: "2026-01-01T00:00:00.300Z", kind: "key", key: "k" },
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "b", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.100Z", kind: "key", key: "o", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.200Z", kind: "key", key: "o", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.300Z", kind: "key", key: "k", keepLiteral: true },
       { at: "2026-01-01T00:00:00.400Z", kind: "key", key: "Enter" },
     ]);
     expect(playbook.steps).toEqual(['Type "book".', "Press key: Enter."]);
@@ -70,24 +70,24 @@ describe("buildPlaybookFromRecording", () => {
 
   it("keeps spaces typed during a demo", () => {
     const playbook = buildPlaybookFromRecording("Search", [
-      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h" },
-      { at: "2026-01-01T00:00:00.100Z", kind: "key", key: "i" },
-      { at: "2026-01-01T00:00:00.200Z", kind: "key", key: " " },
-      { at: "2026-01-01T00:00:00.300Z", kind: "key", key: "t" },
-      { at: "2026-01-01T00:00:00.400Z", kind: "key", key: "h" },
-      { at: "2026-01-01T00:00:00.500Z", kind: "key", key: "e" },
-      { at: "2026-01-01T00:00:00.600Z", kind: "key", key: "r" },
-      { at: "2026-01-01T00:00:00.700Z", kind: "key", key: "e" },
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "h", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.100Z", kind: "key", key: "i", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.200Z", kind: "key", key: " ", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.300Z", kind: "key", key: "t", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.400Z", kind: "key", key: "h", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.500Z", kind: "key", key: "e", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.600Z", kind: "key", key: "r", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.700Z", kind: "key", key: "e", keepLiteral: true },
     ]);
     expect(playbook.steps).toEqual(['Type "hi there".']);
   });
 
   it("collapses a run of protected keystrokes into one redacted step", () => {
     const playbook = buildPlaybookFromRecording("Sign in", [
-      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "u" },
-      { at: "2026-01-01T00:00:00.100Z", kind: "key", key: "s" },
-      { at: "2026-01-01T00:00:00.200Z", kind: "key", key: "e" },
-      { at: "2026-01-01T00:00:00.300Z", kind: "key", key: "r" },
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "u", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.100Z", kind: "key", key: "s", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.200Z", kind: "key", key: "e", keepLiteral: true },
+      { at: "2026-01-01T00:00:00.300Z", kind: "key", key: "r", keepLiteral: true },
       { at: "2026-01-01T00:00:00.400Z", kind: "key", sensitive: true },
       { at: "2026-01-01T00:00:00.500Z", kind: "key", sensitive: true },
       { at: "2026-01-01T00:00:00.600Z", kind: "key", sensitive: true },

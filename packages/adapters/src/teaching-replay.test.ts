@@ -61,12 +61,12 @@ describe("teach me replay secret protection", () => {
     expect(prompt).not.toContain("123456");
   });
 
-  it("includes regular typed text that doesn't contain secrets", () => {
+  it("includes regular typed text when opted in via keepLiteral", () => {
     const normalEvents: TeachRecordingEvent[] = [
-      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "t", fieldType: "text" },
-      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "e", fieldType: "text" },
-      { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "s", fieldType: "text" },
-      { at: "2026-01-01T00:00:03.000Z", kind: "key", key: "t", fieldType: "text" },
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "t", fieldType: "text", keepLiteral: true },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "e", fieldType: "text", keepLiteral: true },
+      { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "s", fieldType: "text", keepLiteral: true },
+      { at: "2026-01-01T00:00:03.000Z", kind: "key", key: "t", fieldType: "text", keepLiteral: true },
     ];
 
     const playbook = buildPlaybookFromRecording("Search", normalEvents);
@@ -78,10 +78,10 @@ describe("teach me replay secret protection", () => {
 
   it("mixed scenario with both secret and non-secret fields", () => {
     const mixedEvents: TeachRecordingEvent[] = [
-      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "u", fieldType: "text" },
-      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "s", fieldType: "text" },
-      { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "e", fieldType: "text" },
-      { at: "2026-01-01T00:00:03.000Z", kind: "key", key: "r", fieldType: "text" },
+      { at: "2026-01-01T00:00:00.000Z", kind: "key", key: "u", fieldType: "text", keepLiteral: true },
+      { at: "2026-01-01T00:00:01.000Z", kind: "key", key: "s", fieldType: "text", keepLiteral: true },
+      { at: "2026-01-01T00:00:02.000Z", kind: "key", key: "e", fieldType: "text", keepLiteral: true },
+      { at: "2026-01-01T00:00:03.000Z", kind: "key", key: "r", fieldType: "text", keepLiteral: true },
       { at: "2026-01-01T00:00:04.000Z", kind: "key", key: "Enter" },
       { at: "2026-01-01T00:00:05.000Z", kind: "key", key: "P", fieldType: "password", fieldLabel: "password" },
       { at: "2026-01-01T00:00:06.000Z", kind: "key", key: "a", fieldType: "password", fieldLabel: "password" },

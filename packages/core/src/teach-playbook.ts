@@ -141,6 +141,7 @@ export function buildPlaybookFromRecording(
 ): SkillPlaybook {
   const steps: string[] = [];
   let typed = "";
+  let typedEvent: TeachRecordingEvent | null = null;
   let typedSensitive = false;
   let currentSecretEvent: TeachRecordingEvent | null = null;
   let drag: { button: string; fromX: number; fromY: number; toX: number; toY: number } | null =
@@ -148,9 +149,10 @@ export function buildPlaybookFromRecording(
 
   function flushTyped() {
     if (!typed) return;
-    const text = redactTypedText(typed);
+    const text = redactTypedText(typed, typedEvent ?? undefined);
     if (text) steps.push(`Type ${JSON.stringify(text)}.`);
     typed = "";
+    typedEvent = null;
   }
 
   function flushSensitiveTyped() {
@@ -210,6 +212,7 @@ export function buildPlaybookFromRecording(
         flushSensitiveTyped();
         flushSecretField();
         typed += key;
+        if (!typedEvent) typedEvent = event;
         continue;
       }
 
@@ -252,9 +255,9 @@ export function buildPlaybookFromRecording(
       } else {
         const text = isProtectedInput(event)
           ? REDACTED_INPUT
-          : event.text
-            ? redactTypedText(event.text)
-            : "";
+          : event.text && event.keepLiteral
+            ? redactTypedText(event.text, event)
+            : REDACTED_INPUT;
         if (text) steps.push(`Paste or type: ${text}.`);
       }
     } else if (event.kind === "scroll") {
