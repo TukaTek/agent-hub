@@ -19,21 +19,18 @@ function isUniqueViolation(error: unknown): boolean {
 /**
  * Everything a brand-new user needs around their account row: a personal
  * organization, its default space, owner memberships for both boundaries,
- * deployment-owner claim, user memory, and notification preferences. Shared by
- * the Better Auth `session.create.before` hook and phone-identity provisioning so
- * both paths stay in lockstep.
+ * user memory, and notification preferences. Shared by the Better Auth
+ * `session.create.before` hook and phone-identity provisioning.
  *
- * `claimDeploymentOwner: false` is for identities that did not sign up
- * through the app (phone provisioning): a first texter must never become
- * the deployment owner.
+ * Deployment owner must be set explicitly via operator provisioning commands;
+ * this function never claims ownerUserId.
  */
 export async function bootstrapUserSpace(
   prisma: PrismaClient,
   user: { id: string },
   env: SignupPolicyEnv,
-  options: { claimDeploymentOwner?: boolean } = {},
 ): Promise<{ spaceId: string }> {
-  const claimDeploymentOwner = options.claimDeploymentOwner ?? true;
+  const claimDeploymentOwner = false;
   // Concurrent bootstraps for the same user (e.g. overlapping first phone
   // inbounds) race on every unique key below; each step either wins or
   // joins the winner's state instead of failing.
