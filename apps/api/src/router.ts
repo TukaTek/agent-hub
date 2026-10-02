@@ -952,17 +952,12 @@ export function createRouter(deps: RouterDeps) {
           create: {
             id: "default",
             ownerUserId: context.actor.userId,
-            signupsEnabled: input.signupsEnabled ?? true,
-            signupAllowlist: (input.signupAllowlist ?? []).join(","),
+            signupsEnabled: false,
+            signupAllowlist: "",
             signupPolicyInitialized: true,
             computerHost: input.computerHost ?? undefined,
           },
           update: {
-            ...(input.signupsEnabled === undefined ? {} : { signupsEnabled: input.signupsEnabled }),
-            ...(input.signupAllowlist ? { signupAllowlist: input.signupAllowlist.join(",") } : {}),
-            ...(input.signupsEnabled === undefined && input.signupAllowlist === undefined
-              ? {}
-              : { signupPolicyInitialized: true }),
             ...(input.computerHost === undefined ? {} : { computerHost: input.computerHost }),
           },
         });
