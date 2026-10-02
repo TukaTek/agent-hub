@@ -3,18 +3,18 @@ import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
 
+import { createDb } from "@cortexai-agent-hub/db";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
-import { loadEnv } from "./env.js";
 import {
   parseProvisionArgs,
   provisionOwner,
   provisionUser,
   transferOwner,
 } from "./cli/provision.js";
-import { createDb } from "@cortexai-agent-hub/db";
+import { loadEnv } from "./env.js";
 
 const logger = createRootLogger(SERVICE_NAMES.api);
 
@@ -26,10 +26,12 @@ if (cliArgs) {
     const prisma = await createDb(env.databaseUrl);
 
     let result: { success: boolean; message: string };
-    
+
     if (cliArgs.command === "provision-owner") {
       if (!cliArgs.email || !cliArgs.name) {
-        process.stderr.write("Usage: provision-owner --email <email> --name <name> [--secret-file <path>] [--hub-user-id <id> --hub-tenant <tenant>]\n");
+        process.stderr.write(
+          "Usage: provision-owner --email <email> --name <name> [--secret-file <path>] [--hub-user-id <id> --hub-tenant <tenant>]\n",
+        );
         process.exit(1);
       }
       result = await provisionOwner(prisma, env, {
@@ -41,7 +43,9 @@ if (cliArgs) {
       });
     } else if (cliArgs.command === "provision-user") {
       if (!cliArgs.email || !cliArgs.name) {
-        process.stderr.write("Usage: provision-user --email <email> --name <name> [--secret-file <path>]\n");
+        process.stderr.write(
+          "Usage: provision-user --email <email> --name <name> [--secret-file <path>]\n",
+        );
         process.exit(1);
       }
       result = await provisionUser(prisma, env, {
@@ -51,7 +55,9 @@ if (cliArgs) {
       });
     } else if (cliArgs.command === "transfer-owner") {
       if (!cliArgs.email) {
-        process.stderr.write("Usage: transfer-owner --email <email> [--hub-user-id <id> --hub-tenant <tenant>]\n");
+        process.stderr.write(
+          "Usage: transfer-owner --email <email> [--hub-user-id <id> --hub-tenant <tenant>]\n",
+        );
         process.exit(1);
       }
       result = await transferOwner(prisma, {

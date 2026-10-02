@@ -4,9 +4,9 @@
  */
 
 import { randomBytes, scrypt } from "node:crypto";
-import { createInterface } from "node:readline";
-import { stdin as input, stdout as output } from "node:process";
 import { readFileSync } from "node:fs";
+import { stdin as input, stdout as output } from "node:process";
+import { createInterface } from "node:readline";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 
 interface ProvisionEnv {
@@ -34,10 +34,7 @@ async function hashPassword(password: string): Promise<string> {
  * Read password from stdin, TTY prompt, or secret file.
  * NEVER accept passwords from argv or environment variables.
  */
-async function readSecret(
-  secretFile: string | undefined,
-  promptMsg: string,
-): Promise<string> {
+async function readSecret(secretFile: string | undefined, promptMsg: string): Promise<string> {
   // Check for stdin (piped input)
   if (!process.stdin.isTTY && !secretFile) {
     const chunks: Buffer[] = [];
@@ -86,7 +83,7 @@ function validateSecretSource(password: string): void {
 
   // Check if password appears in environment variables
   for (const value of Object.values(process.env)) {
-    if (value && value.includes(password)) {
+    if (value?.includes(password)) {
       throw new Error(
         "SECURITY: Password must not be passed via environment variables. Use stdin, TTY prompt, or --secret-file.",
       );
@@ -117,13 +114,12 @@ export async function provisionOwner(
     hubTenant?: string;
   },
 ): Promise<{ userId: string; email: string; success: boolean; message: string }> {
-  const { email, name, secretFile, hubUserId, hubTenant } = options;
+  const { email, name, secretFile } = options;
+  // Hub mode parameters reserved for future implementation
+  // const { hubUserId, hubTenant } = options;
 
   // Read password securely
-  const password = await readSecret(
-    secretFile,
-    `Enter password for deployment owner (${email}): `,
-  );
+  const password = await readSecret(secretFile, `Enter password for deployment owner (${email}): `);
 
   // Validate password source
   validateSecretSource(password);
@@ -305,9 +301,13 @@ export async function transferOwner(
   prisma: PrismaClient,
   options: {
     email: string;
+    hubUserId?: string;
+    hubTenant?: string;
   },
 ): Promise<{ userId: string; email: string; success: boolean; message: string }> {
   const { email } = options;
+  // Hub mode parameters reserved for future implementation
+  // const { hubUserId, hubTenant } = options;
 
   // Find the target user
   const user = await prisma.user.findUnique({
@@ -378,9 +378,7 @@ export async function transferOwner(
 /**
  * Parse CLI arguments for provision commands.
  */
-export function parseProvisionArgs(
-  args: string[],
-): {
+export function parseProvisionArgs(args: string[]): {
   command: "provision-owner" | "provision-user" | "transfer-owner";
   email?: string;
   name?: string;
