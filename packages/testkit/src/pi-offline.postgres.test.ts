@@ -82,7 +82,7 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
       const password = "password12";
       const { PrismaClient } = await import("@prisma/client");
       const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
-      
+
       // Hash password (using Better Auth compatible format)
       const { randomBytes, scrypt } = await import("node:crypto");
       const salt = randomBytes(16);
@@ -93,7 +93,7 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         });
       });
       const passwordHash = `$scrypt$${salt.toString("hex")}$${derivedKey.toString("hex")}`;
-      
+
       const user = await prisma.user.create({
         data: {
           id: randomUUID(),
@@ -102,7 +102,7 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
           emailVerified: true,
         },
       });
-      
+
       await prisma.account.create({
         data: {
           id: randomUUID(),
@@ -112,9 +112,9 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
           password: passwordHash,
         },
       });
-      
+
       await prisma.$disconnect();
-      
+
       // Now sign in
       const signin = await handles.app.request("/api/auth/sign-in/email", {
         method: "POST",

@@ -204,11 +204,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         return;
       }
       clearSpaceSelection();
-      navigate(
-        searchParams.get("next") === "/integrations/setup"
-          ? "/integrations/setup"
-          : "/app",
-      );
+      navigate(searchParams.get("next") === "/integrations/setup" ? "/integrations/setup" : "/app");
     } catch {
       setError(t`Could not reach the server`);
     } finally {
