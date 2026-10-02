@@ -34,17 +34,21 @@ function secretPlaceholder(event: TeachRecordingEvent): string {
 }
 
 export function sanitizeTeachRecordingEvent(event: TeachRecordingEvent): TeachRecordingEvent {
-  // Redact password fields and Protected input (strip key/text)
-  if (event.sensitive || isPasswordField(event)) {
+  // Only keep literal text when explicitly opted in via keepLiteral flag
+  if (event.keepLiteral) return event;
+  
+  // Default: strip key/text from ALL input (passwords, Protected input, and regular fields)
+  if (event.kind === "key" || event.kind === "clipboard") {
     const sanitized = { ...event };
     delete sanitized.key;
     delete sanitized.text;
-    sanitized.sensitive = true;
+    // Mark as sensitive if it's a password field or Protected input
+    if (event.sensitive || isPasswordField(event)) {
+      sanitized.sensitive = true;
+    }
     return sanitized;
   }
   
-  // Regular fields keep their content (backward compatible)
-  // keepLiteral flag is for future opt-in UI
   return event;
 }
 
@@ -114,12 +118,16 @@ function redactSensitiveText(text: string): string {
     .replace(BARE_SECRET, REDACTED);
 }
 
-function redactTypedText(text: string, keepLiteral: boolean = true): string {
-  if (!keepLiteral) return REDACTED_INPUT;
-  const trimmed = text.trim();
-  const redacted = redactSensitiveText(trimmed);
-  if (redacted !== trimmed) return REDACTED_INPUT;
-  return trimmed;
+function redactTypedText(text: string, event?: TeachRecordingEvent): string {
+  // Only keep literal text when explicitly opted in via keepLiteral flag
+  if (event?.keepLiteral) {
+    const trimmed = text.trim();
+    const redacted = redactSensitiveText(trimmed);
+    if (redacted !== trimmed) return REDACTED_INPUT;
+    return trimmed;
+  }
+  // Default: return placeholder for ALL typed text (unless opted in)
+  return REDACTED_INPUT;
 }
 
 function isTypedCharacter(key: string): boolean {
