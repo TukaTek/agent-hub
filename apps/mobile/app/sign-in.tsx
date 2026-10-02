@@ -44,7 +44,6 @@ export default function SignIn() {
   const router = useRouter();
   const { mode: requestedMode } = useLocalSearchParams<{ mode?: string | string[] }>();
   const [formMode, setMode] = useState<AuthMode>(() => initialAuthMode(requestedMode));
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);

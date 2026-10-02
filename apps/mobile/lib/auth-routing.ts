@@ -1,4 +1,4 @@
-export type AuthMode = "in" | "up" | "forgot";
+export type AuthMode = "in" | "forgot";
 
 export const explicitSignInRoute = {
   pathname: "/sign-in",
@@ -6,5 +6,6 @@ export const explicitSignInRoute = {
 } as const;
 
 export function initialAuthMode(requestedMode?: string | string[]): AuthMode {
-  return requestedMode === "in" ? "in" : "up";
+  // Self-service signup removed; default to sign-in
+  return "in";
 }
