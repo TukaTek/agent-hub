@@ -121,7 +121,13 @@ function ProtectedTeachInput({ botId, skillId }: { botId: string; skillId: strin
         await rpc.computer.input({
           botId,
           kind: "clipboard",
-          payload: { text, sensitive: true, skillId: queuedSkillId },
+          payload: { 
+            text, 
+            sensitive: true, 
+            skillId: queuedSkillId,
+            fieldType: "password",
+            fieldLabel: "Protected input",
+          },
         });
         if (activeSkillIdRef.current !== queuedSkillId) return;
         setProtectedText((current) => (current === text ? "" : current));

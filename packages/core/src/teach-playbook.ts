@@ -12,6 +12,7 @@ export type TeachRecordingEvent = {
   fieldType?: string;
   autocomplete?: string;
   fieldLabel?: string;
+  keepLiteral?: boolean;
 };
 
 function isPasswordField(event: TeachRecordingEvent): boolean {

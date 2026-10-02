@@ -1,6 +1,7 @@
 import type { TaughtSkill } from "@cortexai-agent-hub/contracts";
 import {
   DEFAULT_COMPUTER_SCREEN,
+  extractFieldMetadata,
   mapTeachPointer,
   teachCaptureKey,
 } from "@cortexai-agent-hub/core";
@@ -56,7 +57,12 @@ export function TeachCaptureOverlay({
     }
 
     async function sendKey(key: string) {
-      await rpc.computer.input({ botId, kind: "key", payload: { key } });
+      const metadata = extractFieldMetadata();
+      await rpc.computer.input({ 
+        botId, 
+        kind: "key", 
+        payload: { key, ...metadata } 
+      });
     }
 
     async function sendScroll(direction: "up" | "down", amount: number) {

@@ -60,6 +60,9 @@ export type TeachComputerInput = (
 ) & {
   sensitive?: boolean;
   skillId?: string;
+  fieldType?: string;
+  autocomplete?: string;
+  fieldLabel?: string;
 };
 
 export interface TeachingSessionDeps {
@@ -562,6 +565,9 @@ export async function recordTeachingInputEvent(
     at: new Date().toISOString(),
     kind: mapped.kind === "scroll" ? "scroll" : mapped.kind,
     ...(mapped.sensitive ? { sensitive: true as const } : {}),
+    ...(mapped.fieldType ? { fieldType: mapped.fieldType } : {}),
+    ...(mapped.autocomplete ? { autocomplete: mapped.autocomplete } : {}),
+    ...(mapped.fieldLabel ? { fieldLabel: mapped.fieldLabel } : {}),
     ...(mapped.kind === "key"
       ? { key: mapped.key }
       : mapped.kind === "clipboard"

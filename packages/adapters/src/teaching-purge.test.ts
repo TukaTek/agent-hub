@@ -94,7 +94,9 @@ describe("purgeTaughtSkillSecrets", () => {
 
     const result = await purgeTaughtSkillSecrets(prisma);
     expect(result.changed).toBe(1);
+    expect(updates).toHaveLength(1);
     const sanitized = updates[0];
+    expect(sanitized).toBeDefined();
     const recording = sanitized.recording as { events: TeachRecordingEvent[] };
     expect(recording.events[0].key).toBeUndefined();
     expect(recording.events[1].text).toBeUndefined();
