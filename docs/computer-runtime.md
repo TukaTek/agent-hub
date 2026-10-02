@@ -93,7 +93,7 @@ Before exporting a remote workspace, remote backends quiesce desktop browsers so
 
 The disposable OS image is not a portable disk snapshot. System packages installed outside the workspace are lost when moving to another provider; durable machine customization should be represented by a reproducible image or setup recipe. This is what makes a future backend switch practical instead of trying to translate vendor-specific VM snapshots.
 
-Docker computers include `uv` for rootless Python CLI installs. Run `uv tool install <package>`; the tool environments, command shims, managed Python versions, and cache stay under the persistent home. This installs Python command-line tools, not system packages such as `apt` dependencies. The image also ships GitHub's `gh` CLI; bots authenticate the CLI through device flow, and gh stores that credential under the persistent home.
+Docker computers include `uv` for rootless Python CLI installs. Run `uv tool install <package>`; the tool environments, command shims, managed Python versions, and cache stay under the persistent home. This installs Python command-line tools, not system packages such as `apt` dependencies. The system `python3` includes `openpyxl`, `python-docx` and `python-pptx` (hash-pinned in `infra/sandboxes/computer/office-requirements.txt`) so bots can build valid Office files; `infra/sandboxes/computer/office_smoke.py` checks them in CI. The image also ships GitHub's `gh` CLI; bots authenticate the CLI through device flow, and gh stores that credential under the persistent home.
 
 ## Verification
 

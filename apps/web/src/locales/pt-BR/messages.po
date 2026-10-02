@@ -44,6 +44,11 @@ msgstr "{0} (máx. anexos {ATTACHMENT_MAX_COUNT})"
 msgid "{0} (over 10 MiB)"
 msgstr "{0} (acima de 10 MiB)"
 
+#. placeholder {0}: file.name
+#: src/pages/Shell.tsx
+msgid "{0} (unsupported type)"
+msgstr "{0} (tipo não suportado)"
+
 #. placeholder {0}: preset.n
 #: src/pages/RoutineSchedule.tsx
 msgid "{0} {unitLabel}"

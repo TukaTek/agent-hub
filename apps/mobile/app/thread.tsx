@@ -3132,7 +3132,7 @@ const MessageBubble = memo(function MessageBubble({
                     fontSize: 13,
                   }}
                 >
-                  {attachment.mimeType ?? "file"} · {attachment.size} bytes
+                  {attachment.size} bytes
                 </Text>
               ) : null}
             </Pressable>

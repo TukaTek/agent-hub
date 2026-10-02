@@ -12,6 +12,16 @@ export const ATTACHMENT_IMAGE_MIME_TYPES = [
   "image/gif",
 ] as const;
 
+/** Macro-enabled and auto-run variants (.xlsm, .docm, .pptm, .xlsb, .ppsx) stay out on purpose. */
+export const ATTACHMENT_OFFICE_MIME_TYPES = [
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel",
+  "application/msword",
+  "application/vnd.ms-powerpoint",
+] as const;
+
 export const ATTACHMENT_FILE_MIME_TYPES = [
   "application/pdf",
   "text/plain",
@@ -19,6 +29,8 @@ export const ATTACHMENT_FILE_MIME_TYPES = [
   "text/csv",
   "text/html",
   "application/json",
+  ...ATTACHMENT_OFFICE_MIME_TYPES,
+  "application/zip",
 ] as const;
 
 export const ATTACHMENT_ALLOWED_MIME_TYPES = [

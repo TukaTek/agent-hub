@@ -44,6 +44,11 @@ msgstr "{0}（最多 {ATTACHMENT_MAX_COUNT} 个附件）"
 msgid "{0} (over 10 MiB)"
 msgstr "{0}（超过 10 MiB）"
 
+#. placeholder {0}: file.name
+#: src/pages/Shell.tsx
+msgid "{0} (unsupported type)"
+msgstr "{0}（不支持的类型）"
+
 #. placeholder {0}: preset.n
 #: src/pages/RoutineSchedule.tsx
 msgid "{0} {unitLabel}"

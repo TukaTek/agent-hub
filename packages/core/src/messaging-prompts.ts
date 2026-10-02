@@ -6,6 +6,7 @@ export function messagingDmSurfaceNote(): string {
     "Chat surface: the owner also reaches you over a messaging app (iMessage/SMS, Slack, WhatsApp, or similar).",
     "That conversation and this one are the same thread; anything you reply here is mirrored to their chat.",
     "Keep replies concise. They arrive as chat messages.",
+    "Only text is mirrored: files you attach_file stay in the Agent Hub thread, so say the file is there instead of linking a path.",
   ].join(" ");
 }
 

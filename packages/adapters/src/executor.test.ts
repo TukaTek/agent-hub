@@ -1079,6 +1079,15 @@ describe("dockerComputerToolInstruction", () => {
     expect(dockerComputerToolInstruction("e2b")).toBeUndefined();
   });
 
+  it("points Docker bots at the image's Office libraries instead of hand-written XML", () => {
+    const instruction = dockerComputerToolInstruction("docker");
+    for (const library of ["openpyxl", "python-docx", "python-pptx"]) {
+      expect(instruction).toContain(library);
+    }
+    expect(instruction).toMatch(/never by hand-writing XML/);
+    expect(instruction).toMatch(/reopen/);
+  });
+
   it("documents gh CLI device-flow login without token injection", () => {
     const instruction = dockerComputerToolInstruction("docker");
     expect(instruction).toContain("gh auth login");

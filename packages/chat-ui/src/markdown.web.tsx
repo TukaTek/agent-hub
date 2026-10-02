@@ -63,6 +63,8 @@ function CodeBlock(props: React.ComponentPropsWithoutRef<"pre">) {
 
 const components: Components = {
   a({ node: _node, ...props }) {
+    if (!props.href) return <span>{props.children}</span>;
+    if (props.href.startsWith("#")) return <a {...props} />;
     return <a {...props} target="_blank" rel="noreferrer noopener" />;
   },
   img({ node: _node, ...props }) {

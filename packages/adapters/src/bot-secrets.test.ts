@@ -432,7 +432,8 @@ describe("authenticated secret requests", () => {
       ["/v1/export", "image/png; charset=binary", "export.png"],
       ["/v1/report.PDF", "application/pdf", "report.PDF"],
       ["/v1/photo.jpeg", "image/jpeg", "photo.jpeg"],
-      ["/v1/archive", "application/zip", "archive"],
+      ["/v1/archive", "application/zip", "archive.zip"],
+      ["/v1/blob", "application/octet-stream", "blob"],
     ])("names %s (%s) as %s", async (path, contentType, expected) => {
       const { input, fetch } = await fixture();
       const { directory, target } = await downloadTarget();

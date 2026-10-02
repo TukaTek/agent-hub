@@ -102,6 +102,7 @@ import { mountMessagingWebhookRoutes } from "./messaging-webhook.js";
 import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
 import { mountScreenTarget } from "./screen-proxy.js";
+import { noSniff } from "./security-headers.js";
 import { isDeferredReservationLost, TeamChatBridge } from "./team-chat-bridge.js";
 import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
 import {
@@ -526,6 +527,7 @@ export async function createApp(
   });
   const app = new Hono();
   app.use("*", requestLogging(logger));
+  app.use("*", noSniff);
   app.use(
     "*",
     cors({

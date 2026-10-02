@@ -95,20 +95,16 @@ export function plainTextLinkParts(text: string): PlainTextPart[] {
   return parts.length > 0 ? parts : [{ type: "text", value: text }];
 }
 
-export function sanitizeMarkdownUrl(url: string, allowRelative = false): string | undefined {
+/**
+ * Relative paths stay unlinked: in chat they are workspace paths, which no surface can open.
+ * In-page anchors (footnotes, headings in Markdown previews) are allowed when requested.
+ */
+export function sanitizeMarkdownUrl(url: string, allowAnchors = false): string | undefined {
   const value = url.trim();
   const protocol = value.match(protocolPattern)?.[1]?.toLowerCase();
 
   if (protocol) return safeProtocols.has(protocol) ? value : undefined;
-  if (
-    allowRelative &&
-    (value.startsWith("/") ||
-      value.startsWith("./") ||
-      value.startsWith("../") ||
-      value.startsWith("#"))
-  ) {
-    return value;
-  }
+  if (allowAnchors && value.startsWith("#")) return value;
   return undefined;
 }
 

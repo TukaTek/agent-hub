@@ -85,6 +85,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: false
+          load: ${{ matrix.name == 'computer' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ matrix.name == 'app' && format('GIT_SHA={0}', github.sha) || '' }}
@@ -92,6 +93,11 @@ jobs:
           cache-to: type=gha,mode=max,scope=pr-${{ github.event.pull_request.number }}-${{ matrix.name }}
           provenance: false
           sbom: false
+      - name: Office smoke test
+        if: matrix.name == 'computer'
+        env:
+          IMAGE: ${{ steps.meta.outputs.tags }}
+        run: docker run --rm --network none "$IMAGE" python3 /usr/local/share/cortexai-agent-hub-office-smoke.py
 
   build:
     name: Build ${{ matrix.name }} ${{ matrix.arch }}

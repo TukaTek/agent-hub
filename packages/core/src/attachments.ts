@@ -1,4 +1,5 @@
 import {
+  ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_MAX_BASE64_LENGTH,
   ATTACHMENT_MAX_BYTES,
   type AttachmentMimeType,
@@ -139,7 +140,29 @@ const EXTENSION_MIME_TYPES: Record<string, AttachmentMimeType> = {
   ".html": "text/html",
   ".htm": "text/html",
   ".json": "application/json",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".xls": "application/vnd.ms-excel",
+  ".doc": "application/msword",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".zip": "application/zip",
 };
+
+/** Macro-enabled and auto-run Office files are refused even when a picker labels them as allowed. */
+const BLOCKED_EXTENSIONS = new Set([
+  ".xlsm",
+  ".xlsb",
+  ".xltm",
+  ".xlam",
+  ".docm",
+  ".dotm",
+  ".pptm",
+  ".potm",
+  ".ppam",
+  ".ppsx",
+  ".ppsm",
+]);
 
 const MIME_TYPE_EXTENSIONS: Record<AttachmentMimeType, string> = {
   "image/jpeg": ".jpg",
@@ -152,20 +175,37 @@ const MIME_TYPE_EXTENSIONS: Record<AttachmentMimeType, string> = {
   "text/csv": ".csv",
   "text/html": ".html",
   "application/json": ".json",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+  "application/vnd.ms-excel": ".xls",
+  "application/msword": ".doc",
+  "application/vnd.ms-powerpoint": ".ppt",
+  "application/zip": ".zip",
 };
+
+export function supportedAttachmentExtensions(): string[] {
+  return Object.keys(EXTENSION_MIME_TYPES);
+}
+
+/** File-picker `accept` value: extensions too, because some OS pickers mislabel Office files. */
+export const ATTACHMENT_ACCEPT = [
+  ...ATTACHMENT_ALLOWED_MIME_TYPES,
+  ...supportedAttachmentExtensions(),
+].join(",");
 
 export function inferAttachmentMimeType(
   name: string,
   reportedType?: string,
 ): AttachmentMimeType | null {
   const dot = name.lastIndexOf(".");
-  const extensionType = dot < 0 ? undefined : EXTENSION_MIME_TYPES[name.slice(dot).toLowerCase()];
-  // Some browsers and native document pickers report Markdown as text/plain.
-  if (extensionType === "text/markdown" && (!reportedType || reportedType === "text/plain")) {
-    return extensionType;
-  }
-  if (reportedType && isAllowedAttachmentMimeType(reportedType)) return reportedType;
-  return extensionType ?? null;
+  const extension = dot < 0 ? "" : name.slice(dot).toLowerCase();
+  if (BLOCKED_EXTENSIONS.has(extension)) return null;
+  // Pickers mislabel common files (Windows reports .csv as Excel, Markdown as text/plain),
+  // so a known extension wins over the reported type.
+  const extensionType = EXTENSION_MIME_TYPES[extension];
+  if (extensionType) return extensionType;
+  return reportedType && isAllowedAttachmentMimeType(reportedType) ? reportedType : null;
 }
 
 export function attachmentExtensionForMimeType(mimeType: string): string {

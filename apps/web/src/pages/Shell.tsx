@@ -21,7 +21,6 @@ import type {
   VoiceStatus,
 } from "@cortexai-agent-hub/contracts";
 import {
-  ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
   canReactToThreadMessage,
@@ -30,6 +29,7 @@ import {
   normalizeCreateBotProfile,
 } from "@cortexai-agent-hub/contracts";
 import {
+  ATTACHMENT_ACCEPT,
   attachmentsForThread,
   buildComposerMentionOptions,
   type ComposerMention,
@@ -309,7 +309,6 @@ type PendingBrowserNotification = {
   groupNotification: boolean;
 };
 
-const ATTACHMENT_ACCEPT = ATTACHMENT_ALLOWED_MIME_TYPES.join(",");
 /** Identity colour for bots the roster no longer knows about. */
 const FALLBACK_BOT_COLOR = "#85858A";
 const THREAD_SNAPSHOT_TIMEOUT_MS = 2_000;
@@ -2019,7 +2018,7 @@ export function ShellPage() {
         }
         const mimeType = inferAttachmentMimeType(file.name, file.type);
         if (!mimeType) {
-          skipped.push(file.name);
+          skipped.push(t`${file.name} (unsupported type)`);
           continue;
         }
         next.push({

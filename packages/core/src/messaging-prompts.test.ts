@@ -13,6 +13,13 @@ describe("messagingDmSurfaceNote", () => {
     expect(note).toMatch(/same (thread|conversation)/i);
     expect(note).toMatch(/concise/i);
   });
+
+  it("says attached files are not mirrored to the messaging chat", () => {
+    const note = messagingDmSurfaceNote();
+    expect(note).toMatch(/only text is mirrored/i);
+    expect(note).toMatch(/attach_file/);
+    expect(note).toMatch(/Agent Hub/);
+  });
 });
 
 describe("messagingChannelPrivacyBlock", () => {

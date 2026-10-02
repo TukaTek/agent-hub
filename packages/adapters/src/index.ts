@@ -2,6 +2,7 @@ export * from "./agent-connections.js";
 export * from "./agent-environment.js";
 export * from "./ai-consent.js";
 export * from "./artifacts.js";
+export * from "./attach-file-errors.js";
 export * from "./auto-review.js";
 export * from "./auto-review-factory.js";
 export * from "./background-job-handlers.js";

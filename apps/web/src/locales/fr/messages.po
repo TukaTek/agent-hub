@@ -44,6 +44,11 @@ msgstr "{0} (max {ATTACHMENT_MAX_COUNT} pièces jointes)"
 msgid "{0} (over 10 MiB)"
 msgstr "{0} (plus de 10 MiB)"
 
+#. placeholder {0}: file.name
+#: src/pages/Shell.tsx
+msgid "{0} (unsupported type)"
+msgstr "{0} (type non pris en charge)"
+
 #. placeholder {0}: preset.n
 #: src/pages/RoutineSchedule.tsx
 msgid "{0} {unitLabel}"
