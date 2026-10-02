@@ -77,17 +77,55 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         encryptionKey: "offline-model-fixture-encryption-key",
       });
       stop = handles.stop;
-      const signup = await handles.app.request("/api/auth/sign-up/email", {
+      // Create user directly since self-service signup is disabled
+      const email = `offline-pi-${randomUUID()}@cortexai-agent-hub.test`;
+      const password = "password12";
+      const { PrismaClient } = await import("@prisma/client");
+      const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
+      
+      // Hash password (using Better Auth compatible format)
+      const { randomBytes, scrypt } = await import("node:crypto");
+      const salt = randomBytes(16);
+      const derivedKey = await new Promise<Buffer>((resolve, reject) => {
+        scrypt(Buffer.from(password), salt, 64, (err, key) => {
+          if (err) reject(err);
+          else resolve(key);
+        });
+      });
+      const passwordHash = `$scrypt$${salt.toString("hex")}$${derivedKey.toString("hex")}`;
+      
+      const user = await prisma.user.create({
+        data: {
+          id: randomUUID(),
+          email,
+          name: "Offline fixture",
+          emailVerified: true,
+        },
+      });
+      
+      await prisma.account.create({
+        data: {
+          id: randomUUID(),
+          userId: user.id,
+          accountId: email,
+          providerId: "credential",
+          password: passwordHash,
+        },
+      });
+      
+      await prisma.$disconnect();
+      
+      // Now sign in
+      const signin = await handles.app.request("/api/auth/sign-in/email", {
         method: "POST",
         headers: { "content-type": "application/json", origin: fixtureOrigin },
         body: JSON.stringify({
-          email: `offline-pi-${randomUUID()}@cortexai-agent-hub.test`,
-          password: "password12",
-          name: "Offline fixture",
+          email,
+          password,
         }),
       });
-      expect(signup.status).toBeLessThan(400);
-      const cookie = sessionCookieHeader(signup);
+      expect(signin.status).toBeLessThan(400);
+      const cookie = sessionCookieHeader(signin);
       await rpc(handles.app, cookie, "models/connect", {
         provider: model.model.provider,
         modelId: model.model.id,
