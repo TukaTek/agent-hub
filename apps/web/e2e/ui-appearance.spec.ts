@@ -1,5 +1,10 @@
 import { expect, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, createNamedBot, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  createNamedBot,
+  provisionAndSignIn,
+} from "./helpers";
 
 async function captureSidebarSearchSelected(
   page: Page,
@@ -46,7 +51,7 @@ async function captureSidebarSearchSelected(
 
 test("account settings appearance control switches to light mode", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `ui-appearance-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -113,7 +118,12 @@ test("sidebar bot rows hover with the same tone as the integrations row", async 
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-hover-${stamp}@cortexai-agent-hub.test`, "password12", "Hover QA");
+  await provisionAndSignIn(
+    page,
+    `ui-hover-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Hover QA",
+  );
   await completeOnboarding(page, testInfo);
   await createNamedBot(page, "Second Bot");
 

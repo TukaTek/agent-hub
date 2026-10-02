@@ -302,7 +302,13 @@ it("signs in local accounts through the same two steps and keeps the next allowl
   stubServer("local");
   authClient.signIn.email.mockResolvedValue({ data: {}, error: null });
   await render("/sign-in?next=/integrations/setup");
-  expect(container.textContent).toContain("Sign up");
+  // CAAH-43: sign-in only. Accounts come from the operator, so there is no
+  // signup link, control or "Create account" action.
+  expect(container.querySelector('[data-testid="operator-provisioned-hint"]')?.textContent).toBe(
+    "Don’t have an account? Ask the person who runs this server to create one.",
+  );
+  expect(container.textContent).not.toMatch(/sign up|create account|create your/i);
+  expect(container.querySelector('a[href*="sign-up"]')).toBeNull();
   expect(passwordInput()).toBeNull();
 
   await continueWithEmail();

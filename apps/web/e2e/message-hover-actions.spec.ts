@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 /** Submit from the Send control so an in-flight prior send cannot swallow Enter. */
 async function sendComposerMessage(page: Page, composer: Locator, text: string) {
@@ -47,7 +47,7 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `hover-actions-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -280,7 +280,12 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
 
 test("reply preview jumps to parent outside the loaded page", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `hover-page-${stamp}@cortexai-agent-hub.test`, "password12", "Hover Page");
+  await provisionAndSignIn(
+    page,
+    `hover-page-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Hover Page",
+  );
   await completeOnboarding(page);
 
   const parentText = `page-parent-${stamp}`;
@@ -365,7 +370,7 @@ test.describe("touch message actions", () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
 
   test("More exposes actions without simulated hover", async ({ page }, testInfo) => {
-    await signup(
+    await provisionAndSignIn(
       page,
       `touch-actions-${Date.now()}@cortexai-agent-hub.test`,
       "password12",

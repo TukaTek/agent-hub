@@ -1,7 +1,13 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, rpc, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 const LOCAL_MODEL_ID = "cortexai-agent-hub-e2e-local";
 const LOCAL_MODEL_REPLY = "OpenAI-compatible endpoint verified end to end.";
@@ -11,7 +17,12 @@ test("custom connections persist reasoning support and bot thinking", async ({
 }, testInfo) => {
   const stamp = Date.now();
   const userName = `Reasoning ${stamp}`;
-  await signup(page, `reasoning-model-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(
+    page,
+    `reasoning-model-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    userName,
+  );
   await completeOnboarding(page);
   await openUserSettings(page, "models");
   await page.getByPlaceholder("Search providers").fill("openai-compatible");
@@ -167,7 +178,12 @@ test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page },
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
     const stamp = Date.now();
     const userName = `Local model ${stamp}`;
-    await signup(page, `local-model-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+    await provisionAndSignIn(
+      page,
+      `local-model-${stamp}@cortexai-agent-hub.test`,
+      "password12",
+      userName,
+    );
     await completeOnboarding(page);
 
     await openUserSettings(page, "models");
@@ -234,7 +250,7 @@ test("model settings connect, replace, and cancel provider authentication", asyn
 }, testInfo) => {
   const stamp = Date.now();
   const userName = `Models ${stamp}`;
-  await signup(page, `models-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(page, `models-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
 
   await openUserSettings(page, "models");
@@ -412,7 +428,7 @@ test("catalog models keep a space default thinking level per saved model", async
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `catalog-thinking-${stamp}@cortexai-agent-hub.test`,
     "password12",

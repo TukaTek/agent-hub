@@ -134,15 +134,20 @@ test("capability network failure blocks authentication", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
 });
 
-test("local installations retain the welcome and signup flow", async ({ page }) => {
+test("local installations keep the welcome page but lead only to sign-in", async ({ page }) => {
   await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
   await page.route("**/api/auth/capabilities", (route) =>
     route.fulfill({ json: { mode: "local", passwordReset: false, resetUrl: null } }),
   );
   await page.goto("/");
-  await page.getByRole("button", { name: /Sign up/ }).click();
-  await expect(page).toHaveURL(/\/sign-up$/);
-  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
+  // CAAH-43: the welcome page no longer offers signup.
+  await expect(page.getByRole("button", { name: /Sign up/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /Sign in/ }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+  await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
+  await page.goto("/sign-up");
+  await expect(page).toHaveURL(/\/sign-in$/);
+  await expect(page.getByRole("link", { name: "Sign up", exact: true })).toHaveCount(0);
 });
 
 test("tenant entry does not offer signup when capabilities are unavailable", async ({ page }) => {

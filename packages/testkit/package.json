@@ -14,6 +14,7 @@
     "@hono/node-server": "2.1.1",
     "@cortexai-agent-hub/adapter-kit": "workspace:*",
     "@cortexai-agent-hub/adapters": "workspace:*",
+    "@cortexai-agent-hub/auth": "workspace:*",
     "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/db": "workspace:*",

@@ -1,413 +1,267 @@
-import { bootstrapUserSpace, createDb, type PrismaClient } from "@cortexai-agent-hub/db";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AuthEnv } from "./index.js";
+import { randomUUID } from "node:crypto";
+import { createDb } from "@cortexai-agent-hub/db";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { hubUserId } from "./hub-client.js";
 import { createAuth } from "./index.js";
+import {
+  mapHubOwner,
+  ProvisioningError,
+  provisionLocalAccount,
+  transferLocalOwner,
+} from "./provisioning.js";
 
-describe("signup lockdown", () => {
-  let prisma: PrismaClient;
+/**
+ * CAAH-43 against real PostgreSQL and the real Better Auth adapter: signup is
+ * closed on fresh and upgraded installs, the owner is set only by explicit
+ * operator provisioning, and provisioned accounts sign in with the app's own
+ * password hashing.
+ */
+const describePostgres =
+  process.env.VERIFY_DATABASE === "1" && process.env.DATABASE_URL ? describe : describe.skip;
 
-  beforeAll(async () => {
-    prisma = await createDb(
-      "postgres://cortexai-agent-hub:cortexai-agent-hub@127.0.0.1:5433/cortexai-agent-hub",
+const origin = "http://web.example.test";
+const password = "fixture-password12";
+
+describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
+  const db = process.env.DATABASE_URL ? createDb(process.env.DATABASE_URL) : undefined;
+  const prisma = db?.prisma as NonNullable<typeof db>["prisma"];
+  const auth = createAuth(prisma, {
+    secret: "offline-auth-secret-at-least-32-characters",
+    baseURL: origin,
+    webOrigin: origin,
+    // Legacy inputs that used to open signup; they must change nothing.
+    signupsEnabled: "true",
+    signupAllowlist: "",
+  });
+  const request = (path: string, body: unknown, cookie?: string) =>
+    auth.handler(
+      new Request(`${origin}/api/auth${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin, ...(cookie ? { cookie } : {}) },
+        body: JSON.stringify(body),
+      }),
     );
+  const email = (label: string) => `${label}-${randomUUID()}@cortexai-agent-hub.test`;
+  const owner = async () =>
+    (
+      await prisma.deploymentSettings.findUnique({
+        where: { id: "default" },
+        select: { ownerUserId: true },
+      })
+    )?.ownerUserId ?? null;
+
+  beforeEach(async () => {
+    await prisma.deploymentSettings.updateMany({ data: { ownerUserId: null } });
   });
 
   afterAll(async () => {
-    await prisma.$disconnect();
+    await prisma?.$disconnect();
+    await db?.pool.end();
   });
 
-  beforeEach(async () => {
-    await prisma.$transaction([
-      prisma.session.deleteMany(),
-      prisma.user.deleteMany(),
-      prisma.deploymentSettings.deleteMany(),
-    ]);
+  it("fresh install: direct signup is refused and creates no account", async () => {
+    await prisma.deploymentSettings.deleteMany({});
+    const visitor = email("fresh-visitor");
+    const response = await request("/sign-up/email", { email: visitor, password, name: "V" });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Registration is closed");
+    expect(await prisma.user.count({ where: { email: visitor } })).toBe(0);
+    expect(await owner()).toBeNull();
   });
 
-  const createTestAuth = (overrides: Partial<AuthEnv> = {}) => {
-    return createAuth(prisma, {
-      secret: "test-secret-that-is-long-enough-for-better-auth-validation",
-      baseURL: "http://127.0.0.1:3100",
-      webOrigin: "http://127.0.0.1:5173",
-      signupsEnabled: undefined,
-      signupAllowlist: undefined,
-      ...overrides,
+  it("upgrade with a legacy open policy: signup stays closed and an unadmitted signup cannot sign in", async () => {
+    const pending = email("legacy-pending");
+    await prisma.deploymentSettings.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        signupsEnabled: true,
+        signupAllowlist: `${pending},@cortexai-agent-hub.test`,
+        signupPolicyInitialized: true,
+      },
+      update: {
+        signupsEnabled: true,
+        signupAllowlist: `${pending},@cortexai-agent-hub.test`,
+        signupPolicyInitialized: true,
+      },
     });
-  };
+    const visitor = email("legacy-visitor");
+    for (const target of [visitor, pending]) {
+      const response = await request("/sign-up/email", { email: target, password, name: "V" });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("Registration is closed");
+    }
+    expect(await prisma.user.count({ where: { email: visitor } })).toBe(0);
 
-  describe("fresh install", () => {
-    it("rejects email/password signup unconditionally", async () => {
-      const auth = createTestAuth();
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "new@example.test",
-            password: "secure-password-123",
-            name: "New User",
-          }),
-        }),
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error?: string };
-      expect(body.error).toMatch(/registration is closed/i);
+    // A pre-upgrade signup that never got a space (pending mailbox proof).
+    // Create it as a real credential, then strip the space provisioning added.
+    const { userId } = await provisionLocalAccount(prisma, {
+      email: pending,
+      name: "Pending",
+      password,
+      owner: false,
     });
-
-    it("rejects signup even with SIGNUPS_ENABLED=true in env", async () => {
-      const auth = createTestAuth({ signupsEnabled: "true" });
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "new@example.test",
-            password: "secure-password-123",
-            name: "New User",
-          }),
-        }),
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error?: string };
-      expect(body.error).toMatch(/registration is closed/i);
-    });
-
-    it("rejects signup even with allowlist in env", async () => {
-      const auth = createTestAuth({
-        signupsEnabled: "true",
-        signupAllowlist: "new@example.test",
-      });
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "new@example.test",
-            password: "secure-password-123",
-            name: "New User",
-          }),
-        }),
-      );
-
-      expect(res.status).toBe(400);
-    });
+    await prisma.spaceMember.deleteMany({ where: { userId } });
+    await prisma.user.update({ where: { id: userId }, data: { emailVerified: false } });
+    const signIn = await request("/sign-in/email", { email: pending, password });
+    expect(signIn.status).toBe(403);
+    expect(await signIn.text()).toContain("Registration is closed");
+    expect(await prisma.session.count({ where: { userId } })).toBe(0);
+    expect(await prisma.spaceMember.count({ where: { userId } })).toBe(0);
+    expect(await owner()).toBeNull();
   });
 
-  describe("upgraded install with legacy settings", () => {
-    it("rejects signup when stored signupsEnabled=true", async () => {
-      // Simulate legacy deployment with open signup
-      await prisma.deploymentSettings.create({
-        data: {
-          id: "default",
-          ownerUserId: null,
-          signupsEnabled: true,
-          signupAllowlist: "",
-          signupPolicyInitialized: true,
-        },
-      });
-
-      const auth = createTestAuth();
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "new@example.test",
-            password: "secure-password-123",
-            name: "New User",
-          }),
-        }),
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error?: string };
-      expect(body.error).toMatch(/registration is closed/i);
+  it("provision-owner creates a local owner who signs in with the app's hashing", async () => {
+    const ownerEmail = email("owner");
+    const result = await provisionLocalAccount(prisma, {
+      email: ownerEmail.toUpperCase(),
+      name: "Owner",
+      password,
+      owner: true,
     });
+    expect(result).toMatchObject({ email: ownerEmail, owner: true });
+    expect(await owner()).toBe(result.userId);
+    expect(await prisma.spaceMember.count({ where: { userId: result.userId } })).toBe(1);
 
-    it("rejects signup when stored allowlist exists", async () => {
-      await prisma.deploymentSettings.create({
-        data: {
-          id: "default",
-          ownerUserId: null,
-          signupsEnabled: true,
-          signupAllowlist: "approved@example.test",
-          signupPolicyInitialized: true,
-        },
-      });
-
-      const auth = createTestAuth();
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "approved@example.test",
-            password: "secure-password-123",
-            name: "Approved User",
-          }),
-        }),
-      );
-
-      expect(res.status).toBe(400);
-    });
+    const signIn = await request("/sign-in/email", { email: ownerEmail, password });
+    expect(signIn.status).toBe(200);
+    expect(await prisma.session.count({ where: { userId: result.userId } })).toBe(1);
+    expect(
+      (await request("/sign-in/email", { email: ownerEmail, password: "wrong-pass12" })).status,
+    ).toBe(401);
   });
 
-  describe("existing account sign-in", () => {
-    it("allows sign-in for existing verified users", async () => {
-      // Create a verified user
-      const user = await prisma.user.create({
-        data: {
-          id: "user-1",
-          email: "existing@example.test",
-          name: "Existing User",
-          emailVerified: true,
-        },
-      });
-
-      // Create account record for Better Auth
-      await prisma.account.create({
-        data: {
-          id: "account-1",
-          userId: user.id,
-          accountId: user.email,
-          providerId: "credential",
-          password: "$2a$10$X8JK7H5Z3R1YqW5N6wQZ7eB3x4W7jJ1nG8K9mL0pQ2r5S6T7u8v9w", // hashed "password"
-        },
-      });
-
-      await bootstrapUserSpace(prisma, user, {
-        signupsEnabled: undefined,
-        signupAllowlist: undefined,
-      });
-
-      const auth = createTestAuth();
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-in/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "existing@example.test",
-            password: "password",
-          }),
-        }),
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as { user?: { email: string } };
-      expect(body.user).toBeDefined();
-      expect(body.user?.email).toBe("existing@example.test");
+  it("an existing owner makes provision-owner fail with no change", async () => {
+    const first = await provisionLocalAccount(prisma, {
+      email: email("seated"),
+      name: "Seated",
+      password,
+      owner: true,
     });
-
-    it("supports password reset for existing users", async () => {
-      const user = await prisma.user.create({
-        data: {
-          id: "user-2",
-          email: "reset@example.test",
-          name: "Reset User",
-          emailVerified: true,
-        },
-      });
-
-      await prisma.account.create({
-        data: {
-          id: "account-2",
-          userId: user.id,
-          accountId: user.email,
-          providerId: "credential",
-          password: "$2a$10$X8JK7H5Z3R1YqW5N6wQZ7eB3x4W7jJ1nG8K9mL0pQ2r5S6T7u8v9w",
-        },
-      });
-
-      const auth = createTestAuth();
-
-      const res = await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/forgot-password", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "reset@example.test",
-            redirectTo: "http://127.0.0.1:5173/reset-password",
-          }),
-        }),
-      );
-
-      // Should accept the request (actual email delivery is mocked)
-      expect(res.status).toBe(200);
-    });
+    const usersBefore = await prisma.user.count();
+    const second = email("usurper");
+    await expect(
+      provisionLocalAccount(prisma, { email: second, name: "Usurper", password, owner: true }),
+    ).rejects.toMatchObject({ code: "OWNER_EXISTS" });
+    expect(await prisma.user.count()).toBe(usersBefore);
+    expect(await prisma.user.count({ where: { email: second } })).toBe(0);
+    expect(await owner()).toBe(first.userId);
   });
 
-  describe("owner claim prevention", () => {
-    it("never claims empty ownerUserId on session creation", async () => {
-      // Create deployment settings with no owner
-      await prisma.deploymentSettings.create({
-        data: {
-          id: "default",
-          ownerUserId: null,
-          signupsEnabled: false,
-          signupAllowlist: "",
-          signupPolicyInitialized: true,
-        },
-      });
-
-      // Manually create a user (simulating operator provisioning)
-      const user = await prisma.user.create({
-        data: {
-          id: "user-3",
-          email: "noowner@example.test",
-          name: "No Owner",
-          emailVerified: true,
-        },
-      });
-
-      await prisma.account.create({
-        data: {
-          id: "account-3",
-          userId: user.id,
-          accountId: user.email,
-          providerId: "credential",
-          password: "$2a$10$X8JK7H5Z3R1YqW5N6wQZ7eB3x4W7jJ1nG8K9mL0pQ2r5S6T7u8v9w",
-        },
-      });
-
-      // Bootstrap WITHOUT owner claim
-      await bootstrapUserSpace(prisma, user, {
-        signupsEnabled: undefined,
-        signupAllowlist: undefined,
-      });
-
-      const auth = createTestAuth();
-
-      // Sign in to create session
-      await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-in/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "noowner@example.test",
-            password: "password",
-          }),
-        }),
-      );
-
-      // Verify owner is still null
-      const settings = await prisma.deploymentSettings.findUnique({
-        where: { id: "default" },
-      });
-      expect(settings?.ownerUserId).toBeNull();
-    });
-
-    it("never reopens owner claim after deletion", async () => {
-      // Create owner
-      const owner = await prisma.user.create({
-        data: {
-          id: "owner-1",
-          email: "owner@example.test",
-          name: "Owner",
-          emailVerified: true,
-        },
-      });
-
-      await prisma.deploymentSettings.create({
-        data: {
-          id: "default",
-          ownerUserId: owner.id,
-          signupsEnabled: false,
-          signupAllowlist: "",
-          signupPolicyInitialized: true,
-        },
-      });
-
-      // Delete owner (sets ownerUserId to null)
-      await prisma.deploymentSettings.update({
-        where: { id: "default" },
-        data: { ownerUserId: null },
-      });
-
-      // Create another user
-      const user = await prisma.user.create({
-        data: {
-          id: "user-4",
-          email: "another@example.test",
-          name: "Another User",
-          emailVerified: true,
-        },
-      });
-
-      await prisma.account.create({
-        data: {
-          id: "account-4",
-          userId: user.id,
-          accountId: user.email,
-          providerId: "credential",
-          password: "$2a$10$X8JK7H5Z3R1YqW5N6wQZ7eB3x4W7jJ1nG8K9mL0pQ2r5S6T7u8v9w",
-        },
-      });
-
-      await bootstrapUserSpace(prisma, user, {
-        signupsEnabled: undefined,
-        signupAllowlist: undefined,
-      });
-
-      const auth = createTestAuth();
-
-      // Sign in
-      await auth.handler(
-        new Request("http://127.0.0.1:3100/api/auth/sign-in/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-          body: JSON.stringify({
-            email: "another@example.test",
-            password: "password",
-          }),
-        }),
-      );
-
-      // Verify owner is still null (not claimed by new user)
-      const settings = await prisma.deploymentSettings.findUnique({
-        where: { id: "default" },
-      });
-      expect(settings?.ownerUserId).toBeNull();
-    });
+  it("concurrent provision-owner runs leave exactly one owner and no extra account", async () => {
+    const usersBefore = await prisma.user.count();
+    const emails = Array.from({ length: 5 }, (_, index) => email(`race-${index}`));
+    const results = await Promise.allSettled(
+      emails.map((target) =>
+        provisionLocalAccount(prisma, { email: target, name: "Racer", password, owner: true }),
+      ),
+    );
+    const won = results.filter((result) => result.status === "fulfilled");
+    const lost = results.filter((result) => result.status === "rejected");
+    expect(won).toHaveLength(1);
+    for (const result of lost) {
+      expect((result as PromiseRejectedResult).reason).toBeInstanceOf(ProvisioningError);
+      expect((result as PromiseRejectedResult).reason).toMatchObject({ code: "OWNER_EXISTS" });
+    }
+    expect(await prisma.user.count()).toBe(usersBefore + 1);
+    expect(await owner()).toBe((won[0] as PromiseFulfilledResult<{ userId: string }>).value.userId);
   });
 
-  describe("bootstrapUserSpace never claims owner", () => {
-    it("leaves ownerUserId null when bootstrapping new user", async () => {
-      await prisma.deploymentSettings.create({
-        data: {
-          id: "default",
-          ownerUserId: null,
-          signupsEnabled: false,
-          signupAllowlist: "",
-          signupPolicyInitialized: true,
-        },
-      });
-
-      const user = await prisma.user.create({
-        data: {
-          id: "user-5",
-          email: "bootstrap@example.test",
-          name: "Bootstrap User",
-          emailVerified: true,
-        },
-      });
-
-      await bootstrapUserSpace(prisma, user, {
-        signupsEnabled: undefined,
-        signupAllowlist: undefined,
-      });
-
-      const settings = await prisma.deploymentSettings.findUnique({
-        where: { id: "default" },
-      });
-      expect(settings?.ownerUserId).toBeNull();
+  it("provision-user grants no ownership; transfer-owner moves the seat explicitly", async () => {
+    const seated = await provisionLocalAccount(prisma, {
+      email: email("before-transfer"),
+      name: "Owner",
+      password,
+      owner: true,
     });
+    const userEmail = email("member");
+    const member = await provisionLocalAccount(prisma, {
+      email: userEmail,
+      name: "Member",
+      password,
+      owner: false,
+    });
+    expect(await owner()).toBe(seated.userId);
+    expect((await request("/sign-in/email", { email: userEmail, password })).status).toBe(200);
+    expect(await owner()).toBe(seated.userId);
+
+    await expect(
+      provisionLocalAccount(prisma, { email: userEmail, name: "Again", password, owner: false }),
+    ).rejects.toMatchObject({ code: "EMAIL_TAKEN" });
+
+    const moved = await transferLocalOwner(prisma, { email: userEmail });
+    expect(moved).toEqual({ userId: member.userId, previousOwnerUserId: seated.userId });
+    expect(await owner()).toBe(member.userId);
+  });
+
+  it("removing the owner does not reopen an automatic claim", async () => {
+    const ownerEmail = email("leaving-owner");
+    const seated = await provisionLocalAccount(prisma, {
+      email: ownerEmail,
+      name: "Leaving",
+      password,
+      owner: true,
+    });
+    const signIn = await request("/sign-in/email", { email: ownerEmail, password });
+    const cookie = signIn.headers
+      .getSetCookie()
+      .map((value) => value.split(";")[0])
+      .join("; ");
+    const deleted = await request("/delete-user", { password }, cookie);
+    expect(deleted.status).toBe(200);
+    expect(await prisma.user.count({ where: { id: seated.userId } })).toBe(0);
+    expect(await owner()).toBeNull();
+
+    // Neither a later sign-in nor a fresh account takes the empty seat.
+    const nextEmail = email("next");
+    await provisionLocalAccount(prisma, { email: nextEmail, name: "Next", password, owner: false });
+    expect((await request("/sign-in/email", { email: nextEmail, password })).status).toBe(200);
+    const visitor = await request("/sign-up/email", { email: email("v"), password, name: "V" });
+    expect(visitor.status).toBe(400);
+    expect(await owner()).toBeNull();
+  });
+
+  it("Hub owner mapping names tenant_users.id plus tenant and creates no local login", async () => {
+    const hubOrigin = "https://hub.example.test";
+    const tenant = `tenant-${randomUUID()}`;
+    const tenantUserId = randomUUID();
+    const usersBefore = await prisma.user.count();
+    const accountsBefore = await prisma.account.count();
+    const mapped = await mapHubOwner(prisma, {
+      hubOrigin,
+      hubTenant: tenant,
+      hubUserId: tenantUserId,
+      transfer: false,
+    });
+    expect(mapped.ownerUserId).toBe(hubUserId(hubOrigin, tenant, tenantUserId));
+    expect(await owner()).toBe(mapped.ownerUserId);
+    // No user, credential or session: the seat applies only after Hub sign-in and admission.
+    expect(await prisma.user.count()).toBe(usersBefore);
+    expect(await prisma.account.count()).toBe(accountsBefore);
+    expect(await prisma.session.count({ where: { userId: mapped.ownerUserId } })).toBe(0);
+
+    await expect(
+      mapHubOwner(prisma, {
+        hubOrigin,
+        hubTenant: tenant,
+        hubUserId: randomUUID(),
+        transfer: false,
+      }),
+    ).rejects.toMatchObject({ code: "OWNER_EXISTS" });
+    for (const hubUser of ["owner@example.test", " ", ""]) {
+      await expect(
+        mapHubOwner(prisma, { hubOrigin, hubTenant: tenant, hubUserId: hubUser, transfer: true }),
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    }
+    await expect(
+      mapHubOwner(prisma, {
+        hubOrigin,
+        configuredTenant: "other-tenant",
+        hubTenant: tenant,
+        hubUserId: tenantUserId,
+        transfer: true,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(await owner()).toBe(mapped.ownerUserId);
   });
 });

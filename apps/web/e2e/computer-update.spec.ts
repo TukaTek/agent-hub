@@ -1,12 +1,12 @@
 import type { ComputerUpdate } from "@cortexai-agent-hub/contracts";
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { activeBotId, captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test("computer maintenance shows durable background progress and failure recovery", async ({
   page,
 }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem("cortexai-agent-hub.uiAppearance", "dark"));
-  await signup(
+  await provisionAndSignIn(
     page,
     `computer-update-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { explicitSignInRoute, initialAuthMode } from "./auth-routing.js";
 
 describe("mobile authentication routing", () => {
-  it("defaults ordinary logged-out visitors to sign-up", () => {
-    expect(initialAuthMode()).toBe("up");
+  it("starts every logged-out visitor at sign-in, including legacy signup links (CAAH-43)", () => {
+    for (const mode of [undefined, "up", ["up"], "", "anything"]) {
+      expect(initialAuthMode(mode)).toBe("in");
+    }
   });
 
   it("honors the explicit sign-in route used after logout", () => {

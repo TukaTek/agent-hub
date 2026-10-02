@@ -6,14 +6,19 @@ import {
   captureScreenshot,
   completeOnboarding,
   openUserSettings,
+  provisionAndSignIn,
   rpc,
-  signup,
 } from "./helpers";
 
 test("memory and skills are readable and editable in the app", async ({ page }, testInfo) => {
   const stamp = Date.now();
   const userName = `Knowledge ${stamp}`;
-  await signup(page, `knowledge-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(
+    page,
+    `knowledge-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    userName,
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

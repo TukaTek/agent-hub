@@ -1,4 +1,3 @@
-import type { IntegrationSetupState } from "@cortexai-agent-hub/contracts";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -28,10 +27,8 @@ import {
   probeApiBase,
   requestPasswordReset,
   resetApiBase,
-  rpc,
   saveApiBase,
   signIn,
-  signUp,
   usesCustomApiBase,
 } from "../lib/api";
 import { type AuthMode, initialAuthMode } from "../lib/auth-routing";
@@ -255,39 +252,35 @@ export default function SignIn() {
                     </Pressable>
                   ) : null}
                   {reset.mode !== "hub" ? (
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        marginTop: 24,
-                      }}
-                    >
-                      <Text style={{ color: tokens.mutedForeground, fontSize: 15 }}>
-                        {mode === "in"
-                          ? t("Don’t have an account?")
-                          : mode === "up"
-                            ? t("Already have an account?")
-                            : ""}
+                    mode === "in" ? (
+                      // Self-service signup is closed (CAAH-43): accounts come from the operator.
+                      <Text
+                        testID="operator-provisioned-hint"
+                        style={{
+                          color: tokens.mutedForeground,
+                          fontSize: 15,
+                          marginTop: 24,
+                          textAlign: "center",
+                        }}
+                      >
+                        {t("Don’t have an account?")}{" "}
+                        {t("Ask the person who runs this server to create one.")}
                       </Text>
+                    ) : (
                       <Pressable
                         accessibilityRole="button"
                         hitSlop={8}
                         onPress={() => {
-                          setMode((current) => (current === "in" ? "up" : "in"));
+                          setMode("in");
                           setError(null);
                         }}
-                        style={{ marginLeft: 5 }}
+                        style={{ alignSelf: "center", marginTop: 24 }}
                       >
                         <Text style={{ color: tokens.foreground, fontSize: 15, fontWeight: "600" }}>
-                          {mode === "in"
-                            ? t("Sign up")
-                            : mode === "up"
-                              ? t("Sign in")
-                              : t("Back to sign in")}
+                          {t("Back to sign in")}
                         </Text>
                       </Pressable>
-                    </View>
+                    )
                   ) : null}
                 </>
               )}

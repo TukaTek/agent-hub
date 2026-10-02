@@ -1,11 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+} from "./helpers";
 
 test("account settings avatar style previews differ for robot and organic", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `avatar-style-${stamp}@cortexai-agent-hub.test`,
     "password12",

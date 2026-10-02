@@ -18,6 +18,7 @@ import {
 } from "@playwright/test";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import type { createApp } from "../../../../apps/api/src/app.ts";
+import { FIXTURE_PASSWORD, provisionFixtureAccount } from "../fixture-accounts.js";
 import {
   type NumericSummary,
   PERFORMANCE_REPORT_SCHEMA_VERSION,
@@ -82,7 +83,7 @@ try {
   const executablePath = await packagedExecutable();
   const benchmark = { executablePath, env: benchmarkEnv };
   const primedProfile = path.join(temporaryRoot, "profile-primed");
-  await prepareAuthenticatedProfile(benchmark, primedProfile);
+  await prepareAuthenticatedProfile(benchmark, primedProfile, handles.prisma);
   await seedBenchmarkThread(handles.prisma);
 
   const coldLaunches = [];
@@ -180,8 +181,6 @@ function performanceEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
     CORTEXAI_AGENT_HUB_DISABLE_WARM_WINDOW: disableWarmWindow ? "1" : "0",
     CORTEXAI_AGENT_HUB_PERFORMANCE_ASSET_DELAY_MS: String(assetDelayMs),
     DATA_DIR: path.join(temporaryRoot, "data"),
-    SIGNUPS_ENABLED: "true",
-    SIGNUP_ALLOWLIST: "",
     PUBLIC_POSTHOG_KEY: "",
     CI: "",
     CSC_IDENTITY_AUTO_DISCOVERY: "false",
@@ -252,7 +251,11 @@ interface DesktopLaunchOptions {
   waitForReady?: boolean;
 }
 
-async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile: string) {
+async function prepareAuthenticatedProfile(
+  benchmark: BenchmarkContext,
+  profile: string,
+  prisma: PrismaClient,
+) {
   const { app, page } = await launchDesktop(benchmark, {
     profile,
     clearCache: false,
@@ -260,13 +263,14 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
   });
   try {
     const stamp = Date.now();
-    await page.goto(`${webOrigin}/sign-up`);
-    await page.getByPlaceholder("Your name").fill("Benchmark User");
-    await page
-      .getByPlaceholder("Your email address")
-      .fill(`benchmark-${stamp}@cortexai-agent-hub.test`);
-    await page.getByPlaceholder("Password").fill("password12");
-    await page.getByRole("button", { name: "Create account" }).click();
+    const email = `benchmark-${stamp}@cortexai-agent-hub.test`;
+    // Signup is closed (CAAH-43): provision the benchmark account, then sign in.
+    await provisionFixtureAccount(prisma, { email, name: "Benchmark User" });
+    await page.goto(`${webOrigin}/sign-in`);
+    await page.getByPlaceholder("Your email address").fill(email);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByPlaceholder("Password").fill(FIXTURE_PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page
       .waitForFunction(() => /^\/(?:onboarding|app)/.test(window.location.pathname), undefined, {
         timeout: 10_000,
@@ -277,7 +281,7 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
           .textContent()
           .catch(() => null);
         throw new Error(
-          `Benchmark sign-up stayed on ${new URL(page.url()).pathname}${message ? `: ${message}` : ""}`,
+          `Benchmark sign-in stayed on ${new URL(page.url()).pathname}${message ? `: ${message}` : ""}`,
           { cause: error },
         );
       });
@@ -286,7 +290,7 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
     await connectHeading.or(composer).waitFor({ timeout: 20_000 });
     if (await connectHeading.isVisible().catch(() => false)) {
       throw new Error(
-        "Benchmark sign-up requires a default model; connect-model is unsupported here",
+        "Benchmark sign-in requires a default model; connect-model is unsupported here",
       );
     }
     await expect(composer).toBeVisible({ timeout: 20_000 });

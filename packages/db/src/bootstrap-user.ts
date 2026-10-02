@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "./client.js";
 
+/**
+ * Legacy signup inputs. Since CAAH-43 they are accepted for call compatibility
+ * and ignored: no environment value or stored row can reopen signup.
+ */
 export interface SignupPolicyEnv {
-  signupsEnabled: string | undefined;
-  signupAllowlist: string | undefined;
+  signupsEnabled?: string | undefined;
+  signupAllowlist?: string | undefined;
 }
 
 function newId(): string {
@@ -22,15 +25,17 @@ function isUniqueViolation(error: unknown): boolean {
  * user memory, and notification preferences. Shared by the Better Auth
  * `session.create.before` hook and phone-identity provisioning.
  *
- * Deployment owner must be set explicitly via operator provisioning commands;
- * this function never claims ownerUserId.
+ * It never claims the deployment owner (CAAH-43): the seat is set only by an
+ * explicit operator command (provision-owner, transfer-owner). The legacy
+ * `claimDeploymentOwner: false` option is still accepted so existing callers
+ * (Hub sign-in, messaging) keep their call shape.
  */
 export async function bootstrapUserSpace(
   prisma: PrismaClient,
   user: { id: string },
-  env: SignupPolicyEnv,
+  _env: SignupPolicyEnv,
+  _options: { claimDeploymentOwner?: false } = {},
 ): Promise<{ spaceId: string }> {
-  const claimDeploymentOwner = false;
   // Concurrent bootstraps for the same user (e.g. overlapping first phone
   // inbounds) race on every unique key below; each step either wins or
   // joins the winner's state instead of failing.
@@ -87,19 +92,18 @@ export async function bootstrapUserSpace(
     .catch((error: unknown) => {
       if (!isUniqueViolation(error)) throw error;
     });
-  const policy = signupPolicyFromEnv(env);
+  // A fresh row records signup closed; the columns are legacy and never read.
   await prisma.deploymentSettings.upsert({
     where: { id: "default" },
     create: {
       id: "default",
       ownerUserId: null,
-      signupsEnabled: policy.enabled,
-      signupAllowlist: policy.allowlist.join(","),
+      signupsEnabled: false,
+      signupAllowlist: "",
       signupPolicyInitialized: true,
     },
     update: {},
   });
-  // Deployment owner is never claimed here; operator commands set it explicitly.
   const hasMemory = await prisma.memoryDocument.findFirst({
     where: { spaceId: orgId, userId: user.id, scope: "user", path: "MEMORY.md" },
   });

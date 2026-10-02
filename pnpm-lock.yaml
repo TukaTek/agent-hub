@@ -865,6 +865,9 @@ importers:
       '@cortexai-agent-hub/adapters':
         specifier: workspace:*
         version: link:../adapters
+      '@cortexai-agent-hub/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@cortexai-agent-hub/contracts':
         specifier: workspace:*
         version: link:../contracts

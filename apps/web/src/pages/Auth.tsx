@@ -3,7 +3,6 @@ import {
   readBoundedJsonResponse,
   type SignInContinueResponse,
   type SsoCallbackError,
-  signupRequiresEmailVerification,
 } from "@cortexai-agent-hub/core";
 import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
@@ -36,7 +35,7 @@ const MAX_AUTH_CAPABILITIES_RESPONSE_BYTES = 64 * 1024;
 export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) {
   const { t } = useLingui();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -50,8 +49,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   });
   const [pending, setPending] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-  // Signup triggers a session refresh that remounts the anonymous auth page.
-  const sent = resetSent || searchParams.get("verify") === "email";
+  const sent = resetSent;
   const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
   const mode = reset?.mode === "hub" || requestedMode === "entry" ? "in" : requestedMode;
   const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
@@ -63,7 +61,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     signInStep === "desktop_sso_unavailable";
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
-  const passwordFieldId = mode === "in" ? "current-password" : "new-password";
   const title = sent ? (
     <Trans>Check your email</Trans>
   ) : mode === "in" ? (
@@ -303,17 +300,17 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               </Trans>
             </p>
           ) : null}
-          {mode !== "forgot" && (signInStep === null || signInStep === "password") ? (
+          {signInStep === "password" ? (
             <div className="mt-4 w-full">
-              <Label htmlFor={passwordFieldId} className="text-muted-foreground">
+              <Label htmlFor="current-password" className="text-muted-foreground">
                 <Trans>Password</Trans>
               </Label>
               <div className="relative">
                 <Input
                   ref={passwordRef}
-                  id={passwordFieldId}
+                  id="current-password"
                   name="password"
-                  autoComplete={mode === "in" ? "current-password" : "new-password"}
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={t`Password`}
@@ -356,22 +353,19 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 <Trans>Continue</Trans>
               ) : signInStep === "password" ? (
                 <Trans>Sign in</Trans>
-              ) : mode === "forgot" ? (
-                <Trans>Send reset link</Trans>
               ) : (
-                <Trans>Create account</Trans>
+                <Trans>Send reset link</Trans>
               )}
             </Button>
           )}
           {reset.mode !== "hub" ? (
             <p className="mt-8 text-muted-foreground">
               {mode === "in" ? (
-                <>
+                // Self-service signup is closed (CAAH-43): accounts come from the operator.
+                <span data-testid="operator-provisioned-hint">
                   <Trans>Don’t have an account?</Trans>{" "}
-                  <Link to="/sign-up" className="font-medium text-foreground">
-                    <Trans>Sign up</Trans>
-                  </Link>
-                </>
+                  <Trans>Ask the person who runs this server to create one.</Trans>
+                </span>
               ) : (
                 <Link to="/sign-in" className="font-medium text-foreground">
                   <Trans>Back to sign in</Trans>

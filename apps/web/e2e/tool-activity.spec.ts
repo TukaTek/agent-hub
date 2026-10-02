@@ -1,6 +1,11 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+} from "./helpers";
 
 const fixture = "/e2e/fixtures/tool-activity.html";
 const REPLY_TEXT = "Tuesday at 2 pm is free.";
@@ -129,7 +134,7 @@ test("the chat transcript shows tool activity when turned on and hides it when t
   await page.setViewportSize({ width: 1440, height: 900 });
   await seedToolActivityOn(page);
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `tool-activity-${stamp}@cortexai-agent-hub.test`,
     "password12",

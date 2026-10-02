@@ -1,8 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("screen connection failures stay visible and can be retried", async ({ page }, testInfo) => {
-  await signup(
+  await provisionAndSignIn(
     page,
     `screen-error-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

@@ -1,9 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("pinned bots and sidebar sections persist", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `bot-organize-${stamp}@cortexai-agent-hub.test`, "password12", "Test User");
+  await provisionAndSignIn(
+    page,
+    `bot-organize-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Test User",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);
@@ -63,7 +74,12 @@ test("pinned bots and sidebar sections persist", async ({ page }, testInfo) => {
 
 test("bots can be reordered by drag or keyboard and keep that order", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `bot-reorder-${stamp}@cortexai-agent-hub.test`, "password12", "Bot Order");
+  await provisionAndSignIn(
+    page,
+    `bot-reorder-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Bot Order",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);
@@ -178,7 +194,7 @@ test("bots can be reordered by drag or keyboard and keep that order", async ({ p
 
 test("chat composer controls are vertically centered", async ({ page }) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `composer-layout-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -200,7 +216,12 @@ test("chat composer controls are vertically centered", async ({ page }) => {
 
 test("group chats share every context-menu action", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `group-organize-${stamp}@cortexai-agent-hub.test`, "password12", "Group Menu");
+  await provisionAndSignIn(
+    page,
+    `group-organize-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Group Menu",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

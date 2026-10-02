@@ -37,7 +37,7 @@ curl -fsS http://127.0.0.1:3100/internal/health
 
 Missing supervisor token is a **setup failure**: do not treat `sandbox: "none"` as success for this path.
 
-Signup and local Docker computers work **without** an E2B (or other remote) account.
+Sign-in and local Docker computers work **without** an E2B (or other remote) account.
 
 ## `none`
 

@@ -108,7 +108,6 @@ describe("mobile i18n", () => {
       OPENAI_COMPATIBLE_BASE_URL_HINT,
       ...SLASH_ACTIONS.map((action) => action.label),
       "Sign-in did not return a session",
-      "Sign-up did not return a session",
       "{count} model",
       "{count} models",
       // Labels the t() literal scan cannot see: built from maps or ternaries.

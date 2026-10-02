@@ -1,6 +1,12 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, createNamedBot, rpc, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  createNamedBot,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 // Fake values only: this spec proves the UI and API never echo a saved credential.
 const SENTINEL = "fake-bot-credential-values-never-leak";
@@ -11,7 +17,12 @@ test("bot credentials list, add, replace and remove without leaking values", asy
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `bot-credentials-${stamp}@example.test`, "password12", "Bot Credentials");
+  await provisionAndSignIn(
+    page,
+    `bot-credentials-${stamp}@example.test`,
+    "password12",
+    "Bot Credentials",
+  );
   await completeOnboarding(page);
   const botName = `Credentials ${stamp}`;
   const botId = await createNamedBot(page, botName);

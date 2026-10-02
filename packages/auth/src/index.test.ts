@@ -3,8 +3,8 @@ import {
   buildTrustedOrigins,
   createAuth,
   isBlockedAuthPath,
+  isSignupPath,
   passwordResetEmail,
-  resolveSignupPolicy,
 } from "./index.js";
 
 describe("auth policy", () => {
@@ -25,9 +25,19 @@ describe("auth policy", () => {
     }
   });
 
+  it("closes every signup route at the app boundary (CAAH-43)", () => {
+    for (const path of ["/sign-up", "/sign-up/email", "/sign-up/some-future-provider"]) {
+      expect(isSignupPath(path), path).toBe(true);
+      expect(isBlockedAuthPath(path), path).toBe(true);
+    }
+    // A prefix match must not swallow unrelated routes.
+    expect(isBlockedAuthPath("/sign-upgrade")).toBe(false);
+  });
+
+  // Signup is no longer an account route the apps call (CAAH-43), so it moved
+  // to the blocked list above; everything else here must stay reachable.
   it("keeps the account routes the apps call", () => {
     for (const path of [
-      "/sign-up/email",
       "/sign-in/email",
       "/sign-out",
       "/get-session",
@@ -107,55 +117,51 @@ describe("passwordResetEmail", () => {
   });
 });
 
-describe("resolveSignupPolicy", () => {
-  it("uses environment defaults before deployment settings exist", async () => {
-    const prisma = {
-      deploymentSettings: { findUnique: vi.fn().mockResolvedValue(null) },
-    };
-    await expect(
-      resolveSignupPolicy(prisma as never, {
-        signupsEnabled: "false",
-        signupAllowlist: "you@example.com,@company.test",
-      }),
-    ).resolves.toEqual({
-      enabled: false,
-      allowlist: ["you@example.com", "@company.test"],
+describe("signup lockdown (CAAH-43)", () => {
+  const legacyOpenRow = {
+    id: "default",
+    ownerUserId: null,
+    signupsEnabled: true,
+    signupAllowlist: "",
+    signupPolicyInitialized: true,
+  };
+
+  for (const env of [
+    { signupsEnabled: "true", signupAllowlist: "" },
+    { signupsEnabled: "true", signupAllowlist: "visitor@example.test" },
+    { signupsEnabled: undefined, signupAllowlist: undefined },
+  ]) {
+    it(`refuses direct email signup inside Better Auth with legacy env ${JSON.stringify(env)}`, async () => {
+      const prisma = {
+        deploymentSettings: { findUnique: vi.fn().mockResolvedValue(legacyOpenRow) },
+        user: { create: vi.fn(), findFirst: vi.fn().mockResolvedValue(null) },
+        account: { create: vi.fn() },
+      };
+      const auth = createAuth(prisma as never, {
+        secret: "test-secret-that-is-long-enough-for-better-auth",
+        baseURL: "http://127.0.0.1:3100",
+        webOrigin: "http://127.0.0.1:5173",
+        ...env,
+      });
+
+      const res = await auth.handler(
+        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
+          body: JSON.stringify({
+            email: "visitor@example.test",
+            password: "password12",
+            name: "Visitor",
+          }),
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("Registration is closed");
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.account.create).not.toHaveBeenCalled();
+      // The legacy row is never consulted: no stored flag can reopen signup.
+      expect(prisma.deploymentSettings.findUnique).not.toHaveBeenCalled();
     });
-  });
-
-  it("keeps using the environment policy for a pre-upgrade uninitialized row", async () => {
-    const prisma = {
-      deploymentSettings: {
-        findUnique: vi.fn().mockResolvedValue({
-          signupsEnabled: true,
-          signupAllowlist: "",
-          signupPolicyInitialized: false,
-        }),
-      },
-    };
-    await expect(
-      resolveSignupPolicy(prisma as never, {
-        signupsEnabled: "false",
-        signupAllowlist: "existing-policy@example.com",
-      }),
-    ).resolves.toEqual({ enabled: false, allowlist: ["existing-policy@example.com"] });
-  });
-
-  it("uses live deployment settings as the effective policy after initial seeding", async () => {
-    const prisma = {
-      deploymentSettings: {
-        findUnique: vi.fn().mockResolvedValue({
-          signupsEnabled: false,
-          signupAllowlist: "approved@example.com",
-          signupPolicyInitialized: true,
-        }),
-      },
-    };
-    await expect(
-      resolveSignupPolicy(prisma as never, {
-        signupsEnabled: "false",
-        signupAllowlist: "environment-only@example.com",
-      }),
-    ).resolves.toEqual({ enabled: false, allowlist: ["approved@example.com"] });
-  });
+  }
 });

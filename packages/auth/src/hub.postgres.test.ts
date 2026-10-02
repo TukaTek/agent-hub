@@ -250,7 +250,12 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
       }
       const spaces = await Promise.all(
         ids.map((id) =>
-          bootstrapUserSpace(db.prisma, { id }, { signupsEnabled: "false", signupAllowlist: "" }),
+          bootstrapUserSpace(
+            db.prisma,
+            { id },
+            { signupsEnabled: "false", signupAllowlist: "" },
+            { claimDeploymentOwner: false },
+          ),
         ),
       );
       expect(spaces[0]!.spaceId).not.toBe(spaces[1]!.spaceId);

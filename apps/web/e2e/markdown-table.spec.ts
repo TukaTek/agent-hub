@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 const fixture = "/e2e/fixtures/markdown-table.html";
 const longValue =
@@ -439,7 +439,12 @@ test.describe("touch table controls", () => {
 
 test("bot replies render markdown tables as cards", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `table-card-${stamp}@cortexai-agent-hub.test`, "password12", "Table Card");
+  await provisionAndSignIn(
+    page,
+    `table-card-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Table Card",
+  );
   await completeOnboarding(page);
 
   const composer = page.getByRole("combobox", { name: /^Message/ });

@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openNewSpace, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, openNewSpace, provisionAndSignIn } from "./helpers";
 
 function isPresented(error: Locator) {
   return error.evaluate((element) => {
@@ -24,7 +24,12 @@ function seenRunErrorCount(page: Page) {
 
 test("a failed run is visible once without returning after reload", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `run-failure-${stamp}@cortexai-agent-hub.test`, "password12", "Run Failure");
+  await provisionAndSignIn(
+    page,
+    `run-failure-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Run Failure",
+  );
   await completeOnboarding(page);
 
   // "fail this run" makes the scripted runtime throw, so the run fails the same way a
@@ -60,7 +65,7 @@ test("a failed run is visible once without returning after reload", async ({ pag
 
 test("a covered run error is not remembered until it is presented", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `covered-run-failure-${stamp}@cortexai-agent-hub.test`,
     "password12",

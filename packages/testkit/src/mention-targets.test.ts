@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioEmulator } from "@cortexai-agent-hub/adapters";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
@@ -31,7 +32,6 @@ describeWithDatabase("structured @ mention targets", () => {
       sandboxProvider: "fake",
       agentRuntime: "scripted",
       composio: new ComposioEmulator(),
-      signupsEnabled: "true",
     });
     app = handles.app;
     prisma = handles.prisma;
@@ -43,8 +43,8 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("starts a routine test run on the owning bot", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `mention-routine-${stamp}@cortexai-agent-hub.test`,
       "Routine Owner",
     );
@@ -73,8 +73,8 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("replays routine testRun with the same clientNonce", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `mention-routine-replay-${stamp}@cortexai-agent-hub.test`,
       "Replay Owner",
     );
@@ -112,8 +112,8 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("includes connector intent on a 1:1 send prompt", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `mention-connector-${stamp}@cortexai-agent-hub.test`,
       "Connector Owner",
     );
@@ -143,8 +143,8 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("lands a group-targeted send in the group transcript, not the 1:1 bot thread", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `mention-group-${stamp}@cortexai-agent-hub.test`,
       "Group Owner",
     );
@@ -188,8 +188,8 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("wakes exactly one bot on an unmentioned group send", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `mention-group-default-${stamp}@cortexai-agent-hub.test`,
       "Group Default",
     );
@@ -222,7 +222,11 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("wakes a mentioned group member from typed bot chips and ignores non-members", async () => {
-    const cookie = await signup(app, `mention-out-${stamp}@cortexai-agent-hub.test`, "Out Of Chat");
+    const cookie = await signInAs(
+      handles,
+      `mention-out-${stamp}@cortexai-agent-hub.test`,
+      "Out Of Chat",
+    );
     const botA = await rpc<{ id: string }>(app, cookie, "bots/create", {
       name: "MemberA",
       title: "",
@@ -265,8 +269,16 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 
   it("rejects another user's routine, connection, and group mentions", async () => {
-    const ada = await signup(app, `mention-auth-ada-${stamp}@cortexai-agent-hub.test`, "Ada Auth");
-    const bob = await signup(app, `mention-auth-bob-${stamp}@cortexai-agent-hub.test`, "Bob Auth");
+    const ada = await signInAs(
+      handles,
+      `mention-auth-ada-${stamp}@cortexai-agent-hub.test`,
+      "Ada Auth",
+    );
+    const bob = await signInAs(
+      handles,
+      `mention-auth-bob-${stamp}@cortexai-agent-hub.test`,
+      "Bob Auth",
+    );
     const adaBot = await rpc<{ id: string }>(app, ada, "bots/create", {
       name: "AdaBot",
       title: "",
@@ -328,19 +340,9 @@ describeWithDatabase("structured @ mention targets", () => {
   });
 });
 
-async function signup(app: App, email: string, name: string) {
-  const res = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: "http://127.0.0.1:5173",
-    },
-    body: JSON.stringify({ email, password: "password12", name }),
-  });
-  if (res.status >= 400) {
-    throw new Error(`signup failed ${res.status}: ${await res.text()}`);
-  }
-  return sessionCookieHeader(res);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "password12" });
 }
 
 async function raw(app: App, cookie: string, proc: string, body: unknown = {}) {

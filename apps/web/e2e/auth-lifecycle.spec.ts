@@ -1,30 +1,37 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
-test("restricted signup waits for mailbox verification", async ({ page }, testInfo) => {
-  await page.route("**/api/auth/get-session**", (route) => route.fulfill({ json: null }));
-  await page.route("**/api/auth/capabilities", (route) =>
-    route.fulfill({
-      json: { passwordReset: false, resetUrl: null },
-    }),
+test("signup is closed: the sign-in screen has no signup path and the API refuses it", async ({
+  page,
+}, testInfo) => {
+  // CAAH-43: a public visitor gets sign-in only, on every signup URL.
+  for (const path of ["/sign-up", "/sign-up?verify=email"]) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/sign-in$/);
+    await expect(
+      page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" }),
+    ).toBeVisible();
+  }
+  await expect(page.getByRole("link", { name: /sign up/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /create account/i })).toHaveCount(0);
+  await expect(page.getByLabel("Name")).toHaveCount(0);
+  await expect(page.getByTestId("operator-provisioned-hint")).toHaveText(
+    "Don’t have an account? Ask the person who runs this server to create one.",
   );
-  await page.route("**/api/auth/sign-up/email", (route) =>
-    route.fulfill({
-      json: { token: null, user: { id: "pending-user", emailVerified: false } },
-    }),
-  );
-  await page.goto("/sign-up");
-  await page.getByLabel("Name").fill("Pending User");
-  await page.getByLabel("Email").fill("pending@example.test");
+  await captureScreenshot(page, testInfo, "sign-in-no-signup");
+
+  // A direct API call is refused too, so no account appears for that address.
+  const visitor = `visitor-${Date.now()}@cortexai-agent-hub.test`;
+  const direct = await page.request.post("/api/auth/sign-up/email", {
+    data: { email: visitor, password: "password12", name: "Visitor" },
+  });
+  expect(direct.status()).toBe(404);
+  await page.getByLabel("Email", { exact: true }).fill(visitor);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByLabel("Password", { exact: true }).fill("password12");
-  await page.getByRole("button", { name: "Create account", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
-  await expect(page).toHaveURL(/\/sign-up\?verify=email$/);
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
-  await captureScreenshot(page, testInfo, "signup-verification-required");
-  await page.getByRole("link", { name: "Back to sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page).toHaveURL(/\/sign-in$/);
 });
 
 test("logout protects bot deep links and sign-in restores the session", async ({
@@ -35,23 +42,18 @@ test("logout protects bot deep links and sign-in restores the session", async ({
   const password = "password12";
   const userName = "Auth Lifecycle";
 
-  await page.goto("/sign-up");
+  await page.goto("/sign-in");
   await expect(page.getByTestId("cortexai-logo")).toHaveAttribute(
     "src",
     "/brand/cortexai-icon.png",
   );
-  await expect(page.getByRole("button", { name: "Create account" })).toHaveCSS(
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCSS(
     "background-color",
     "rgb(247, 147, 59)",
   );
-  await expect(page.getByLabel("Name")).toHaveAttribute("autocomplete", "name");
   await expect(page.getByLabel("Email")).toHaveAttribute("autocomplete", "username");
-  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
-    "autocomplete",
-    "new-password",
-  );
 
-  await signup(page, email, password, userName);
+  await provisionAndSignIn(page, email, password, userName, testInfo);
   await completeOnboarding(page);
 
   await page.waitForURL(/\/app\/[^/]+$/);
@@ -88,9 +90,11 @@ test("logout protects bot deep links and sign-in restores the session", async ({
     "src",
     "/brand/cortexai-icon.png",
   );
-  await page.getByRole("button", { name: /Sign up/ }).click();
-  await expect(page).toHaveURL(/\/sign-up$/);
-  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
+  // CAAH-43: the welcome call to action leads to sign-in, not signup.
+  await page.getByRole("button", { name: /Sign in/ }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+  await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await page.goto("/");
   await captureScreenshot(page, testInfo, "37-logged-out-welcome");
 
@@ -162,7 +166,7 @@ test("changes and recovers an email password", async ({ page }, testInfo) => {
   const resetPassword = "reset-password12";
   const userName = "Password Recovery";
 
-  await signup(page, email, originalPassword, userName);
+  await provisionAndSignIn(page, email, originalPassword, userName);
   await completeOnboarding(page);
   await page.waitForURL(/\/app\/[^/]+$/);
 

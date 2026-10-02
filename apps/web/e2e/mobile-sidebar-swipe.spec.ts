@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test.use({
   hasTouch: true,
@@ -60,7 +60,7 @@ async function swipe(page: Page, start: [number, number], end: [number, number])
 test("swiping inward from the mobile edge opens the bots sidebar", async ({ page }, testInfo) => {
   await prepareOnboarding(page);
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `mobile-sidebar-swipe-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -85,7 +85,7 @@ test("swiping inward from the mobile edge opens the bots sidebar", async ({ page
 test("the mobile edge swipe follows right-to-left layout direction", async ({ page }) => {
   await prepareOnboarding(page);
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `mobile-sidebar-rtl-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -109,7 +109,7 @@ test("the mobile edge swipe follows right-to-left layout direction", async ({ pa
 test("vertical and non-edge swipes leave the mobile sidebar closed", async ({ page }) => {
   await prepareOnboarding(page);
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `mobile-sidebar-ignore-${stamp}@cortexai-agent-hub.test`,
     "password12",

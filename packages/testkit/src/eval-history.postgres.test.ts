@@ -76,7 +76,6 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
                 sandboxProvider: "fake",
                 agentRuntime: "pi",
                 wakeupDriver: "memory",
-                signupsEnabled: "true",
                 composio,
                 encryptionKey: "offline-eval-history-encryption-key",
               }),

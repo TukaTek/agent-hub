@@ -12,7 +12,7 @@ import { isTerminal } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 import { afterAll, describe, expect, it } from "vitest";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 if (process.env.VERIFY_PROVIDERS) loadRootEnv();
 
@@ -224,13 +224,8 @@ describePiApp("live OpenRouter product journey", () => {
     stop = handles.stop;
     const stamp = Date.now();
     const email = `pi-${stamp}@cortexai-agent-hub.test`;
-    const signup = await handles.app.request("/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-      body: JSON.stringify({ email, password: "password12", name: "Pi Canary" }),
-    });
-    expect(signup.status).toBeLessThan(400);
-    const cookie = sessionCookieHeader(signup);
+    // Signup is closed (CAAH-43): provision the fixture account, then sign in.
+    const cookie = await provisionAndSignIn(handles, { email, name: "Pi Canary" });
     const botRes = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
       name: "Chief",
       title: "Chief of staff",

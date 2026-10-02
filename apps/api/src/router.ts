@@ -949,9 +949,9 @@ export function createRouter(deps: RouterDeps) {
         }
         await deps.prisma.deploymentSettings.upsert({
           where: { id: "default" },
+          // ownerUserId is never written here: only operator commands set it.
           create: {
             id: "default",
-            ownerUserId: context.actor.userId,
             signupsEnabled: false,
             signupAllowlist: "",
             signupPolicyInitialized: true,
@@ -6010,10 +6010,9 @@ async function deploymentDto(prisma: PrismaClient, sandboxProvider: string) {
   const settings = await prisma.deploymentSettings.findUnique({ where: { id: "default" } });
   return {
     ownerUserId: settings?.ownerUserId ?? null,
-    signupsEnabled: settings?.signupsEnabled ?? true,
-    signupAllowlist: settings?.signupAllowlist
-      ? settings.signupAllowlist.split(",").filter(Boolean)
-      : [],
+    // CAAH-43: legacy signup columns are never read; signup stays closed.
+    signupsEnabled: false as const,
+    signupAllowlist: [],
     hasDeploymentModelCredential: Boolean(settings?.deploymentModelCredentialCipher),
     defaultProvider: settings?.defaultModelProvider ?? null,
     defaultModel: settings?.defaultModelId ?? null,

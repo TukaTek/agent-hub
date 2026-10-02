@@ -5,7 +5,7 @@ import path from "node:path";
 import { ComposioEmulator } from "@cortexai-agent-hub/adapters";
 import { describe, expect, it } from "vitest";
 import { discardBotIntroRun } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 import { startModelEmulator } from "./model-emulator.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
@@ -72,60 +72,16 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         sandboxProvider: "fake",
         agentRuntime: "pi",
         wakeupDriver: "memory",
-        signupsEnabled: "true",
         composio: new ComposioEmulator(),
         encryptionKey: "offline-model-fixture-encryption-key",
       });
       stop = handles.stop;
-      // Create user directly since self-service signup is disabled
-      const email = `offline-pi-${randomUUID()}@cortexai-agent-hub.test`;
-      const password = "password12";
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
-
-      // Hash password (using Better Auth compatible format)
-      const { randomBytes, scrypt } = await import("node:crypto");
-      const salt = randomBytes(16);
-      const derivedKey = await new Promise<Buffer>((resolve, reject) => {
-        scrypt(Buffer.from(password), salt, 64, (err, key) => {
-          if (err) reject(err);
-          else resolve(key);
-        });
-      });
-      const passwordHash = `$scrypt$${salt.toString("hex")}$${derivedKey.toString("hex")}`;
-
-      const user = await prisma.user.create({
-        data: {
-          id: randomUUID(),
-          email,
-          name: "Offline fixture",
-          emailVerified: true,
-        },
-      });
-
-      await prisma.account.create({
-        data: {
-          id: randomUUID(),
-          userId: user.id,
-          accountId: email,
-          providerId: "credential",
-          password: passwordHash,
-        },
-      });
-
-      await prisma.$disconnect();
-
-      // Now sign in
-      const signin = await handles.app.request("/api/auth/sign-in/email", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: fixtureOrigin },
-        body: JSON.stringify({
-          email,
-          password,
-        }),
-      });
-      expect(signin.status).toBeLessThan(400);
-      const cookie = sessionCookieHeader(signin);
+      // Signup is closed (CAAH-43): provision the user directly, then sign in.
+      const cookie = await provisionAndSignIn(
+        handles,
+        { email: `offline-pi-${randomUUID()}@cortexai-agent-hub.test`, name: "Offline fixture" },
+        fixtureOrigin,
+      );
       await rpc(handles.app, cookie, "models/connect", {
         provider: model.model.provider,
         modelId: model.model.id,

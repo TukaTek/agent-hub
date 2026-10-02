@@ -1,12 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+} from "./helpers";
 
 test("settings shell is two-pane and deep-links Models Memory Voice Usage", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
   const userName = `Settings shell ${stamp}`;
-  await signup(page, `settings-shell-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(
+    page,
+    `settings-shell-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    userName,
+  );
   await completeOnboarding(page);
 
   await page.getByTestId("user-menu-trigger").click();
@@ -79,7 +89,12 @@ test("Hub accounts retain managed identity controls in the new settings shell", 
   page,
 }, testInfo) => {
   const email = `hub-settings-${Date.now()}@hub.invalid`;
-  await signup(page, `settings-${Date.now()}@example.test`, "password12", "Hub account");
+  await provisionAndSignIn(
+    page,
+    `settings-${Date.now()}@example.test`,
+    "password12",
+    "Hub account",
+  );
   await completeOnboarding(page);
   await page.route("**/api/auth/get-session*", async (route) => {
     const response = await route.fetch();

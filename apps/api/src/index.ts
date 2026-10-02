@@ -3,83 +3,13 @@ import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
 
-import { createDb } from "@cortexai-agent-hub/db";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
-import {
-  parseProvisionArgs,
-  provisionOwner,
-  provisionUser,
-  transferOwner,
-} from "./cli/provision.js";
 import { loadEnv } from "./env.js";
 
 const logger = createRootLogger(SERVICE_NAMES.api);
-
-// Check for CLI mode (provision commands)
-const cliArgs = parseProvisionArgs(process.argv.slice(2));
-if (cliArgs) {
-  try {
-    const env = loadEnv();
-    const prisma = await createDb(env.databaseUrl);
-
-    let result: { success: boolean; message: string };
-
-    if (cliArgs.command === "provision-owner") {
-      if (!cliArgs.email || !cliArgs.name) {
-        process.stderr.write(
-          "Usage: provision-owner --email <email> --name <name> [--secret-file <path>] [--hub-user-id <id> --hub-tenant <tenant>]\n",
-        );
-        process.exit(1);
-      }
-      result = await provisionOwner(prisma, env, {
-        email: cliArgs.email,
-        name: cliArgs.name,
-        secretFile: cliArgs.secretFile,
-        hubUserId: cliArgs.hubUserId,
-        hubTenant: cliArgs.hubTenant,
-      });
-    } else if (cliArgs.command === "provision-user") {
-      if (!cliArgs.email || !cliArgs.name) {
-        process.stderr.write(
-          "Usage: provision-user --email <email> --name <name> [--secret-file <path>]\n",
-        );
-        process.exit(1);
-      }
-      result = await provisionUser(prisma, env, {
-        email: cliArgs.email,
-        name: cliArgs.name,
-        secretFile: cliArgs.secretFile,
-      });
-    } else if (cliArgs.command === "transfer-owner") {
-      if (!cliArgs.email) {
-        process.stderr.write(
-          "Usage: transfer-owner --email <email> [--hub-user-id <id> --hub-tenant <tenant>]\n",
-        );
-        process.exit(1);
-      }
-      result = await transferOwner(prisma, {
-        email: cliArgs.email,
-        hubUserId: cliArgs.hubUserId,
-        hubTenant: cliArgs.hubTenant,
-      });
-    } else {
-      process.stderr.write("Unknown command\n");
-      process.exit(1);
-    }
-
-    process.stdout.write(`${result.message}\n`);
-    await prisma.$disconnect();
-    await logger.flush({ timeoutMs: 2_000 });
-    process.exit(result.success ? 0 : 1);
-  } catch (error) {
-    process.stderr.write(`Provision command failed: ${error}\n`);
-    await logger.flush({ timeoutMs: 2_000 });
-    process.exit(1);
-  }
-}
 
 try {
   const env = loadEnv();

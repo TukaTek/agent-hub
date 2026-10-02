@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn, rpc } from "./helpers";
 
 test("sidebar preview preserves underscores in filenames", async ({ page }, testInfo) => {
-  await signup(
+  await provisionAndSignIn(
     page,
     `preview-identifiers-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

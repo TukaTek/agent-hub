@@ -1,6 +1,12 @@
 import type { Routine } from "@cortexai-agent-hub/contracts";
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("Slack message trigger uses the mounted messaging provider and persists", async ({
   page,
@@ -14,7 +20,7 @@ test("Slack message trigger uses the mounted messaging provider and persists", a
     }),
   );
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `routine-slack-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -58,7 +64,7 @@ test("GitHub event trigger exposes signed delivery settings and persists", async
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `routine-github-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -102,7 +108,12 @@ test("Korean webhook routine keeps technical field labels in English", async ({
 }, testInfo) => {
   const stamp = Date.now();
   const userName = `Korean Routine ${stamp}`;
-  await signup(page, `routine-ko-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(
+    page,
+    `routine-ko-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    userName,
+  );
   await completeOnboarding(page);
 
   await page.getByRole("button", { name: new RegExp(userName) }).click();
@@ -130,7 +141,12 @@ test("Korean webhook routine keeps technical field labels in English", async ({
 
 test("routine test-run completes and survives reload", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `routine-${stamp}@cortexai-agent-hub.test`, "password12", "Routine");
+  await provisionAndSignIn(
+    page,
+    `routine-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Routine",
+  );
   await completeOnboarding(page);
 
   await page.getByTitle("Agent computer").click();

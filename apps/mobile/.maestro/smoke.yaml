@@ -5,12 +5,11 @@ name: CortexAI Agent Hub mobile smoke
     clearState: true
 
 - assertVisible: "Sign in to CortexAI Agent Hub"
-- assertVisible: "Sign up"
-- tapOn: "Sign up"
-- assertVisible: "Sign up for CortexAI Agent Hub"
-- assertVisible: "Name"
-- tapOn: "Sign in"
-- assertVisible: "Sign in to CortexAI Agent Hub"
+# Self-service signup is closed (CAAH-43): no signup control, an operator hint instead.
+- assertNotVisible: "Sign up"
+- assertNotVisible: "Name"
+- assertVisible:
+    id: "operator-provisioned-hint"
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_EMAIL}
 - tapOn: "Password"

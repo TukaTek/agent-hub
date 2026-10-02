@@ -37,8 +37,6 @@ async function main() {
     BETTER_AUTH_URL: "http://127.0.0.1:5173",
     WEB_ORIGIN: "http://127.0.0.1:5173",
     DATA_DIR: dataDir,
-    SIGNUPS_ENABLED: "true",
-    SIGNUP_ALLOWLIST: "",
   };
   try {
     execFileSync("pnpm", ["--filter", "@cortexai-agent-hub/db", "generate"], {

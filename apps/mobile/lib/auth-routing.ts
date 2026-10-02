@@ -5,7 +5,10 @@ export const explicitSignInRoute = {
   params: { mode: "in" },
 } as const;
 
-export function initialAuthMode(requestedMode?: string | string[]): AuthMode {
-  // Self-service signup removed; default to sign-in
+/**
+ * Self-service signup is closed (CAAH-43), so every logged-out visitor starts
+ * at sign-in; a legacy `mode=up` link lands there too.
+ */
+export function initialAuthMode(_requestedMode?: string | string[]): AuthMode {
   return "in";
 }

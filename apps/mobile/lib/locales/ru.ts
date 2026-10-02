@@ -282,6 +282,8 @@ export const RU_MESSAGES: Record<string, string> = {
   Description: "Описание",
   "Describe what this bot does": "Опишите, что делает этот бот",
   "Don’t have an account?": "Нет аккаунта?",
+  "Ask the person who runs this server to create one.":
+    "Попросите администратора этого сервера создать его.",
   Done: "Готово",
   "Disconnect {name}?": "Отключить {name}?",
   Disconnect: "Отключить",
@@ -475,8 +477,6 @@ export const RU_MESSAGES: Record<string, string> = {
   "Sign in": "Войти",
   "Sign in to CortexAI Agent Hub": "Войти в CortexAI Agent Hub",
   "Sign out": "Выйти",
-  "Sign up": "Зарегистрироваться",
-  "Sign up for CortexAI Agent Hub": "Зарегистрироваться в CortexAI Agent Hub",
   "Sign-in": "Вход",
   "Sign-up": "Регистрация",
   "Sign-in did not return a session": "Вход не вернул сессию",

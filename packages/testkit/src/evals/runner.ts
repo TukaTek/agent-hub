@@ -6,7 +6,7 @@ import { ACTIVE_RUN_STATUSES, isTerminal } from "@cortexai-agent-hub/core";
 import type { createDb } from "@cortexai-agent-hub/db";
 import { discardBotIntroRun } from "../discard-bot-intro.js";
 
-import { sessionCookieHeader } from "../index.js";
+import { provisionAndSignIn } from "../index.js";
 import type { EvalCase, Evidence } from "./cases.js";
 import { emptyTrial, type FailureCategory, redact, type TrialResult } from "./report.js";
 import { EvalServices } from "./services.js";
@@ -108,17 +108,19 @@ export async function runTrial(
     const trial = handles;
     const { app, prisma } = trial;
     const setupActor = async () => {
-      const signup = await app.request("/api/auth/sign-up/email", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-        body: JSON.stringify({
-          email: `eval-${randomUUID()}@example.test`,
-          password: "synthetic-eval-password-12",
-          name: "Eval User",
-        }),
-      });
-      if (!signup.ok) throw new EvalFailure("harness", `Fixture signup failed (${signup.status})`);
-      cookie = sessionCookieHeader(signup);
+      // Signup is closed (CAAH-43): provision the eval account, then sign in.
+      try {
+        cookie = await provisionAndSignIn(
+          { app, prisma },
+          {
+            email: `eval-${randomUUID()}@example.test`,
+            password: "synthetic-eval-password-12",
+            name: "Eval User",
+          },
+        );
+      } catch {
+        throw new EvalFailure("harness", "Fixture account sign-in failed");
+      }
       await rpc(app, cookie, "models/connect", options.connection);
       for (const provider of scenario.connections ?? ["GMAIL", "CRM", "GITHUB"])
         await rpc(app, cookie, "connections/begin", {

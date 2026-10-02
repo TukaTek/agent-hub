@@ -8,9 +8,10 @@ import {
   PipedreamConnector,
   ThirdPartyConnectorEmulator,
 } from "@cortexai-agent-hub/adapters";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
@@ -59,7 +60,6 @@ describeWithDatabase("Composio catalog reconciliation", () => {
         resolveHostname: thirdParties.resolveHostname,
       },
       encryptionKey: TEST_ENCRYPTION_KEY,
-      signupsEnabled: "true",
     });
     app = handles.app;
   });
@@ -74,13 +74,13 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("reconciles one scoped row per provider under concurrent catalog fetches", async () => {
-    const ownerCookie = await signup(
-      app,
+    const ownerCookie = await signInAs(
+      handles,
       `owner-connections-${stamp}@cortexai-agent-hub.test`,
       "Owner",
     );
-    const otherCookie = await signup(
-      app,
+    const otherCookie = await signInAs(
+      handles,
       `other-connections-${stamp}@cortexai-agent-hub.test`,
       "Other",
     );
@@ -127,8 +127,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("keeps a second connected account for the same provider and renames it", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `multi-account-${stamp}@cortexai-agent-hub.test`,
       "Multi Account",
     );
@@ -197,8 +197,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("returns the remote catalog when local reconciliation fails", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `db-failure-connections-${stamp}@cortexai-agent-hub.test`,
       "DB Failure",
     );
@@ -225,8 +225,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("does not mutate local state when the provider catalog fails", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `provider-failure-connections-${stamp}@cortexai-agent-hub.test`,
       "Provider Failure",
     );
@@ -244,8 +244,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("routes an emulated Composio app tool with user-scoped connection context", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `composio-tool-${stamp}@cortexai-agent-hub.test`,
       "Composio Tool",
     );
@@ -324,8 +324,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("runs Pipedream connection and MCP tool execution through the product registry", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `pipedream-${stamp}@cortexai-agent-hub.test`,
       "Pipedream Connector",
     );
@@ -395,8 +395,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("installs Treg, Executor, and custom MCP sources and routes their calls", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `mcp-connectors-${stamp}@cortexai-agent-hub.test`,
       "MCP Connectors",
     );
@@ -499,8 +499,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("imports an OpenAPI connector, keeps its credential encrypted, and routes calls", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `api-connector-${stamp}@cortexai-agent-hub.test`,
       "API Connector",
     );
@@ -576,8 +576,8 @@ describeWithDatabase("Composio catalog reconciliation", () => {
   });
 
   it("imports a GraphQL connector, introspects operations, and routes calls", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `graphql-connector-${stamp}@cortexai-agent-hub.test`,
       "GraphQL Connector",
     );
@@ -673,17 +673,9 @@ async function connectRemote(composio: ComposioEmulator, actor: Actor, provider:
   );
 }
 
-async function signup(app: App, email: string, name: string) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: "http://127.0.0.1:5173",
-    },
-    body: JSON.stringify({ email, password: "password12", name }),
-  });
-  if (!response.ok) throw new Error(`signup failed ${response.status}: ${await response.text()}`);
-  return sessionCookieHeader(response);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "password12" });
 }
 
 async function rpc<T>(app: App, cookie: string, procedure: string, body: unknown = {}): Promise<T> {

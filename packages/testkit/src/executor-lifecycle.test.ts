@@ -10,6 +10,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
+import { provisionAndSignIn } from "./index.js";
 
 process.env.WAKEUP_DRIVER = "memory";
 process.env.SANDBOX_PROVIDER = "fake";
@@ -575,7 +576,7 @@ describeIntegration("run executor lifecycle", () => {
   });
 
   it("applies the same no-parallel-run rule to the targeted group member", async () => {
-    const cookie = await signup(
+    const cookie = await signInAs(
       `executor-group-steering-${stamp}@cortexai-agent-hub.test`,
       "Executor group steering",
     );
@@ -877,7 +878,7 @@ describeIntegration("run executor lifecycle", () => {
       completedAt?: Date;
     } = {},
   ) {
-    const cookie = await signup(
+    const cookie = await signInAs(
       `executor-${label}-${stamp}@cortexai-agent-hub.test`,
       `Executor ${label}`,
     );
@@ -919,17 +920,9 @@ describeIntegration("run executor lifecycle", () => {
     return { cookie, me, bot, thread, task, run };
   }
 
-  async function signup(email: string, name: string) {
-    const response = await handles.app.request("/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-      body: JSON.stringify({ email, password: "password12", name }),
-    });
-    expect(response.status).toBeLessThan(400);
-    const raw = response.headers.get("set-cookie") ?? "";
-    const match = raw.match(/better-auth\.session_token=([^;]+)/);
-    expect(match?.[1]).toBeTruthy();
-    return `better-auth.session_token=${match![1]}`;
+  /** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+  async function signInAs(email: string, name: string) {
+    return provisionAndSignIn(handles, { email, name, password: "password12" });
   }
 
   async function rpc<T>(cookie: string, procedure: string, body: unknown = {}): Promise<T> {

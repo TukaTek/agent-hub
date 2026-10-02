@@ -1,11 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("command palette opens with keyboard, filters, and switches bots", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `cmdk-bots-${stamp}@cortexai-agent-hub.test`, "password12", "CmdK Bots");
+  await provisionAndSignIn(
+    page,
+    `cmdk-bots-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "CmdK Bots",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn, rpc } from "./helpers";
 
 async function captureSidebarRoster(
   page: Page,
@@ -30,7 +30,12 @@ async function captureSidebarRoster(
 
 test("sidebar roster shows bot title pill below the name", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `roster-title-${stamp}@cortexai-agent-hub.test`, "password12", "Roster Title");
+  await provisionAndSignIn(
+    page,
+    `roster-title-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Roster Title",
+  );
   await completeOnboarding(page);
 
   const bot = await rpc<{ id: string; name: string }>(page, "bots/create", {

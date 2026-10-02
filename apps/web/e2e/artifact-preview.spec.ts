@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test("agent-attached files appear as downloadable cards", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `artifact-card-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -33,7 +33,7 @@ test("agent-attached Markdown opens a rendered preview and can be downloaded", a
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `markdown-preview-${stamp}@cortexai-agent-hub.test`,
     "password12",

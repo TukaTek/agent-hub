@@ -43,34 +43,72 @@ arm64 hosts need no special tag. Do not assume `latest` is present until a stabl
 
 ### First-time deployment owner provisioning
 
-Self-service signup is permanently disabled. The deployment owner must be provisioned explicitly
-via CLI commands before the application accepts sign-ins.
+Self-service signup is permanently disabled: there is no signup page, the signup API returns 404,
+and no setting (including a legacy `signupsEnabled` row or allowlist) can reopen it. Nobody becomes
+the owner by signing in first. The operator creates every local account from the API container.
 
-1. Ensure the API and Postgres containers are running (`docker compose up -d api postgres`)
-2. Provision the deployment owner:
+1. Start the stack (`bash install-images.sh`, or `docker compose up -d`).
+2. Put the owner's password in a file only you can read, then pipe it on stdin:
+
    ```bash
-   docker compose exec api node dist/index.js provision-owner \
-     --email owner@example.com \
-     --name "Owner Name"
+   umask 077 && read -rs -p "Owner password: " pw && printf '%s\n' "$pw" > owner-password.txt && unset pw
+   docker compose exec -T api pnpm --silent --filter @cortexai-agent-hub/api provision \
+     provision-owner --email owner@example.com --name "Owner Name" < owner-password.txt
+   rm owner-password.txt
    ```
-   Or with a password file:
+
+   Or read a file that is already inside the container, such as a Compose secret
+   (use an absolute path):
+
    ```bash
-   docker compose exec api node dist/index.js provision-owner \
-     --email owner@example.com \
-     --name "Owner Name" \
+   docker compose exec -T api pnpm --silent --filter @cortexai-agent-hub/api provision \
+     provision-owner --email owner@example.com --name "Owner Name" \
      --secret-file /run/secrets/owner-password
    ```
-   The command prompts for a password or reads from the specified file. Never pass passwords
-   via command arguments or environment variables.
 
-3. Provision additional users (optional):
+   The password is read only from piped stdin or `--secret-file` (one trailing newline is
+   dropped), 8–128 characters. The command never prompts on a terminal and refuses `--password`
+   and similar arguments; it never reads a password from an environment variable. The account is
+   created already verified, with the same password hashing sign-in uses, in one transaction.
+   If the deployment already has an owner, the command fails and changes nothing, and two
+   concurrent runs leave exactly one owner.
+3. Optional: add more accounts the same way. They get their own space and no owner rights:
+
    ```bash
-   docker compose exec api node dist/index.js provision-user \
-     --email user@example.com \
-     --name "User Name"
+   docker compose exec -T api pnpm --silent --filter @cortexai-agent-hub/api provision \
+     provision-user --email user@example.com --name "User Name" < user-password.txt
    ```
 
-4. Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and sign in with the provisioned credentials.
+4. Move the owner seat to another existing account (no password needed):
+
+   ```bash
+   docker compose exec -T api pnpm --silent --filter @cortexai-agent-hub/api provision \
+     transfer-owner --email user@example.com
+   ```
+
+5. Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and sign in. People without an account see
+   "Ask the person who runs this server to create one."
+
+The command exits 0 on success and non-zero on refusal; messages name the email or id, never the
+password. Deleting the owner account leaves the seat empty until you run `provision-owner` or
+`transfer-owner` again; it is never claimed automatically.
+
+**Hub mode (`AUTH_MODE=hub`).** CortexAI Hub owns identities and passwords, so these commands
+create no local account or password, and `provision-user` is unavailable (add people in Hub).
+Map the owner seat to the Hub user's `tenant_users.id` and tenant, never an email or Entra object id:
+
+```bash
+docker compose exec -T api pnpm --silent --filter @cortexai-agent-hub/api provision \
+  provision-owner --hub-user-id <tenant_users.id> --hub-tenant <tenant id>
+# later: transfer-owner --hub-user-id <tenant_users.id> --hub-tenant <tenant id>
+```
+
+`--hub-tenant` must match `HUB_AUTH_TENANT_ID` when that is set. The mapping takes effect only
+when that person signs in through Hub and passes Hub's admission check; it creates no session
+and does not bypass Hub sign-in.
+
+From a source checkout, run the same commands with `pnpm --filter @cortexai-agent-hub/api provision …`
+and `DATABASE_URL` set.
 
 For production: Put TLS in front of `:5173` and set the three public origins to that HTTPS URL.
 
@@ -198,12 +236,11 @@ WEB_ORIGIN=https://app.example.com
 API_URL=https://app.example.com
 ```
 
-Cookies and CORS follow those origins. Self-service signup has been permanently removed for security.
-All accounts must be provisioned via operator CLI commands (see [First-time deployment owner provisioning](#first-time-deployment-owner-provisioning)).
-
-Legacy `SIGNUP_ALLOWLIST` values in the database are ignored; stored signup settings remain for backward
-compatibility but have no effect. Password reset for existing local accounts still works and requires SMTP
-configuration.
+Cookies and CORS follow those origins. Self-service signup is removed; create accounts with the
+[provisioning commands](#first-time-deployment-owner-provisioning). `SIGNUPS_ENABLED` and
+`SIGNUP_ALLOWLIST` are no longer read; delete them from `.env`. Stored signup settings from older
+versions are ignored. Existing accounts keep signing in, and forgotten-password recovery works when
+email is configured (below).
 
 ### Verification and password recovery email
 
@@ -252,8 +289,6 @@ child commands do not receive them.
 Optional:
 
 ```env
-SIGNUPS_ENABLED=true
-SIGNUP_ALLOWLIST=you@example.com,@company.com
 SANDBOX_PROVIDER=docker   # or none, e2b, daytona, createos, box. Keep fake only for pnpm test.
 AGENT_RUNTIME=pi          # Keep scripted only for pnpm test.
 WAKEUP_DRIVER=graphile
@@ -400,7 +435,7 @@ container logs, default no-new-privileges, and the kernel NAT path instead of Do
    If you enable the `updater` profile, also set a dedicated `CORTEXAI_AGENT_HUB_UPDATER_TOKEN` (at least 32
    characters) that differs from `BETTER_AUTH_SECRET`, `SANDBOX_SUPERVISOR_TOKEN`, and
    `SCREEN_PROXY_SECRET`.
-3. Keep registration allowlisted while the service is private:
+3. Set the production environment. Accounts are created with the [provisioning commands](#first-time-deployment-owner-provisioning), not by signup:
 
 ```env
 NODE_ENV=production
@@ -410,8 +445,6 @@ CORTEXAI_AGENT_HUB_HOST=app.example.com
 BETTER_AUTH_URL=https://app.example.com
 WEB_ORIGIN=https://app.example.com
 API_URL=https://app.example.com
-SIGNUPS_ENABLED=true
-SIGNUP_ALLOWLIST=owner@example.com,reviewer@example.com
 # e2b, daytona, or box
 SANDBOX_PROVIDER=e2b
 AGENT_RUNTIME=pi
@@ -433,6 +466,15 @@ docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
 docker compose --env-file .env -f infra/compose/docker-compose.prod.yml \
   up -d --wait --pull never
 curl --fail https://app.example.com/health
+```
+
+5. Create the owner account (password on stdin; see
+   [First-time deployment owner provisioning](#first-time-deployment-owner-provisioning)):
+
+```bash
+docker compose --env-file .env -f infra/compose/docker-compose.prod.yml exec -T api \
+  pnpm --silent --filter @cortexai-agent-hub/api provision \
+  provision-owner --email owner@example.com --name "Owner Name" < owner-password.txt
 ```
 
 **Build, do not pull, for a first deployment.** `CORTEXAI_AGENT_HUB_IMAGE_TAG` ships as `local`, a tag no
@@ -796,8 +838,8 @@ shared filesystem; an object-storage adapter is not available yet.
 
 Use the same HTTPS origin for the web app, `/api`, and `/rpc`. Preserve the authenticated screen
 proxy routes. Choose a [computer provider](#choosing-a-computer-provider) appropriate to the
-service's trust boundary. `SIGNUPS_ENABLED` applies on the API's first start. A non-empty
-`SIGNUP_ALLOWLIST` applies on every API start.
+service's trust boundary. Create accounts with the
+[provisioning commands](#first-time-deployment-owner-provisioning).
 The optional marketing site in `apps/www` can be hosted separately.
 
 ## Connect mobile clients

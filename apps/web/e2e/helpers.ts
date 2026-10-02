@@ -50,20 +50,44 @@ export async function completeOnboarding(page: Page, testInfo?: TestInfo) {
   }
 }
 
-export async function signup(
+/**
+ * Self-service signup is closed (CAAH-43). Specs get a fresh account the way
+ * an operator creates one: the harness provisions it through the same code as
+ * the provision CLI (its loopback-only `/__e2e/accounts` route, never part of
+ * the product), and the spec then signs in through the real sign-in screen.
+ */
+export async function provisionAccount(
+  page: Page,
+  account: { email: string; password: string; name: string; owner?: boolean },
+) {
+  const harness = process.env.API_URL ?? "http://127.0.0.1:3110";
+  const response = await page.request.post(`${harness}/__e2e/accounts`, { data: account });
+  if (response.status() !== 201) {
+    throw new Error(`provisioning ${account.email} failed: ${response.status()}`);
+  }
+}
+
+export async function signIn(page: Page, email: string, password: string, testInfo?: TestInfo) {
+  await page.goto("/sign-in");
+  await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /sign up/i })).toHaveCount(0);
+  if (testInfo) await captureScreenshot(page, testInfo, "01-sign-in");
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+}
+
+/** Provision a new account, then sign in to it through the UI. */
+export async function provisionAndSignIn(
   page: Page,
   email: string,
   password: string,
   name: string,
   testInfo?: TestInfo,
 ) {
-  await page.goto("/sign-up");
-  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
-  if (testInfo) await captureScreenshot(page, testInfo, "01-sign-up");
-  await page.getByPlaceholder("Your name").fill(name);
-  await page.getByPlaceholder("Your email address").fill(email);
-  await page.getByPlaceholder("Password").fill(password);
-  await page.getByRole("button", { name: "Create account" }).click();
+  await provisionAccount(page, { email, password, name });
+  await signIn(page, email, password, testInfo);
 }
 
 export async function captureScreenshot(page: Page, testInfo: TestInfo, name: string) {

@@ -23,7 +23,6 @@ import {
   readBoundedJsonResponse,
   reduceLiveMessageBlocks,
   runFailureError,
-  signupRequiresEmailVerification,
   takeLiveMessage,
   updateCloudAgentMessages,
   upsertMessageById,
@@ -381,8 +380,8 @@ export async function captureApiRequestContext(): Promise<ApiRequestContext> {
 }
 
 async function authenticateWithEmail(
-  action: "sign-in" | "sign-up",
-  input: { email: string; password: string; name?: string },
+  action: "sign-in",
+  input: { email: string; password: string },
   hub = false,
 ) {
   const { response, body } = await fetchMobileJson<unknown>(
@@ -398,16 +397,7 @@ async function authenticateWithEmail(
     throw new Error(responseErrorMessage(body, `Could not ${action.replace("-", " ")}`));
   }
   const token = tokenFromAuthResponse(response, body);
-  if (action === "sign-up" && signupRequiresEmailVerification(body))
-    return { verificationRequired: true };
-  if (!token)
-    throw new Error(
-      t(
-        action === "sign-in"
-          ? "Sign-in did not return a session"
-          : "Sign-up did not return a session",
-      ),
-    );
+  if (!token) throw new Error(t("Sign-in did not return a session"));
   if (!(await clearSpace())) throw new Error(t("Could not clear the previous space"));
   await saveSessionToken(token);
   return { verificationRequired: false };
@@ -415,10 +405,6 @@ async function authenticateWithEmail(
 
 export function signIn(email: string, password: string, hub = false) {
   return authenticateWithEmail("sign-in", { email, password }, hub);
-}
-
-export function signUp(email: string, password: string, name: string) {
-  return authenticateWithEmail("sign-up", { email, password, name });
 }
 
 export type PasswordResetCapabilities = {

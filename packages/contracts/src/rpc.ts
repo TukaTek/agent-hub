@@ -182,7 +182,9 @@ export const appContract = {
     get: oc.output(DeploymentSettingsSchema),
     update: oc
       .input(
-        z.object({
+        // Strict: signup fields were removed (CAAH-43) and must fail loudly,
+        // not be dropped silently, so no client believes it reopened signup.
+        z.strictObject({
           computerHost: z.enum(["docker", "this-mac"]).nullable().optional(),
         }),
       )

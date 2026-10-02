@@ -4,15 +4,15 @@ import {
   captureScreenshot,
   completeOnboarding,
   openUserSettings,
+  provisionAndSignIn,
   rpc,
-  signup,
 } from "./helpers";
 
 test("actions run by default while optional confirmations live in advanced user settings", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `action-confirmations-${stamp}@cortexai-agent-hub.test`,
     "password12",

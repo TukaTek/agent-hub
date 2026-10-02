@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test("computer rail resizes its preview and remembers width", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1500, height: 1000 });
-  await signup(
+  await provisionAndSignIn(
     page,
     `computer-prefs-${Date.now()}@example.test`,
     "password12",

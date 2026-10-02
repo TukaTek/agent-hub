@@ -1,11 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("renders tappable choice buttons and submits the offered action id", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `choice-card-${stamp}@cortexai-agent-hub.test`, "password12", "Choice Card");
+  await provisionAndSignIn(
+    page,
+    `choice-card-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Choice Card",
+  );
   await completeOnboarding(page);
 
   const botId = activeBotId(page);

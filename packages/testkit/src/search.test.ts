@@ -2,10 +2,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SearchHit, ThreadSnapshot } from "@cortexai-agent-hub/contracts";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 
@@ -19,6 +20,7 @@ let botIntroHarness: BotIntroHarness | undefined;
 
 describeSearch("workspace search", () => {
   let app: App;
+  let prisma: PrismaClient;
   let stop: () => Promise<void>;
   const stamp = Date.now();
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-search-"));
@@ -32,6 +34,7 @@ describeSearch("workspace search", () => {
       agentRuntime: "scripted",
     });
     app = handles.app;
+    prisma = handles.prisma;
     stop = handles.stop;
     botIntroHarness = handles;
   });
@@ -41,7 +44,11 @@ describeSearch("workspace search", () => {
   });
 
   it("finds bots, messages, files, links, and routines within the workspace", async () => {
-    const cookie = await signup(app, `search-${stamp}@cortexai-agent-hub.test`, "Search User");
+    const cookie = await signInAs(
+      { app, prisma },
+      `search-${stamp}@cortexai-agent-hub.test`,
+      "Search User",
+    );
     const bot = await rpc<{ id: string }>(app, cookie, "bots/create", {
       name: "Finder",
       title: "Finder",
@@ -113,7 +120,11 @@ describeSearch("workspace search", () => {
   });
 
   it("returns no hits for another workspace", async () => {
-    const ownerCookie = await signup(app, `search-owner-${stamp}@cortexai-agent-hub.test`, "Owner");
+    const ownerCookie = await signInAs(
+      { app, prisma },
+      `search-owner-${stamp}@cortexai-agent-hub.test`,
+      "Owner",
+    );
     const ownerBot = await rpc<{ id: string }>(app, ownerCookie, "bots/create", {
       name: "OwnerOnly",
       title: "OwnerOnly",
@@ -123,8 +134,8 @@ describeSearch("workspace search", () => {
     });
     await sendAndWait(app, ownerCookie, ownerBot.id, { text: "owner-only-token-xyz" });
 
-    const intruderCookie = await signup(
-      app,
+    const intruderCookie = await signInAs(
+      { app, prisma },
       `search-intruder-${stamp}@cortexai-agent-hub.test`,
       "Intruder",
     );
@@ -135,8 +146,8 @@ describeSearch("workspace search", () => {
   });
 
   it("finds group conversations, messages, and files", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `search-group-${stamp}@cortexai-agent-hub.test`,
       "Group Search User",
     );
@@ -201,14 +212,9 @@ describeSearch("workspace search", () => {
   });
 });
 
-async function signup(app: App, email: string, name: string) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-    body: JSON.stringify({ email, password: "test-password-123", name }),
-  });
-  expect(response.status).toBeLessThan(400);
-  return sessionCookieHeader(response);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "test-password-123" });
 }
 
 async function rpc<T>(app: App, cookie: string, proc: string, body: unknown = {}): Promise<T> {

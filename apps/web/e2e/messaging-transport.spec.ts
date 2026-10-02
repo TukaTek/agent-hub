@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 type ThreadPayload = {
   json?: {
@@ -48,7 +48,7 @@ function injectTransportMessage(body: ThreadPayload, stamp: number) {
 
 test("labels a Sendblue group message with its actual transport", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `messaging-transport-${stamp}@cortexai-agent-hub.test`,
     "password12",
