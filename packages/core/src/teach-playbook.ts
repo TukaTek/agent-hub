@@ -34,12 +34,18 @@ function secretPlaceholder(event: TeachRecordingEvent): string {
 }
 
 export function sanitizeTeachRecordingEvent(event: TeachRecordingEvent): TeachRecordingEvent {
-  if (!event.sensitive && !isPasswordField(event)) return event;
-  const sanitized = { ...event };
-  delete sanitized.key;
-  delete sanitized.text;
-  sanitized.sensitive = true;
-  return sanitized;
+  // Redact password fields and Protected input (strip key/text)
+  if (event.sensitive || isPasswordField(event)) {
+    const sanitized = { ...event };
+    delete sanitized.key;
+    delete sanitized.text;
+    sanitized.sensitive = true;
+    return sanitized;
+  }
+  
+  // Regular fields keep their content (backward compatible)
+  // keepLiteral flag is for future opt-in UI
+  return event;
 }
 
 export type TeachSnapshot = {
@@ -108,9 +114,9 @@ function redactSensitiveText(text: string): string {
     .replace(BARE_SECRET, REDACTED);
 }
 
-function redactTypedText(text: string): string {
+function redactTypedText(text: string, keepLiteral: boolean = true): string {
+  if (!keepLiteral) return REDACTED_INPUT;
   const trimmed = text.trim();
-  if (/password|secret|token|api[_-]?key/i.test(trimmed)) return REDACTED_INPUT;
   const redacted = redactSensitiveText(trimmed);
   if (redacted !== trimmed) return REDACTED_INPUT;
   return trimmed;
