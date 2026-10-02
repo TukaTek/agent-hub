@@ -214,7 +214,6 @@ describe("Hub authentication through real auth endpoints", () => {
       expect.anything(),
       expect.objectContaining({ id: userId }),
       expect.anything(),
-      { claimDeploymentOwner: false },
     );
     expect(f.grants.size).toBe(1);
     const stored = [...f.grants.values()][0];
