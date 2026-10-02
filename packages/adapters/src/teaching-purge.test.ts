@@ -65,7 +65,7 @@ describe("purgeTaughtSkillSecrets", () => {
     expect(result.changed).toBe(1);
     expect(updates).toHaveLength(1);
     const sanitized = updates[0];
-    expect(sanitized).toBeDefined();
+    if (!sanitized) throw new Error("Expected update");
     const recording = sanitized.recording as { events: TeachRecordingEvent[] };
     expect(recording.events[0].key).toBeUndefined();
     expect(recording.events[0].text).toBeUndefined();
@@ -96,7 +96,7 @@ describe("purgeTaughtSkillSecrets", () => {
     expect(result.changed).toBe(1);
     expect(updates).toHaveLength(1);
     const sanitized = updates[0];
-    expect(sanitized).toBeDefined();
+    if (!sanitized) throw new Error("Expected update");
     const recording = sanitized.recording as { events: TeachRecordingEvent[] };
     expect(recording.events[0].key).toBeUndefined();
     expect(recording.events[1].text).toBeUndefined();
@@ -154,7 +154,7 @@ describe("purgeTaughtSkillSecrets", () => {
     expect(result.changed).toBe(1);
     expect(updates).toHaveLength(1);
     const sanitized = updates[0];
-    expect(sanitized).toBeDefined();
+    if (!sanitized) throw new Error("Expected update");
     const recording = sanitized.recording as { events: TeachRecordingEvent[] };
     // All key events should have key stripped
     expect(recording.events[0].key).toBeUndefined();

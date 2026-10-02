@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import { buildPlaybookFromRecording } from "@cortexai-agent-hub/core";
 import type { TeachRecordingEvent } from "@cortexai-agent-hub/core";
-import { startModelEmulator } from "./model-emulator.js";
+import { startModelEmulator } from "../../testkit/src/model-emulator.js";
 
 describe("AC2: model request body never contains secret values from taught skills", () => {
   it("sends {{secret:password}} placeholder to model, not the actual password", async () => {
@@ -31,22 +30,14 @@ describe("AC2: model request body never contains secret values from taught skill
       ],
     });
 
-    // Simulate a user invoking the skill by creating a request that includes the playbook
-    const runRequest: AgentRunRequest = {
-      model: server.model,
-      authorization: { id: "fixture-bot-id", botId: "fixture-bot", type: "bot", hashedSigningKey: "fixture-hash" },
-      prompt: `Sign in to dashboard\n\nRun taught skill: Sign in\nSteps:\n${playbook.steps.join("\n")}`,
-      tools: [],
-    };
-
-    // Run the request through the model emulator (which simulates Pi runtime)
+    // Simulate a user invoking the skill
     const response = await fetch(`${server.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: "Bearer local", "content-type": "application/json" },
       body: JSON.stringify({
         model: server.model.id,
         stream: true,
-        messages: [{ role: "user", content: runRequest.prompt }],
+        messages: [{ role: "user", content: `Sign in to dashboard\n\nRun taught skill: Sign in\nSteps:\n${playbook.steps.join("\n")}` }],
       }),
     });
 
@@ -55,6 +46,7 @@ describe("AC2: model request body never contains secret values from taught skill
 
     // AC2 assertions: the model request must contain {{secret:password}}, not "Secret"
     expect(capturedRequest).not.toBeNull();
+    if (!capturedRequest) throw new Error("Expected request");
     const requestBody = JSON.stringify(capturedRequest);
     expect(requestBody).toContain("{{secret:password}}");
     expect(requestBody).not.toContain("Secret");
@@ -99,6 +91,7 @@ describe("AC2: model request body never contains secret values from taught skill
 
     // AC2 assertions: the model request must contain [redacted input], not "PIN"
     expect(capturedRequest).not.toBeNull();
+    if (!capturedRequest) throw new Error("Expected request");
     const requestBody = JSON.stringify(capturedRequest);
     expect(requestBody).toContain("[redacted input]");
     expect(requestBody).not.toContain("PIN");
