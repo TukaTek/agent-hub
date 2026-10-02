@@ -333,38 +333,12 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
             code: "INVALID_PASSWORD",
           });
         }
+        // Signup is permanently disabled; no policy resolution needed.
         let policy =
-          ctx.path === "/sign-up/email" || ctx.path === "/sign-in/email"
-            ? await resolveSignupPolicy(prisma, env)
-            : undefined;
+          ctx.path === "/sign-in/email" ? await resolveSignupPolicy(prisma, env) : undefined;
         let requireEmailVerification = false;
-        if (ctx.path === "/sign-up/email") {
-          if (!policy?.enabled) {
-            throw new APIError("BAD_REQUEST", { message: "Registration is closed" });
-          }
-          const email = String(ctx.body?.email ?? "");
-          if (!emailAllowed(email, policy.allowlist)) {
-            throw new APIError("BAD_REQUEST", { message: "Email is not allowed to register" });
-          }
-          if (policy.allowlist.length > 0 && !env.email) {
-            const held = await holdFirstAccountGate(prisma);
-            if (held.admission === "needs-delivery") {
-              await held.release();
-              throw new APIError("BAD_REQUEST", {
-                message: "Registration requires email delivery",
-              });
-            }
-            rememberSignupGate(email, held.release);
-            requireEmailVerification = false;
-          } else {
-            requireEmailVerification =
-              allowlistedSignupAdmission({
-                allowlistSize: policy.allowlist.length,
-                hasEmailDelivery: Boolean(env.email),
-                existingHumanCount: 0,
-              }) === "verify";
-          }
-        } else if (policy) {
+        // Sign-in may still need verification for allowlisted deployments
+        if (policy) {
           requireEmailVerification = policy.allowlist.length > 0;
         }
         // Return a request-local override; mutating the shared auth options
