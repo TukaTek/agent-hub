@@ -40,13 +40,16 @@ describe("loadEnv", () => {
         secret: "synthetic-service-secret",
       });
       expect(loadEnv({ ...sso, HUB_SSO_ENABLED: undefined }).hubAuth?.sso).toBeUndefined();
-      for (const key of [
-        "HUB_AUTH_TENANT_ID",
-        "HUB_DEPLOYMENT_ID",
-        "HUB_SERVICE_API_ID",
-        "HUB_SERVICE_SECRET_FILE",
-      ]) {
-        expect(() => loadEnv({ ...sso, [key]: "" })).toThrow(`requires ${key}`);
+      expect(() => loadEnv({ ...sso, HUB_DEPLOYMENT_ID: "" })).toThrow(
+        "requires HUB_DEPLOYMENT_ID",
+      );
+      // A missing tenant or service credential starts Hub mode not configured: every
+      // sign-in is refused, SSO is off, and the missing setting is named.
+      for (const key of ["HUB_AUTH_TENANT_ID", "HUB_SERVICE_API_ID", "HUB_SERVICE_SECRET_FILE"]) {
+        const hub = loadEnv({ ...sso, [key]: "" }).hubAuth;
+        expect(hub?.notConfigured?.missing).toEqual([{ name: key, problem: "unset" }]);
+        expect(hub?.sso).toBeUndefined();
+        expect(hub?.service).toBeUndefined();
       }
       expect(() => loadEnv({ ...sso, AUTH_MODE: "local" })).toThrow("requires AUTH_MODE=hub");
       const split = {
@@ -64,9 +67,10 @@ describe("loadEnv", () => {
         }).hubAuth?.sso,
       ).toBeDefined();
       expect(loadEnv({ ...sso, ...split, HUB_SSO_ENABLED: "false" }).hubAuth?.sso).toBeUndefined();
-      expect(() => loadEnv({ ...sso, HUB_SERVICE_SECRET_FILE: `${secretFile}.missing` })).toThrow(
-        "HUB_SERVICE_SECRET_FILE could not be read",
-      );
+      expect(
+        loadEnv({ ...sso, HUB_SERVICE_SECRET_FILE: `${secretFile}.missing` }).hubAuth
+          ?.notConfigured,
+      ).toEqual({ missing: [{ name: "HUB_SERVICE_SECRET_FILE", problem: "unreadable" }] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -438,6 +438,10 @@ msgstr "Answered"
 msgid "Add credential"
 msgstr "Add credential"
 
+#: src/pages/Auth.tsx
+msgid "Ask your admin for access"
+msgstr "Ask your admin for access"
+
 #: src/pages/shell/bot-credentials.tsx
 msgid "Basic auth"
 msgstr "Basic auth"
@@ -501,6 +505,10 @@ msgstr "Save credential"
 #: src/pages/shell/bot-credentials.tsx
 msgid "Save new value"
 msgstr "Save new value"
+
+#: src/pages/Auth.tsx
+msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
+msgstr "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
 
 #: src/pages/shell/bot-credentials.tsx
 msgid "Site"

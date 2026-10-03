@@ -9,6 +9,7 @@ import {
   isMessagingEmail,
   parseAllowlist,
   signupPolicyFromEnv,
+  withHubSignupPolicy,
 } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
 
@@ -23,13 +24,50 @@ import {
   localSignInPlugin,
   rejectHubAccountMutation,
 } from "./hub.js";
-import type { HubAuthConfig } from "./hub-client.js";
+import { createHubClient, type HubAuthConfig } from "./hub-client.js";
+import type { HubConfigFetch, HubPolicy } from "./hub-policy.js";
 
-export { type HubAuthConfig, hubAuthFromEnv } from "./hub-client.js";
+export {
+  HUB_CONFIG_DOC,
+  type HubAuthConfig,
+  type HubConfigProblem,
+  hubAuthFromEnv,
+} from "./hub-client.js";
+export {
+  type AppliedHubPolicy,
+  applyHubPolicyAtStartup,
+  createHubPolicy,
+  type HubConfigFetch,
+  type HubPolicy,
+  type HubPolicySignal,
+  type HubPolicyStatus,
+  notConfiguredHubPolicy,
+} from "./hub-policy.js";
+export { HUB_MANAGED_SETTINGS, HubPolicyError } from "./hub-policy-contract.js";
+export {
+  type HubPolicyRestart,
+  type HubPolicyRuntime,
+  hubNotConfiguredLogEntry,
+  hubPolicyAutoRestart,
+  hubPolicyLogEntry,
+  startHubPolicyRuntime,
+} from "./hub-policy-runtime.js";
+export {
+  type HubPolicyStore,
+  memoryHubPolicyStore,
+  prismaHubPolicyStore,
+} from "./hub-policy-store.js";
 export {
   createUserWorkAuthorizer,
   type HubSessionAuthorizerConfig,
+  type HubSessionPolicy,
 } from "./hub-sessions.js";
+
+/** Hub's service-config read for one deployment, through the service token. */
+export function hubConfigFetch(config: HubAuthConfig): HubConfigFetch {
+  const client = createHubClient(config);
+  return (etag) => client.serviceConfig(etag);
+}
 export { createHubVerifyCache, type HubVerifyCache } from "./hub-verify-cache.js";
 
 export interface AuthEnv {
@@ -46,6 +84,8 @@ export interface AuthEnv {
   tokenEncryptionKey?: string;
   /** Fixed Hub SSO failure reasons for operator logs; never carries secrets or email. */
   onHubSsoError?: (reason: string) => void;
+  /** Required with `hub`: Hub policy gates every sign-in path (CAAH-36). */
+  hubPolicy?: HubPolicy;
 }
 
 export async function resolveSignupPolicy(
@@ -56,13 +96,14 @@ export async function resolveSignupPolicy(
     where: { id: "default" },
     select: { signupsEnabled: true, signupAllowlist: true, signupPolicyInitialized: true },
   });
+  // Hub's signup policy wins over the persisted and environment ones (CAAH-36).
   if (settings?.signupPolicyInitialized) {
-    return {
+    return withHubSignupPolicy({
       enabled: settings.signupsEnabled,
       allowlist: parseAllowlist(settings.signupAllowlist),
-    };
+    });
   }
-  return signupPolicyFromEnv(env);
+  return withHubSignupPolicy(signupPolicyFromEnv(env));
 }
 
 const signupGates = new Map<string, Array<() => Promise<void>>>();
