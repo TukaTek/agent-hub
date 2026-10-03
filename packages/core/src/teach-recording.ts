@@ -19,6 +19,11 @@ const SPECIAL_TEACH_KEYS = new Set([
   "ArrowDown",
 ]);
 
+/** Named navigation keys a demo may press. They carry no typed value, so recordings keep them. */
+export function isNamedTeachKey(key: string): boolean {
+  return SPECIAL_TEACH_KEYS.has(key);
+}
+
 export function teachCaptureKey(
   key: string,
   modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean },

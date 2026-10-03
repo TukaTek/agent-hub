@@ -242,3 +242,43 @@ it("drops a queued protected submit when the chrome unmounts", async () => {
   });
   expect(computerInput).not.toHaveBeenCalled();
 });
+
+function keepField(container: HTMLElement) {
+  const input = container.querySelector('[data-testid="teach-keep-text-input"] input');
+  if (!(input instanceof HTMLInputElement)) throw new Error("missing keep text input");
+  return input;
+}
+
+it("sends Keep text as explicitly opted-in literal input, separate from Protected input", async () => {
+  const view = await renderChrome(recording("skill-keep"), "bot-keep");
+  try {
+    expect(view.container.textContent).toContain(
+      "Typed text is saved as a placeholder unless you use Keep text.",
+    );
+    const input = keepField(view.container);
+    expect(input.type).toBe("text");
+    expect(input.getAttribute("aria-label")).toBe("Keep text");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "weekly-export.csv");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = view.container.querySelector('[data-testid="teach-keep-text-input"] button');
+    if (!(button instanceof HTMLButtonElement)) throw new Error("missing keep text submit");
+    expect(button.getAttribute("aria-label")).toBe("Type and keep in skill");
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+      await computerInput.mock.results[0]?.value;
+    });
+    expect(computerInput).toHaveBeenCalledWith({
+      botId: "bot-keep",
+      kind: "clipboard",
+      payload: { text: "weekly-export.csv", keepLiteral: true },
+    });
+    expect(keepField(view.container).value).toBe("");
+    expect(field(view.container).value).toBe("");
+  } finally {
+    await view.cleanup();
+  }
+});

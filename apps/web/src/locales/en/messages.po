@@ -1873,6 +1873,10 @@ msgstr "Downloading…"
 msgid "Draft skill"
 msgstr "Draft skill"
 
+#: src/components/teach/SkillDraftCard.tsx
+msgid "This draft changed since you opened it. Review it and save again."
+msgstr "This draft changed since you opened it. Review it and save again."
+
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Drag, drop, or paste an image"
 msgstr "Drag, drop, or paste an image"

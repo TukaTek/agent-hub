@@ -461,6 +461,11 @@ export const TeachRecordingEventSchema = z.object({
   text: z.string().optional(),
   summary: z.string().optional(),
   sensitive: z.boolean().optional(),
+  fieldType: z.string().max(40).optional(),
+  autocomplete: z.string().max(200).optional(),
+  fieldLabel: z.string().max(200).optional(),
+  keepLiteral: z.boolean().optional(),
+  redacted: z.boolean().optional(),
 });
 export type TeachRecordingEvent = z.infer<typeof TeachRecordingEventSchema>;
 

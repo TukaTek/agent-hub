@@ -1873,6 +1873,10 @@ msgstr ""
 msgid "Draft skill"
 msgstr "작업 기술 초안"
 
+#: src/components/teach/SkillDraftCard.tsx
+msgid "This draft changed since you opened it. Review it and save again."
+msgstr ""
+
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Drag, drop, or paste an image"
 msgstr "이미지를 끌어다 놓거나 붙여넣으세요"

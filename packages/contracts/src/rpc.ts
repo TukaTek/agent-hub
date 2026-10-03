@@ -548,6 +548,9 @@ export const appContract = {
           skillId: Id,
           name: z.string().optional(),
           playbook: SkillPlaybookSchema,
+          // CAAH-71: the skill's updatedAt the edit was based on. Missing or stale is a 409, so
+          // a card read before a scrub cannot write old steps back.
+          expectedUpdatedAt: z.string().max(64).optional(),
         }),
       )
       .output(TaughtSkillSchema),

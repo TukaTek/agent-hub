@@ -537,6 +537,106 @@ describe("recordTeachingInputEvent", () => {
   });
 });
 
+describe("recordTeachingInputEvent (CAAH-71)", () => {
+  const actor = { spaceId: "workspace-1", userId: "user-1" } as never;
+  const computer = {
+    id: "computer-1",
+    homeKey: "bot-1",
+    kind: "e2b",
+    providerRef: "box-1",
+    controlHolder: "user",
+    controlBotId: "bot-1",
+    controlLeaseId: "lease-1",
+  };
+
+  it("types ordinary keys and pastes into the sandbox but stores neither value", async () => {
+    const { deps, current, tx } = recordingDeps(skillRow());
+    tx.bot.findUnique = vi.fn(async () => ({ id: "bot-1", computer }));
+    for (const key of "Summer2026!") {
+      await recordTeachingInputEvent(deps as never, actor, "bot-1", { kind: "key", key });
+    }
+    await recordTeachingInputEvent(deps as never, actor, "bot-1", {
+      kind: "clipboard",
+      text: "pasted-value",
+    });
+    expect(deps.sandbox.sendInput).toHaveBeenCalledWith(
+      expect.anything(),
+      { kind: "clipboard", text: "S" },
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(deps.sandbox.sendInput).toHaveBeenCalledWith(
+      expect.anything(),
+      { kind: "clipboard", text: "pasted-value" },
+      expect.anything(),
+      expect.anything(),
+    );
+    const stored = JSON.stringify(current().recording);
+    expect(stored).not.toMatch(/"key":"[^"]{1}"/);
+    expect(stored).not.toContain("pasted-value");
+    expect(current().recording.events.at(-1)).toEqual({
+      at: expect.any(String),
+      kind: "clipboard",
+      redacted: true,
+    });
+  });
+
+  it("never stores a password-field value even when keepLiteral is claimed", async () => {
+    const { deps, current, tx } = recordingDeps(skillRow());
+    tx.bot.findUnique = vi.fn(async () => ({ id: "bot-1", computer }));
+    await recordTeachingInputEvent(deps as never, actor, "bot-1", {
+      kind: "clipboard",
+      text: "hunter2",
+      fieldType: "password",
+      fieldLabel: "Password",
+      keepLiteral: true,
+    });
+    expect(deps.sandbox.sendInput).toHaveBeenCalledWith(
+      expect.anything(),
+      { kind: "clipboard", text: "hunter2" },
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(current().recording.events).toEqual([
+      {
+        at: expect.any(String),
+        kind: "clipboard",
+        fieldType: "password",
+        fieldLabel: "Password",
+        redacted: true,
+      },
+    ]);
+  });
+
+  it("keeps explicitly opted-in text, after secret redaction, and builds it into the draft", async () => {
+    const { deps, current, tx } = recordingDeps(skillRow());
+    const bot = { id: "bot-1", thread: { id: "thread-1" }, computer: null };
+    tx.bot.findUnique = vi.fn(async () => bot);
+    deps.prisma.bot.findUnique = vi.fn().mockResolvedValue(bot);
+    await recordTeachingInputEvent(deps as never, actor, "bot-1", {
+      kind: "clipboard",
+      text: "weekly-export.csv",
+      keepLiteral: true,
+    });
+    await recordTeachingInputEvent(deps as never, actor, "bot-1", {
+      kind: "clipboard",
+      text: "token=abc123",
+      keepLiteral: true,
+    });
+    for (const key of "alice") {
+      await recordTeachingInputEvent(deps as never, actor, "bot-1", { kind: "key", key });
+    }
+    await completeTeachingSession(deps as never, actor, "skill-1", "stopped");
+    expect(JSON.stringify(current().recording)).not.toContain("abc123");
+    expect((current().playbook as { steps: string[] }).steps).toEqual([
+      "Paste or type: weekly-export.csv.",
+      "Paste or type: [redacted input].",
+      'Type "{{input:typed text 1}}".',
+    ]);
+    expect(JSON.stringify(current())).not.toContain("alice");
+  });
+});
+
 describe("applyTeachingDesktopInput", () => {
   const computer = {
     homeKey: "bot-1",
