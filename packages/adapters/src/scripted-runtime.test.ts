@@ -1,6 +1,23 @@
 import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
+import { buildPlaybookFromRecording, formatSkillRunPrompt } from "@cortexai-agent-hub/core";
 import { describe, expect, it } from "vitest";
 import { inferScript, ScriptedAgentRuntime } from "./scripted-runtime.js";
+
+describe("inferScript taught-skill runs", () => {
+  it("runs an input-placeholder skill instead of reading its credential guidance as a sign-in", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const playbook = buildPlaybookFromRecording("Search", [
+      { at, kind: "key", key: "w" },
+      { at, kind: "key", key: "x" },
+    ]);
+    const prompt = formatSkillRunPrompt("Search", playbook);
+    expect(prompt).toContain("request_takeover");
+    const script = inferScript(prompt);
+    expect(script).toHaveLength(1);
+    expect(script[0]).toMatchObject({ complete: true });
+    expect(JSON.stringify(script)).not.toContain("takeover");
+  });
+});
 
 describe("inferScript message_bot", () => {
   const messageBotScript = (confirmName: string, message: string) => [

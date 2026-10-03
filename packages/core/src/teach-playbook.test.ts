@@ -358,12 +358,43 @@ describe("formatSkillRunPrompt", () => {
     expect(prompt).not.toContain("alice");
   });
 
-  it("gives input-only playbooks input guidance without secret or sign-in wording", () => {
+  it("gives input-only playbooks input guidance without secret-placeholder or sign-in wording", () => {
     const playbook = buildPlaybookFromRecording("Search", [...typed("weekly report")]);
     const prompt = formatSkillRunPrompt("Search", playbook);
     expect(prompt).toContain("{{input:<label>}}");
     expect(prompt).not.toContain("{{secret:<label>}}");
-    expect(prompt).not.toMatch(/login|sign in|take over|request_secret|fill_secret/i);
+    // These phrases send the scripted test runtime into a takeover (journey 17).
+    expect(prompt).not.toMatch(/login|sign in|take over/i);
+  });
+
+  it("never resolves an input placeholder in a credential field through chat (AC2)", () => {
+    // No real client reports field metadata, so a password typed into a site is stored as a
+    // plain {{input:…}} placeholder. The guidance must route credential fields to the secret
+    // store, a protected request or a takeover, never to a chat question.
+    const playbook = buildPlaybookFromRecording("Sign in", [
+      ...typed("alice"),
+      { at: at(20), kind: "key", key: "Tab" },
+      ...typed("Summer2026!"),
+    ]);
+    expect(playbook.steps.join("\n")).not.toContain("{{secret:");
+    const prompt = formatSkillRunPrompt("Sign in", playbook);
+    const guidance = prompt.split("\n").find((line) => line.startsWith("- {{input:<label>}}"));
+    expect(guidance).toBeDefined();
+    expect(guidance).toMatch(/log-in, password, passcode or verification-code field/);
+    expect(guidance).toMatch(/or the value could be a credential/);
+    expect(guidance).toMatch(
+      /never take it from the conversation and never ask for it in a message/,
+    );
+    for (const route of ["list_secrets", "fill_secret", "request_secret", "request_takeover"]) {
+      expect(guidance).toContain(route);
+    }
+    // Asking the user is allowed only for the non-credential case, after the credential rule.
+    const credentialRule = guidance!.indexOf("could be a credential");
+    const askUser = guidance!.indexOf("ask the user");
+    expect(askUser).toBeGreaterThan(credentialRule);
+    expect(guidance!.slice(credentialRule, askUser)).toContain("For any other field");
+    expect(prompt).not.toContain("Summer2026!");
+    expect(prompt).not.toContain("alice");
   });
 
   it("adds no placeholder guidance to playbooks without placeholders", () => {

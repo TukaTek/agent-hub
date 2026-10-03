@@ -355,8 +355,11 @@ const PLACEHOLDER_GUIDANCE_INTRO =
   "Placeholders: the steps never contain what the user typed during the demo.";
 const SECRET_PLACEHOLDER_GUIDANCE =
   "- {{secret:<label>}} and [redacted input] stand for a password, one-time code or other secret. Use a saved credential for this site when one exists (list_secrets, then browser_act fill_secret). Otherwise call request_secret so the user enters it in a protected card, or request_takeover for one-time codes and anything that needs the live screen. Never type the placeholder, never guess a value, and never ask for a secret in chat.";
+// CAAH-71 AC2: clients do not report field types, so a password typed into a site is usually
+// stored as {{input:…}}. Credential fields must never be resolved through chat. The wording
+// also avoids the scripted test runtime's sign-in trigger phrases.
 const INPUT_PLACEHOLDER_GUIDANCE =
-  "- {{input:<label>}} stands for ordinary text typed or pasted during the demo. Use the matching value from the user's request; if it is not there, ask the user before typing it.";
+  "- {{input:<label>}} stands for text typed or pasted during the demo. The recording cannot always tell a password from ordinary text. If the step fills a log-in, password, passcode or verification-code field, or the value could be a credential, never take it from the conversation and never ask for it in a message: use a saved credential for this site (list_secrets, then browser_act fill_secret), otherwise call request_secret so the user enters it in a protected card, or request_takeover for one-time codes. For any other field, use the matching value from the user's request; if it is not there, ask the user for that value before typing it.";
 
 const SECRET_PLACEHOLDER_PATTERN = /\{\{secret:[^}]*\}\}|\[redacted input\]/;
 const INPUT_PLACEHOLDER_PATTERN = /\{\{input:[^}]*\}\}/;
