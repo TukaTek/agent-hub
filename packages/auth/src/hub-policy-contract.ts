@@ -53,11 +53,12 @@ export interface HubManagedSetting {
   /** Environment inputs this setting replaces; the first one receives Hub's value. */
   env: readonly string[];
   /** Persisted DeploymentSettings field this setting also overrides at read time. */
-  deploymentField?:
-    | "defaultModelProvider"
-    | "defaultModelId"
-    | "signupsEnabled"
-    | "signupAllowlist";
+  deploymentField?: "defaultModelProvider" | "defaultModelId";
+  /**
+   * Accepted and validated because Hub still sends it, but never applied: no env input,
+   * no deployment field, no override signal. Rejecting it would invalidate Hub's document.
+   */
+  inert?: true;
   options?: readonly string[];
   min?: number;
   max?: number;
@@ -73,12 +74,11 @@ function add(
 ) {
   settings.push({ category, path, kind, env: typeof env === "string" ? [env] : env, ...extra });
 }
-add("features", "signup.enabled", "boolean", "SIGNUPS_ENABLED", {
-  deploymentField: "signupsEnabled",
-});
-add("features", "signup.allowlist", "list", "SIGNUP_ALLOWLIST", {
-  deploymentField: "signupAllowlist",
-});
+// CAAH-43: self-service signup is closed in code. Hub's sample still sends signup.enabled and
+// signup.allowlist, so they stay valid (and validated, as Hub's shared invalid-values fixture
+// expects) but reach nothing: Hub can't reopen signup.
+add("features", "signup.enabled", "boolean", [], { inert: true });
+add("features", "signup.allowlist", "list", [], { inert: true });
 add("provider", "model.defaultProvider", "text", "PI_DEFAULT_PROVIDER", {
   deploymentField: "defaultModelProvider",
 });

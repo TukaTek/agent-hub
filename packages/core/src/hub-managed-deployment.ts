@@ -1,5 +1,3 @@
-import { parseAllowlist } from "./signup-policy.js";
-
 /**
  * Hub-managed values for persisted deployment settings, applied when they are read so
  * the stored local baseline is never rewritten. Set once at process start from the
@@ -8,8 +6,6 @@ import { parseAllowlist } from "./signup-policy.js";
 export interface HubManagedDeploymentSettings {
   defaultModelProvider?: string | null;
   defaultModelId?: string | null;
-  signupsEnabled?: boolean;
-  signupAllowlist?: string;
 }
 
 let managed: Readonly<HubManagedDeploymentSettings> = {};
@@ -44,18 +40,4 @@ export function withHubModelDefaults<
         ? null
         : (settings?.defaultModelId ?? null),
   } as T;
-}
-
-/** The signup policy with Hub's values in place of the persisted or environment ones. */
-export function withHubSignupPolicy(policy: { enabled: boolean; allowlist: string[] }): {
-  enabled: boolean;
-  allowlist: string[];
-} {
-  return {
-    enabled: managed.signupsEnabled ?? policy.enabled,
-    allowlist:
-      managed.signupAllowlist === undefined
-        ? policy.allowlist
-        : parseAllowlist(managed.signupAllowlist),
-  };
 }

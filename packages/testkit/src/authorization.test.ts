@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioEmulator } from "@cortexai-agent-hub/adapters";
 import type { appContract, Space, SpaceNavigation } from "@cortexai-agent-hub/contracts";
+import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   claimEmptySpaceDeletionForMember,
@@ -1531,6 +1532,17 @@ describeWithDatabase("API authorization and resource isolation", () => {
       signupsEnabled: false,
       signupAllowlist: [],
     });
+    // Nor can Hub reopen it: even with Hub-managed signup values forced into the
+    // process (the overlay no longer produces them), the readback stays closed.
+    setHubManagedDeploymentSettings({ signupsEnabled: true, signupAllowlist: visitor } as never);
+    try {
+      expect(await rpc(app, owner, "deployment/get")).toMatchObject({
+        signupsEnabled: false,
+        signupAllowlist: [],
+      });
+    } finally {
+      setHubManagedDeploymentSettings({});
+    }
 
     // Direct calls to every signup route fail, including for the allowlisted
     // visitor, and create nothing.
