@@ -5,14 +5,19 @@ import {
   captureScreenshot,
   completeOnboarding,
   createNamedBot,
+  provisionAndSignIn,
   realSandboxTimeout,
   rpc,
-  signup,
 } from "./helpers";
 
 test("needs-you computer card opens the computer", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `needs-you-${stamp}@cortexai-agent-hub.test`, "password12", "Needs You");
+  await provisionAndSignIn(
+    page,
+    `needs-you-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Needs You",
+  );
   await completeOnboarding(page);
 
   const botId = activeBotId(page);
@@ -57,7 +62,7 @@ test("needs-you computer card opens the computer", async ({ page }, testInfo) =>
 
 test("needs-you computer card opens a group member bot computer", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `needs-you-group-${stamp}@cortexai-agent-hub.test`,
     "password12",

@@ -4,9 +4,9 @@ import {
   activeBotId,
   captureScreenshot,
   completeOnboarding,
+  provisionAndSignIn,
   realSandboxTimeout,
   rpc,
-  signup,
 } from "./helpers";
 
 async function openComputer(page: Page) {
@@ -33,7 +33,12 @@ async function openComputer(page: Page) {
 test("the computer workspace browses, uploads, and downloads files over the screen", async ({
   page,
 }, testInfo) => {
-  await signup(page, `workspace-${Date.now()}@cortexai-agent-hub.test`, "password12", "Workspace");
+  await provisionAndSignIn(
+    page,
+    `workspace-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Workspace",
+  );
   await completeOnboarding(page);
   const botId = activeBotId(page);
   await rpc(page, "computer/boot", { botId });
@@ -154,7 +159,7 @@ test("the computer workspace browses, uploads, and downloads files over the scre
 test("the terminal shows the bot's shell commands and file actions live and after reopening", async ({
   page,
 }, testInfo) => {
-  await signup(
+  await provisionAndSignIn(
     page,
     `terminal-feed-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

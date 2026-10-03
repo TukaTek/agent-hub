@@ -279,6 +279,10 @@ msgstr "एक HTTPS सर्वर URL दर्ज करें।"
 msgid "Add another"
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Add credential"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Add Executor"
 msgstr "Executor जोड़ें"
@@ -410,10 +414,6 @@ msgstr ""
 msgid "Allowed once"
 msgstr "एक बार अनुमति दी गई"
 
-#: src/pages/Auth.tsx
-msgid "Already have an account?"
-msgstr "पहले से खाता है?"
-
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Always act"
 msgstr ""
@@ -433,106 +433,6 @@ msgstr "उत्तर"
 #: src/components/AskCard.tsx
 msgid "Answered"
 msgstr "उत्तर दिया गया"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Add credential"
-msgstr ""
-
-#: src/pages/Auth.tsx
-msgid "Ask your admin for access"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Basic auth"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Basic auth ({username})"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not load credentials."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not remove the credential"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not save the credential"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Credentials"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Custom header"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Enter a username and password"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Header \"{header}\""
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Keys and passwords this bot can use, each for one site only. Values are encrypted and never shown again."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Lowercase letters, numbers, hyphens and underscores, starting with a letter."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "No credentials saved for this bot."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Remove {secretName}? This bot will no longer be able to use it."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Replace value"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Save credential"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Save new value"
-msgstr ""
-
-#: src/pages/Auth.tsx
-msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Site"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "These saved settings can't be read. Remove it and add it again."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Type"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Updated {updated}"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Value"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Website login"
-msgstr ""
 
 #. placeholder {0}: selectedAskActionLabel(answer, actions)
 #: src/components/AskCard.tsx
@@ -633,8 +533,16 @@ msgstr "खरीद से पहले पूछें"
 msgid "Ask before sending external email"
 msgstr "बाहरी ईमेल भेजने से पहले पूछें"
 
+#: src/pages/Auth.tsx
+msgid "Ask the person who runs this server to create one."
+msgstr ""
+
 #: src/components/integrations/IntegrationSetup.tsx
 msgid "Ask the server owner to configure this provider."
+msgstr ""
+
+#: src/pages/Auth.tsx
+msgid "Ask your admin for access"
 msgstr ""
 
 #. js-lingui-explicit-id
@@ -726,8 +634,17 @@ msgstr "साइन इन पर वापस जाएँ"
 msgid "Base URL"
 msgstr "बेस URL"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Basic auth"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Basic auth ({username})"
+msgstr ""
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 #: src/pages/PluginsOverlay.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Bearer token"
 msgstr "बियरर टोकन"
 
@@ -783,6 +700,7 @@ msgstr "सर्वर तक नहीं पहुंचा जा सका�
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/PluginsOverlay.tsx
+#: src/pages/shell/bot-credentials.tsx
 #: src/pages/shell/dialogs.tsx
 msgid "Cancel"
 msgstr "रद्द करें"
@@ -1354,6 +1272,10 @@ msgstr ""
 msgid "Could not load commands"
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Could not load credentials."
+msgstr ""
+
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not load integrations"
@@ -1433,6 +1355,10 @@ msgstr "समूह हटाया नहीं जा सका"
 msgid "Could not remove rule"
 msgstr "नियम हटाया नहीं जा सका"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Could not remove the credential"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not rename connection"
 msgstr ""
@@ -1498,6 +1424,10 @@ msgstr "वह वाक् मॉडल सहेजा नहीं जा स
 #: src/pages/VoiceSettingsOverlay.tsx
 msgid "Could not save that voice"
 msgstr "वह आवाज़ सहेजी नहीं जा सकी"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Could not save the credential"
+msgstr ""
 
 #: src/pages/shell/message-cards.tsx
 msgid "Could not save this choice"
@@ -1582,10 +1512,6 @@ msgstr "बनाएं"
 msgid "Create a section and move {0} into it."
 msgstr "एक सेक्शन बनाएं और {0} को उसमें ले जाएं।"
 
-#: src/pages/Auth.tsx
-msgid "Create account"
-msgstr "खाता बनाएं"
-
 #: src/pages/GroupPanel.tsx
 msgid "Create group"
 msgstr "समूह बनाएं"
@@ -1612,10 +1538,6 @@ msgstr ""
 msgid "Create space"
 msgstr ""
 
-#: src/pages/Auth.tsx
-msgid "Create your CortexAI Agent Hub"
-msgstr "अपना CortexAI Agent Hub बनाएं"
-
 #: src/components/AskCard.tsx
 msgid "Created"
 msgstr ""
@@ -1635,6 +1557,10 @@ msgstr "क्रेडेंशियल"
 msgid "credential saved"
 msgstr "क्रेडेंशियल सहेजा गया"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Credentials"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Credentials are encrypted and never sent to the model."
 msgstr "क्रेडेंशियल एन्क्रिप्टेड होते हैं और मॉडल को कभी नहीं भेजे जाते।"
@@ -1650,6 +1576,10 @@ msgstr "Cron एक्सप्रेशन"
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Current password"
 msgstr "वर्तमान पासवर्ड"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Custom header"
+msgstr ""
 
 #: src/pages/shell/dialogs.tsx
 msgid "Customer support"
@@ -1905,6 +1835,10 @@ msgstr "ईमेल"
 msgid "Engage when... Ignore..."
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Enter a username and password"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 msgid "Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context limit."
@@ -2129,8 +2063,13 @@ msgstr ""
 msgid "header"
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Header \"{header}\""
+msgstr ""
+
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/PluginsOverlay.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Header name"
 msgstr "हेडर नाम"
 
@@ -2295,6 +2234,10 @@ msgstr "मेमोरी रखें"
 msgid "key"
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Keys and passwords this bot can use, each for one site only. Values are encrypted and never shown again."
+msgstr ""
+
 #: src/pages/KnowledgeSection.tsx
 msgid "Knowledge"
 msgstr "ज्ञान"
@@ -2413,6 +2356,10 @@ msgstr "निम्न"
 #. js-lingui-explicit-id
 #: src/lib/model-catalog.ts
 msgid "Low"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Lowercase letters, numbers, hyphens and underscores, starting with a letter."
 msgstr ""
 
 #: src/components/ComputerUpdateProgress.tsx
@@ -2658,9 +2605,9 @@ msgid "Mute"
 msgstr "म्यूट करें"
 
 #: src/components/teach/SkillDraftCard.tsx
-#: src/pages/Auth.tsx
 #: src/pages/GroupPanel.tsx
 #: src/pages/RoutineEditor.tsx
+#: src/pages/shell/bot-credentials.tsx
 #: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/dialogs.tsx
 msgid "Name"
@@ -2754,6 +2701,10 @@ msgstr ""
 
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "No chat apps linked yet."
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "No credentials saved for this bot."
 msgstr ""
 
 #: src/pages/MessagingSettingsOverlay.tsx
@@ -2993,6 +2944,7 @@ msgstr "पार्क करें"
 #: src/components/AskCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/Auth.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Password"
 msgstr "पासवर्ड"
 
@@ -3197,6 +3149,7 @@ msgstr ""
 #: src/components/ApprovalRulesSettings.tsx
 #: src/pages/PluginsOverlay.tsx
 #: src/pages/ScratchpadSection.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Remove"
 msgstr "हटाएं"
 
@@ -3204,6 +3157,10 @@ msgstr "हटाएं"
 #: src/pages/Shell.tsx
 msgid "Remove {0}"
 msgstr "{0} हटाएं"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Remove {secretName}? This bot will no longer be able to use it."
+msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove Git event"
@@ -3261,6 +3218,10 @@ msgstr "API कुंजी बदलें"
 msgid "Replace key"
 msgstr "कुंजी बदलें"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Replace value"
+msgstr ""
+
 #: src/pages/Shell.tsx
 msgid "Reply"
 msgstr "उत्तर दें"
@@ -3310,6 +3271,10 @@ msgstr "अपना पासवर्ड रीसेट करें"
 #: src/components/ComputerMaintenanceActions.tsx
 msgid "Resetting…"
 msgstr "रीसेट हो रहा है…"
+
+#: src/pages/ResizableSidePanel.tsx
+msgid "Resize panel"
+msgstr "पैनल का आकार बदलें"
 
 #: src/components/DesktopUpdates.tsx
 msgid "Restart to update"
@@ -3414,8 +3379,16 @@ msgstr ""
 msgid "Save"
 msgstr "सहेजें"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Save credential"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Save limits"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Save new value"
 msgstr ""
 
 #: src/components/AskCard.tsx
@@ -3449,6 +3422,7 @@ msgstr ""
 #: src/pages/GroupPanel.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/RoutineEditor.tsx
+#: src/pages/shell/bot-credentials.tsx
 #: src/pages/shell/dialogs.tsx
 msgid "Saving…"
 msgstr "सहेजा जा रहा है…"
@@ -3629,6 +3603,7 @@ msgstr "ट्रांसक्रिप्ट दिखाएँ"
 #: src/pages/Auth.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/Welcome.tsx
 msgid "Sign in"
 msgstr "साइन इन करें"
 
@@ -3641,12 +3616,15 @@ msgid "Sign in to CortexAI Agent Hub"
 msgstr "CortexAI Agent Hub में साइन इन करें"
 
 #: src/pages/Auth.tsx
-#: src/pages/Welcome.tsx
-msgid "Sign up"
-msgstr "साइन अप करें"
+msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
+msgstr ""
 
 #: src/pages/Auth.tsx
 msgid "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Site"
 msgstr ""
 
 #. placeholder {0}: skill.name
@@ -3838,6 +3816,10 @@ msgstr ""
 msgid "The selected memory provider is not available in this build."
 msgstr "चयनित मेमोरी प्रोवाइडर इस बिल्ड में उपलब्ध नहीं है।"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "These saved settings can't be read. Remove it and add it again."
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/shell/bot-panel.tsx
@@ -3961,6 +3943,10 @@ msgstr "Treg टोकन"
 msgid "Try again"
 msgstr "फिर से कोशिश करें"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Type"
+msgstr ""
+
 #: src/components/teach/TeachRecordingChrome.tsx
 msgid "Type without recording"
 msgstr ""
@@ -4032,6 +4018,10 @@ msgstr ""
 msgid "Updated"
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Updated {updated}"
+msgstr ""
+
 #: src/pages/SettingsOverlay.tsx
 msgid "Updates"
 msgstr "अपडेट"
@@ -4087,7 +4077,12 @@ msgid "Use this model"
 msgstr "यह मॉडल उपयोग करें"
 
 #: src/components/AskCard.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Username"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Value"
 msgstr ""
 
 #: src/pages/PluginsOverlay.tsx
@@ -4123,6 +4118,10 @@ msgstr "प्रतीक्षा…"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Website login"
 msgstr ""
 
 #: src/pages/RoutineEditor.tsx
@@ -4203,17 +4202,9 @@ msgid "Your email address"
 msgstr "आपका ईमेल पता"
 
 #: src/pages/Auth.tsx
-msgid "Your name"
-msgstr "आपका नाम"
-
-#: src/pages/Auth.tsx
 msgid "Your sign-in expired. Try again."
 msgstr ""
 
 #: src/pages/Welcome.tsx
 msgid "Your team of always-on agents<0/>that you can give real work to."
 msgstr "हमेशा चालू रहने वाले एजेंटों की आपकी टीम<0/>जिन्हें आप असली काम सौंप सकते हैं।"
-
-#: src/pages/ResizableSidePanel.tsx
-msgid "Resize panel"
-msgstr "पैनल का आकार बदलें"

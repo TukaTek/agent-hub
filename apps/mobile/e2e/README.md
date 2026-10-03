@@ -9,7 +9,8 @@ expects a running CortexAI Agent Hub stack and deliberately stays out of ordinar
 1. Install the Maestro CLI and start an Android emulator or iOS simulator.
 2. Start CortexAI Agent Hub's database, API, worker, and sandbox supervisor. The computer portion requires a
    working sandbox provider (the normal local Docker provider is sufficient).
-3. Create a disposable test account through the mobile or web sign-up screen. Never use a
+3. Create a disposable test account with the `provision-user` command in
+   [docs/self-host.md](../../../docs/self-host.md#first-time-deployment-owner-provisioning). Never use a
    production account or put credentials in this repository.
 4. Build/install the native app with an API URL that the emulator can reach. For the standard local
    ports, use `http://10.0.2.2:3100` on the Android emulator and `http://127.0.0.1:3100` on the iOS

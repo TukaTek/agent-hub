@@ -69,7 +69,6 @@ import {
   type HubPolicy,
   isBlockedAuthPath,
 } from "@cortexai-agent-hub/auth";
-import { signupAllowlistBootUpdate, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
 
 import {
@@ -197,44 +196,20 @@ export async function createApp(
   const events = createThreadEvents(prisma, realtime, {
     runSecretWriter: createRunSecretWriter(secrets),
   });
-  const environmentSignupPolicy = signupPolicyFromEnv(env);
-  const deploymentSettings = await prisma.deploymentSettings.upsert({
+  // CAAH-43: signup is closed and the owner seat is set only by an operator
+  // command. A fresh row records that closed state; a legacy row is left as
+  // is because no reader consults its signup columns. SIGNUPS_ENABLED and
+  // SIGNUP_ALLOWLIST are no longer read.
+  await prisma.deploymentSettings.upsert({
     where: { id: "default" },
     create: {
       id: "default",
-      signupsEnabled: environmentSignupPolicy.enabled,
-      signupAllowlist: environmentSignupPolicy.allowlist.join(","),
+      signupsEnabled: false,
+      signupAllowlist: "",
       signupPolicyInitialized: true,
     },
     update: {},
   });
-  if (!deploymentSettings.signupPolicyInitialized) {
-    // Older versions created this row with schema defaults even though auth
-    // still enforced the environment policy. Copy that effective policy once
-    // so upgrades preserve behavior. Later starts reapply a non-empty
-    // SIGNUP_ALLOWLIST; a blank value leaves the stored list alone.
-    await prisma.deploymentSettings.updateMany({
-      where: { id: "default", signupPolicyInitialized: false },
-      data: {
-        signupsEnabled: environmentSignupPolicy.enabled,
-        signupAllowlist: environmentSignupPolicy.allowlist.join(","),
-        signupPolicyInitialized: true,
-      },
-    });
-  } else {
-    const signupAllowlist = signupAllowlistBootUpdate(
-      deploymentSettings.signupAllowlist,
-      env.signupAllowlist,
-      true,
-    );
-    if (signupAllowlist !== null) {
-      await prisma.deploymentSettings.update({
-        where: { id: "default" },
-        data: { signupAllowlist },
-      });
-      logger.info("applied SIGNUP_ALLOWLIST from the environment");
-    }
-  }
 
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
@@ -364,8 +339,6 @@ export async function createApp(
     secret: env.authSecret,
     baseURL: env.authUrl,
     webOrigin: env.webOrigin,
-    signupsEnabled: env.signupsEnabled,
-    signupAllowlist: env.signupAllowlist,
     email,
     onEmailError: (error) => getLogger().error("transactional email delivery failed", error),
     onHubSsoError: (reason) => getLogger().warn("hub.sso.failed", { "hub.sso.reason": reason }),
@@ -631,10 +604,8 @@ export async function createApp(
       jobs,
       provision: (request, policyEnv) => provisionMessagingIdentity(prisma, request, policyEnv),
       openSignup: env.messagingOpenSignup,
-      signupPolicy: {
-        signupsEnabled: env.signupsEnabled,
-        signupAllowlist: env.signupAllowlist,
-      },
+      // Legacy shape only; messaging bootstrap ignores it and never claims the owner.
+      signupPolicy: {},
       typing: (threadId) => {
         // Keep conversation addresses out of trace ids — those reach logs
         // and telemetry, a different trust boundary than the database.

@@ -56,7 +56,16 @@ user, password, and database from first init, so keep those values in `.env`, or
 place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or when the data is
 disposable); `docker compose down -v` deletes all Postgres state.
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
+Create the owner account (password on stdin; there is no signup page), then open
+[http://127.0.0.1:5173](http://127.0.0.1:5173), sign in, and connect a model:
+
+```bash
+docker compose --env-file .env -f infra/compose/docker-compose.yml exec -T api \
+  pnpm --silent --filter @cortexai-agent-hub/api provision \
+  provision-owner --email you@example.com --name "Your Name" < owner-password.txt
+```
+
+See [First-time deployment owner provisioning](./docs/self-host.md#first-time-deployment-owner-provisioning).
 Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, or `box`
 with the matching API key.
 
@@ -125,8 +134,9 @@ pnpm sandbox:build
 pnpm dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, connect a model, and create
-your first assistant.
+Create your account with `pnpm --filter @cortexai-agent-hub/api provision provision-owner --email you@example.com --name "You" < owner-password.txt`
+(with `DATABASE_URL` set), then open [http://127.0.0.1:5173](http://127.0.0.1:5173), sign in, connect a
+model, and create your first assistant.
 
 For deployment, provider selection, backups, and upgrades, see the
 [self-hosting guide](./docs/self-host.md).

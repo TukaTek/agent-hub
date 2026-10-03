@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
@@ -7,7 +7,12 @@ const OFFICE_FILES = ["report.xlsx", "brief.docx", "deck.pptx"];
 
 async function openChat(page: Page, label: string) {
   const stamp = Date.now();
-  await signup(page, `${label}-${stamp}@cortexai-agent-hub.test`, "password12", "Office Files");
+  await provisionAndSignIn(
+    page,
+    `${label}-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Office Files",
+  );
   await completeOnboarding(page);
   const composer = page.getByPlaceholder(/Message/);
   await expect(composer).toBeVisible();

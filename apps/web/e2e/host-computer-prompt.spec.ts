@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 for (const platform of ["darwin", "win32"]) {
   test(`host computer choice explains file access on ${platform}`, async ({ page }, testInfo) => {
-    await signup(
+    await provisionAndSignIn(
       page,
       `host-choice-${platform}-${Date.now()}@cortexai-agent-hub.test`,
       "password12",

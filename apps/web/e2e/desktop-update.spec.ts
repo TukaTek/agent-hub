@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+} from "./helpers";
 
 test("desktop update can be checked, deferred, and installed from settings", async ({
   page,
@@ -58,7 +63,7 @@ test("desktop update can be checked, deferred, and installed from settings", asy
     });
   });
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `desktop-update-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -97,7 +102,7 @@ test("desktop update can be checked, deferred, and installed from settings", asy
 });
 
 test("ordinary web sessions do not show desktop update controls", async ({ page }) => {
-  await signup(
+  await provisionAndSignIn(
     page,
     `web-update-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

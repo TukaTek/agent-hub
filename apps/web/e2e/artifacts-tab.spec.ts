@@ -1,11 +1,17 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("opens Artifacts from the account menu and lists created files", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `artifacts-tab-${stamp}@cortexai-agent-hub.test`,
     "password12",

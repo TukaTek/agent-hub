@@ -10,7 +10,7 @@ tags:
 
 # A cold API 34 emulator can show a launcher ANR over the healthy app.
 - extendedWaitUntil:
-    visible: "Sign up for CortexAI Agent Hub|Pixel Launcher isn't responding"
+    visible: "Sign in to CortexAI Agent Hub|Pixel Launcher isn't responding"
     timeout: 30000
 - runFlow:
     when:
@@ -18,11 +18,9 @@ tags:
     commands:
       - tapOn: "Close app"
 - extendedWaitUntil:
-    visible: "Sign up for CortexAI Agent Hub"
+    visible: "Sign in to CortexAI Agent Hub"
     timeout: 30000
-- takeScreenshot: "02-sign-up"
-- tapOn: "Sign in"
-- assertVisible: "Sign in to CortexAI Agent Hub"
+- assertNotVisible: "Sign up"
 - takeScreenshot: "01-sign-in"
 
 - tapOn: "Use a custom server"

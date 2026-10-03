@@ -1,11 +1,21 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+} from "./helpers";
 
 test("account settings language picker includes Simplified Chinese and applies it", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-zh-cn-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
+  await provisionAndSignIn(
+    page,
+    `ui-locale-zh-cn-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Locale QA",
+  );
   await completeOnboarding(page, testInfo);
 
   const settings = await openUserSettings(page);
@@ -28,7 +38,12 @@ test("account settings language picker includes Korean and applies it", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-ko-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
+  await provisionAndSignIn(
+    page,
+    `ui-locale-ko-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Locale QA",
+  );
   await completeOnboarding(page, testInfo);
 
   const settings = await openUserSettings(page);
@@ -51,7 +66,12 @@ test("account settings language picker includes Spanish and applies it", async (
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-es-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
+  await provisionAndSignIn(
+    page,
+    `ui-locale-es-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Locale QA",
+  );
   await completeOnboarding(page, testInfo);
 
   const settings = await openUserSettings(page);
@@ -74,7 +94,12 @@ test("account settings language picker includes Russian and persists it", async 
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-ru-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
+  await provisionAndSignIn(
+    page,
+    `ui-locale-ru-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Locale QA",
+  );
   await completeOnboarding(page, testInfo);
 
   await page.getByTestId("user-menu-trigger").click();
@@ -102,7 +127,12 @@ test("account settings language picker includes French and persists it", async (
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `ui-locale-fr-${stamp}@cortexai-agent-hub.test`, "password12", "Locale QA");
+  await provisionAndSignIn(
+    page,
+    `ui-locale-fr-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Locale QA",
+  );
   await completeOnboarding(page, testInfo);
 
   await page.getByTestId("user-menu-trigger").click();

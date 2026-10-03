@@ -1,10 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, rpc, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("voice settings connect a key, speak a reply, and open a call", async ({ page }, testInfo) => {
   const stamp = Date.now();
   const userName = `Voice ${stamp}`;
-  await signup(page, `voice-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(page, `voice-${stamp}@cortexai-agent-hub.test`, "password12", userName);
   await completeOnboarding(page);
 
   await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0);

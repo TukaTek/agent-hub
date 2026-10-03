@@ -1,4 +1,3 @@
-import type { IntegrationSetupState } from "@cortexai-agent-hub/contracts";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -28,10 +27,8 @@ import {
   probeApiBase,
   requestPasswordReset,
   resetApiBase,
-  rpc,
   saveApiBase,
   signIn,
-  signUp,
   usesCustomApiBase,
 } from "../lib/api";
 import { type AuthMode, initialAuthMode } from "../lib/auth-routing";
@@ -44,7 +41,6 @@ export default function SignIn() {
   const router = useRouter();
   const { mode: requestedMode } = useLocalSearchParams<{ mode?: string | string[] }>();
   const [formMode, setMode] = useState<AuthMode>(() => initialAuthMode(requestedMode));
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -114,25 +110,8 @@ export default function SignIn() {
         setResetSent(true);
         return;
       }
-      if (mode === "up") {
-        const trimmedEmail = email.trim();
-        const result = await signUp(
-          trimmedEmail,
-          password,
-          name.trim() || trimmedEmail.split("@")[0] || "User",
-        );
-        if (result.verificationRequired) {
-          setResetSent(true);
-          return;
-        }
-      } else {
-        await signIn(email.trim(), password, reset?.mode === "hub");
-      }
-      const setup =
-        mode === "up"
-          ? await rpc<IntegrationSetupState>("integrationSetup/get").catch(() => null)
-          : null;
-      router.replace(setup?.needsSetup ? "/integration-setup" : "/");
+      await signIn(email.trim(), password, reset?.mode === "hub");
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("Could not continue"));
     } finally {
@@ -173,9 +152,7 @@ export default function SignIn() {
                   ? t("Check your email")
                   : mode === "in"
                     ? t("Sign in to CortexAI Agent Hub")
-                    : mode === "up"
-                      ? t("Sign up for CortexAI Agent Hub")
-                      : t("Reset your password")}
+                    : t("Reset your password")}
               </Text>
               {!reset ? (
                 capabilitiesFailed ? (
@@ -201,22 +178,6 @@ export default function SignIn() {
                 </View>
               ) : (
                 <>
-                  {mode === "up" ? (
-                    <TextInput
-                      autoComplete="name"
-                      placeholder={t("Name")}
-                      placeholderTextColor={tokens.mutedForeground}
-                      value={name}
-                      onChangeText={setName}
-                      style={{
-                        marginTop: 28,
-                        backgroundColor: tokens.muted,
-                        borderRadius: 13,
-                        padding: 16,
-                        color: tokens.foreground,
-                      }}
-                    />
-                  ) : null}
                   <TextInput
                     autoCapitalize="none"
                     autoComplete="email"
@@ -226,7 +187,7 @@ export default function SignIn() {
                     value={email}
                     onChangeText={setEmail}
                     style={{
-                      marginTop: mode === "up" ? 12 : 28,
+                      marginTop: 28,
                       backgroundColor: tokens.muted,
                       borderRadius: 13,
                       padding: 16,
@@ -272,9 +233,7 @@ export default function SignIn() {
                         ? t("Working…")
                         : mode === "in"
                           ? t("Sign in")
-                          : mode === "up"
-                            ? t("Sign up")
-                            : t("Send reset link")}
+                          : t("Send reset link")}
                     </Text>
                   </Pressable>
                   {mode === "in" && reset?.passwordReset && reset.resetUrl ? (
@@ -293,39 +252,35 @@ export default function SignIn() {
                     </Pressable>
                   ) : null}
                   {reset.mode !== "hub" ? (
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        marginTop: 24,
-                      }}
-                    >
-                      <Text style={{ color: tokens.mutedForeground, fontSize: 15 }}>
-                        {mode === "in"
-                          ? t("Don’t have an account?")
-                          : mode === "up"
-                            ? t("Already have an account?")
-                            : ""}
+                    mode === "in" ? (
+                      // Self-service signup is closed (CAAH-43): accounts come from the operator.
+                      <Text
+                        testID="operator-provisioned-hint"
+                        style={{
+                          color: tokens.mutedForeground,
+                          fontSize: 15,
+                          marginTop: 24,
+                          textAlign: "center",
+                        }}
+                      >
+                        {t("Don’t have an account?")}{" "}
+                        {t("Ask the person who runs this server to create one.")}
                       </Text>
+                    ) : (
                       <Pressable
                         accessibilityRole="button"
                         hitSlop={8}
                         onPress={() => {
-                          setMode((current) => (current === "in" ? "up" : "in"));
+                          setMode("in");
                           setError(null);
                         }}
-                        style={{ marginLeft: 5 }}
+                        style={{ alignSelf: "center", marginTop: 24 }}
                       >
                         <Text style={{ color: tokens.foreground, fontSize: 15, fontWeight: "600" }}>
-                          {mode === "in"
-                            ? t("Sign up")
-                            : mode === "up"
-                              ? t("Sign in")
-                              : t("Back to sign in")}
+                          {t("Back to sign in")}
                         </Text>
                       </Pressable>
-                    </View>
+                    )
                   ) : null}
                 </>
               )}

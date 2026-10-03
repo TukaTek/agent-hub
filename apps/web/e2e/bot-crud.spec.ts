@@ -4,12 +4,17 @@ import {
   completeOnboarding,
   createBotFromPicker,
   openNewBot,
-  signup,
+  provisionAndSignIn,
 } from "./helpers";
 
 test("bot creation, editing, and deletion persist", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `bot-crud-${stamp}@cortexai-agent-hub.test`, "password12", "Bot CRUD");
+  await provisionAndSignIn(
+    page,
+    `bot-crud-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Bot CRUD",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

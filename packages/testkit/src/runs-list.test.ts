@@ -4,7 +4,7 @@ import path from "node:path";
 import type { RunActivityRow } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 
@@ -40,7 +40,11 @@ describeRunsList("runs.list activity tracker", () => {
   });
 
   it("lists active runs from two bots and keeps completed runs under recent", async () => {
-    const cookie = await signup(app, `runs-${stamp}@cortexai-agent-hub.test`, "Runs User");
+    const cookie = await signInAs(
+      { app, prisma },
+      `runs-${stamp}@cortexai-agent-hub.test`,
+      "Runs User",
+    );
     const alpha = await rpc<{ id: string }>(app, cookie, "bots/create", {
       name: "Alpha",
       title: "Alpha",
@@ -78,7 +82,11 @@ describeRunsList("runs.list activity tracker", () => {
   });
 
   it("never returns runs from another workspace", async () => {
-    const ownerCookie = await signup(app, `runs-owner-${stamp}@cortexai-agent-hub.test`, "Owner");
+    const ownerCookie = await signInAs(
+      { app, prisma },
+      `runs-owner-${stamp}@cortexai-agent-hub.test`,
+      "Owner",
+    );
     const ownerBot = await rpc<{ id: string }>(app, ownerCookie, "bots/create", {
       name: "OwnerBot",
       title: "OwnerBot",
@@ -88,8 +96,8 @@ describeRunsList("runs.list activity tracker", () => {
     });
     await seedRun(prisma, ownerBot.id, "running", "owner active run");
 
-    const intruderCookie = await signup(
-      app,
+    const intruderCookie = await signInAs(
+      { app, prisma },
       `runs-intruder-${stamp}@cortexai-agent-hub.test`,
       "Intruder",
     );
@@ -100,8 +108,8 @@ describeRunsList("runs.list activity tracker", () => {
   });
 
   it("excludes archived bots from recent before applying the limit", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `runs-archived-${stamp}@cortexai-agent-hub.test`,
       "Archive User",
     );
@@ -141,7 +149,11 @@ describeRunsList("runs.list activity tracker", () => {
   });
 
   it("returns group runs with groupId for navigation", async () => {
-    const cookie = await signup(app, `runs-group-${stamp}@cortexai-agent-hub.test`, "Group User");
+    const cookie = await signInAs(
+      { app, prisma },
+      `runs-group-${stamp}@cortexai-agent-hub.test`,
+      "Group User",
+    );
     const botA = await rpc<{ id: string }>(app, cookie, "bots/create", {
       name: "Worker",
       title: "Worker",
@@ -225,14 +237,9 @@ async function seedRun(
   });
 }
 
-async function signup(app: App, email: string, name: string) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-    body: JSON.stringify({ email, password: "test-password-123", name }),
-  });
-  expect(response.status).toBeLessThan(400);
-  return sessionCookieHeader(response);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "test-password-123" });
 }
 
 async function rpc<T>(app: App, cookie: string, proc: string, body: unknown = {}): Promise<T> {

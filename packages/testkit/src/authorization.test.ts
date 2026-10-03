@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioEmulator } from "@cortexai-agent-hub/adapters";
 import type { appContract, Space, SpaceNavigation } from "@cortexai-agent-hub/contracts";
+import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   claimEmptySpaceDeletionForMember,
   deleteEmptySpaceForMember,
@@ -13,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
@@ -48,7 +50,6 @@ describeWithDatabase("API authorization and resource isolation", () => {
       sandboxProvider: "fake",
       agentRuntime: "scripted",
       wakeupDriver: "memory",
-      signupsEnabled: "true",
       composio: new ComposioEmulator(),
     });
     app = handles.app;
@@ -64,7 +65,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const calls = exhaustiveProtectedCalls([
       ["me"],
       ["deployment/get"],
-      ["deployment/update", { signupsEnabled: true }],
+      ["deployment/update", { computerHost: null }],
       ["updater/status"],
       ["updater/check", {}],
       ["updater/apply", {}],
@@ -203,13 +204,13 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("prevents one user from reading or mutating another user's resources", async () => {
-    const owner = await signup(
-      app,
+    const owner = await signInAs(
+      handles,
       `owner-authz-${stamp}@cortexai-agent-hub.test`,
       "Authorization Owner",
     );
-    const intruder = await signup(
-      app,
+    const intruder = await signInAs(
+      handles,
       `intruder-authz-${stamp}@cortexai-agent-hub.test`,
       "Authorization Intruder",
     );
@@ -477,13 +478,13 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("keeps approval rules private to each user in a shared Space", async () => {
-    const owner = await signup(
-      app,
+    const owner = await signInAs(
+      handles,
       `approval-owner-${stamp}@cortexai-agent-hub.test`,
       "Approval Owner",
     );
-    const member = await signup(
-      app,
+    const member = await signInAs(
+      handles,
       `approval-member-${stamp}@cortexai-agent-hub.test`,
       "Approval Member",
     );
@@ -526,7 +527,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("keeps space data and computers behind the selected space boundary", async () => {
-    const cookie = await signup(app, `spaces-${stamp}@cortexai-agent-hub.test`, "Space Owner");
+    const cookie = await signInAs(
+      handles,
+      `spaces-${stamp}@cortexai-agent-hub.test`,
+      "Space Owner",
+    );
     const original = await rpc<Actor>(app, cookie, "me");
     const originalBot = await rpc<Bot>(app, cookie, "bots/create", botInput("Open source"));
     const support = await rpc<Space>(app, cookie, "spaces/create", {
@@ -645,8 +650,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
     expect(storedSupport?.spaceId).toBe(support.id);
     expect(storedOriginal?.computerId).not.toBe(storedSupport?.computerId);
 
-    const intruder = await signup(
-      app,
+    const intruder = await signInAs(
+      handles,
       `spaces-intruder-${stamp}@cortexai-agent-hub.test`,
       "Intruder",
     );
@@ -654,7 +659,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("enforces the space limit across concurrent creation requests", async () => {
-    const cookie = await signup(app, `space-limit-${stamp}@cortexai-agent-hub.test`, "Space Limit");
+    const cookie = await signInAs(
+      handles,
+      `space-limit-${stamp}@cortexai-agent-hub.test`,
+      "Space Limit",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const currentSpace = await handles.prisma.space.findUniqueOrThrow({
       where: { id: actor.spaceId },
@@ -692,8 +701,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("reuses provider credentials and copies their selections into a new Space", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `space-provider-copy-${stamp}@cortexai-agent-hub.test`,
       "Provider Copy",
     );
@@ -771,8 +780,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("shares model credentials while keeping defaults private to each space", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `model-defaults-${stamp}@cortexai-agent-hub.test`,
       "Model Defaults",
     );
@@ -873,8 +882,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("deletes only empty, non-default spaces", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `space-delete-${stamp}@cortexai-agent-hub.test`,
       "Space Delete",
     );
@@ -913,8 +922,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const navigation = await rpc<SpaceNavigation>(app, cookie, "spaces/list");
     expect(navigation.spaces.map((space) => space.id)).not.toContain(empty.id);
 
-    const intruder = await signup(
-      app,
+    const intruder = await signInAs(
+      handles,
       `space-delete-intruder-${stamp}@cortexai-agent-hub.test`,
       "Intruder",
     );
@@ -929,8 +938,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       where: { id: shared.id },
       select: { organizationId: true },
     });
-    const memberCookie = await signup(
-      app,
+    const memberCookie = await signInAs(
+      handles,
       `space-delete-member-${stamp}@cortexai-agent-hub.test`,
       "Space Member",
     );
@@ -1008,7 +1017,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("keeps the Better Auth organization routes closed to product sessions", async () => {
-    const cookie = await signup(app, `org-routes-${stamp}@cortexai-agent-hub.test`, "Org Routes");
+    const cookie = await signInAs(
+      handles,
+      `org-routes-${stamp}@cortexai-agent-hub.test`,
+      "Org Routes",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const marker = await rpc<Space>(app, cookie, "spaces/create", { name: "Marker" });
 
@@ -1041,7 +1054,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("blocks bot creation after empty space deletion is claimed", async () => {
-    const cookie = await signup(app, `space-race-${stamp}@cortexai-agent-hub.test`, "Space Race");
+    const cookie = await signInAs(
+      handles,
+      `space-race-${stamp}@cortexai-agent-hub.test`,
+      "Space Race",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const space = await rpc<Space>(app, cookie, "spaces/create", { name: "Concurrent" });
     await handles.prisma.computer.create({
@@ -1109,7 +1126,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("keeps a space claimed after ambiguous sandbox teardown failure", async () => {
-    const cookie = await signup(app, `space-teardown-${stamp}@cortexai-agent-hub.test`, "Teardown");
+    const cookie = await signInAs(
+      handles,
+      `space-teardown-${stamp}@cortexai-agent-hub.test`,
+      "Teardown",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const space = await rpc<Space>(app, cookie, "spaces/create", { name: "Teardown" });
     await handles.prisma.computer.create({
@@ -1167,7 +1188,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("times out a hung sandbox teardown without unblocking the space", async () => {
-    const cookie = await signup(app, `space-deadline-${stamp}@cortexai-agent-hub.test`, "Deadline");
+    const cookie = await signInAs(
+      handles,
+      `space-deadline-${stamp}@cortexai-agent-hub.test`,
+      "Deadline",
+    );
     const actor = await rpc<Actor>(app, cookie, "me");
     const space = await rpc<Space>(app, cookie, "spaces/create", { name: "Deadline" });
     await handles.prisma.computer.create({
@@ -1221,8 +1246,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("validates custom thinking against the saved connection capability", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `custom-thinking-${stamp}@cortexai-agent-hub.test`,
       "Custom Thinking",
     );
@@ -1267,7 +1292,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("validates per-bot model overrides against connected providers and catalog", async () => {
-    const cookie = await signup(app, `bot-model-${stamp}@cortexai-agent-hub.test`, "Bot Model");
+    const cookie = await signInAs(
+      handles,
+      `bot-model-${stamp}@cortexai-agent-hub.test`,
+      "Bot Model",
+    );
     const bot = await rpc<
       Bot & {
         modelProvider: string | null;
@@ -1325,8 +1354,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("binds a new default to the space preference credential, not a newer unused duplicate", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      handles,
       `model-duplicates-${stamp}@cortexai-agent-hub.test`,
       "Model Duplicates",
     );
@@ -1402,7 +1431,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
 
   it("never hands out session tokens and asks for the password before account deletion", async () => {
     const email = `sessions-${stamp}@cortexai-agent-hub.test`;
-    const cookie = await signup(app, email, "Sessions");
+    const cookie = await signInAs(handles, email, "Sessions");
     const second = await app.request("/api/auth/sign-in/email", {
       method: "POST",
       headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
@@ -1433,95 +1462,99 @@ describeWithDatabase("API authorization and resource isolation", () => {
   });
 
   it("restricts deployment settings to the deployment owner", async () => {
-    const owner = await signup(
-      app,
+    const owner = await signInAs(
+      handles,
       `deployment-owner-${stamp}@cortexai-agent-hub.test`,
       "Deployment Owner",
     );
-    const other = await signup(
-      app,
+    const other = await signInAs(
+      handles,
       `deployment-other-${stamp}@cortexai-agent-hub.test`,
       "Deployment Other",
     );
     const ownerActor = await rpc<Actor>(app, owner, "me");
     const otherActor = await rpc<Actor>(app, other, "me");
-    // This test changes a live allowlist; the operator has already proved
-    // ownership of the mailbox. Endpoint verification has offline auth tests.
-    await handles.prisma.user.update({
-      where: { id: ownerActor.userId },
-      data: { emailVerified: true },
-    });
     await handles.prisma.deploymentSettings.update({
       where: { id: "default" },
-      data: {
-        ownerUserId: ownerActor.userId,
-        signupsEnabled: true,
-        signupAllowlist: "",
-      },
+      data: { ownerUserId: ownerActor.userId },
     });
 
     expect(otherActor.userId).not.toBe(ownerActor.userId);
 
     await rpc(app, owner, "deployment/get");
     await expectDenied(app, other, "deployment/get", {});
-    await expectDenied(app, other, "deployment/update", {
-      signupsEnabled: false,
-      signupAllowlist: ["attacker@example.test"],
-    });
+    await expectDenied(app, other, "deployment/update", { computerHost: null });
     await expectForbidden(app, other, "updater/status", {});
     await expectForbidden(app, other, "updater/check", {});
     await expectForbidden(app, other, "updater/apply", {});
     expect(
       await handles.prisma.deploymentSettings.findUniqueOrThrow({ where: { id: "default" } }),
-    ).toMatchObject({ signupsEnabled: true, signupAllowlist: "" });
+    ).toMatchObject({ ownerUserId: ownerActor.userId });
+  });
 
+  it("lets no account, not even the owner, reopen signup through the app API (CAAH-43)", async () => {
+    const owner = await signInAs(
+      handles,
+      `lockdown-owner-${stamp}@cortexai-agent-hub.test`,
+      "Lockdown Owner",
+    );
+    const ownerActor = await rpc<Actor>(app, owner, "me");
+    // Upgrade with a legacy open policy: the stored row says signup is open
+    // and lists an approved visitor.
+    const visitor = `lockdown-visitor-${stamp}@example.test`;
+    await handles.prisma.deploymentSettings.update({
+      where: { id: "default" },
+      data: {
+        ownerUserId: ownerActor.userId,
+        signupsEnabled: true,
+        signupAllowlist: visitor,
+        signupPolicyInitialized: true,
+      },
+    });
+    const before = await handles.prisma.deploymentSettings.findUniqueOrThrow({
+      where: { id: "default" },
+    });
+
+    for (const input of [
+      { signupsEnabled: true },
+      { signupAllowlist: [visitor] },
+      { signupsEnabled: true, signupAllowlist: [], computerHost: null },
+    ]) {
+      const response = await raw(app, owner, "deployment/update", input);
+      expect(response.status, JSON.stringify(input)).toBe(400);
+    }
+    expect(
+      await handles.prisma.deploymentSettings.findUniqueOrThrow({ where: { id: "default" } }),
+    ).toEqual(before);
+
+    // The owner reads signup as closed whatever the legacy row holds.
+    expect(await rpc(app, owner, "deployment/get")).toMatchObject({
+      signupsEnabled: false,
+      signupAllowlist: [],
+    });
+    // Nor can Hub reopen it: even with Hub-managed signup values forced into the
+    // process (the overlay no longer produces them), the readback stays closed.
+    setHubManagedDeploymentSettings({ signupsEnabled: true, signupAllowlist: visitor } as never);
     try {
-      await rpc(app, owner, "deployment/update", { signupsEnabled: false });
-      const closedSignup = await app.request("/api/auth/sign-up/email", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: `closed-${stamp}@cortexai-agent-hub.test`,
-          password: "password123",
-          name: "Closed Signup",
-        }),
-      });
-      expect(closedSignup.status).toBe(400);
-      expect(await closedSignup.text()).toContain("Registration is closed");
-
-      const approvedEmail = `approved-${stamp}@example.test`;
-      await rpc(app, owner, "deployment/update", {
-        signupsEnabled: true,
-        signupAllowlist: [approvedEmail],
-      });
-      const disallowedSignup = await app.request("/api/auth/sign-up/email", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: `not-approved-${stamp}@cortexai-agent-hub.test`,
-          password: "password123",
-          name: "Disallowed Signup",
-        }),
-      });
-      expect(disallowedSignup.status).toBe(400);
-      expect(await disallowedSignup.text()).toContain("Email is not allowed to register");
-      const unverifiedSignup = await app.request("/api/auth/sign-up/email", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: approvedEmail,
-          password: "password123",
-          name: "Approved Signup",
-        }),
-      });
-      expect(unverifiedSignup.status).toBe(400);
-      expect(await unverifiedSignup.text()).toContain("Registration requires email delivery");
-    } finally {
-      await rpc(app, owner, "deployment/update", {
-        signupsEnabled: true,
+      expect(await rpc(app, owner, "deployment/get")).toMatchObject({
+        signupsEnabled: false,
         signupAllowlist: [],
       });
+    } finally {
+      setHubManagedDeploymentSettings({});
     }
+
+    // Direct calls to every signup route fail, including for the allowlisted
+    // visitor, and create nothing.
+    for (const route of ["/api/auth/sign-up/email", "/api/auth/sign-up"]) {
+      const response = await app.request(route, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
+        body: JSON.stringify({ email: visitor, password: "password123", name: "Visitor" }),
+      });
+      expect(response.status, route).toBe(404);
+    }
+    expect(await handles.prisma.user.findFirst({ where: { email: visitor } })).toBeNull();
   });
 });
 
@@ -1567,16 +1600,9 @@ function connectionInput(displayName: string) {
   return { provider: "test-provider", displayName };
 }
 
-async function signup(app: App, email: string, name: string) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-    body: JSON.stringify({ email, password: "password12", name }),
-  });
-  if (response.status >= 400) {
-    throw new Error(`signup failed ${response.status}: ${await response.text()}`);
-  }
-  return sessionCookieHeader(response);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "password12" });
 }
 
 async function raw(

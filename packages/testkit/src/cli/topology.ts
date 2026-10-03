@@ -28,6 +28,14 @@ async function main() {
       env,
       capture,
     );
+  const composeWithInput = (args: string[], input: string) =>
+    command(
+      "docker",
+      ["compose", "--project-name", project, "--file", composeFile, ...args],
+      env,
+      true,
+      input,
+    );
   let cookie: string | undefined;
   let botId: string | undefined;
 
@@ -48,7 +56,29 @@ async function main() {
     await waitForComposeHealth(compose, "web", 60_000);
 
     compose(["stop", "worker"]);
-    cookie = await signup(baseUrl);
+    // Fresh install (CAAH-43): signup is closed, so provision the first owner
+    // with the documented Compose command, password on stdin, then sign in.
+    const email = `topology-${Date.now()}@cortexai-agent-hub.test`;
+    const password = "password12";
+    composeWithInput(
+      [
+        "exec",
+        "-T",
+        "api",
+        "pnpm",
+        "--silent",
+        "--filter",
+        "@cortexai-agent-hub/api",
+        "provision",
+        "provision-owner",
+        "--email",
+        email,
+        "--name",
+        "Topology",
+      ],
+      `${password}\n`,
+    );
+    cookie = await signIn(baseUrl, email, password);
     const bot = await rpc<{ id: string }>(baseUrl, cookie, "bots/create", {
       name: "Topology",
       title: "Topology smoke bot",
@@ -142,22 +172,18 @@ async function main() {
   }
 }
 
-async function signup(baseUrl: string) {
-  const response = await fetch(`${baseUrl}/api/auth/sign-up/email`, {
+async function signIn(baseUrl: string, email: string, password: string) {
+  const response = await fetch(`${baseUrl}/api/auth/sign-in/email`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: baseUrl },
-    body: JSON.stringify({
-      email: `topology-${Date.now()}@cortexai-agent-hub.test`,
-      password: "password12",
-      name: "Topology",
-    }),
+    body: JSON.stringify({ email, password }),
   });
-  if (!response.ok) throw new Error(`signup failed ${response.status}: ${await response.text()}`);
+  if (!response.ok) throw new Error(`sign-in failed ${response.status}: ${await response.text()}`);
   const cookies = response.headers.getSetCookie?.() ?? [];
   const cookie = cookies.length
     ? cookies.map((value) => value.split(";")[0]).join("; ")
     : response.headers.get("set-cookie")?.split(";")[0];
-  if (!cookie) throw new Error("signup response did not include a session cookie");
+  if (!cookie) throw new Error("sign-in response did not include a session cookie");
   return cookie;
 }
 
@@ -392,11 +418,17 @@ function removeManagedComputers(
   }
 }
 
-function command(commandName: string, args: string[], env: NodeJS.ProcessEnv, capture: boolean) {
+function command(
+  commandName: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  capture: boolean,
+  input?: string,
+) {
   const result = spawnSync(commandName, args, {
     env,
     encoding: "utf8",
-    stdio: capture ? "pipe" : "inherit",
+    ...(input === undefined ? { stdio: capture ? "pipe" : "inherit" } : { input }),
   });
   if (result.status !== 0) {
     const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();

@@ -2,10 +2,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ThreadSnapshot } from "@cortexai-agent-hub/contracts";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 
@@ -19,6 +20,7 @@ let botIntroHarness: BotIntroHarness | undefined;
 
 describeAttachments("chat attachments", () => {
   let app: App;
+  let prisma: PrismaClient;
   let stop: () => Promise<void>;
   const stamp = Date.now();
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-attachments-"));
@@ -36,6 +38,7 @@ describeAttachments("chat attachments", () => {
       agentRuntime: "scripted",
     });
     app = handles.app;
+    prisma = handles.prisma;
     stop = handles.stop;
     botIntroHarness = handles;
   });
@@ -45,8 +48,8 @@ describeAttachments("chat attachments", () => {
   });
 
   it("uploads, sends with image/file, and rejects invalid attachments", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `attachments-${stamp}@cortexai-agent-hub.test`,
       "Attachment User",
     );
@@ -141,8 +144,8 @@ describeAttachments("chat attachments", () => {
   });
 
   it("attaches a workspace file into the thread", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `attach-thread-${stamp}@cortexai-agent-hub.test`,
       "Attach Thread User",
     );
@@ -173,14 +176,9 @@ describeAttachments("chat attachments", () => {
   });
 });
 
-async function signup(app: App, email: string, name: string) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-    body: JSON.stringify({ email, password: "test-password-123", name }),
-  });
-  expect(response.status).toBeLessThan(400);
-  return sessionCookieHeader(response);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "test-password-123" });
 }
 
 async function rpc<T>(app: App, cookie: string, proc: string, body: unknown = {}): Promise<T> {

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test("setup exposes all integration choices and saves only the selected provider", async ({
   page,
@@ -24,7 +24,7 @@ test("setup exposes all integration choices and saves only the selected provider
     saved.push(route.request().postDataJSON());
     return route.fulfill({ json: { json: { ok: true } } });
   });
-  await signup(
+  await provisionAndSignIn(
     page,
     `integration-setup-${Date.now()}@cortexai-agent-hub.test`,
     "password12",
@@ -99,7 +99,7 @@ test("direct MCP connects a catalog result without asking for a URL and assigns 
     serverId = route.request().postDataJSON().json.serverId;
     return route.fulfill({ json: { json: { status: "already_connected" } } });
   });
-  await signup(
+  await provisionAndSignIn(
     page,
     `direct-mcp-setup-${Date.now()}@cortexai-agent-hub.test`,
     "password12",
@@ -149,7 +149,7 @@ test("Executor reconnect saves a replacement token before authorization", async 
       },
     }),
   );
-  await signup(
+  await provisionAndSignIn(
     page,
     `executor-reconnect-${Date.now()}@cortexai-agent-hub.test`,
     "password12",
@@ -220,7 +220,7 @@ test("remote members skip server setup and keep direct MCP connections", async (
       },
     }),
   );
-  await signup(
+  await provisionAndSignIn(
     page,
     `remote-member-${Date.now()}@cortexai-agent-hub.test`,
     "password12",
@@ -263,7 +263,7 @@ test("configured server owners manage providers from settings", async ({ page },
       },
     }),
   );
-  await signup(
+  await provisionAndSignIn(
     page,
     `configured-owner-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

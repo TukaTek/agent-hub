@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, signup } from "./helpers";
+import { captureScreenshot, provisionAndSignIn } from "./helpers";
 
 test("onboarding skips model connect when a default model is already available", async ({
   page,
@@ -28,7 +28,7 @@ test("onboarding skips model connect when a default model is already available",
 
   const createRequest = page.waitForRequest("**/rpc/bots/create");
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `model-auto-skip-${stamp}@cortexai-agent-hub.test`,
     "password12",

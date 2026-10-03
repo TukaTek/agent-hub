@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test("teach a task records interaction and saves a draft", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `teach-${stamp}@cortexai-agent-hub.test`, "password12", "Teach");
+  await provisionAndSignIn(page, `teach-${stamp}@cortexai-agent-hub.test`, "password12", "Teach");
   await completeOnboarding(page);
 
   await page.getByTitle("Agent computer").click();

@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "./client.js";
 
+/**
+ * Legacy signup inputs. Since CAAH-43 they are accepted for call compatibility
+ * and ignored: no environment value or stored row can reopen signup.
+ */
 export interface SignupPolicyEnv {
-  signupsEnabled: string | undefined;
-  signupAllowlist: string | undefined;
+  signupsEnabled?: string | undefined;
+  signupAllowlist?: string | undefined;
 }
 
 function newId(): string {
@@ -19,21 +22,20 @@ function isUniqueViolation(error: unknown): boolean {
 /**
  * Everything a brand-new user needs around their account row: a personal
  * organization, its default space, owner memberships for both boundaries,
- * deployment-owner claim, user memory, and notification preferences. Shared by
- * the Better Auth `session.create.before` hook and phone-identity provisioning so
- * both paths stay in lockstep.
+ * user memory, and notification preferences. Shared by the Better Auth
+ * `session.create.before` hook and phone-identity provisioning.
  *
- * `claimDeploymentOwner: false` is for identities that did not sign up
- * through the app (phone provisioning): a first texter must never become
- * the deployment owner.
+ * It never claims the deployment owner (CAAH-43): the seat is set only by an
+ * explicit operator command (provision-owner, transfer-owner). The legacy
+ * `claimDeploymentOwner: false` option is still accepted so existing callers
+ * (Hub sign-in, messaging) keep their call shape.
  */
 export async function bootstrapUserSpace(
   prisma: PrismaClient,
   user: { id: string },
-  env: SignupPolicyEnv,
-  options: { claimDeploymentOwner?: boolean } = {},
+  _env: SignupPolicyEnv,
+  _options: { claimDeploymentOwner?: false } = {},
 ): Promise<{ spaceId: string }> {
-  const claimDeploymentOwner = options.claimDeploymentOwner ?? true;
   // Concurrent bootstraps for the same user (e.g. overlapping first phone
   // inbounds) race on every unique key below; each step either wins or
   // joins the winner's state instead of failing.
@@ -90,25 +92,18 @@ export async function bootstrapUserSpace(
     .catch((error: unknown) => {
       if (!isUniqueViolation(error)) throw error;
     });
-  const policy = signupPolicyFromEnv(env);
+  // A fresh row records signup closed; the columns are legacy and never read.
   await prisma.deploymentSettings.upsert({
     where: { id: "default" },
     create: {
       id: "default",
-      ownerUserId: claimDeploymentOwner ? user.id : null,
-      signupsEnabled: policy.enabled,
-      signupAllowlist: policy.allowlist.join(","),
+      ownerUserId: null,
+      signupsEnabled: false,
+      signupAllowlist: "",
       signupPolicyInitialized: true,
     },
     update: {},
   });
-  if (claimDeploymentOwner) {
-    // Conditional claim: only the first concurrent claimant wins the seat.
-    await prisma.deploymentSettings.updateMany({
-      where: { id: "default", ownerUserId: null },
-      data: { ownerUserId: user.id },
-    });
-  }
   const hasMemory = await prisma.memoryDocument.findFirst({
     where: { spaceId: orgId, userId: user.id, scope: "user", path: "MEMORY.md" },
   });

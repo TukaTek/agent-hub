@@ -1,9 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("shows peer chips in transcript and opens view-only peer chat", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `peer-msg-${stamp}@cortexai-agent-hub.test`, "password12", "Peer Msg");
+  await provisionAndSignIn(
+    page,
+    `peer-msg-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Peer Msg",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

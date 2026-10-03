@@ -1,6 +1,12 @@
 import type { Bot, Routine } from "@cortexai-agent-hub/contracts";
 import { expect, type Page, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 async function addScheduleTrigger(page: Page, freq: string) {
   await page.getByRole("button", { name: "Add trigger" }).click();
@@ -20,7 +26,7 @@ async function saveAndReturn(page: Page, procedure: "routines/create" | "routine
 
 test("routine active switch keeps its thumb inside the track", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `routine-toggle-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -69,7 +75,12 @@ test("routine editing updates in place, preserves timezone, and deletion persist
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `routine-crud-${stamp}@cortexai-agent-hub.test`, "password12", "Routine CRUD");
+  await provisionAndSignIn(
+    page,
+    `routine-crud-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Routine CRUD",
+  );
   await completeOnboarding(page);
   const botId = activeBotId(page);
 
@@ -135,7 +146,7 @@ test("routine editing updates in place, preserves timezone, and deletion persist
 
 test("invalid advanced cron is rejected without creating a routine", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `routine-invalid-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -161,7 +172,7 @@ test("a successful routine create is not reported as failed when refresh fails",
   page,
 }) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `routine-refresh-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -204,7 +215,7 @@ test("switching bots while a routine save is pending does not reopen stale state
   page,
 }) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `routine-switch-${stamp}@cortexai-agent-hub.test`,
     "password12",

@@ -30,7 +30,6 @@ import {
   shouldApplyMobileThreadRefresh,
   signIn,
   signOut,
-  signUp,
   subscribeThread,
 } from "./api.js";
 import { resumeLiveNotifications } from "./live-notifications.js";
@@ -104,28 +103,9 @@ describe("mobile API authentication", () => {
     );
   });
 
-  it("creates an account and persists its session token", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({ token: "signup-token" }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await signUp("new@example.com", "correct horse", "New User");
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:3100/api/auth/sign-up/email",
-      expect.objectContaining({
-        method: "POST",
-        headers: { "content-type": "application/json", origin: "cortexai-agent-hub://" },
-        body: JSON.stringify({
-          email: "new@example.com",
-          password: "correct horse",
-          name: "New User",
-        }),
-      }),
-    );
-    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
-      "cortexai-agent-hub.session_token",
-      "signup-token",
-    );
+  it("offers no signup call: accounts are operator-provisioned (CAAH-43)", async () => {
+    const api = await import("./api");
+    expect("signUp" in api).toBe(false);
   });
 
   it("loads password recovery capability and requests a server-approved redirect", async () => {

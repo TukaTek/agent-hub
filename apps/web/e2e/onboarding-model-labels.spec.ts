@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, signup } from "./helpers";
+import { captureScreenshot, provisionAndSignIn } from "./helpers";
 
 test("onboarding uses compact model selects without misleading latest labels", async ({
   page,
@@ -21,7 +21,7 @@ test("onboarding uses compact model selects without misleading latest labels", a
   });
 
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `model-labels-${stamp}@cortexai-agent-hub.test`,
     "password12",

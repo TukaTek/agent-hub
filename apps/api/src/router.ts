@@ -140,7 +140,6 @@ import {
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
   withHubModelDefaults,
-  withHubSignupPolicy,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
@@ -951,20 +950,15 @@ export function createRouter(deps: RouterDeps) {
         }
         await deps.prisma.deploymentSettings.upsert({
           where: { id: "default" },
+          // ownerUserId is never written here: only operator commands set it.
           create: {
             id: "default",
-            ownerUserId: context.actor.userId,
-            signupsEnabled: input.signupsEnabled ?? true,
-            signupAllowlist: (input.signupAllowlist ?? []).join(","),
+            signupsEnabled: false,
+            signupAllowlist: "",
             signupPolicyInitialized: true,
             computerHost: input.computerHost ?? undefined,
           },
           update: {
-            ...(input.signupsEnabled === undefined ? {} : { signupsEnabled: input.signupsEnabled }),
-            ...(input.signupAllowlist ? { signupAllowlist: input.signupAllowlist.join(",") } : {}),
-            ...(input.signupsEnabled === undefined && input.signupAllowlist === undefined
-              ? {}
-              : { signupPolicyInitialized: true }),
             ...(input.computerHost === undefined ? {} : { computerHost: input.computerHost }),
           },
         });
@@ -6020,14 +6014,11 @@ async function deploymentDto(prisma: PrismaClient, sandboxProvider: string) {
   const settings = withHubModelDefaults(
     await prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
   );
-  const signup = withHubSignupPolicy({
-    enabled: settings?.signupsEnabled ?? true,
-    allowlist: settings?.signupAllowlist ? settings.signupAllowlist.split(",").filter(Boolean) : [],
-  });
   return {
     ownerUserId: settings?.ownerUserId ?? null,
-    signupsEnabled: signup.enabled,
-    signupAllowlist: signup.allowlist,
+    // CAAH-43: legacy signup columns, env and Hub signup settings are never read; signup stays closed.
+    signupsEnabled: false as const,
+    signupAllowlist: [],
     hasDeploymentModelCredential: Boolean(settings?.deploymentModelCredentialCipher),
     defaultProvider: settings?.defaultModelProvider ?? null,
     defaultModel: settings?.defaultModelId ?? null,

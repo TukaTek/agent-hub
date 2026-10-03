@@ -1,11 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("renders masked secret card and saves without putting the value in chat", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `secret-card-${stamp}@cortexai-agent-hub.test`, "password12", "Secret Card");
+  await provisionAndSignIn(
+    page,
+    `secret-card-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Secret Card",
+  );
   await completeOnboarding(page);
 
   const botId = activeBotId(page);

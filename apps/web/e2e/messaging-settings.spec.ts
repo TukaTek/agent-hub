@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test.afterEach(async ({ page }) => {
   // Polling can leave a route.fetch response in use when the assertions finish.
@@ -81,7 +81,12 @@ test("Korean messaging settings show linked chat apps, channels, and connections
 
   const stamp = Date.now();
   const userName = `Messenger ${stamp}`;
-  await signup(page, `messaging-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(
+    page,
+    `messaging-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    userName,
+  );
   await completeOnboarding(page);
 
   await page.getByRole("button", { name: new RegExp(userName) }).click();
@@ -201,7 +206,12 @@ test("team conversation settings open from messaging overlay", async ({ page }, 
 
   const stamp = Date.now();
   const userName = `TeamChat ${stamp}`;
-  await signup(page, `team-chat-${stamp}@cortexai-agent-hub.test`, "password12", userName);
+  await provisionAndSignIn(
+    page,
+    `team-chat-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    userName,
+  );
   await completeOnboarding(page);
 
   await page.getByRole("button", { name: new RegExp(userName) }).click();

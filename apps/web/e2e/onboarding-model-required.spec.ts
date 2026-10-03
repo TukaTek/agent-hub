@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, signup } from "./helpers";
+import { captureScreenshot, provisionAndSignIn } from "./helpers";
 
 test("onboarding requires a model when the deployment has none", async ({ page }, testInfo) => {
   await page.route("**/rpc/me", async (route) => {
@@ -19,7 +19,7 @@ test("onboarding requires a model when the deployment has none", async ({ page }
   });
 
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `model-required-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -51,7 +51,7 @@ for (const unavailable of ["empty", "failed"] as const) {
       unavailable === "failed" ? route.abort() : route.fulfill({ json: { json: [] } }),
     );
     const stamp = Date.now();
-    await signup(
+    await provisionAndSignIn(
       page,
       `catalog-${unavailable}-${stamp}@cortexai-agent-hub.test`,
       "password12",

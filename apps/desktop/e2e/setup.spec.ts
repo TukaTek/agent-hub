@@ -292,12 +292,11 @@ for (const { name, surface } of [
   },
   {
     name: "logged-out welcome",
-    surface: '<div data-cortexai-agent-hub-surface="welcome"><button>Sign up</button></div>',
+    surface: '<div data-cortexai-agent-hub-surface="welcome"><button>Sign in</button></div>',
   },
   {
     name: "translated logged-out welcome",
-    surface:
-      '<div data-cortexai-agent-hub-surface="welcome"><button>Créer un compte</button></div>',
+    surface: '<div data-cortexai-agent-hub-surface="welcome"><button>Se connecter</button></div>',
   },
 ]) {
   test(`a post-session ${name} mount is accepted`, async () => {

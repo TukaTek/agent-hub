@@ -1,5 +1,11 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 /**
  * Build a real browser Selection over `startNeedle` … `endNeedle` inside `scope`
@@ -61,7 +67,12 @@ async function selectAndRelease(
 
 test("selecting a text span quotes it into a reply", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `quote-${stamp}@cortexai-agent-hub.test`, "password12", "Quote Tester");
+  await provisionAndSignIn(
+    page,
+    `quote-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Quote Tester",
+  );
   await completeOnboarding(page);
 
   const transcript = page.getByTestId("transcript");
@@ -149,7 +160,7 @@ test("selecting a text span quotes it into a reply", async ({ page }, testInfo) 
 
 test("rendered markdown selections survive server quote derivation", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `quote-markdown-${stamp}@cortexai-agent-hub.test`,
     "password12",
@@ -228,7 +239,12 @@ test("rendered markdown selections survive server quote derivation", async ({ pa
 
 test("selecting text inside a table cell quotes the rendered cell", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `quote-cell-${stamp}@cortexai-agent-hub.test`, "password12", "Quote Tester");
+  await provisionAndSignIn(
+    page,
+    `quote-cell-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Quote Tester",
+  );
   await completeOnboarding(page);
 
   const transcript = page.getByTestId("transcript");
@@ -278,7 +294,12 @@ test("selecting text inside a table cell quotes the rendered cell", async ({ pag
 
 test("an armed reply survives the parent paging out of the transcript", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `quote-evict-${stamp}@cortexai-agent-hub.test`, "password12", "Quote Tester");
+  await provisionAndSignIn(
+    page,
+    `quote-evict-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Quote Tester",
+  );
   await completeOnboarding(page);
 
   const transcript = page.getByTestId("transcript");
@@ -357,7 +378,12 @@ test("an armed reply survives the parent paging out of the transcript", async ({
 
 test("a selection spanning two messages offers no quote action", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `quote-span-${stamp}@cortexai-agent-hub.test`, "password12", "Quote Tester");
+  await provisionAndSignIn(
+    page,
+    `quote-span-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Quote Tester",
+  );
   await completeOnboarding(page);
 
   const transcript = page.getByTestId("transcript");
@@ -386,7 +412,12 @@ test("a selection spanning two messages offers no quote action", async ({ page }
 
 test("quoting a second message retargets the armed reply", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `quote-switch-${stamp}@cortexai-agent-hub.test`, "password12", "Quote Tester");
+  await provisionAndSignIn(
+    page,
+    `quote-switch-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Quote Tester",
+  );
   await completeOnboarding(page);
 
   const transcript = page.getByTestId("transcript");

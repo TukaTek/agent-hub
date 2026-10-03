@@ -3,7 +3,6 @@ import {
   hubManagedDeploymentSettings,
   setHubManagedDeploymentSettings,
   withHubModelDefaults,
-  withHubSignupPolicy,
 } from "./hub-managed-deployment.js";
 
 const row = {
@@ -49,20 +48,8 @@ describe("Hub-managed deployment settings", () => {
     });
   });
 
-  it("applies Hub's signup policy over the persisted one", () => {
-    expect(withHubSignupPolicy({ enabled: true, allowlist: ["local.test"] })).toEqual({
-      enabled: true,
-      allowlist: ["local.test"],
-    });
-    setHubManagedDeploymentSettings({ signupsEnabled: false, signupAllowlist: "hub.test,b.test" });
-    expect(withHubSignupPolicy({ enabled: true, allowlist: ["local.test"] })).toEqual({
-      enabled: false,
-      allowlist: ["hub.test", "b.test"],
-    });
-  });
-
   it("is frozen so callers cannot widen it in place", () => {
-    setHubManagedDeploymentSettings({ signupsEnabled: false });
+    setHubManagedDeploymentSettings({ defaultModelProvider: "anthropic" });
     expect(Object.isFrozen(hubManagedDeploymentSettings())).toBe(true);
   });
 });

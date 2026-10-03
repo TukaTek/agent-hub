@@ -1,11 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test("approval input resumes durable work", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `approval-${stamp}@cortexai-agent-hub.test`, "password12", "Approval");
+  await provisionAndSignIn(
+    page,
+    `approval-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Approval",
+  );
   await completeOnboarding(page);
 
   const composer = page.getByPlaceholder(/Message/);

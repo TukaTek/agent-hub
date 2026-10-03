@@ -44,6 +44,8 @@ export const DE_MESSAGES: Record<string, string> = {
   "Custom server": "Eigener Server",
   "Custom server {host}": "Eigener Server {host}",
   "Don’t have an account?": "Du hast noch kein Konto?",
+  "Ask the person who runs this server to create one.":
+    "Bitte die Person, die diesen Server betreibt, dir eines anzulegen.",
   Email: "E-Mail",
   "Enter your CortexAI Agent Hub server address.":
     "Gib die Adresse deines CortexAI Agent Hub-Servers ein.",
@@ -56,8 +58,6 @@ export const DE_MESSAGES: Record<string, string> = {
   "Send reset link": "Link zum Zurücksetzen senden",
   Server: "Server",
   "Sign in to CortexAI Agent Hub": "Bei CortexAI Agent Hub anmelden",
-  "Sign up": "Registrieren",
-  "Sign up for CortexAI Agent Hub": "Bei CortexAI Agent Hub registrieren",
   "Use a custom server": "Eigenen Server verwenden",
   "Use default server": "Standardserver verwenden",
   // app/index.tsx

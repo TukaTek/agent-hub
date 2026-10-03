@@ -74,8 +74,6 @@ async function main() {
     process.env.WEB_PORT = String(webPort);
     process.env.PLAYWRIGHT_BASE_URL = webOrigin;
     process.env.DATA_DIR = path.join(reportDir, "data");
-    process.env.SIGNUPS_ENABLED = "true";
-    process.env.SIGNUP_ALLOWLIST = "";
     process.env.CI = "1";
 
     execSync("pnpm --filter @cortexai-agent-hub/db generate", {
@@ -113,6 +111,9 @@ async function main() {
         "packages/adapters/src/realtime.postgres.test.ts",
         "packages/adapters/src/job-reconciler.postgres.test.ts",
         "packages/adapters/src/cloud-agent.postgres.test.ts",
+        // CAAH-43: signup lockdown and operator provisioning against real PostgreSQL.
+        "packages/auth/src/signup-lockdown.postgres.test.ts",
+        "apps/api/src/cli/provision.postgres.test.ts",
       ];
       // Each app reconciles all durable work in its database, including intentionally
       // unfinished fixture runs. Clone the pristine migrated schema so one suite
@@ -197,6 +198,12 @@ async function main() {
       fetch: async (request) => {
         if (new URL(request.url).pathname === "/__e2e/emails") {
           return Response.json(email.sent, { headers: { "cache-control": "no-store" } });
+        }
+        // CAAH-43: signup is closed, so browser specs get accounts the way an
+        // operator creates them. This route lives on this loopback-only harness
+        // server, never in the product app.
+        if (new URL(request.url).pathname === "/__e2e/accounts" && request.method === "POST") {
+          return provisionE2eAccount(handles.prisma, request);
         }
         activeRequests += 1;
         try {
@@ -298,6 +305,37 @@ async function main() {
 }
 
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
+
+async function provisionE2eAccount(prisma: AppHandles["prisma"], request: Request) {
+  const { provisionFixtureAccount } = await import("../fixture-accounts.js");
+  const body = (await request.json().catch(() => null)) as {
+    email?: unknown;
+    name?: unknown;
+    password?: unknown;
+    owner?: unknown;
+  } | null;
+  if (
+    typeof body?.email !== "string" ||
+    typeof body.name !== "string" ||
+    typeof body.password !== "string"
+  ) {
+    return Response.json({ error: "email, name and password are required" }, { status: 400 });
+  }
+  try {
+    const account = await provisionFixtureAccount(prisma, {
+      email: body.email,
+      name: body.name,
+      password: body.password,
+      owner: typeof body.owner === "boolean" ? body.owner : "first",
+    });
+    return Response.json(account, { status: 201, headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "provisioning failed" },
+      { status: 409 },
+    );
+  }
+}
 
 async function managedComputers(handles: AppHandles) {
   if (!["e2b", "daytona", "box"].includes(sandboxProvider)) return [];

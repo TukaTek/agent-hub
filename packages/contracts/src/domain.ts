@@ -1107,8 +1107,10 @@ export type VoiceStatus = z.infer<typeof VoiceStatusSchema>;
 
 export const DeploymentSettingsSchema = z.object({
   ownerUserId: Id.nullable(),
-  signupsEnabled: z.boolean(),
-  signupAllowlist: z.array(z.string()),
+  /** Always false: self-service signup is closed (CAAH-43). Kept for wire compatibility. */
+  signupsEnabled: z.literal(false),
+  /** Always empty: a legacy stored allowlist admits no one (CAAH-43). */
+  signupAllowlist: z.array(z.string()).length(0),
   hasDeploymentModelCredential: z.boolean(),
   defaultProvider: z.string().nullable(),
   defaultModel: z.string().nullable(),

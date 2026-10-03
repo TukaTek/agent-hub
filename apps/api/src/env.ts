@@ -26,8 +26,6 @@ export interface AppEnv {
   privacyPolicyUrl?: string;
   apiUrl: string;
   apiHost: string;
-  signupsEnabled: string | undefined;
-  signupAllowlist: string | undefined;
   encryptionKey: string;
   dataDir: string;
   /** Opt-in Pi JSONL session recording under DATA_DIR/pi-sessions. Default off. */
@@ -126,8 +124,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     privacyPolicyUrl: optional(source.PRIVACY_POLICY_URL),
     apiUrl: source.API_URL ?? "http://127.0.0.1:3100",
     apiHost: source.API_HOST ?? "127.0.0.1",
-    signupsEnabled: source.SIGNUPS_ENABLED,
-    signupAllowlist: source.SIGNUP_ALLOWLIST,
     encryptionKey: resolveEncryptionKey(source),
     dataDir: source.DATA_DIR ?? "./data",
     piSessionRecording: source.PI_SESSION_RECORDING === "true",

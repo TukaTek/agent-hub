@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, completeOnboarding, rpc, signup } from "./helpers";
+import { activeBotId, completeOnboarding, provisionAndSignIn, rpc } from "./helpers";
 
 test("a ?m= deep link jumps while the thread is streaming", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `jump-${stamp}@cortexai-agent-hub.test`, "password12", "Jump Tester");
+  await provisionAndSignIn(
+    page,
+    `jump-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Jump Tester",
+  );
   await completeOnboarding(page);
 
   const botId = activeBotId(page);

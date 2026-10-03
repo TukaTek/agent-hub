@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/agent-hub-service-config.v1.json" with { type: "json" };
-import { parseHubPolicy } from "./hub-policy-contract.js";
+import hubSample from "./fixtures/hub-agent-hub-service-config.v1.sample.json" with {
+  type: "json",
+};
+import { HUB_MANAGED_SETTINGS, parseHubPolicy } from "./hub-policy-contract.js";
 import { hubDeploymentSettings, overlayHubEnv } from "./hub-policy-overlay.js";
 
 const configured = parseHubPolicy(fixture.cases.configured, "tenant-a");
@@ -24,7 +27,6 @@ describe("Hub precedence over local environment and deployment settings", () => 
     ["toolkit and tools", "MCP_STDIO_ALLOWED_COMMANDS", "npx,uvx", ""],
     ["features", "CORTEXAI_AGENT_HUB_AUTO_REVIEW", "false", "true"],
     ["features", "MESSAGING_OPEN_SIGNUP", "true", "false"],
-    ["features", "SIGNUPS_ENABLED", "true", "false"],
     ["features", "SANDBOX_IDLE_MS", "600000", "120000"],
     ["connections", "E2B_API_KEY", "local-computer-secret", "hub-computer-secret-not-real"],
   ])("%s: Hub replaces a conflicting %s", (_category, name, local, hub) => {
@@ -52,7 +54,6 @@ describe("Hub precedence over local environment and deployment settings", () => 
   it("supplies a Hub value with no local input without reporting an override", () => {
     const { env, signals } = overlayHubEnv({}, configured);
     expect(env.PI_DEFAULT_PROVIDER).toBe("anthropic");
-    expect(env.SIGNUP_ALLOWLIST).toBe("example.test");
     expect(signals).toEqual([]);
   });
 
@@ -131,14 +132,10 @@ describe("Hub precedence over persisted deployment settings", () => {
     expect(managed).toEqual({
       defaultModelProvider: "anthropic",
       defaultModelId: "claude-sonnet-5",
-      signupsEnabled: false,
-      signupAllowlist: "example.test",
     });
     expect(signals.map((signal) => signal.overriddenSource).sort()).toEqual([
       "deployment_settings.defaultModelId",
       "deployment_settings.defaultModelProvider",
-      "deployment_settings.signupAllowlist",
-      "deployment_settings.signupsEnabled",
     ]);
   });
 
@@ -153,5 +150,42 @@ describe("Hub precedence over persisted deployment settings", () => {
   it("manages nothing for an empty snapshot", () => {
     const empty = parseHubPolicy(fixture.cases.empty, "tenant-a");
     expect(hubDeploymentSettings(empty, row)).toEqual({ managed: {}, signals: [] });
+  });
+});
+
+describe("Hub's signup settings are accepted but inert (CAAH-43)", () => {
+  // Hub's published sample still sends signup.enabled=true and an allowlist.
+  const sample = parseHubPolicy(structuredClone(hubSample), hubSample.tenantId);
+  const signupPaths = ["signup.enabled", "signup.allowlist"];
+
+  it("still parses Hub's signup values, so Hub documents stay valid", () => {
+    expect(hubSample.overrides.signup.enabled).toBe(true);
+    expect(hubSample.overrides.signup.allowlist.length).toBeGreaterThan(0);
+    expect(sample.overrides["signup.enabled"]).toBe(true);
+    expect(sample.overrides["signup.allowlist"]).toEqual(hubSample.overrides.signup.allowlist);
+  });
+
+  it("maps them to no environment input and no deployment field", () => {
+    for (const path of signupPaths) {
+      const setting = HUB_MANAGED_SETTINGS.find((entry) => entry.path === path);
+      expect(setting, path).toMatchObject({ inert: true, env: [] });
+      expect(setting?.deploymentField, path).toBeUndefined();
+    }
+  });
+
+  it("never writes SIGNUPS_ENABLED or SIGNUP_ALLOWLIST and reports no signup override", () => {
+    const { env, signals } = overlayHubEnv({}, sample);
+    expect(env).not.toHaveProperty("SIGNUPS_ENABLED");
+    expect(env).not.toHaveProperty("SIGNUP_ALLOWLIST");
+    expect(signals.filter((signal) => signupPaths.includes(signal.key))).toEqual([]);
+  });
+
+  it("puts no signup value in the Hub-managed deployment settings", () => {
+    // A stored row still has the legacy signup columns.
+    const legacyRow = { defaultModelProvider: null, signupsEnabled: false, signupAllowlist: "" };
+    const { managed, signals } = hubDeploymentSettings(sample, legacyRow);
+    expect(managed).not.toHaveProperty("signupsEnabled");
+    expect(managed).not.toHaveProperty("signupAllowlist");
+    expect(signals.filter((signal) => signupPaths.includes(signal.key))).toEqual([]);
   });
 });

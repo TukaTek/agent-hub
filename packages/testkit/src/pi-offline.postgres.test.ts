@@ -5,7 +5,7 @@ import path from "node:path";
 import { ComposioEmulator } from "@cortexai-agent-hub/adapters";
 import { describe, expect, it } from "vitest";
 import { discardBotIntroRun } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 import { startModelEmulator } from "./model-emulator.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
@@ -72,22 +72,16 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         sandboxProvider: "fake",
         agentRuntime: "pi",
         wakeupDriver: "memory",
-        signupsEnabled: "true",
         composio: new ComposioEmulator(),
         encryptionKey: "offline-model-fixture-encryption-key",
       });
       stop = handles.stop;
-      const signup = await handles.app.request("/api/auth/sign-up/email", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: fixtureOrigin },
-        body: JSON.stringify({
-          email: `offline-pi-${randomUUID()}@cortexai-agent-hub.test`,
-          password: "password12",
-          name: "Offline fixture",
-        }),
-      });
-      expect(signup.status).toBeLessThan(400);
-      const cookie = sessionCookieHeader(signup);
+      // Signup is closed (CAAH-43): provision the user directly, then sign in.
+      const cookie = await provisionAndSignIn(
+        handles,
+        { email: `offline-pi-${randomUUID()}@cortexai-agent-hub.test`, name: "Offline fixture" },
+        fixtureOrigin,
+      );
       await rpc(handles.app, cookie, "models/connect", {
         provider: model.model.provider,
         modelId: model.model.id,

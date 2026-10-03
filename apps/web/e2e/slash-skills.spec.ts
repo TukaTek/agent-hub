@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn, rpc } from "./helpers";
 
 test("composer / picker lists skills above actions", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `slash-skills-${stamp}@cortexai-agent-hub.test`, "password12", "Slash Skills");
+  await provisionAndSignIn(
+    page,
+    `slash-skills-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Slash Skills",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

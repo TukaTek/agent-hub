@@ -82,10 +82,7 @@ function SessionApp() {
               user ? <Navigate to={signInDestination} replace /> : <AuthPage key="in" mode="in" />
             }
           />
-          <Route
-            path="/sign-up"
-            element={user ? <Navigate to="/onboarding" replace /> : <AuthPage key="up" mode="up" />}
-          />
+          <Route path="/sign-up" element={<Navigate to="/sign-in" replace />} />
           <Route
             path="/forgot-password"
             element={

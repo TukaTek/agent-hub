@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bots can update their profile pictures and completion notification preference when asked.
 - Optional CortexAI Hub sign-in across web, desktop, and mobile, using tenant discovery and live product-access checks.
 
+### Changed
+
+- Self-service signup is removed. Operators create accounts and the owner with the `provision-owner`, `provision-user`, and `transfer-owner` commands (password via stdin or `--secret-file`); `SIGNUPS_ENABLED` and `SIGNUP_ALLOWLIST` are no longer read, and stored signup settings cannot reopen signup.
+
 ### Fixed
 
 - Improved computer startup, stopped-container recovery, mobile streaming, and touch clipboard paste.

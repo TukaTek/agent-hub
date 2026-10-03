@@ -11,6 +11,7 @@ import {
   toComputerRef,
 } from "@cortexai-agent-hub/adapters";
 import { ACTIVE_RUN_STATUSES, ONCE_ROUTINE_CRON } from "@cortexai-agent-hub/core";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   appendEvent,
   createThreadEvents,
@@ -21,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 process.env.WAKEUP_DRIVER = "memory";
@@ -135,9 +136,13 @@ describeJourneys("required product journeys", () => {
   });
 
   it("computer updates preserve the workspace and reserve the shared computer until completion", async () => {
-    const cookie = await signup(app, `maintenance-${stamp}@cortexai-agent-hub.test`, "Maintenance");
-    const outsider = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
+      `maintenance-${stamp}@cortexai-agent-hub.test`,
+      "Maintenance",
+    );
+    const outsider = await signInAs(
+      { app, prisma },
       `maintenance-other-${stamp}@cortexai-agent-hub.test`,
       "Other workspace",
     );
@@ -236,8 +241,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("updating a computer the user has taken over hands control back first", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `maintenance-control-${stamp}@cortexai-agent-hub.test`,
       "Maintenance",
     );
@@ -270,8 +275,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("recovering a computer the user has taken over hands control back first", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `maintenance-recover-${stamp}@cortexai-agent-hub.test`,
       "Maintenance",
     );
@@ -303,8 +308,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("resetting a computer the user has taken over hands control back first", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `maintenance-reset-${stamp}@cortexai-agent-hub.test`,
       "Maintenance",
     );
@@ -331,8 +336,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("maintenance leaves a run waiting on control", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `maintenance-waiting-${stamp}@cortexai-agent-hub.test`,
       "Maintenance",
     );
@@ -385,8 +390,16 @@ describeJourneys("required product journeys", () => {
   });
 
   it("1+2: users are isolated and workspace bots share the Team Computer", async () => {
-    const ada = await signup(app, `ada-j-${stamp}@cortexai-agent-hub.test`, "Ada Journey");
-    const bob = await signup(app, `bob-j-${stamp}@cortexai-agent-hub.test`, "Bob Journey");
+    const ada = await signInAs(
+      { app, prisma },
+      `ada-j-${stamp}@cortexai-agent-hub.test`,
+      "Ada Journey",
+    );
+    const bob = await signInAs(
+      { app, prisma },
+      `bob-j-${stamp}@cortexai-agent-hub.test`,
+      "Bob Journey",
+    );
 
     const adaMe = await rpc<Me>(app, ada, "me");
     const bobMe = await rpc<Me>(app, bob, "me");
@@ -553,7 +566,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("clears a conversation without removing the bot, computer, memory, or routines", async () => {
-    const cookie = await signup(app, `clear-j-${stamp}@cortexai-agent-hub.test`, "Clear Journey");
+    const cookie = await signInAs(
+      { app, prisma },
+      `clear-j-${stamp}@cortexai-agent-hub.test`,
+      "Clear Journey",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Keeper",
       title: "Keeps its setup",
@@ -687,7 +704,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("2b: two Team bots send at once on distinct screens", async () => {
-    const cookie = await signup(app, `parallel-j-${stamp}@cortexai-agent-hub.test`, "Parallel");
+    const cookie = await signInAs(
+      { app, prisma },
+      `parallel-j-${stamp}@cortexai-agent-hub.test`,
+      "Parallel",
+    );
     const writer = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Writer",
       title: "",
@@ -734,7 +755,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("3: disconnect and reconnect from a cursor reconstructs the thread", async () => {
-    const cookie = await signup(app, `cursor-j-${stamp}@cortexai-agent-hub.test`, "Cursor");
+    const cookie = await signInAs(
+      { app, prisma },
+      `cursor-j-${stamp}@cortexai-agent-hub.test`,
+      "Cursor",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -758,7 +783,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("4: takeover login then resume without exposing credentials", async () => {
-    const cookie = await signup(app, `takeover-j-${stamp}@cortexai-agent-hub.test`, "Takeover");
+    const cookie = await signInAs(
+      { app, prisma },
+      `takeover-j-${stamp}@cortexai-agent-hub.test`,
+      "Takeover",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -801,8 +830,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("4d: skipping takeover resumes without treating login as done", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `takeover-skip-j-${stamp}@cortexai-agent-hub.test`,
       "Skip Takeover",
     );
@@ -849,8 +878,8 @@ describeJourneys("required product journeys", () => {
     const previousTakeoverTtl = process.env.COMPUTER_TAKEOVER_TTL_MS;
     process.env.COMPUTER_TAKEOVER_TTL_MS = "1000";
     try {
-      const cookie = await signup(
-        app,
+      const cookie = await signInAs(
+        { app, prisma },
         `takeover-expiry-j-${stamp}@cortexai-agent-hub.test`,
         "Expiry",
       );
@@ -937,8 +966,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("4c: a takeover authorizes input only on the controlled bot screen", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `takeover-scope-j-${stamp}@cortexai-agent-hub.test`,
       "Takeover Scope",
     );
@@ -972,8 +1001,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("4d: a stale Team release cannot clear a newer bot takeover", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `takeover-release-fence-j-${stamp}@cortexai-agent-hub.test`,
       "Release Fence",
     );
@@ -1123,8 +1152,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("4e: concurrent Team takeovers never return another bot's lease", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `takeover-owner-race-j-${stamp}@cortexai-agent-hub.test`,
       "Takeover Owner Race",
     );
@@ -1198,7 +1227,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("5: a routine wakes the bot and posts into the existing thread", async () => {
-    const cookie = await signup(app, `routine-j-${stamp}@cortexai-agent-hub.test`, "Routine");
+    const cookie = await signInAs(
+      { app, prisma },
+      `routine-j-${stamp}@cortexai-agent-hub.test`,
+      "Routine",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1281,8 +1314,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("5b: tool-created schedules wake in the creating group or 1:1 thread", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `schedule-dest-j-${stamp}@cortexai-agent-hub.test`,
       "Schedule Dest",
     );
@@ -1407,7 +1440,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("allocates event and message cursors atomically under concurrent writes", async () => {
-    const cookie = await signup(app, `sequence-j-${stamp}@cortexai-agent-hub.test`, "Sequence");
+    const cookie = await signInAs(
+      { app, prisma },
+      `sequence-j-${stamp}@cortexai-agent-hub.test`,
+      "Sequence",
+    );
     const actor = await rpc<Me>(app, cookie, "me");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Sequencer",
@@ -1476,7 +1513,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("7: destination write is independently inspectable and credentials stay out of the thread", async () => {
-    const cookie = await signup(app, `dest-j-${stamp}@cortexai-agent-hub.test`, "Dest");
+    const cookie = await signInAs(
+      { app, prisma },
+      `dest-j-${stamp}@cortexai-agent-hub.test`,
+      "Dest",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1502,7 +1543,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("8: retrying a completed effect does not duplicate the destination write", async () => {
-    const cookie = await signup(app, `crash-j-${stamp}@cortexai-agent-hub.test`, "Crash");
+    const cookie = await signInAs(
+      { app, prisma },
+      `crash-j-${stamp}@cortexai-agent-hub.test`,
+      "Crash",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1532,7 +1577,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("9: export includes memory and files but not secrets or browser sessions", async () => {
-    const cookie = await signup(app, `export-j-${stamp}@cortexai-agent-hub.test`, "Export");
+    const cookie = await signInAs(
+      { app, prisma },
+      `export-j-${stamp}@cortexai-agent-hub.test`,
+      "Export",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1564,8 +1613,16 @@ describeJourneys("required product journeys", () => {
   });
 
   it("10: bots can be archived safely and deleted with or without their memories", async () => {
-    const ada = await signup(app, `delete-j-${stamp}@cortexai-agent-hub.test`, "Delete Ada");
-    const bob = await signup(app, `delete-bob-j-${stamp}@cortexai-agent-hub.test`, "Delete Bob");
+    const ada = await signInAs(
+      { app, prisma },
+      `delete-j-${stamp}@cortexai-agent-hub.test`,
+      "Delete Ada",
+    );
+    const bob = await signInAs(
+      { app, prisma },
+      `delete-bob-j-${stamp}@cortexai-agent-hub.test`,
+      "Delete Bob",
+    );
     const keep = await rpc<Bot>(app, ada, "bots/create", {
       name: "Keep",
       title: "",
@@ -1677,7 +1734,7 @@ describeJourneys("required product journeys", () => {
 
   it("11: deleting an account removes the user and personal workspace data", async () => {
     const email = `account-delete-j-${stamp}@cortexai-agent-hub.test`;
-    const cookie = await signup(app, email, "Delete Account");
+    const cookie = await signInAs({ app, prisma }, email, "Delete Account");
     const me = await rpc<Me>(app, cookie, "me");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Temporary",
@@ -1705,7 +1762,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("12: a bot can spawn a regular bot and must confirm the name to delete it", async () => {
-    const cookie = await signup(app, `spawn-j-${stamp}@cortexai-agent-hub.test`, "Spawn");
+    const cookie = await signInAs(
+      { app, prisma },
+      `spawn-j-${stamp}@cortexai-agent-hub.test`,
+      "Spawn",
+    );
     const parent = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1759,7 +1820,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("12b: a bot can silence and resume its own finish notifications", async () => {
-    const cookie = await signup(app, `notify-finish-j-${stamp}@cortexai-agent-hub.test`, "Notify");
+    const cookie = await signInAs(
+      { app, prisma },
+      `notify-finish-j-${stamp}@cortexai-agent-hub.test`,
+      "Notify",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1782,7 +1847,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("13: a subagent shows up in the parent thread without creating a bot", async () => {
-    const cookie = await signup(app, `subagent-j-${stamp}@cortexai-agent-hub.test`, "Subagent");
+    const cookie = await signInAs(
+      { app, prisma },
+      `subagent-j-${stamp}@cortexai-agent-hub.test`,
+      "Subagent",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1807,7 +1876,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("14: this-mac is refused unless the sandbox is docker", async () => {
-    const cookie = await signup(app, `host-j-${stamp}@cortexai-agent-hub.test`, "Host");
+    const cookie = await signInAs(
+      { app, prisma },
+      `host-j-${stamp}@cortexai-agent-hub.test`,
+      "Host",
+    );
     const me = await rpc<Me>(app, cookie, "me");
     expect(me.canChooseHostComputer).toBe(false);
     await prisma.deploymentSettings.update({
@@ -1821,7 +1894,7 @@ describeJourneys("required product journeys", () => {
   });
 
   it("15: ask, answer, stop, follow-up, and clientNonce stay consistent", async () => {
-    const cookie = await signup(app, `ask-j-${stamp}@cortexai-agent-hub.test`, "Ask");
+    const cookie = await signInAs({ app, prisma }, `ask-j-${stamp}@cortexai-agent-hub.test`, "Ask");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1925,7 +1998,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("15b: a free-text chat message answers a waiting ask", async () => {
-    const cookie = await signup(app, `ask-freetext-j-${stamp}@cortexai-agent-hub.test`, "Ask Free");
+    const cookie = await signInAs(
+      { app, prisma },
+      `ask-freetext-j-${stamp}@cortexai-agent-hub.test`,
+      "Ask Free",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1976,8 +2053,16 @@ describeJourneys("required product journeys", () => {
   });
 
   it("16: routine test-run and plugin connect/revoke", async () => {
-    const ada = await signup(app, `plug-j-${stamp}@cortexai-agent-hub.test`, "Plug Ada");
-    const bob = await signup(app, `plug-bob-j-${stamp}@cortexai-agent-hub.test`, "Plug Bob");
+    const ada = await signInAs(
+      { app, prisma },
+      `plug-j-${stamp}@cortexai-agent-hub.test`,
+      "Plug Ada",
+    );
+    const bob = await signInAs(
+      { app, prisma },
+      `plug-bob-j-${stamp}@cortexai-agent-hub.test`,
+      "Plug Bob",
+    );
     const bot = await rpc<Bot>(app, ada, "bots/create", {
       name: "Chief",
       title: "",
@@ -2036,7 +2121,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("54: group chats share one transcript with mentions and handoffs", async () => {
-    const ada = await signup(app, `ada-g-${stamp}@cortexai-agent-hub.test`, "Ada Groups");
+    const ada = await signInAs(
+      { app, prisma },
+      `ada-g-${stamp}@cortexai-agent-hub.test`,
+      "Ada Groups",
+    );
     const adaMe = await rpc<Me>(app, ada, "me");
     const botA = await rpc<Bot>(app, ada, "bots/create", {
       name: "BotA",
@@ -2460,7 +2549,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("17: teach a task end to end", async () => {
-    const cookie = await signup(app, `teach-j-${stamp}@cortexai-agent-hub.test`, "Teach Ada");
+    const cookie = await signInAs(
+      { app, prisma },
+      `teach-j-${stamp}@cortexai-agent-hub.test`,
+      "Teach Ada",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Teacher",
       title: "",
@@ -2551,8 +2644,8 @@ describeJourneys("required product journeys", () => {
     const previousTtl = process.env.TEACH_RECORDING_TTL_MS;
     process.env.TEACH_RECORDING_TTL_MS = "1000";
     try {
-      const cookie = await signup(
-        app,
+      const cookie = await signInAs(
+        { app, prisma },
         `teach-exp-j-${stamp}@cortexai-agent-hub.test`,
         "Teach Exp Ada",
       );
@@ -2581,7 +2674,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("19: destination writes pause for approval before side effects", async () => {
-    const cookie = await signup(app, `approval-j-${stamp}@cortexai-agent-hub.test`, "Approval");
+    const cookie = await signInAs(
+      { app, prisma },
+      `approval-j-${stamp}@cortexai-agent-hub.test`,
+      "Approval",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -2649,7 +2746,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("20: actions run by default and specific exceptions override broad review rules", async () => {
-    const cookie = await signup(app, `always-j-${stamp}@cortexai-agent-hub.test`, "Always");
+    const cookie = await signInAs(
+      { app, prisma },
+      `always-j-${stamp}@cortexai-agent-hub.test`,
+      "Always",
+    );
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -2718,8 +2819,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("21: routine destination writes pause on the same approval card", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `routine-approval-j-${stamp}@cortexai-agent-hub.test`,
       "Routine Approval",
     );
@@ -2766,8 +2867,8 @@ describeJourneys("required product journeys", () => {
   });
 
   it("22: a routine schedule with any malformed or mixed one-shot cron is rejected", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `routine-crons-j-${stamp}@cortexai-agent-hub.test`,
       "Routine Crons",
     );
@@ -2801,7 +2902,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("23: never-run one-shot templates can be armed with a future runAt", async () => {
-    const cookie = await signup(app, `once-arm-j-${stamp}@cortexai-agent-hub.test`, "Once Arm");
+    const cookie = await signInAs(
+      { app, prisma },
+      `once-arm-j-${stamp}@cortexai-agent-hub.test`,
+      "Once Arm",
+    );
     const me = await rpc<Me>(app, cookie, "me");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Once Bot",
@@ -2885,7 +2990,11 @@ describeJourneys("required product journeys", () => {
   });
 
   it("24: chat creates a space only after explicit approval", async () => {
-    const cookie = await signup(app, `space-chat-j-${stamp}@cortexai-agent-hub.test`, "Space Chat");
+    const cookie = await signInAs(
+      { app, prisma },
+      `space-chat-j-${stamp}@cortexai-agent-hub.test`,
+      "Space Chat",
+    );
     const me = await rpc<Me>(app, cookie, "me");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
@@ -2976,19 +3085,9 @@ type Snap = {
   activeRuns?: Array<{ id: string; status: string }>;
 };
 
-async function signup(app: App, email: string, name: string) {
-  const res = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: "http://127.0.0.1:5173",
-    },
-    body: JSON.stringify({ email, password: "password12", name }),
-  });
-  if (res.status >= 400) {
-    throw new Error(`signup failed ${res.status}: ${await res.text()}`);
-  }
-  return sessionCookieHeader(res);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "password12" });
 }
 
 async function raw(app: App, cookie: string, proc: string, body: unknown = {}) {

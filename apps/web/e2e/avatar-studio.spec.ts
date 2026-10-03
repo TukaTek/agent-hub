@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test("bot settings open Avatar Studio on the Bot tab", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(
+  await provisionAndSignIn(
     page,
     `avatar-studio-${stamp}@cortexai-agent-hub.test`,
     "password12",

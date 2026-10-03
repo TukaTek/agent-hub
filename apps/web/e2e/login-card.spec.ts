@@ -1,11 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("saves a website login from a username and password card without echoing either", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `login-card-${stamp}@cortexai-agent-hub.test`, "password12", "Login Card");
+  await provisionAndSignIn(
+    page,
+    `login-card-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Login Card",
+  );
   await completeOnboarding(page);
 
   const botId = activeBotId(page);

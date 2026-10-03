@@ -1,11 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openNewSpace, rpc, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openNewSpace,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 test("spaces stay invisible by default and chat creation requires approval", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `spaces-${stamp}@cortexai-agent-hub.test`, "password12", "Space Owner");
+  await provisionAndSignIn(
+    page,
+    `spaces-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Space Owner",
+  );
   await completeOnboarding(page);
 
   const sidebar = page.locator("aside").first();
@@ -74,7 +85,12 @@ test("a new space auto-completes onboarding and can be deleted from its menu", a
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `spaces-delete-${stamp}@cortexai-agent-hub.test`, "password12", "Space Owner");
+  await provisionAndSignIn(
+    page,
+    `spaces-delete-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Space Owner",
+  );
   await completeOnboarding(page);
 
   const sidebar = page.locator("aside").first();
@@ -126,7 +142,12 @@ test("a new space auto-completes onboarding and can be deleted from its menu", a
 
 test("deleting the last bot in a space stays in the app after first use", async ({ page }) => {
   const stamp = Date.now();
-  await signup(page, `spaces-empty-${stamp}@cortexai-agent-hub.test`, "password12", "Space Owner");
+  await provisionAndSignIn(
+    page,
+    `spaces-empty-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Space Owner",
+  );
   await completeOnboarding(page);
   const [chief] = await rpc<Array<{ id: string }>>(page, "bots/list", {});
   expect(chief).toBeTruthy();

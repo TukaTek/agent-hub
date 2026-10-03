@@ -1,5 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, rpc, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  openUserSettings,
+  provisionAndSignIn,
+  rpc,
+} from "./helpers";
 
 function slackCard(page: Page) {
   return page.getByRole("group", { name: "Slack connection" });
@@ -9,7 +15,12 @@ test("focus choice suggests apps and preserves a completed connection", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `onboarding-${stamp}@cortexai-agent-hub.test`, "password12", "Robin");
+  await provisionAndSignIn(
+    page,
+    `onboarding-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Robin",
+  );
   await completeOnboarding(page);
 
   await expect(
@@ -91,7 +102,12 @@ test("focus choice suggests apps and preserves a completed connection", async ({
 
 test("focus choice follows Simplified Chinese UI locale", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `onboarding-zh-cn-${stamp}@cortexai-agent-hub.test`, "password12", "Robin");
+  await provisionAndSignIn(
+    page,
+    `onboarding-zh-cn-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Robin",
+  );
   await completeOnboarding(page);
 
   await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible();
@@ -115,7 +131,7 @@ test("focus choice follows Simplified Chinese UI locale", async ({ page }, testI
 });
 
 test("choice refresh failures leave options available for retry", async ({ page }) => {
-  await signup(
+  await provisionAndSignIn(
     page,
     `choice-refresh-${Date.now()}@cortexai-agent-hub.test`,
     "password12",

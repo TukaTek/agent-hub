@@ -36,8 +36,6 @@ async function main() {
       SCREEN_PROXY_SECRET: "provider-canary-screen-proxy-secret-at-least-32-characters",
       BETTER_AUTH_URL: "http://127.0.0.1:5173",
       WEB_ORIGIN: "http://127.0.0.1:5173",
-      SIGNUPS_ENABLED: "true",
-      SIGNUP_ALLOWLIST: "",
       DATA_DIR: dataDir,
     };
     if (postgres) {

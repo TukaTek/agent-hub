@@ -11,7 +11,7 @@ import {
 } from "@cortexai-agent-hub/adapters";
 import { createThreadMessage, type PrismaClient } from "@cortexai-agent-hub/db";
 import { serve } from "@hono/node-server";
-import { sessionCookieHeader } from "../index.js";
+import { provisionAndSignIn } from "../index.js";
 import { runProcess } from "./process.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -175,14 +175,16 @@ function configureEnvironment() {
     API_PORT: String(API_PORT),
     API_URL: HOST_API_URL,
     DATA_DIR,
-    SIGNUPS_ENABLED: "true",
-    SIGNUP_ALLOWLIST: "",
     CI: "1",
   });
 }
 
 async function seedFixture(app: App, prisma: PrismaClient) {
-  const cookie = await signup(app);
+  const cookie = await provisionAndSignIn(
+    { app, prisma },
+    { email: EMAIL, password: PASSWORD, name: "Screenshot User" },
+    WEB_ORIGIN,
+  );
   const researcher = await rpc<{ id: string }>(app, cookie, "bots/create", {
     name: "Researcher",
     title: "Product research",
@@ -280,18 +282,6 @@ async function seedFixture(app: App, prisma: PrismaClient) {
   });
 
   return { botId: researcher.id, groupId: group.id, routineId: routine.id };
-}
-
-async function signup(app: App) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: WEB_ORIGIN },
-    body: JSON.stringify({ email: EMAIL, password: PASSWORD, name: "Screenshot User" }),
-  });
-  if (!response.ok) throw new Error(`Fixture signup failed with ${response.status}`);
-  const cookie = sessionCookieHeader(response);
-  if (!cookie) throw new Error("Fixture signup did not return a session cookie");
-  return cookie;
 }
 
 async function rpc<T>(app: App, cookie: string, procedure: string, body: unknown = {}): Promise<T> {

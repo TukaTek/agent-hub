@@ -10,7 +10,7 @@ import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
-import { sessionCookieHeader } from "./index.js";
+import { provisionAndSignIn } from "./index.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 
@@ -48,8 +48,16 @@ describeVoice("voice credentials and speech HTTP", () => {
   });
 
   it("connects a scripted key, speaks, and transcribes without leaking the secret", async () => {
-    const cookie = await signup(app, `voice-${stamp}@cortexai-agent-hub.test`, "Voice User");
-    const other = await signup(app, `voice-other-${stamp}@cortexai-agent-hub.test`, "Other Voice");
+    const cookie = await signInAs(
+      { app, prisma },
+      `voice-${stamp}@cortexai-agent-hub.test`,
+      "Voice User",
+    );
+    const other = await signInAs(
+      { app, prisma },
+      `voice-other-${stamp}@cortexai-agent-hub.test`,
+      "Other Voice",
+    );
 
     const before = await rpc<{ ready: boolean; utterances: string[] }>(
       app,
@@ -142,13 +150,13 @@ describeVoice("voice credentials and speech HTTP", () => {
   });
 
   it("disconnects the actor credential and leaves another user's key in place", async () => {
-    const cookie = await signup(
-      app,
+    const cookie = await signInAs(
+      { app, prisma },
       `voice-disconnect-${stamp}@cortexai-agent-hub.test`,
       "Voice Disconnect",
     );
-    const other = await signup(
-      app,
+    const other = await signInAs(
+      { app, prisma },
       `voice-disconnect-other-${stamp}@cortexai-agent-hub.test`,
       "Other Voice Disconnect",
     );
@@ -197,14 +205,9 @@ describeVoice("voice credentials and speech HTTP", () => {
   });
 });
 
-async function signup(app: App, email: string, name: string) {
-  const response = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
-    body: JSON.stringify({ email, password: "test-password-123", name }),
-  });
-  expect(response.status).toBeLessThan(400);
-  return sessionCookieHeader(response);
+/** Operator-provisions the account (signup is closed, CAAH-43) and signs it in. */
+async function signInAs(handles: { app: App; prisma: PrismaClient }, email: string, name: string) {
+  return provisionAndSignIn(handles, { email, name, password: "test-password-123" });
 }
 
 async function rpc<T>(app: App, cookie: string, proc: string, body: unknown = {}): Promise<T> {

@@ -1,11 +1,16 @@
 import type { McpServer } from "@cortexai-agent-hub/contracts";
 import { expect, type Route, test } from "@playwright/test";
 import { MCP_OAUTH_CHANNEL } from "../src/lib/mcp-connect";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, provisionAndSignIn } from "./helpers";
 
 test("connects an MCP server through the OAuth popup callback", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `mcp-oauth-${stamp}@cortexai-agent-hub.test`, "password12", "MCP OAuth");
+  await provisionAndSignIn(
+    page,
+    `mcp-oauth-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "MCP OAuth",
+  );
   await completeOnboarding(page);
 
   let oauthStatus: McpServer["oauthStatus"] = "none";
