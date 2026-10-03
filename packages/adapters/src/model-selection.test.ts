@@ -1,6 +1,7 @@
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   defaultCatalogModelId,
   modelCredentialAuthKindsForSpace,
@@ -195,6 +196,29 @@ describe("configured model selection", () => {
     },
   ])("$name", ({ input, expected }) => {
     expect(selectConfiguredModel({ ...defaults, ...input })).toEqual(expected);
+  });
+});
+
+describe("Hub-managed deployment model (CAAH-36)", () => {
+  afterEach(() => setHubManagedDeploymentSettings({}));
+
+  it("uses Hub's default provider and model over the persisted deployment default", () => {
+    setHubManagedDeploymentSettings({
+      defaultModelProvider: "hub-provider",
+      defaultModelId: "hub-model",
+    });
+    expect(selectConfiguredModel({ ...defaults, defaultCredential: null })).toMatchObject({
+      provider: "hub-provider",
+      id: "hub-model",
+    });
+  });
+
+  it("never pairs Hub's provider with a persisted model chosen for another provider", () => {
+    setHubManagedDeploymentSettings({ defaultModelProvider: "hub-provider" });
+    expect(selectConfiguredModel({ ...defaults, defaultCredential: null })).toMatchObject({
+      provider: "hub-provider",
+      id: "deployment-model",
+    });
   });
 });
 

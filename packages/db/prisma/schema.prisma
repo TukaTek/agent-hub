@@ -80,6 +80,26 @@ model HubIdentity {
   @@map("hub_identity")
 }
 
+/// Last-known-good Hub policy per pinned tenant, shared by API and worker. The
+/// document holds Hub-delivered credentials and is stored encrypted.
+model HubPolicySnapshot {
+  tenant            String    @id
+  documentCipher    String?
+  revision          Int?
+  etag              String?
+  digest            String?
+  state             String
+  reason            String?
+  source            String
+  assignmentsSource String
+  fetchedAt         DateTime?
+  checkedAt         DateTime?
+  attemptedAt       DateTime
+  updatedAt         DateTime  @updatedAt
+
+  @@map("hub_policy_snapshot")
+}
+
 model HubSession {
   sessionId    String   @id
   session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)

@@ -1,5 +1,8 @@
 import {
+  HUB_SIGN_IN_REFUSAL_CODES,
   HUB_SSO_ACCESS_DENIED,
+  type HubSignInRefusalCode,
+  hubRefusalCallbackError,
   readBoundedJsonResponse,
   type SignInContinueResponse,
   type SsoCallbackError,
@@ -39,10 +42,23 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const hubUnavailable = t`Sign-in is temporarily unavailable, CortexAI Hub can't be reached`;
   const ssoErrors: Record<SsoCallbackError, string> = {
     sso_expired: t`Your sign-in expired. Try again.`,
     sso_failed: t`Microsoft sign-in didn't finish. Try again, or ask your admin for access.`,
+    hub_unavailable: hubUnavailable,
+    hub_config_invalid: hubUnavailable,
+    hub_config_restart_required: hubUnavailable,
+    tenant_disabled: hubUnavailable,
+    hub_credential_invalid: hubUnavailable,
+    hub_not_configured: hubUnavailable,
+    hub_access_denied: t`Ask your admin for access`,
   };
+  /** Fixed copy for a sign-in Hub policy refused (CAAH-36), or undefined. */
+  const hubRefusal = (code: unknown) =>
+    HUB_SIGN_IN_REFUSAL_CODES.includes(code as HubSignInRefusalCode)
+      ? ssoErrors[hubRefusalCallbackError(code as HubSignInRefusalCode)]
+      : undefined;
   const [error, setError] = useState<string | null>(() => {
     const code = searchParams.get("error");
     return code && Object.hasOwn(ssoErrors, code) ? ssoErrors[code as SsoCallbackError] : null;
@@ -123,13 +139,16 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email }),
         });
-        if (response.status === 403) {
+        if (response.status === 403 || response.status === 503) {
           const refusal = await readBoundedJsonResponse<{ code?: unknown }>(
             response,
             MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
           ).catch(() => undefined);
           setError(
-            refusal?.code === HUB_SSO_ACCESS_DENIED ? ssoErrors.sso_failed : t`Could not continue`,
+            hubRefusal(refusal?.code) ??
+              (refusal?.code === HUB_SSO_ACCESS_DENIED
+                ? ssoErrors.sso_failed
+                : t`Could not continue`),
           );
           return;
         }
@@ -169,9 +188,10 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
           );
           setError(
-            body.code === "HUB_IDP_UNSUPPORTED"
-              ? t`This organization’s sign-in method is not supported yet`
-              : t`Could not sign in through CortexAI Hub`,
+            hubRefusal(body.code) ??
+              (body.code === "HUB_IDP_UNSUPPORTED"
+                ? t`This organization’s sign-in method is not supported yet`
+                : t`Could not sign in through CortexAI Hub`),
           );
           return;
         }

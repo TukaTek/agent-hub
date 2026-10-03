@@ -1,4 +1,10 @@
+import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
 import { describe, expect, it, vi } from "vitest";
+import hubSample from "./fixtures/hub-agent-hub-service-config.v1.sample.json" with {
+  type: "json",
+};
+import { parseHubPolicy } from "./hub-policy-contract.js";
+import { hubDeploymentSettings, overlayHubEnv } from "./hub-policy-overlay.js";
 import {
   buildTrustedOrigins,
   createAuth,
@@ -164,4 +170,44 @@ describe("signup lockdown (CAAH-43)", () => {
       expect(prisma.deploymentSettings.findUnique).not.toHaveBeenCalled();
     });
   }
+
+  it("keeps signup closed when Hub's policy says signupsEnabled=true with an allowlist", async () => {
+    // Apply Hub's published sample the way a process does at startup.
+    const policy = parseHubPolicy(structuredClone(hubSample), hubSample.tenantId);
+    expect(policy.overrides["signup.enabled"]).toBe(true);
+    const allowlisted = hubSample.overrides.signup.allowlist.find(
+      (entry) => !entry.startsWith("@"),
+    );
+    expect(allowlisted).toMatch(/^[^@]+@/);
+    const { env } = overlayHubEnv({}, policy);
+    setHubManagedDeploymentSettings(hubDeploymentSettings(policy).managed);
+    try {
+      const prisma = {
+        deploymentSettings: { findUnique: vi.fn().mockResolvedValue(legacyOpenRow) },
+        user: { create: vi.fn(), findFirst: vi.fn().mockResolvedValue(null) },
+        account: { create: vi.fn() },
+      };
+      const auth = createAuth(prisma as never, {
+        secret: "test-secret-that-is-long-enough-for-better-auth",
+        baseURL: "http://127.0.0.1:3100",
+        webOrigin: "http://127.0.0.1:5173",
+        // Even if Hub's values reached the auth env, they could not reopen signup.
+        signupsEnabled: env.SIGNUPS_ENABLED ?? "true",
+        signupAllowlist: env.SIGNUP_ALLOWLIST ?? hubSample.overrides.signup.allowlist.join(","),
+      });
+      const res = await auth.handler(
+        new Request("http://127.0.0.1:3100/api/auth/sign-up/email", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
+          body: JSON.stringify({ email: allowlisted, password: "password12", name: "Partner" }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("Registration is closed");
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.account.create).not.toHaveBeenCalled();
+    } finally {
+      setHubManagedDeploymentSettings({});
+    }
+  });
 });

@@ -63,7 +63,12 @@ import {
   sandboxProviderOptionsFromEnv,
   toTeamChatInbound,
 } from "@cortexai-agent-hub/adapters";
-import { createAuth, createUserWorkAuthorizer, isBlockedAuthPath } from "@cortexai-agent-hub/auth";
+import {
+  createAuth,
+  createUserWorkAuthorizer,
+  type HubPolicy,
+  isBlockedAuthPath,
+} from "@cortexai-agent-hub/auth";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
 
 import {
@@ -90,7 +95,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppEnv } from "./env.js";
 import { loadEnv } from "./env.js";
-import { healthRoutes } from "./health.js";
+import { healthRoutes, hubPolicyHealth } from "./health.js";
 import { mountLocalSettings } from "./local-settings.js";
 import {
   createMessagingInboundHandler,
@@ -152,6 +157,8 @@ export async function createApp(
     email?: TransactionalEmailProvider;
     remoteConnectors?: RemoteConnectorDependencies;
     logger?: Logger;
+    /** Required in Hub mode: the started Hub policy (see startApiHubPolicy). */
+    hubPolicy?: HubPolicy;
   } = {},
 ): Promise<AppHandles> {
   const {
@@ -164,6 +171,7 @@ export async function createApp(
     email: emailOverride,
     remoteConnectors,
     logger: loggerOverride,
+    hubPolicy,
     ...envOverrides
   } = overrides;
   const env = { ...loadEnv(process.env), ...envOverrides };
@@ -326,6 +334,7 @@ export async function createApp(
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
     hub: env.hubAuth,
+    hubPolicy,
     tokenEncryptionKey: env.encryptionKey,
     secret: env.authSecret,
     baseURL: env.authUrl,
@@ -379,6 +388,7 @@ export async function createApp(
         ? {
             verifyCacheTtlMs: env.hubAuth.verifyCacheTtlMs,
             verifyCacheEnabled: env.hubAuth.verifyCacheEnabled,
+            policy: hubPolicy,
           }
         : {},
     ),
@@ -844,7 +854,7 @@ export async function createApp(
 
   app.route(
     "/",
-    healthRoutes(() => ({
+    healthRoutes(async () => ({
       runtime: env.agentRuntime,
       sandbox: env.sandboxProvider,
       composio: Boolean(stack.composio),
@@ -854,6 +864,8 @@ export async function createApp(
       jobs: jobKind,
       realtime: realtime.describe().id,
       revision: env.gitSha ?? null,
+      // Revision, freshness, source and state only; never a setting value.
+      ...hubPolicyHealth(hubPolicy ? await hubPolicy.status() : null),
     })),
   );
 

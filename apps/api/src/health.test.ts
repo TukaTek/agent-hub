@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { healthRoutes } from "./health.js";
+import { healthRoutes, hubPolicyHealth } from "./health.js";
 
 const app = healthRoutes(() => ({ runtime: "pi", sandbox: "docker", revision: "abc123" }));
 
@@ -29,5 +29,27 @@ describe("health routes", () => {
       const response = await app.request("/internal/health", { headers });
       expect(response.status).toBe(404);
     }
+  });
+
+  it("keeps liveness up but reports degraded when Hub mode is not configured", async () => {
+    const status = {
+      state: "not_configured",
+      code: "HUB_NOT_CONFIGURED",
+      missing: ["HUB_AUTH_TENANT_ID"],
+    } as const;
+    const degraded = healthRoutes(() => hubPolicyHealth(status));
+    expect(await (await degraded.request("/health")).json()).toEqual({ ok: true });
+    expect(await (await degraded.request("/internal/health")).json()).toEqual({
+      ok: true,
+      status: "degraded",
+      hubPolicy: status,
+    });
+  });
+
+  it("reports ok only while Hub policy is ok, and nothing without Hub", () => {
+    expect(hubPolicyHealth({ state: "ok" })).toEqual({ status: "ok", hubPolicy: { state: "ok" } });
+    for (const state of ["unavailable", "invalid", "stale", "restart_required", "missing"])
+      expect(hubPolicyHealth({ state }).status).toBe("degraded");
+    expect(hubPolicyHealth(null)).toEqual({ status: "ok", hubPolicy: null });
   });
 });

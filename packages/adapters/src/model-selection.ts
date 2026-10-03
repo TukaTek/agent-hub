@@ -1,6 +1,7 @@
 import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { usableModelId } from "@cortexai-agent-hub/contracts";
+import { withHubModelDefaults } from "@cortexai-agent-hub/core";
 import {
   chooseModelCredential,
   type findDefaultModelCredential,
@@ -359,7 +360,9 @@ export function selectConfiguredModel(input: {
   settings: { defaultModelProvider: string | null; defaultModelId: string | null } | null;
   deployment: { provider: string; model: string } | null;
 }) {
-  const { bot, overrideCredential, defaultCredential, settings, deployment } = input;
+  const { bot, overrideCredential, defaultCredential, deployment } = input;
+  // Hub's deployment default wins over the persisted one (CAAH-36).
+  const settings = withHubModelDefaults(input.settings);
   const hasOverride = Boolean(bot?.modelProvider && usableModelId(bot.modelId));
   // The override provider, model and credential must win together.
   const useOverride = Boolean(hasOverride && overrideCredential);

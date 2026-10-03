@@ -139,6 +139,7 @@ import {
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
+  withHubModelDefaults,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
@@ -5728,7 +5729,9 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
 async function modelSetup(deps: RouterDeps, actor: Actor) {
   const [credential, settings] = await Promise.all([
     findDefaultModelCredential(deps.prisma, actor),
-    deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+    deps.prisma.deploymentSettings
+      .findUnique({ where: { id: "default" } })
+      .then(withHubModelDefaults),
   ]);
   const hasDeployment = Boolean(deps.env.deploymentModelKey);
   return {
@@ -6007,10 +6010,13 @@ async function computerScreenContext(
 }
 
 async function deploymentDto(prisma: PrismaClient, sandboxProvider: string) {
-  const settings = await prisma.deploymentSettings.findUnique({ where: { id: "default" } });
+  // Read back what is in effect: Hub-managed values win over the persisted ones.
+  const settings = withHubModelDefaults(
+    await prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+  );
   return {
     ownerUserId: settings?.ownerUserId ?? null,
-    // CAAH-43: legacy signup columns are never read; signup stays closed.
+    // CAAH-43: legacy signup columns, env and Hub signup settings are never read; signup stays closed.
     signupsEnabled: false as const,
     signupAllowlist: [],
     hasDeploymentModelCredential: Boolean(settings?.deploymentModelCredentialCipher),

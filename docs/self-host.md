@@ -789,6 +789,16 @@ CORTEXAI_AGENT_HUB_UPDATE_SERVICES=supervisor
 These names are appended to the built-in `api`, `worker`, `web`, never substituted for them, so no
 value here can drop a core service from an update.
 
+A Hub-mode deployment (`AUTH_MODE=hub`) layers `infra/compose/docker-compose.hub.yml`, which mounts
+the Hub service secret into the API. It adds no service, so nothing goes in
+`CORTEXAI_AGENT_HUB_UPDATE_SERVICES`, but it must be in the file list:
+
+```
+CORTEXAI_AGENT_HUB_COMPOSE_FILE=infra/compose/docker-compose.prod.yml:infra/compose/docker-compose.hub.yml
+```
+
+See [Configuring Hub mode](hub-auth.md#configuring-hub-mode) for the secret file and settings.
+
 The value therefore has to be the path **the daemon** sees, which is not always the path your shell
 sees:
 
