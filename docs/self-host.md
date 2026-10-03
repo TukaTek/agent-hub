@@ -103,7 +103,7 @@ docker compose exec -T api pnpm --silent --filter @cortexai-agent-hub/api provis
 # later: transfer-owner --hub-user-id <tenant_users.id> --hub-tenant <tenant id>
 ```
 
-`--hub-tenant` must match `HUB_AUTH_TENANT_ID` when that is set. The mapping takes effect only
+Set `HUB_AUTH_TENANT_ID` in the API's environment first: without it the command refuses ("set HUB_AUTH_TENANT_ID first") and maps nothing, and `--hub-tenant` must match it. The mapping takes effect only
 when that person signs in through Hub and passes Hub's admission check; it creates no session
 and does not bypass Hub sign-in.
 

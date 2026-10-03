@@ -279,6 +279,10 @@ msgstr "Ajoutez une URL de serveur HTTPS."
 msgid "Add another"
 msgstr "En ajouter un autre"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Add credential"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Add Executor"
 msgstr "Ajouter un exécuteur"
@@ -410,10 +414,6 @@ msgstr "Autoriser l'écriture"
 msgid "Allowed once"
 msgstr "Autorisé une fois"
 
-#: src/pages/Auth.tsx
-msgid "Already have an account?"
-msgstr "Vous avez déjà un compte ?"
-
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Always act"
 msgstr "Agir toujours"
@@ -433,106 +433,6 @@ msgstr "Répondre"
 #: src/components/AskCard.tsx
 msgid "Answered"
 msgstr "Répondu"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Add credential"
-msgstr ""
-
-#: src/pages/Auth.tsx
-msgid "Ask your admin for access"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Basic auth"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Basic auth ({username})"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not load credentials."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not remove the credential"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not save the credential"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Credentials"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Custom header"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Enter a username and password"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Header \"{header}\""
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Keys and passwords this bot can use, each for one site only. Values are encrypted and never shown again."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Lowercase letters, numbers, hyphens and underscores, starting with a letter."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "No credentials saved for this bot."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Remove {secretName}? This bot will no longer be able to use it."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Replace value"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Save credential"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Save new value"
-msgstr ""
-
-#: src/pages/Auth.tsx
-msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Site"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "These saved settings can't be read. Remove it and add it again."
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Type"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Updated {updated}"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Value"
-msgstr ""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Website login"
-msgstr ""
 
 #. placeholder {0}: selectedAskActionLabel(answer, actions)
 #: src/components/AskCard.tsx
@@ -633,9 +533,17 @@ msgstr "Demander avant les achats"
 msgid "Ask before sending external email"
 msgstr "Demander avant d'envoyer un e-mail externe"
 
+#: src/pages/Auth.tsx
+msgid "Ask the person who runs this server to create one."
+msgstr ""
+
 #: src/components/integrations/IntegrationSetup.tsx
 msgid "Ask the server owner to configure this provider."
 msgstr "Demandez au propriétaire du serveur de configurer ce fournisseur."
+
+#: src/pages/Auth.tsx
+msgid "Ask your admin for access"
+msgstr ""
 
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
@@ -726,8 +634,17 @@ msgstr "Retour à la connexion"
 msgid "Base URL"
 msgstr "URL de base"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Basic auth"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Basic auth ({username})"
+msgstr ""
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 #: src/pages/PluginsOverlay.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Bearer token"
 msgstr "Jeton porteur"
 
@@ -783,6 +700,7 @@ msgstr "Impossible d'atteindre le serveur."
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/PluginsOverlay.tsx
+#: src/pages/shell/bot-credentials.tsx
 #: src/pages/shell/dialogs.tsx
 msgid "Cancel"
 msgstr "Annuler"
@@ -1354,6 +1272,10 @@ msgstr "Impossible de charger les bots. Rechargez pour réessayer."
 msgid "Could not load commands"
 msgstr ""
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Could not load credentials."
+msgstr ""
+
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not load integrations"
@@ -1433,6 +1355,10 @@ msgstr "Impossible de retirer le groupe"
 msgid "Could not remove rule"
 msgstr "Impossible de retirer la règle"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Could not remove the credential"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not rename connection"
 msgstr "Impossible de renommer la connexion"
@@ -1498,6 +1424,10 @@ msgstr "Impossible d'enregistrer ce modèle de parole"
 #: src/pages/VoiceSettingsOverlay.tsx
 msgid "Could not save that voice"
 msgstr "Impossible d'enregistrer cette voix"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Could not save the credential"
+msgstr ""
 
 #: src/pages/shell/message-cards.tsx
 msgid "Could not save this choice"
@@ -1582,10 +1512,6 @@ msgstr "Créer"
 msgid "Create a section and move {0} into it."
 msgstr "Créez une section et déplacez {0} dedans."
 
-#: src/pages/Auth.tsx
-msgid "Create account"
-msgstr "Créer un compte"
-
 #: src/pages/GroupPanel.tsx
 msgid "Create group"
 msgstr "Créer un groupe"
@@ -1612,10 +1538,6 @@ msgstr "Créer une routine"
 msgid "Create space"
 msgstr "Créer un espace"
 
-#: src/pages/Auth.tsx
-msgid "Create your CortexAI Agent Hub"
-msgstr "Créez votre CortexAI Agent Hub"
-
 #: src/components/AskCard.tsx
 msgid "Created"
 msgstr "Créé"
@@ -1635,6 +1557,10 @@ msgstr "Identifiant"
 msgid "credential saved"
 msgstr "Identifiant enregistré"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Credentials"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Credentials are encrypted and never sent to the model."
 msgstr "Les identifiants sont chiffrés et jamais envoyés au modèle."
@@ -1650,6 +1576,10 @@ msgstr "Expression Cron"
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Current password"
 msgstr "Mot de passe actuel"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Custom header"
+msgstr ""
 
 #: src/pages/shell/dialogs.tsx
 msgid "Customer support"
@@ -1905,6 +1835,10 @@ msgstr "E-mail"
 msgid "Engage when... Ignore..."
 msgstr "Répondre quand... Ignorer..."
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Enter a username and password"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 msgid "Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context limit."
@@ -2129,8 +2063,13 @@ msgstr "Raccrochez, puis saisissez le code à l'écran."
 msgid "header"
 msgstr "en-tête"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Header \"{header}\""
+msgstr ""
+
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/PluginsOverlay.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Header name"
 msgstr "Nom de l'en-tête"
 
@@ -2295,6 +2234,10 @@ msgstr "Conserver les mémoires"
 msgid "key"
 msgstr "clé"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Keys and passwords this bot can use, each for one site only. Values are encrypted and never shown again."
+msgstr ""
+
 #: src/pages/KnowledgeSection.tsx
 msgid "Knowledge"
 msgstr "Connaissances"
@@ -2413,6 +2356,10 @@ msgstr "Faible"
 #. js-lingui-explicit-id
 #: src/lib/model-catalog.ts
 msgid "Low"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Lowercase letters, numbers, hyphens and underscores, starting with a letter."
 msgstr ""
 
 #: src/components/ComputerUpdateProgress.tsx
@@ -2658,9 +2605,9 @@ msgid "Mute"
 msgstr "Couper le micro"
 
 #: src/components/teach/SkillDraftCard.tsx
-#: src/pages/Auth.tsx
 #: src/pages/GroupPanel.tsx
 #: src/pages/RoutineEditor.tsx
+#: src/pages/shell/bot-credentials.tsx
 #: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/dialogs.tsx
 msgid "Name"
@@ -2755,6 +2702,10 @@ msgstr "Aucun bot ne correspond"
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "No chat apps linked yet."
 msgstr "Aucune application de discussion connectée pour le moment."
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "No credentials saved for this bot."
+msgstr ""
 
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "No group chats yet."
@@ -2993,6 +2944,7 @@ msgstr "Mettre en attente"
 #: src/components/AskCard.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 #: src/pages/Auth.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Password"
 msgstr "Mot de passe"
 
@@ -3197,6 +3149,7 @@ msgstr "Libérer l'ordinateur interrompu ?"
 #: src/components/ApprovalRulesSettings.tsx
 #: src/pages/PluginsOverlay.tsx
 #: src/pages/ScratchpadSection.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Remove"
 msgstr "Retirer"
 
@@ -3204,6 +3157,10 @@ msgstr "Retirer"
 #: src/pages/Shell.tsx
 msgid "Remove {0}"
 msgstr "Retirer {0}"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Remove {secretName}? This bot will no longer be able to use it."
+msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove Git event"
@@ -3261,6 +3218,10 @@ msgstr "Remplacer la clé API"
 msgid "Replace key"
 msgstr "Remplacer la clé"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Replace value"
+msgstr ""
+
 #: src/pages/Shell.tsx
 msgid "Reply"
 msgstr "Répondre"
@@ -3310,6 +3271,10 @@ msgstr "Réinitialisez votre mot de passe"
 #: src/components/ComputerMaintenanceActions.tsx
 msgid "Resetting…"
 msgstr "Réinitialisation en cours…"
+
+#: src/pages/ResizableSidePanel.tsx
+msgid "Resize panel"
+msgstr "Redimensionner le panneau"
 
 #: src/components/DesktopUpdates.tsx
 msgid "Restart to update"
@@ -3414,8 +3379,16 @@ msgstr "S'exécute lorsque ce bot reçoit un message vérifié de ce fournisseur
 msgid "Save"
 msgstr "Enregistrer"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Save credential"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Save limits"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Save new value"
 msgstr ""
 
 #: src/components/AskCard.tsx
@@ -3449,6 +3422,7 @@ msgstr "Enregistrement..."
 #: src/pages/GroupPanel.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/RoutineEditor.tsx
+#: src/pages/shell/bot-credentials.tsx
 #: src/pages/shell/dialogs.tsx
 msgid "Saving…"
 msgstr "Enregistrement en cours…"
@@ -3629,6 +3603,7 @@ msgstr "Afficher la transcription"
 #: src/pages/Auth.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/Welcome.tsx
 msgid "Sign in"
 msgstr "Se connecter"
 
@@ -3641,12 +3616,15 @@ msgid "Sign in to CortexAI Agent Hub"
 msgstr "Connectez-vous à CortexAI Agent Hub"
 
 #: src/pages/Auth.tsx
-#: src/pages/Welcome.tsx
-msgid "Sign up"
-msgstr "S'inscrire"
+msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
+msgstr ""
 
 #: src/pages/Auth.tsx
 msgid "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Site"
 msgstr ""
 
 #. placeholder {0}: skill.name
@@ -3838,6 +3816,10 @@ msgstr "L'API n'est pas revenue. Actualisez cette page."
 msgid "The selected memory provider is not available in this build."
 msgstr "Le fournisseur de mémoire sélectionné n'est pas disponible dans cette version."
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "These saved settings can't be read. Remove it and add it again."
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/shell/bot-panel.tsx
@@ -3961,6 +3943,10 @@ msgstr "Jeton Treg"
 msgid "Try again"
 msgstr "Réessayer"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Type"
+msgstr ""
+
 #: src/components/teach/TeachRecordingChrome.tsx
 msgid "Type without recording"
 msgstr ""
@@ -4032,6 +4018,10 @@ msgstr "Progression de la mise à jour"
 msgid "Updated"
 msgstr "Mis à jour"
 
+#: src/pages/shell/bot-credentials.tsx
+msgid "Updated {updated}"
+msgstr ""
+
 #: src/pages/SettingsOverlay.tsx
 msgid "Updates"
 msgstr "Mises à jour"
@@ -4087,7 +4077,12 @@ msgid "Use this model"
 msgstr "Utiliser ce modèle"
 
 #: src/components/AskCard.tsx
+#: src/pages/shell/bot-credentials.tsx
 msgid "Username"
+msgstr ""
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Value"
 msgstr ""
 
 #: src/pages/PluginsOverlay.tsx
@@ -4124,6 +4119,10 @@ msgstr "En attente…"
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
 msgstr "Webhook"
+
+#: src/pages/shell/bot-credentials.tsx
+msgid "Website login"
+msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 #: src/pages/RoutineSchedule.tsx
@@ -4203,17 +4202,9 @@ msgid "Your email address"
 msgstr "Votre adresse e-mail"
 
 #: src/pages/Auth.tsx
-msgid "Your name"
-msgstr "Votre nom"
-
-#: src/pages/Auth.tsx
 msgid "Your sign-in expired. Try again."
 msgstr ""
 
 #: src/pages/Welcome.tsx
 msgid "Your team of always-on agents<0/>that you can give real work to."
 msgstr "Votre équipe d'agents toujours actifs<0/>à qui vous pouvez confier de vrais travaux."
-
-#: src/pages/ResizableSidePanel.tsx
-msgid "Resize panel"
-msgstr "Redimensionner le panneau"
