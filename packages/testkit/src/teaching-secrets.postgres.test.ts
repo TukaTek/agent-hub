@@ -25,6 +25,8 @@ const PROTECTED = "protected-pw-fixture";
 const PASTED = "pasted-value-fixture";
 const KEPT = "weekly-export.csv";
 const NEVER_STORED = [PASSWORD, USERNAME, PROTECTED, PASTED];
+// apps/api TAUGHT_SKILLS_PURGE_MARKER; pinned here because a changed name re-runs the purge.
+const TAUGHT_SKILLS_PURGE_MARKER = "caah71-taught-skills-secret-purge";
 
 type LogLine = { level: string; message: string; bindings?: Record<string, unknown> };
 
@@ -180,7 +182,7 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
       await input("key", { key: "Enter" });
       await rpc(handles.app, cookie, "skills/stop", { skillId: skill.id });
 
-      const draft = await rpc<{ playbook: { steps: string[] } }>(
+      const draft = await rpc<{ playbook: { steps: string[] }; updatedAt: string }>(
         handles.app,
         cookie,
         "skills/get",
@@ -203,6 +205,7 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
         skillId: skill.id,
         name: "Sign in to CRM",
         playbook: draft.playbook,
+        expectedUpdatedAt: draft.updatedAt,
       });
       await rpc(handles.app, cookie, "skills/save", { skillId: skill.id, name: "Sign in to CRM" });
 
@@ -243,7 +246,7 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
     }
   }, 60_000);
 
-  it("purges legacy rows at API start through createApp, logs counts only, and a rerun changes 0 rows", async () => {
+  it("purges legacy rows after the API starts, logs counts only, records a marker, and later starts skip it", async () => {
     const requests: ModelEmulatorRequest[] = [];
     const model = await startModelEmulator({
       apiKey: fixtureKey,
@@ -260,6 +263,10 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
     let handles: Handles | undefined;
     try {
       handles = await startApp(dataDir);
+      // This database has not been purged yet (as on the first start after the upgrade).
+      await handles.prisma.maintenanceMarker.deleteMany({
+        where: { name: TAUGHT_SKILLS_PURGE_MARKER },
+      });
       const { cookie, botId } = await signedInBot(handles, model);
       const bot = await handles.prisma.bot.findUniqueOrThrow({
         where: { id: botId },
@@ -327,12 +334,17 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
       await handles.stop();
       handles = undefined;
 
-      // A production start runs the purge from createApp.
+      // A production start runs the purge in the background once the API is listening;
+      // createApp itself no longer waits for it.
       const firstLines: LogLine[] = [];
       handles = await startApp(dataDir, {
         nodeEnv: "production",
         logger: captureLogger(firstLines),
       });
+      expect(firstLines.some((line) => line.message.startsWith("taught_skills secret purge"))).toBe(
+        false,
+      );
+      await handles.startBackgroundMaintenance();
       const first = firstLines.filter((line) =>
         line.message.startsWith("taught_skills secret purge"),
       );
@@ -350,6 +362,8 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
             skippedConcurrent: 0,
             draftMessagesScanned: expect.any(Number),
             draftMessagesScrubbed: 1,
+            draftMessagesSkippedConcurrent: 0,
+            markerRecorded: true,
             durationMs: expect.any(Number),
           },
         },
@@ -373,20 +387,36 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
         "Press key: Enter.",
         "Paste or type: {{input:pasted text 1}}.",
       ]);
+      const marker = await handles.prisma.maintenanceMarker.findUnique({
+        where: { name: TAUGHT_SKILLS_PURGE_MARKER },
+      });
+      expect(marker?.completedAt).toBeInstanceOf(Date);
       await handles.stop();
       handles = undefined;
 
-      // The next deployment start finds nothing left to change.
+      // The next deployment start (or a CAAH-36 self-restart) finds the marker and skips the
+      // full scan.
       const secondLines: LogLine[] = [];
       handles = await startApp(dataDir, {
         nodeEnv: "production",
         logger: captureLogger(secondLines),
       });
+      await handles.startBackgroundMaintenance();
       expect(
-        secondLines.find((line) => line.message === "taught_skills secret purge complete")
-          ?.bindings,
-      ).toMatchObject({ skillsChanged: 0, draftMessagesScrubbed: 0, skippedConcurrent: 0 });
+        secondLines.filter((line) => line.message.startsWith("taught_skills secret purge")),
+      ).toEqual([
+        {
+          level: "info",
+          message: "taught_skills secret purge skipped",
+          bindings: {
+            deployment: "127.0.0.1:5173",
+            reason: "done",
+            completedAt: marker!.completedAt.toISOString(),
+          },
+        },
+      ]);
       expect(await storedSkillJson(handles, legacy.id, botId)).toEqual(after);
+      // Run directly, the purge still finds nothing left to change.
       await expect(purgeTaughtSkillSecrets(handles.prisma)).resolves.toMatchObject({
         skillsChanged: 0,
         draftMessagesScrubbed: 0,
@@ -416,7 +446,167 @@ describe.skipIf(!databaseAvailable)("Teach Me secret redaction (CAAH-71) on Post
       }
     }
   }, 90_000);
+
+  it("a card read before the purge cannot write the password back through updateDraft (M1)", async () => {
+    const model = await startModelEmulator({ apiKey: fixtureKey, steps: [] });
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-teach-stale-"));
+    let handles: Handles | undefined;
+    try {
+      handles = await startApp(dataDir);
+      const { cookie, botId } = await signedInBot(handles, model);
+      const bot = await handles.prisma.bot.findUniqueOrThrow({
+        where: { id: botId },
+        include: { thread: true },
+      });
+      // A pre-fix draft: raw keystrokes in the recording, literals in the steps and the card.
+      const legacySteps = [
+        "Click left button at (5, 6).",
+        `Type "${PASSWORD}".`,
+        "Press key: Enter.",
+        `Paste or type: ${PASTED}.`,
+      ];
+      const legacyPlaybook = {
+        ...buildPlaybookFromRecording("Legacy sign in", []),
+        steps: legacySteps,
+      };
+      const legacy = await handles.prisma.taughtSkill.create({
+        data: {
+          spaceId: bot.spaceId,
+          botId,
+          userId: bot.userId,
+          name: "Legacy sign in",
+          goal: "Legacy sign in",
+          status: "draft",
+          recording: {
+            events: [
+              { at: "2026-09-01T00:00:00.000Z", kind: "pointer", x: 5, y: 6, type: "click" },
+              ...[...PASSWORD].map((key) => ({
+                at: "2026-09-01T00:00:01.000Z",
+                kind: "key" as const,
+                key,
+              })),
+              { at: "2026-09-01T00:00:02.000Z", kind: "key", key: "Enter" },
+              { at: "2026-09-01T00:00:03.000Z", kind: "clipboard", text: PASTED },
+            ],
+            snapshots: [],
+          } as never,
+          playbook: legacyPlaybook as never,
+        },
+      });
+      const thread = await handles.prisma.thread.update({
+        where: { id: bot.thread!.id },
+        data: { nextMessageSeq: { increment: 1 } },
+        select: { nextMessageSeq: true },
+      });
+      // The old build's card carries no version.
+      await handles.prisma.message.create({
+        data: {
+          threadId: bot.thread!.id,
+          seq: thread.nextMessageSeq - 1,
+          role: "bot",
+          botId,
+          blocks: [
+            {
+              kind: "skill_draft",
+              skillId: legacy.id,
+              name: "Legacy sign in",
+              goal: "Legacy sign in",
+              playbook: legacyPlaybook,
+              status: "draft",
+            },
+          ] as never,
+        },
+      });
+      // The open tab read the skill before the purge ran.
+      const staleRead = await rpc<{ playbook: { steps: string[] }; updatedAt: string }>(
+        handles.app,
+        cookie,
+        "skills/get",
+        { skillId: legacy.id },
+      );
+      expect(staleRead.playbook.steps).toEqual(legacySteps);
+
+      await expect(purgeTaughtSkillSecrets(handles.prisma)).resolves.toMatchObject({
+        skillsChanged: 1,
+        draftMessagesScrubbed: 1,
+      });
+      const purged = await storedSkillJson(handles, legacy.id, botId);
+      expect(purged.playbook).not.toContain(PASSWORD);
+
+      // 1. The old card sends no version: 409, nothing written.
+      const unversioned = await rawRpc(handles.app, cookie, "skills/updateDraft", {
+        skillId: legacy.id,
+        name: "Legacy sign in",
+        playbook: staleRead.playbook,
+      });
+      expect(unversioned.status).toBe(409);
+      expect(await storedSkillJson(handles, legacy.id, botId)).toEqual(purged);
+
+      // 2. The purge keeps updatedAt, so the stale read's version still matches. The literal
+      // steps are scrubbed anyway: the value is not stored even with a matching token.
+      const matching = await rpc<{ playbook: { steps: string[] }; updatedAt: string }>(
+        handles.app,
+        cookie,
+        "skills/updateDraft",
+        {
+          skillId: legacy.id,
+          name: "Legacy sign in",
+          playbook: {
+            ...staleRead.playbook,
+            steps: [...legacySteps, "Paste or type: hunter2pass."],
+          },
+          expectedUpdatedAt: staleRead.updatedAt,
+        },
+      );
+      expect(matching.playbook.steps).toEqual([
+        "Click left button at (5, 6).",
+        'Type "{{input:typed text 1}}".',
+        "Press key: Enter.",
+        "Paste or type: {{input:pasted text 1}}.",
+        "Paste or type: {{input:pasted text 2}}.",
+      ]);
+      const after = await storedSkillJson(handles, legacy.id, botId);
+      for (const value of [PASSWORD, PASTED, "hunter2pass"]) {
+        expect(after.playbook, `playbook stored ${value}`).not.toContain(value);
+        expect(after.recording, `recording stored ${value}`).not.toContain(value);
+        expect(after.messages, `draft card stored ${value}`).not.toContain(value);
+      }
+      // The card now carries the row's version for the next edit.
+      expect(after.messages).toContain(`"updatedAt":"${matching.updatedAt}"`);
+
+      // 3. The same stale version is now rejected.
+      const replayed = await rawRpc(handles.app, cookie, "skills/updateDraft", {
+        skillId: legacy.id,
+        playbook: staleRead.playbook,
+        expectedUpdatedAt: staleRead.updatedAt,
+      });
+      expect(replayed.status).toBe(409);
+      expect(await storedSkillJson(handles, legacy.id, botId)).toEqual(after);
+    } finally {
+      try {
+        await handles?.stop();
+      } finally {
+        await model.close();
+        await rm(dataDir, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
 });
+
+async function rawRpc(
+  app: App,
+  cookie: string,
+  procedure: string,
+  input: unknown,
+): Promise<{ status: number }> {
+  const response = await app.request(`/rpc/${procedure}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie, origin: fixtureOrigin },
+    body: JSON.stringify({ json: input }),
+  });
+  await response.body?.cancel();
+  return { status: response.status };
+}
 
 async function rpc<T>(
   app: App,

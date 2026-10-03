@@ -357,6 +357,7 @@ function skillDraftBlocks(skill: TaughtSkillRow): MessageBlock[] {
       goal: skill.goal,
       playbook: parsePlaybook(skill.playbook),
       status: "draft",
+      updatedAt: skill.updatedAt.toISOString(),
     },
   ];
 }

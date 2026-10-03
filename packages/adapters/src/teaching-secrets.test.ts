@@ -5,6 +5,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import { describe, expect, it } from "vitest";
 import {
+  PurgeInterruptedError,
   type PurgePrisma,
   purgeTaughtSkillSecrets,
   redactPlaybook,
@@ -127,6 +128,71 @@ describe("scrubTaughtSkill", () => {
     expect(result.playbook.steps).toEqual(edited.steps);
   });
 
+  it("drops literal Type/Paste steps a stale client sends back for a clean recording (M1 probe)", () => {
+    // GStack's probe: a card read before the purge still shows the literal steps, and Save
+    // sends them back after the recording was scrubbed.
+    const clean = scrubTaughtSkill(legacyRow("skill-1"));
+    const stale: SkillPlaybook = {
+      ...clean.playbook,
+      steps: [
+        "Click left button at (10, 20).",
+        'Type "Summer2026!".',
+        "Press key: Enter.",
+        "Paste or type: hunter2pass.",
+        "Check the dashboard loaded.",
+      ],
+    };
+    const result = scrubTaughtSkill(
+      { ...legacyRow("skill-1"), recording: clean.recording, playbook: stale },
+      { clientSteps: true },
+    );
+    expect(result.recordingChanged).toBe(false);
+    expect(result.playbookChanged).toBe(true);
+    expect(result.playbook.steps).toEqual([
+      "Click left button at (10, 20).",
+      'Type "{{input:typed text 1}}".',
+      "Press key: Enter.",
+      "Paste or type: {{input:pasted text 1}}.",
+      "Check the dashboard loaded.",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("Summer2026!");
+    expect(JSON.stringify(result)).not.toContain("hunter2pass");
+  });
+
+  it("keeps client literal steps the recording itself produced from keepLiteral events", () => {
+    const events: TeachRecordingEvent[] = [
+      ...typed("Weekly CRM", { keepLiteral: true }),
+      { at: at(20), kind: "clipboard", text: "Q3 pipeline", keepLiteral: true },
+      ...typed("x"),
+    ];
+    const recording = { events: events.map(sanitizeStoredTeachEvent), snapshots: [] };
+    const built = buildPlaybookFromRecording("Report", recording.events);
+    expect(built.steps).toEqual(
+      expect.arrayContaining(['Type "Weekly CRM".', "Paste or type: Q3 pipeline."]),
+    );
+    const client: SkillPlaybook = {
+      ...built,
+      steps: [
+        'Type "Weekly CRM".',
+        "Paste or type: Q3 pipeline.",
+        'Type "{{input:typed text 1}}".',
+        'Type "Summer2026!".',
+        "Open the report tab.",
+      ],
+    };
+    const result = scrubTaughtSkill(
+      { goal: "Report", recording, playbook: client },
+      { clientSteps: true },
+    );
+    expect(result.playbook.steps).toEqual([
+      'Type "Weekly CRM".',
+      "Paste or type: Q3 pipeline.",
+      'Type "{{input:typed text 1}}".',
+      'Type "{{input:typed text 2}}".',
+      "Open the report tab.",
+    ]);
+  });
+
   it("redacts credentials the user wrote into an edited playbook", () => {
     const clean = scrubTaughtSkill(legacyRow("skill-1"));
     const result = scrubTaughtSkill({
@@ -175,6 +241,7 @@ type MessageRow = { id: string; blocks: unknown };
 function fakePrisma(skills: SkillRow[], messages: MessageRow[] = []) {
   const writes = { skills: 0, messages: 0 };
   let beforeWrite: ((id: string) => void) | undefined;
+  let beforeMessageWrite: ((id: string) => void) | undefined;
   const byId = <T extends { id: string }>(
     rows: T[],
     args: { where?: { id?: { gt: string } }; take: number },
@@ -215,11 +282,23 @@ function fakePrisma(skills: SkillRow[], messages: MessageRow[] = []) {
             JSON.stringify(row.blocks).includes('"skill_draft"'),
           ),
         ),
-      update: async ({ where, data }: { where: { id: string }; data: { blocks: unknown } }) => {
-        const row = messages.find((candidate) => candidate.id === where.id);
-        if (row) row.blocks = structuredClone(data.blocks);
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: string; blocks: { equals: unknown } };
+        data: { blocks: unknown };
+      }) => {
+        beforeMessageWrite?.(where.id);
+        const row = messages.find(
+          (candidate) =>
+            candidate.id === where.id &&
+            JSON.stringify(candidate.blocks) === JSON.stringify(where.blocks.equals),
+        );
+        if (!row) return { count: 0 };
+        row.blocks = structuredClone(data.blocks);
         writes.messages += 1;
-        return row;
+        return { count: 1 };
       },
     },
   };
@@ -230,6 +309,9 @@ function fakePrisma(skills: SkillRow[], messages: MessageRow[] = []) {
     writes,
     onBeforeWrite(fn: (id: string) => void) {
       beforeWrite = fn;
+    },
+    onBeforeMessageWrite(fn: (id: string) => void) {
+      beforeMessageWrite = fn;
     },
   };
 }
@@ -282,6 +364,7 @@ describe("purgeTaughtSkillSecrets", () => {
       skippedConcurrent: 0,
       draftMessagesScanned: 2,
       draftMessagesScrubbed: 2,
+      draftMessagesSkippedConcurrent: 0,
     });
     expect(JSON.stringify(db.skills)).not.toContain("Summer");
     expect(JSON.stringify(db.skills)).not.toContain("sk-live");
@@ -307,5 +390,52 @@ describe("purgeTaughtSkillSecrets", () => {
     });
     const result = await purgeTaughtSkillSecrets(db.prisma);
     expect(result).toMatchObject({ skillsChanged: 0, skippedConcurrent: 1 });
+  });
+
+  it("stops at a batch boundary when shutdown aborts it", async () => {
+    const db = fakePrisma([legacyRow("skill-a"), legacyRow("skill-b")]);
+    const controller = new AbortController();
+    db.onBeforeWrite(() => controller.abort());
+    await expect(
+      purgeTaughtSkillSecrets(db.prisma, { batchSize: 1, signal: controller.signal }),
+    ).rejects.toBeInstanceOf(PurgeInterruptedError);
+    // The batch in flight finished; the next one never started.
+    expect(db.writes.skills).toBe(1);
+    expect(JSON.stringify(db.skills[1])).toContain(SECRET);
+  });
+
+  it("skips a draft card another writer changed meanwhile instead of overwriting it", async () => {
+    const legacy = legacyRow("skill-a");
+    const card = {
+      kind: "skill_draft",
+      skillId: "deleted-skill",
+      name: "Old",
+      goal: "Old",
+      playbook: { ...legacy.playbook, steps: [`Type "${SECRET}".`] },
+      status: "draft",
+    };
+    const db = fakePrisma([], [{ id: "m-1", blocks: [card] }]);
+    // A concurrent card-state write (say, Save flipping status) lands between read and write.
+    const concurrent = [{ ...card, status: "saved", name: "Renamed meanwhile" }];
+    db.onBeforeMessageWrite((id) => {
+      const row = db.messages.find((candidate) => candidate.id === id);
+      if (row) row.blocks = structuredClone(concurrent);
+    });
+    const result = await purgeTaughtSkillSecrets(db.prisma);
+    expect(result).toMatchObject({
+      draftMessagesScanned: 1,
+      draftMessagesScrubbed: 0,
+      draftMessagesSkippedConcurrent: 1,
+    });
+    // The concurrent write survives; the next start scrubs the card.
+    expect(db.messages[0]?.blocks).toEqual(concurrent);
+    expect(db.writes.messages).toBe(0);
+    db.onBeforeMessageWrite(() => {});
+    const retry = await purgeTaughtSkillSecrets(db.prisma);
+    expect(retry).toMatchObject({ draftMessagesScrubbed: 1, draftMessagesSkippedConcurrent: 0 });
+    expect(JSON.stringify(db.messages)).not.toContain(SECRET);
+    expect(db.messages[0]?.blocks).toEqual([
+      expect.objectContaining({ status: "saved", name: "Renamed meanwhile" }),
+    ]);
   });
 });

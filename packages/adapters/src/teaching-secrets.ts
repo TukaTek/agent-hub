@@ -91,19 +91,36 @@ export type ScrubbedTaughtSkill = {
  * builder copied that input into them. A clean recording keeps the user's edited steps.
  * Either way every playbook string goes through secret redaction. Running it on its own
  * output changes nothing.
+ *
+ * `clientSteps` marks steps that came from a client (updateDraft). A client can hold a card
+ * read before the purge, so a literal `Type "…".` or `Paste or type: ….` step is only kept
+ * when the sanitized recording itself produces it (a keepLiteral event); any other literal
+ * is replaced with a numbered placeholder.
  */
-export function scrubTaughtSkill(row: {
-  goal: string;
-  recording: unknown;
-  playbook: unknown;
-}): ScrubbedTaughtSkill {
+export function scrubTaughtSkill(
+  row: {
+    goal: string;
+    recording: unknown;
+    playbook: unknown;
+  },
+  options: { clientSteps?: boolean } = {},
+): ScrubbedTaughtSkill {
   const recording = parseStoredRecording(row.recording);
   const events = recording.events.map(sanitizeStoredTeachEvent);
   const recordingChanged = JSON.stringify(events) !== JSON.stringify(recording.events);
   const stored = parseStoredPlaybook(row.playbook);
-  const steps = recordingChanged
-    ? buildPlaybookFromRecording(row.goal, events, recording.snapshots).steps
-    : stored.steps;
+  let steps: string[];
+  if (recordingChanged) {
+    steps = buildPlaybookFromRecording(row.goal, events, recording.snapshots).steps;
+  } else if (options.clientSteps) {
+    const recorded = buildPlaybookFromRecording(row.goal, events, recording.snapshots).steps;
+    steps = scrubLiteralSteps(
+      stored.steps,
+      new Set(recorded.filter((step) => literalStepValue(step) !== undefined)),
+    );
+  } else {
+    steps = stored.steps;
+  }
   const playbook = redactPlaybook({ ...stored, steps });
   return {
     recording: { ...recording, events },
@@ -117,42 +134,56 @@ const LITERAL_TYPE_STEP = /^Type "(.*)"\.$/s;
 const LITERAL_PASTE_STEP = /^Paste or type: (.*)\.$/s;
 const PLACEHOLDER_ONLY = /^(?:\{\{(?:secret|input):[^}]*\}\}|\[redacted input\])$/;
 
+type LiteralStep = { kind: "typed" | "pasted"; value: string };
+
+function literalStepValue(step: string): LiteralStep | undefined {
+  const typedMatch = LITERAL_TYPE_STEP.exec(step);
+  if (typedMatch) {
+    const raw = typedMatch[1] ?? "";
+    try {
+      return { kind: "typed", value: String(JSON.parse(`"${raw}"`)) };
+    } catch {
+      return { kind: "typed", value: raw };
+    }
+  }
+  const pastedMatch = LITERAL_PASTE_STEP.exec(step);
+  if (pastedMatch) return { kind: "pasted", value: pastedMatch[1] ?? "" };
+  return undefined;
+}
+
+/**
+ * Replaces literal Type/Paste steps with numbered placeholders, keeping placeholder-only
+ * steps and any step in `allowed` (literals the recording itself produced).
+ */
+function scrubLiteralSteps(steps: string[], allowed: ReadonlySet<string> = new Set()): string[] {
+  let typed = 0;
+  let pasted = 0;
+  return steps.map((step) => {
+    const literal = literalStepValue(step);
+    if (!literal) return step;
+    if (PLACEHOLDER_ONLY.test(literal.value)) {
+      if (literal.value.startsWith(`{{input:${literal.kind} text `)) {
+        if (literal.kind === "typed") typed += 1;
+        else pasted += 1;
+      }
+      return step;
+    }
+    if (allowed.has(step)) return step;
+    if (literal.kind === "typed") {
+      typed += 1;
+      return `Type "{{input:typed text ${typed}}}".`;
+    }
+    pasted += 1;
+    return `Paste or type: {{input:pasted text ${pasted}}}.`;
+  });
+}
+
 /**
  * For a chat draft card whose skill no longer exists there is no recording to rebuild from,
  * so literal Type/Paste steps are replaced with placeholders in place.
  */
 export function scrubDraftPlaybook(playbook: SkillPlaybook): SkillPlaybook {
-  let typed = 0;
-  let pasted = 0;
-  const steps = playbook.steps.map((step) => {
-    const typedMatch = LITERAL_TYPE_STEP.exec(step);
-    if (typedMatch) {
-      const inner = (() => {
-        try {
-          return String(JSON.parse(`"${typedMatch[1]}"`));
-        } catch {
-          return typedMatch[1] ?? "";
-        }
-      })();
-      if (PLACEHOLDER_ONLY.test(inner)) {
-        if (inner.startsWith("{{input:typed text ")) typed += 1;
-        return step;
-      }
-      typed += 1;
-      return `Type "{{input:typed text ${typed}}}".`;
-    }
-    const pastedMatch = LITERAL_PASTE_STEP.exec(step);
-    if (pastedMatch) {
-      if (PLACEHOLDER_ONLY.test(pastedMatch[1] ?? "")) {
-        if (pastedMatch[1]?.startsWith("{{input:pasted text ")) pasted += 1;
-        return step;
-      }
-      pasted += 1;
-      return `Paste or type: {{input:pasted text ${pasted}}}.`;
-    }
-    return step;
-  });
-  return redactPlaybook({ ...playbook, steps });
+  return redactPlaybook({ ...playbook, steps: scrubLiteralSteps(playbook.steps) });
 }
 
 export type PurgePrisma = Pick<PrismaClient, "taughtSkill" | "message">;
@@ -166,7 +197,17 @@ export type TaughtSkillPurgeCounts = {
   skippedConcurrent: number;
   draftMessagesScanned: number;
   draftMessagesScrubbed: number;
+  /** Draft cards another writer changed between read and write; the next start retries them. */
+  draftMessagesSkippedConcurrent: number;
 };
+
+/** The purge stopped at a batch boundary because the API is shutting down. */
+export class PurgeInterruptedError extends Error {
+  override name = "PurgeInterruptedError";
+  constructor() {
+    super("taught_skills secret purge interrupted");
+  }
+}
 
 type DraftBlock = { kind: "skill_draft"; skillId?: unknown; playbook?: unknown };
 
@@ -180,13 +221,19 @@ function isDraftBlock(block: unknown): block is DraftBlock {
  * Idempotent legacy purge for CAAH-71. Scrubs every taught_skills row and every chat
  * skill_draft card that copied a playbook. Returns counts only; it never logs or returns
  * a stored value. `updatedAt` is preserved and used as an optimistic guard, so a concurrent
- * edit is never overwritten and the purge does not reorder anyone's skill list.
+ * edit is never overwritten and the purge does not reorder anyone's skill list. Draft cards
+ * are guarded by comparing their blocks.
  */
 export async function purgeTaughtSkillSecrets(
   prisma: PurgePrisma,
-  options: { batchSize?: number } = {},
+  options: { batchSize?: number; signal?: AbortSignal } = {},
 ): Promise<TaughtSkillPurgeCounts> {
   const batchSize = options.batchSize ?? 100;
+  // Checked between batches so an API shutdown is not held up by a long purge; the
+  // interrupted purge simply runs again on the next start.
+  const checkAborted = () => {
+    if (options.signal?.aborted) throw new PurgeInterruptedError();
+  };
   const counts: TaughtSkillPurgeCounts = {
     skillsScanned: 0,
     skillsChanged: 0,
@@ -195,10 +242,12 @@ export async function purgeTaughtSkillSecrets(
     skippedConcurrent: 0,
     draftMessagesScanned: 0,
     draftMessagesScrubbed: 0,
+    draftMessagesSkippedConcurrent: 0,
   };
 
   let lastSkillId: string | undefined;
   for (;;) {
+    checkAborted();
     const batch = await prisma.taughtSkill.findMany({
       where: lastSkillId ? { id: { gt: lastSkillId } } : {},
       orderBy: { id: "asc" },
@@ -231,6 +280,7 @@ export async function purgeTaughtSkillSecrets(
 
   let lastMessageId: string | undefined;
   for (;;) {
+    checkAborted();
     const batch = await prisma.message.findMany({
       where: {
         ...(lastMessageId ? { id: { gt: lastMessageId } } : {}),
@@ -268,7 +318,16 @@ export async function purgeTaughtSkillSecrets(
         blocks.push({ ...block, playbook });
       }
       if (!changed) continue;
-      await prisma.message.update({ where: { id: message.id }, data: { blocks: blocks as never } });
+      // Compare-and-swap on the blocks we read (messages have no updatedAt): a card-state
+      // write that landed in between is never overwritten.
+      const written = await prisma.message.updateMany({
+        where: { id: message.id, blocks: { equals: message.blocks as never } },
+        data: { blocks: blocks as never },
+      });
+      if (written.count === 0) {
+        counts.draftMessagesSkippedConcurrent += 1;
+        continue;
+      }
       counts.draftMessagesScrubbed += 1;
     }
     if (batch.length < batchSize) break;

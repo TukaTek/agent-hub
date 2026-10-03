@@ -145,6 +145,11 @@ export interface AppHandles {
   email?: TransactionalEmailProvider;
   executor: ReturnType<typeof createRunExecutor>;
   runtime: AgentRuntime;
+  /**
+   * One-time data maintenance (the CAAH-71 legacy purge), started by the entrypoint after the
+   * server is listening. Resolves when it finishes; never rejects. stop() interrupts it.
+   */
+  startBackgroundMaintenance: () => Promise<void>;
   stop: () => Promise<void>;
 }
 
@@ -236,10 +241,6 @@ export async function createApp(
       logger.info("applied SIGNUP_ALLOWLIST from the environment");
     }
   }
-
-  // CAAH-71: scrub Teach Me secrets left by older builds. Idempotent and count-only; a
-  // failure is logged and never stops the API.
-  await runTaughtSkillsSecretPurgeAtStartup({ env, prisma, logger });
 
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
@@ -903,6 +904,19 @@ export async function createApp(
     })),
   );
 
+  // CAAH-71: scrub Teach Me secrets left by older builds. Idempotent, count-only and
+  // marker-guarded; a failure is logged and never stops the API.
+  let maintenanceTask: Promise<void> | undefined;
+  const startBackgroundMaintenance = () => {
+    maintenanceTask ??= runTaughtSkillsSecretPurgeAtStartup({
+      env,
+      prisma,
+      logger,
+      signal: shutdown.signal,
+    });
+    return maintenanceTask;
+  };
+
   return {
     app,
     prisma,
@@ -915,10 +929,13 @@ export async function createApp(
     email,
     executor,
     runtime,
+    startBackgroundMaintenance,
     stop: async () => {
       // Abort in-flight continueRun boot waits before draining jobs so stop() cannot sit
       // on waitForComputerReady for the full boot-wait window during shared Postgres journeys.
       shutdown.abort();
+      // The purge stops at its next batch boundary; let it finish before the pool closes.
+      await maintenanceTask;
       oauthLogins.abortAll();
       messagingStopped = true;
       clearMessagingRetryDelay?.();

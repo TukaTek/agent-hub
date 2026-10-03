@@ -3351,6 +3351,7 @@ export function createRouter(deps: RouterDeps) {
         taughtSkills.updateDraft(context.actor, input.skillId, {
           name: input.name,
           playbook: input.playbook,
+          expectedUpdatedAt: input.expectedUpdatedAt,
         }),
       ),
       save: authed.skills.save.handler(async ({ context, input }) =>

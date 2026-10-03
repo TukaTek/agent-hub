@@ -2504,6 +2504,7 @@ describeJourneys("required product journeys", () => {
       status: string;
       playbook: { steps: string[] };
       recording: { events: Array<{ kind: string }>; snapshots: Array<{ summary: string }> };
+      updatedAt: string;
     }>(app, cookie, "skills/stop", { skillId: skill.id });
     expect(stopped.status).toBe("draft");
     expect(stopped.playbook.steps.join(" ")).toMatch(/Click|120|40|x/i);
@@ -2521,6 +2522,7 @@ describeJourneys("required product journeys", () => {
       skillId: skill.id,
       name: "Export weekly CRM list",
       playbook: stopped.playbook,
+      expectedUpdatedAt: stopped.updatedAt,
     });
     const saved = await rpc<{ status: string; name: string }>(app, cookie, "skills/save", {
       skillId: skill.id,

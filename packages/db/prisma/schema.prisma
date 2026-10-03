@@ -311,6 +311,15 @@ model DeploymentSettings {
   @@map("deployment_settings")
 }
 
+/// One-time data maintenance that finished on this database, so later API starts skip it
+/// (CAAH-71: the Teach Me legacy secret purge).
+model MaintenanceMarker {
+  name        String   @id
+  completedAt DateTime @default(now())
+
+  @@map("maintenance_markers")
+}
+
 model UserModelCredential {
   id          String                 @id @default(cuid())
   userId      String

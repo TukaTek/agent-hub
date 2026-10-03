@@ -276,21 +276,28 @@ async function updateSkillDraftMessage(
   });
   if (!bot?.thread) return;
 
-  const messages = await deps.prisma.message.findMany({
-    where: { threadId: bot.thread.id, role: "bot" },
-    orderBy: { seq: "desc" },
-    take: 100,
-  });
-
-  for (const message of messages) {
+  // Compare-and-swap on the blocks we read (messages have no updatedAt), retried a few times,
+  // so a concurrent card write (another tab, the legacy purge) is never silently overwritten.
+  for (let attempt = 0; attempt < DRAFT_MESSAGE_WRITE_ATTEMPTS; attempt += 1) {
+    const messages = await deps.prisma.message.findMany({
+      where: { threadId: bot.thread.id, role: "bot" },
+      orderBy: { seq: "desc" },
+      take: 100,
+    });
+    const message = messages.find(
+      (candidate) =>
+        Array.isArray(candidate.blocks) &&
+        (candidate.blocks as MessageBlock[]).some(
+          (block) => block.kind === "skill_draft" && block.skillId === skill.id,
+        ),
+    );
+    if (!message) return;
     const parsed = message.blocks as MessageBlock[];
-    if (!Array.isArray(parsed)) continue;
     const index = parsed.findIndex(
       (block) => block.kind === "skill_draft" && block.skillId === skill.id,
     );
-    if (index === -1) continue;
     const existing = parsed[index];
-    if (existing?.kind !== "skill_draft") continue;
+    if (existing?.kind !== "skill_draft") return;
     const playbook = input.playbook ?? parsePlaybook(skill.playbook);
     const nextBlocks: MessageBlock[] = [...parsed];
     nextBlocks[index] = {
@@ -300,11 +307,13 @@ async function updateSkillDraftMessage(
       goal: skill.goal,
       playbook,
       status: input.status ?? existing.status,
+      updatedAt: skill.updatedAt.toISOString(),
     };
-    await deps.prisma.message.update({
-      where: { id: message.id },
+    const written = await deps.prisma.message.updateMany({
+      where: { id: message.id, blocks: { equals: message.blocks as never } },
       data: { blocks: nextBlocks as never },
     });
+    if (written.count === 0) continue;
     await deps.events.append({
       spaceId: actor.spaceId,
       threadId: bot.thread.id,
@@ -314,6 +323,20 @@ async function updateSkillDraftMessage(
     });
     return;
   }
+}
+
+const DRAFT_MESSAGE_WRITE_ATTEMPTS = 3;
+
+function staleDraftError() {
+  return new ORPCError("CONFLICT", {
+    message: "This draft changed since you opened it. Reload it and save again.",
+  });
+}
+
+function sameInstant(expected: string | undefined, actual: Date): boolean {
+  if (!expected) return false;
+  const time = Date.parse(expected);
+  return Number.isFinite(time) && time === actual.getTime();
 }
 
 export async function expireTeachingSessionIfNeeded(deps: TaughtSkillsDeps, skillId: string) {
@@ -477,22 +500,29 @@ export function createTaughtSkillsService(deps: TaughtSkillsDeps) {
     async updateDraft(
       actor: Actor,
       skillId: string,
-      input: { name?: string; playbook: SkillPlaybook },
+      input: { name?: string; playbook: SkillPlaybook; expectedUpdatedAt?: string },
     ): Promise<TaughtSkill> {
       const skill = await getOwnedSkill(deps, actor, skillId);
       if (skill.status !== "draft" && skill.status !== "saved") {
         throw new ORPCError("BAD_REQUEST", { message: "Skill is not editable yet" });
       }
-      // CAAH-71: the client's playbook is kept (it is the user's edit) but goes through the
-      // same server-side scrub as everything else, and a recording that still holds raw
-      // input from an older build is stripped and its steps rebuilt.
-      const scrubbed = scrubTaughtSkill({
-        goal: skill.goal,
-        recording: skill.recording,
-        playbook: input.playbook,
-      });
-      const row = await deps.prisma.taughtSkill.update({
-        where: { id: skill.id },
+      // CAAH-71: optimistic concurrency. The edit must be based on the row as it is now; a
+      // card read before a scrub (or from an older build, which sends no version) is stale.
+      if (!sameInstant(input.expectedUpdatedAt, skill.updatedAt)) throw staleDraftError();
+      // The client's playbook is kept (it is the user's edit) but goes through the same
+      // server-side scrub as everything else: a recording that still holds raw input from an
+      // older build is stripped and its steps rebuilt, and literal Type/Paste steps the
+      // recording did not produce are replaced with placeholders.
+      const scrubbed = scrubTaughtSkill(
+        {
+          goal: skill.goal,
+          recording: skill.recording,
+          playbook: input.playbook,
+        },
+        { clientSteps: true },
+      );
+      const written = await deps.prisma.taughtSkill.updateMany({
+        where: { id: skill.id, updatedAt: skill.updatedAt },
         data: {
           name: input.name ?? skill.name,
           recording: scrubbed.recording as never,
@@ -500,6 +530,8 @@ export function createTaughtSkillsService(deps: TaughtSkillsDeps) {
           status: skill.status === "saved" ? "saved" : "draft",
         },
       });
+      if (written.count === 0) throw staleDraftError();
+      const row = await deps.prisma.taughtSkill.findUniqueOrThrow({ where: { id: skill.id } });
       await updateSkillDraftMessage(deps, actor, row, {
         name: row.name,
         playbook: parsePlaybook(row.playbook),

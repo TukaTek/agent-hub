@@ -1873,6 +1873,10 @@ msgstr ""
 msgid "Draft skill"
 msgstr "ड्राफ़्ट स्किल"
 
+#: src/components/teach/SkillDraftCard.tsx
+msgid "This draft changed since you opened it. Review it and save again."
+msgstr ""
+
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Drag, drop, or paste an image"
 msgstr "छवि खींचें, छोड़ें या पेस्ट करें"
