@@ -23,7 +23,9 @@ export type ProvisioningErrorCode =
   | "OWNER_EXISTS"
   | "EMAIL_TAKEN"
   | "NOT_FOUND"
-  | "NOT_ADMITTED";
+  | "NOT_ADMITTED"
+  /** Hub mode lacks HUB_AUTH_TENANT_ID, so no Hub identity can be trusted as owner. */
+  | "NOT_CONFIGURED";
 
 export class ProvisioningError extends Error {
   constructor(
@@ -224,11 +226,21 @@ function validateHubIdentifier(label: string, value: string): string {
   return trimmed;
 }
 
+/** Refusal for Hub owner mapping without the deployment's tenant. Nothing is written. */
+export const HUB_TENANT_MISSING = {
+  code: "NOT_CONFIGURED",
+  message:
+    "AUTH_MODE=hub needs this deployment's tenant: set HUB_AUTH_TENANT_ID first. No owner was mapped.",
+} as const;
+
 export interface HubOwnerMappingInput {
   /** HUB_AUTH_ORIGIN as parsed by hubAuthFromEnv. */
   hubOrigin: string;
-  /** Deployment restriction from HUB_AUTH_TENANT_ID, when configured. */
-  configuredTenant?: string;
+  /**
+   * HUB_AUTH_TENANT_ID. Required: the owner's tenant must be this deployment's tenant, never
+   * just the one the operator typed. Blank refuses the mapping (CAAH-43 M1).
+   */
+  configuredTenant: string;
   /** Hub tenant id that owns `hubUserId`. */
   hubTenant: string;
   /** Hub `tenant_users.id`. Never an Entra object id or an email. */
@@ -248,9 +260,12 @@ export async function mapHubOwner(
   prisma: PrismaClient,
   input: HubOwnerMappingInput,
 ): Promise<{ ownerUserId: string; previousOwnerUserId: string | null }> {
+  if (typeof input.configuredTenant !== "string" || !input.configuredTenant.trim()) {
+    throw new ProvisioningError(HUB_TENANT_MISSING.code, HUB_TENANT_MISSING.message);
+  }
   const tenant = validateHubIdentifier("--hub-tenant", input.hubTenant);
   const subject = validateHubIdentifier("--hub-user-id", input.hubUserId);
-  if (input.configuredTenant && input.configuredTenant !== tenant) {
+  if (input.configuredTenant.trim() !== tenant) {
     throw new ProvisioningError(
       "INVALID_INPUT",
       "--hub-tenant does not match this deployment's HUB_AUTH_TENANT_ID",

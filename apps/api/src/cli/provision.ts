@@ -9,6 +9,7 @@
  */
 import { readFile } from "node:fs/promises";
 import {
+  HUB_TENANT_MISSING,
   type HubAuthConfig,
   mapHubOwner,
   ProvisioningError,
@@ -177,9 +178,15 @@ export async function runProvisionCommand(args: ProvisionArgs, deps: ProvisionDe
       ["email", "name", "secretFile"],
       "AUTH_MODE=hub: no local password is created. Use --hub-user-id and --hub-tenant only.",
     );
+    // M1: a not-configured Hub mode (no HUB_AUTH_TENANT_ID) has no tenant to check against,
+    // so --hub-tenant alone must never decide whose seat this is.
+    const configuredTenant = deps.hub.tenantId?.trim();
+    if (deps.hub.notConfigured || !configuredTenant) {
+      throw new ProvisioningError(HUB_TENANT_MISSING.code, HUB_TENANT_MISSING.message);
+    }
     const result = await mapHubOwner(deps.prisma, {
       hubOrigin: deps.hub.origin,
-      configuredTenant: deps.hub.tenantId,
+      configuredTenant,
       hubTenant: requireValue(args.hubTenant, "--hub-tenant"),
       hubUserId: requireValue(args.hubUserId, "--hub-user-id"),
       transfer: args.command === "transfer-owner",

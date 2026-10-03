@@ -1,3 +1,4 @@
+import { hubAuthFromEnv, ProvisioningError } from "@cortexai-agent-hub/auth";
 import { describe, expect, it, vi } from "vitest";
 import {
   ProvisionUsageError,
@@ -174,6 +175,44 @@ describe("provision command routing", () => {
         },
       ),
     ).rejects.toThrow("--hub-user-id is required");
+    expect(out).not.toHaveBeenCalled();
+  });
+
+  // M1: the tenant check must never be skipped. Without HUB_AUTH_TENANT_ID the operator's
+  // --hub-tenant would otherwise become the owner's tenant.
+  const mapping = { command: "provision-owner", hubUserId: "tu-1", hubTenant: "tenant-a" } as const;
+
+  it("refuses Hub owner mapping before touching the database when HUB_AUTH_TENANT_ID is missing", async () => {
+    for (const tenantId of [undefined, "", "  "]) {
+      const hub = { origin: "https://hub.example.test", tenantId } as never;
+      for (const command of ["provision-owner", "transfer-owner"] as const) {
+        await expect(
+          runProvisionCommand({ ...mapping, command }, { prisma, hub, stdin: pipe(""), out }),
+        ).rejects.toMatchObject({
+          code: "NOT_CONFIGURED",
+          message: expect.stringContaining("set HUB_AUTH_TENANT_ID first"),
+        });
+      }
+    }
+    expect(out).not.toHaveBeenCalled();
+  });
+
+  it("refuses Hub owner mapping when Hub mode is not configured", async () => {
+    // The real parser: AUTH_MODE=hub without HUB_AUTH_TENANT_ID yields notConfigured.
+    const parsed = hubAuthFromEnv({
+      AUTH_MODE: "hub",
+      HUB_AUTH_ORIGIN: "https://hub.example.test",
+    });
+    expect(parsed?.notConfigured).toBeDefined();
+    expect(parsed?.tenantId).toBeUndefined();
+    // Even a notConfigured config that somehow carries a tenant is refused.
+    const withTenant = { ...parsed, tenantId: "tenant-a" } as never;
+    for (const hub of [parsed as never, withTenant]) {
+      const refusal = runProvisionCommand(mapping, { prisma, hub, stdin: pipe(""), out });
+      await expect(refusal).rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+      await expect(refusal).rejects.toThrow("set HUB_AUTH_TENANT_ID first");
+    }
+    expect(provisionExitCode(new ProvisioningError("NOT_CONFIGURED", "x"))).toBe(1);
     expect(out).not.toHaveBeenCalled();
   });
 });

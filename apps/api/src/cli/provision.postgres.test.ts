@@ -248,4 +248,25 @@ describePostgres("provision CLI against PostgreSQL (CAAH-43)", () => {
     expect(await handles.prisma.user.count()).toBe(usersBefore);
     expect(await handles.prisma.account.count()).toBe(accountsBefore);
   });
+
+  it("Hub mode without HUB_AUTH_TENANT_ID (not configured) maps nothing (M1)", async () => {
+    const before = await owner();
+    const usersBefore = await handles.prisma.user.count();
+    const accountsBefore = await handles.prisma.account.count();
+    // Unset and blank both leave Hub mode not configured; the typed --hub-tenant is never used.
+    for (const tenantEnv of [{}, { HUB_AUTH_TENANT_ID: "" }]) {
+      for (const command of ["provision-owner", "transfer-owner"]) {
+        const run = await provision(
+          [command, "--hub-user-id", randomUUID(), "--hub-tenant", "typed-tenant"],
+          {
+            env: { AUTH_MODE: "hub", HUB_AUTH_ORIGIN: "https://hub.example.test", ...tenantEnv },
+          },
+        );
+        expectRefused(run, "set HUB_AUTH_TENANT_ID first");
+      }
+    }
+    expect(await owner()).toBe(before);
+    expect(await handles.prisma.user.count()).toBe(usersBefore);
+    expect(await handles.prisma.account.count()).toBe(accountsBefore);
+  });
 });

@@ -227,7 +227,7 @@ describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
     expect(await owner()).toBeNull();
   });
 
-  it("Hub owner mapping names tenant_users.id plus tenant and creates no local login", async () => {
+  it("Hub owner mapping names tenant_users.id plus tenant, creates no local login, and needs HUB_AUTH_TENANT_ID", async () => {
     const hubOrigin = "https://hub.example.test";
     const tenant = `tenant-${randomUUID()}`;
     const tenantUserId = randomUUID();
@@ -235,6 +235,7 @@ describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
     const accountsBefore = await prisma.account.count();
     const mapped = await mapHubOwner(prisma, {
       hubOrigin,
+      configuredTenant: tenant,
       hubTenant: tenant,
       hubUserId: tenantUserId,
       transfer: false,
@@ -249,6 +250,7 @@ describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
     await expect(
       mapHubOwner(prisma, {
         hubOrigin,
+        configuredTenant: tenant,
         hubTenant: tenant,
         hubUserId: randomUUID(),
         transfer: false,
@@ -256,7 +258,13 @@ describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
     ).rejects.toMatchObject({ code: "OWNER_EXISTS" });
     for (const hubUser of ["owner@example.test", " ", ""]) {
       await expect(
-        mapHubOwner(prisma, { hubOrigin, hubTenant: tenant, hubUserId: hubUser, transfer: true }),
+        mapHubOwner(prisma, {
+          hubOrigin,
+          configuredTenant: tenant,
+          hubTenant: tenant,
+          hubUserId: hubUser,
+          transfer: true,
+        }),
       ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     }
     await expect(
@@ -269,5 +277,24 @@ describePostgres("signup lockdown and owner provisioning (PostgreSQL)", () => {
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(await owner()).toBe(mapped.ownerUserId);
+
+    // M1: without HUB_AUTH_TENANT_ID the operator's --hub-tenant is never trusted,
+    // for a first mapping or a transfer, and the seat is left as it was.
+    for (const configuredTenant of ["", "  ", undefined as unknown as string]) {
+      for (const transfer of [false, true]) {
+        await expect(
+          mapHubOwner(prisma, {
+            hubOrigin,
+            configuredTenant,
+            hubTenant: `typed-${randomUUID()}`,
+            hubUserId: randomUUID(),
+            transfer,
+          }),
+        ).rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+      }
+    }
+    expect(await owner()).toBe(mapped.ownerUserId);
+    expect(await prisma.user.count()).toBe(usersBefore);
+    expect(await prisma.account.count()).toBe(accountsBefore);
   });
 });
