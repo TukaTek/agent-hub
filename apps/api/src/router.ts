@@ -225,6 +225,7 @@ import {
   promptFocus,
   startOnboarding,
 } from "./onboarding.js";
+import { listRoutineRuns } from "./routine-runs.js";
 import { listSpaceRuns } from "./runs.js";
 import { addScreenProxyCapability } from "./screen-proxy.js";
 import { querySpaceSearch } from "./search.js";
@@ -2994,6 +2995,9 @@ export function createRouter(deps: RouterDeps) {
       ),
     },
     routines: {
+      history: authed.routines.history.handler(async ({ context, input }) =>
+        listRoutineRuns(deps.prisma, context.actor, input.routineId, input.before),
+      ),
       list: authed.routines.list.handler(async ({ context, input }) => {
         await repos.getBot(context.actor, input.botId);
         return listRoutinesDto(deps, context.actor, input.botId);

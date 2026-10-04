@@ -1367,6 +1367,10 @@ msgstr "No se pudieron cargar los servidores MCP"
 msgid "Could not load model settings"
 msgstr "No se pudo cargar la configuración de modelos"
 
+#: src/pages/RoutineRunHistory.tsx
+msgid "Could not load run history"
+msgstr "No se pudo cargar el historial de ejecuciones"
+
 #: src/pages/KnowledgeSection.tsx
 msgid "Could not load skill"
 msgstr "No se pudo cargar la habilidad"
@@ -2347,6 +2351,10 @@ msgstr "Cargar mensajes anteriores"
 msgid "Load more"
 msgstr ""
 
+#: src/pages/RoutineRunHistory.tsx
+msgid "Load older runs"
+msgstr "Cargar ejecuciones anteriores"
+
 #: src/pages/ActivityList.tsx
 msgid "Loading activity…"
 msgstr "Cargando actividad…"
@@ -2385,6 +2393,7 @@ msgstr "Cargando proveedores de voz…"
 #: src/pages/IntegrationSetup.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/PeerMessagesOverlay.tsx
+#: src/pages/RoutineRunHistory.tsx
 #: src/pages/Shell.tsx
 msgid "Loading…"
 msgstr "Cargando…"
@@ -2805,7 +2814,7 @@ msgstr ""
 msgid "No results"
 msgstr "Sin resultados"
 
-#: src/pages/RoutineEditor.tsx
+#: src/pages/RoutineRunHistory.tsx
 msgid "No runs yet"
 msgstr "Aún no hay ejecuciones"
 
@@ -3174,6 +3183,10 @@ msgstr ""
 msgid "Recreating the computer"
 msgstr ""
 
+#: src/pages/RoutineRunHistory.tsx
+msgid "Refresh"
+msgstr "Actualizar"
+
 #: src/components/teach/TeachComputerOverlay.tsx
 msgid "Refresh view"
 msgstr "Actualizar vista"
@@ -3374,7 +3387,7 @@ msgstr "Rutinas"
 msgid "Run at"
 msgstr "Ejecutar a las"
 
-#: src/pages/RoutineEditor.tsx
+#: src/pages/RoutineRunHistory.tsx
 msgid "Run history"
 msgstr "Historial de ejecuciones"
 
@@ -3721,6 +3734,7 @@ msgid "Starting"
 msgstr "Iniciando"
 
 #: src/components/teach/TeachComputerOverlay.tsx
+#: src/lib/roster-status.ts
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 msgid "Starting…"
@@ -4102,6 +4116,10 @@ msgstr "Verificando…"
 msgid "Version"
 msgstr ""
 
+#: src/pages/RoutineRunHistory.tsx
+msgid "View chat"
+msgstr "Ver chat"
+
 #: src/pages/SettingsOverlay.tsx
 #: src/pages/Shell.tsx
 #: src/pages/shell/bot-panel.tsx
@@ -4116,6 +4134,10 @@ msgstr "Chat de voz"
 #: src/components/SoftwareUpdateSection.tsx
 msgid "Waiting for the API to come back…"
 msgstr "Esperando a que vuelva la API…"
+
+#: src/lib/roster-status.ts
+msgid "Waiting in line…"
+msgstr "Esperando en la cola…"
 
 #: src/pages/shell/message-cards.tsx
 msgid "Waiting…"
@@ -4170,6 +4192,7 @@ msgstr "Cuándo usar"
 msgid "Where should bots run?"
 msgstr "¿Dónde deben ejecutarse los bots?"
 
+#: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 msgid "Working…"
 msgstr "Trabajando…"

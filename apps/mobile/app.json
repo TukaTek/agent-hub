@@ -47,7 +47,7 @@
         {
           "photosPermission": "CortexAI Agent Hub uses your photo library so you can attach images to an assistant message.",
           "cameraPermission": "CortexAI Agent Hub uses the camera so you can attach photos to an assistant message.",
-          "microphonePermission": false
+          "microphonePermission": "CortexAI Agent Hub uses the microphone for voice calls with your bots."
         }
       ],
       "expo-sharing",

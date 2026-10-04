@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fluxbox \
     xterm \
     xdotool \
+    wmctrl \
     x11-utils \
     x11-xserver-utils \
     imagemagick \
@@ -56,6 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && printf '%s\n' '#!/bin/sh' 'exec xsetroot -solid "#111113" "$@"' > /usr/bin/fbsetbg \
   && chmod +x /usr/bin/fbsetbg \
   && ln -sfn /bin/true /usr/bin/xmessage
+RUN ln -s "$(dpkg -L libnss-wrapper | grep '/libnss_wrapper.so$')" /usr/local/lib/libnss_wrapper.so
 ARG TARGETARCH
 ARG UV_VERSION=0.12.19
 RUN set -eux; \
@@ -108,9 +110,11 @@ WORKDIR /home/cortexai-agent-hub
 # --chmod normalizes modes: a restrictive host umask (e.g. 077 on hardened hosts) would
 # otherwise leave these files unreadable to USER 1000 at runtime.
 COPY --chmod=755 start.sh /usr/local/bin/cortexai-agent-hub-computer
+COPY --chmod=644 user-env.sh /usr/local/lib/cortexai-agent-hub-user-env.sh
 COPY --chmod=755 control.py /usr/local/bin/cortexai-agent-hub-computer-control
 COPY --from=capture-builder /build/libcortexai_agent_hub-xcapture.so /usr/local/lib/libcortexai_agent_hub-xcapture.so
 COPY --chmod=755 cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-browser
+COPY --chmod=755 cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-focus-or-launch
 COPY --chmod=755 cortexai-agent-hub-page-browser /usr/local/bin/cortexai-agent-hub-page-browser
 COPY --chmod=644 cortexai-agent-hub-browser.desktop /usr/share/applications/cortexai-agent-hub-browser.desktop
 COPY --chmod=644 fluxbox.init /etc/cortexai-agent-hub/fluxbox/init
@@ -125,10 +129,14 @@ COPY --chmod=644 cortexai-agent-hub-local-bin.sh /etc/profile.d/cortexai-agent-h
 COPY --chmod=644 office_smoke.py /usr/local/share/cortexai-agent-hub-office-smoke.py
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
-  && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-page-browser \
+  && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/lib/cortexai-agent-hub-user-env.sh /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-page-browser \
     /etc/cortexai-agent-hub/fluxbox/init /etc/cortexai-agent-hub/fluxbox/apps /etc/cortexai-agent-hub/fluxbox/menu \
     /etc/profile.d/cortexai-agent-hub-local-bin.sh
-
 EXPOSE 7070 6080 6081 6082 6083 6084 6085 6086 6087 6088 6089 6090 6091 6092 6093 6094 6095
+# Docker exec does not inherit PID 1's exports, so every process gets the same
+# identity lookup. Startup creates these private files for the effective UID/GID.
+ENV LD_PRELOAD=/usr/local/lib/libnss_wrapper.so \
+    NSS_WRAPPER_PASSWD=/tmp/cortexai-agent-hub-nss/passwd \
+    NSS_WRAPPER_GROUP=/tmp/cortexai-agent-hub-nss/group
 USER 1000:1000
 CMD ["/usr/local/bin/cortexai-agent-hub-computer"]

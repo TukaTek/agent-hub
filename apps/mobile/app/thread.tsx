@@ -98,18 +98,19 @@ import {
   type MobileSnapshot,
   mergeMobileSnapshot,
   messagingProviderLabel,
+  mobileThreadRefreshResult,
   prependMobileMessagePage,
   rpc,
   selectedSpaceId,
   selectSpace,
-  shouldApplyMobileThreadRefresh,
   subscribeThread,
 } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
 import { type MobileArtifactTarget, openMobileArtifact } from "../lib/artifact-open";
 import { nextAutoSpeakAction } from "../lib/auto-speak";
 import { confirmDeleteBot } from "../lib/bot-lifecycle";
-import { startCall, useCallSession } from "../lib/call-session";
+import { setCallProviderTranscribe, startCall, useCallSession } from "../lib/call-session";
+import { loadDeviceVoiceEnabled } from "../lib/device-voice";
 import { available as dictationAvailable } from "../lib/dictation";
 import { cancelFocusPrompt, focusPromptThreadActive } from "../lib/focus-prompt";
 import { dateLocaleForUi, t, useI18n } from "../lib/i18n";
@@ -145,6 +146,7 @@ import {
   type ThreadScrollState,
 } from "../lib/thread-scroll";
 import { speakText } from "../lib/voice";
+import { probeProviderTranscribe, resolveVoiceCallPlan } from "../lib/voice-call-entry";
 
 type PendingAttachment = PickedAttachment & { threadKey: string };
 type AskAction = NonNullable<Extract<MessageBlock, { kind: "ask" }>["actions"]>[number];
@@ -274,6 +276,7 @@ function Thread() {
   const inGroup = Boolean(groupId);
   const call = useCallSession();
   const onCall = Boolean(botId) && call?.botId === botId;
+  const voiceCallStarting = useRef(false);
   const scroll = useRef<FlatList<ThreadItem<MobileMessage>>>(null);
   const pinnedScroll = useRef<ScrollView>(null);
   const scrollBehavior = useRef(new ThreadScrollBehavior());
@@ -282,6 +285,9 @@ function Thread() {
   const expandedHistoryThread = useRef<string | null>(null);
   const historyEpoch = useRef(0);
   const jumpGeneration = useRef(0);
+  const refreshGeneration = useRef(0);
+  const liveSubscribed = useRef(false);
+  const liveSubscriptionGeneration = useRef(0);
   const pinnedAroundRef = useRef<{
     botId?: string;
     groupId?: string;
@@ -776,25 +782,33 @@ function Thread() {
     const targetBotId = botId;
     const targetGroupId = groupId;
     const epoch = historyEpoch.current;
+    const generation = ++refreshGeneration.current;
     const next = await rpc<MobileSnapshot>(
       "threads/get",
       targetGroupId ? { groupId: targetGroupId } : { botId: targetBotId! },
     );
-    if (
-      !shouldApplyMobileThreadRefresh({
-        requestEpoch: epoch,
-        currentEpoch: historyEpoch.current,
-        targetBotId,
-        targetGroupId,
-        activeBotId: activeBotId.current,
-        activeGroupId: activeGroupId.current,
-      })
-    )
-      return next;
-    commitSnap(
-      mergeMobileSnapshot(snapRef.current, next, expandedHistoryThread.current === next.threadId),
-    );
-    return next;
+    // Only the newest started refresh may commit. Threads also receive live
+    // events; an older snapshot must not overwrite those while a newer refresh
+    // is already in flight. The subscription starts from the snapshot returned
+    // here, so a discarded fetch must not supply its cursor.
+    const result = mobileThreadRefreshResult({
+      fetched: next,
+      onScreen: snapRef.current,
+      requestGeneration: generation,
+      currentGeneration: refreshGeneration.current,
+      requestEpoch: epoch,
+      currentEpoch: historyEpoch.current,
+      targetBotId,
+      targetGroupId,
+      activeBotId: activeBotId.current,
+      activeGroupId: activeGroupId.current,
+    });
+    if (result.commit) {
+      commitSnap(
+        mergeMobileSnapshot(snapRef.current, next, expandedHistoryThread.current === next.threadId),
+      );
+    }
+    return result.snapshot ?? undefined;
   }
 
   async function applyMessageJump(target: { botId?: string; groupId?: string; messageId: string }) {
@@ -945,6 +959,8 @@ function Thread() {
     expandedHistoryThread.current = null;
     historyEpoch.current += 1;
     const abort = new AbortController();
+    const subscriptionGeneration = ++liveSubscriptionGeneration.current;
+    liveSubscribed.current = false;
     void (async () => {
       // Pending search jumps load the around-page separately; avoid replacing it with latest.
       const next = messageId
@@ -963,6 +979,7 @@ function Thread() {
       let retryMs = 250;
       while (!abort.signal.aborted) {
         try {
+          liveSubscribed.current = true;
           await subscribeThread(
             groupId ? { groupId } : { botId: botId! },
             cursor,
@@ -1008,6 +1025,10 @@ function Thread() {
           );
         } catch {
           // A full refresh reconciles visible state; the event cursor still resumes without gaps.
+        } finally {
+          if (liveSubscriptionGeneration.current === subscriptionGeneration) {
+            liveSubscribed.current = false;
+          }
         }
         if (abort.signal.aborted) break;
         if (!jumpScrollTarget.current && !expandedHistoryThread.current) {
@@ -1026,6 +1047,8 @@ function Thread() {
     if (!botId && !groupId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const refreshDelay = () =>
+      threadRefreshDelayMs(snap?.run?.status, { liveSubscribed: liveSubscribed.current });
     const tick = async () => {
       if (
         AppState.currentState === "active" &&
@@ -1036,10 +1059,10 @@ function Thread() {
         await refresh().catch(() => undefined);
       }
       if (!cancelled) {
-        timer = setTimeout(() => void tick(), threadRefreshDelayMs(snap?.run?.status));
+        timer = setTimeout(() => void tick(), refreshDelay());
       }
     };
-    timer = setTimeout(() => void tick(), threadRefreshDelayMs(snap?.run?.status));
+    timer = setTimeout(() => void tick(), refreshDelay());
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
@@ -1245,7 +1268,7 @@ function Thread() {
         return;
       }
       if (isCurrentTarget(botTarget, groupTarget)) {
-        await refresh();
+        void refresh().catch(() => undefined);
       }
     } catch (err) {
       if (reroutedToGroup && groupTarget) {
@@ -1321,15 +1344,22 @@ function Thread() {
   );
 
   async function startVoiceCall() {
-    if (!botId) return;
+    const targetBotId = botId;
+    if (!targetBotId || voiceCallStarting.current) return;
+    voiceCallStarting.current = true;
+    const loadVoiceStatus = () => rpc<{ ready: boolean; transcribe: boolean }>("voice/status");
     try {
-      const status = await rpc<{ ready: boolean; transcribe: boolean }>("voice/status");
-      if (!status.ready) {
+      const plan = await resolveVoiceCallPlan({
+        loadDeviceVoiceEnabled,
+        dictationAvailable,
+        loadVoiceStatus,
+      });
+      if (activeBotId.current !== targetBotId) return;
+      if (plan.kind === "settings") {
         router.push("/voice");
         return;
       }
-      // The device recognising speech itself is enough: a speak-only provider still calls.
-      if (!status.transcribe && !(await dictationAvailable())) {
+      if (plan.kind === "dictation") {
         Alert.alert(
           t("Calls need transcription"),
           t("Allow speech recognition in Settings, or connect ElevenLabs, OpenAI, or Fish Audio."),
@@ -1340,14 +1370,23 @@ function Thread() {
         );
         return;
       }
-      startCall({
-        botId,
+      const startedCallId = startCall({
+        botId: targetBotId,
         botName: displayName ?? t("Bot"),
-        botColor: mentionBots.find((bot) => bot.id === botId)?.color,
-        transcribe: status.transcribe,
+        botColor: mentionBots.find((bot) => bot.id === targetBotId)?.color,
+        transcribe: plan.transcribe,
       });
+      if (plan.kind === "device") {
+        void probeProviderTranscribe(loadVoiceStatus)
+          .then((enabled) => {
+            if (enabled) setCallProviderTranscribe(true, startedCallId);
+          })
+          .catch(() => undefined);
+      }
     } catch {
-      router.push("/voice");
+      if (activeBotId.current === targetBotId) router.push("/voice");
+    } finally {
+      voiceCallStarting.current = false;
     }
   }
 

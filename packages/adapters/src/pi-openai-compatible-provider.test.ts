@@ -1,5 +1,6 @@
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@cortexai-agent-hub/contracts";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { fetch as undiciFetch } from "undici";
 import { describe, expect, it } from "vitest";
 import { buildModelConnectPlaintext } from "./model-connect.js";
 import { listPiCatalog } from "./pi-models.js";
@@ -131,15 +132,21 @@ describe("openai-compatible provider", () => {
   it("drives the guarded dispatcher with a fetch from the same undici", async () => {
     // See remote-mcp.test: failing inside the lookup proves the request was
     // dispatched through the Agent rather than rejected by a mismatched fetch.
+    // Omitting fetch, passing the builtin, and passing a captured builtin must
+    // all use the package fetch that matches the Agent.
+    expect(undiciFetch).not.toBe(globalThis.fetch);
+    const captured = globalThis.fetch;
     const previous = process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
     process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
     try {
-      const safeFetch = createOpenAiCompatibleFetch(undefined, async () => {
-        throw new Error("lookup reached");
-      });
-      await expect(safeFetch("https://models.example.test/v1/models")).rejects.toMatchObject({
-        cause: { message: "lookup reached" },
-      });
+      for (const injected of [undefined, globalThis.fetch, captured] as const) {
+        const safeFetch = createOpenAiCompatibleFetch(injected, async () => {
+          throw new Error("lookup reached");
+        });
+        await expect(safeFetch("https://models.example.test/v1/models")).rejects.toMatchObject({
+          cause: { message: "lookup reached" },
+        });
+      }
     } finally {
       if (previous === undefined) delete process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
       else process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = previous;

@@ -215,6 +215,20 @@ describe("shared Linux desktop lifecycle", () => {
     expect(() => terminalCommand("c", "bad token", ".")).toThrow("invalid terminal token");
   });
 
+  it("drops libnss_wrapper before the screen browser exec", () => {
+    const command = ensureScreenCommand(0, "bot", "token");
+    expect(command).toContain("*libnss_wrapper.so");
+    expect(command).toContain("unset LD_PRELOAD");
+    expect(command).toContain(
+      "browser=$(command -v cortexai-agent-hub-browser || command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)",
+    );
+    const lines = command.split("\n");
+    const unsetAt = lines.findIndex((line) => line.includes("unset LD_PRELOAD"));
+    const execAt = lines.findIndex((line) => line.startsWith("exec "));
+    expect(unsetAt).toBeGreaterThan(-1);
+    expect(execAt).toBeGreaterThan(unsetAt);
+  });
+
   it("stops the terminal with the control lease and the screen transports", () => {
     expect(interactiveScreenCommand(false)).toMatch(/pkill -f .*cortexai-agent-hub-terminal\.py/);
     expect(interactiveScreenCommand(false)).toContain("desktop-targets/terminal-1");
@@ -325,7 +339,7 @@ describe("shared Linux desktop lifecycle", () => {
       const log = path.join(root, "closed");
       mkdirSync(bin);
       const sleeper = path.join(bin, "sleeper");
-      writeFileSync(sleeper, "#!/bin/sh\nsleep 120\n");
+      writeFileSync(sleeper, "#!/usr/bin/env python3\nimport time\ntime.sleep(120)\n");
       chmodSync(sleeper, 0o755);
       writeFileSync(
         path.join(bin, "python3"),
@@ -377,6 +391,18 @@ describe("shared Linux desktop lifecycle", () => {
         { stdio: "ignore", detached: true, env: { ...process.env, JOINED_READY: joinedReady } },
       );
       children.push(joined);
+      const launcher = spawn(
+        "/bin/sh",
+        [
+          "-c",
+          "sleep 120",
+          "launcher",
+          `--user-data-dir=${botDir}`,
+          "--remote-debugging-port=9333",
+        ],
+        { stdio: "ignore", detached: true },
+      );
+      children.push(launcher);
       const bot = start(botDir, [`--user-data-dir=${botDir}`, "--remote-debugging-port=9333"]);
       const botRenderer = start(botDir, [
         "--type=renderer",
@@ -417,6 +443,7 @@ describe("shared Linux desktop lifecycle", () => {
         );
         expect(closed).not.toContain(String(botRenderer.child.pid));
         expect(closed).not.toContain(String(botHelper.child.pid));
+        expect(closed).not.toContain(String(launcher.pid));
         expect(spawnSync("kill", ["-0", String(botRenderer.child.pid)]).status).toBe(0);
         expect(spawnSync("kill", ["-0", String(botHelper.child.pid)]).status).toBe(0);
         expect(readFileSync(bot.cookies, "utf8")).toBe("session=kept");
