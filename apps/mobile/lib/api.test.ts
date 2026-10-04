@@ -18,6 +18,7 @@ import {
   MAX_MOBILE_AUTH_RESPONSE_BYTES,
   MAX_MOBILE_RPC_RESPONSE_BYTES,
   mergeMobileSnapshot,
+  mobileThreadRefreshResult,
   passwordResetCapabilities,
   prependMobileMessagePage,
   requestPasswordReset,
@@ -33,6 +34,12 @@ import {
   signUp,
   subscribeThread,
 } from "./api.js";
+import {
+  AVATAR_STYLE_KEY,
+  clearAvatarStyle,
+  getCachedAvatarStyle,
+  saveAvatarStyle,
+} from "./avatar-style.js";
 import { resumeLiveNotifications } from "./live-notifications.js";
 import {
   clearSessionToken,
@@ -685,6 +692,83 @@ describe("mobile API authentication", () => {
     expect(promptAiConsent).toHaveBeenLastCalledWith(recipient, "https://example.com/privacy");
   });
 
+  it("coalesces concurrent mobile consent checks before sending each request once", async () => {
+    vi.mocked(promptAiConsent).mockClear();
+    vi.mocked(promptAiConsent).mockResolvedValue(true);
+    const calls: string[] = [];
+    const recipient = {
+      key: "provider",
+      name: "Example AI",
+      use: "model",
+      detail: "",
+      allowed: false,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        const path = new URL(String(url)).pathname;
+        calls.push(path);
+        if (path.endsWith("/status"))
+          return jsonResponse({
+            json: {
+              scope: "account-space",
+              version: "2026-09-14",
+              recipients: [recipient],
+            },
+          });
+        return jsonResponse({ json: { ok: true } });
+      }),
+    );
+
+    await Promise.all([
+      rpc("threads/send", { botId: "bot-1", text: "first" }),
+      rpc("threads/send", { botId: "bot-1", text: "second" }),
+    ]);
+
+    expect(promptAiConsent).toHaveBeenCalledTimes(1);
+    expect(calls.filter((path) => path.endsWith("/aiConsent/status"))).toHaveLength(2);
+    expect(calls.filter((path) => path.endsWith("/aiConsent/allow"))).toHaveLength(1);
+    expect(calls.filter((path) => path.endsWith("/threads/send"))).toHaveLength(2);
+  });
+
+  it("coalesces a concurrent refusal without granting or replaying the action", async () => {
+    vi.mocked(promptAiConsent).mockClear();
+    vi.mocked(promptAiConsent).mockResolvedValue(false);
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        const path = new URL(String(url)).pathname;
+        calls.push(path);
+        return jsonResponse({
+          json: {
+            scope: "account-space",
+            version: "2026-09-14",
+            recipients: [
+              {
+                key: "provider",
+                name: "Example AI",
+                use: "model",
+                detail: "",
+                allowed: false,
+              },
+            ],
+          },
+        });
+      }),
+    );
+
+    const results = await Promise.allSettled([
+      rpc("threads/send", { botId: "bot-1", text: "keep this draft" }),
+      rpc("threads/send", { botId: "bot-1", text: "keep this draft" }),
+    ]);
+
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    expect(promptAiConsent).toHaveBeenCalledTimes(1);
+    expect(calls.filter((path) => path.endsWith("/aiConsent/allow"))).toHaveLength(0);
+    expect(calls.filter((path) => path.endsWith("/threads/send"))).toHaveLength(0);
+  });
+
   it("rejects an oversized RPC response before parsing it", async () => {
     vi.stubGlobal(
       "fetch",
@@ -836,6 +920,36 @@ describe("mobile API authentication", () => {
       "session-token",
       "space-support",
     );
+  });
+
+  it("restores the avatar style when an endpoint switch rolls the session back", async () => {
+    await saveAvatarStyle("organic");
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.session_token") return "session-token";
+      return null;
+    });
+    await selectSpace("space-support");
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.api_base") throw new Error("device locked");
+    });
+
+    try {
+      await expect(saveApiBase("https://second-server.example")).resolves.toEqual({
+        ok: false,
+        error: "Could not save the server URL",
+      });
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith(AVATAR_STYLE_KEY);
+      expect(SecureStore.setItemAsync).toHaveBeenCalledWith(AVATAR_STYLE_KEY, "organic");
+      expect(getCachedAvatarStyle()).toBe("organic");
+      await expect(authHeaders()).resolves.toEqual({
+        authorization: "Bearer session-token",
+        "x-cortexai-agent-hub-space-id": "space-support",
+      });
+    } finally {
+      vi.mocked(SecureStore.setItemAsync).mockReset();
+      vi.mocked(SecureStore.deleteItemAsync).mockReset();
+      await clearAvatarStyle();
+    }
   });
 
   it("restores credentials when the new endpoint cannot be persisted", async () => {
@@ -1889,6 +2003,80 @@ describe("mobile thread refresh targeting", () => {
     await refresh;
 
     expect(applied).toBeNull();
+  });
+});
+
+describe("discarded mobile thread refresh cursor", () => {
+  const onScreen = {
+    ...snapshot([mobileMessage("shown", [{ kind: "text", text: "shown" }], 2)]),
+    cursor: 2,
+  };
+  const fetched = {
+    ...snapshot([
+      mobileMessage("shown", [{ kind: "text", text: "shown" }], 2),
+      mobileMessage("missed", [{ kind: "text", text: "from the discarded snapshot" }], 4),
+      mobileMessage("also-missed", [{ kind: "text", text: "also only in that snapshot" }], 5),
+    ]),
+    cursor: 5,
+  };
+  const gate = {
+    fetched,
+    onScreen,
+    requestEpoch: 1,
+    currentEpoch: 1,
+    requestGeneration: 1,
+    currentGeneration: 1,
+    targetBotId: "bot-1",
+    targetGroupId: undefined,
+    activeBotId: "bot-1",
+    activeGroupId: undefined,
+  };
+
+  // The server replays events with seq greater than the subscription cursor.
+  function shownAfter(cursor: number) {
+    const events = [
+      {
+        type: "thread.message.created",
+        seq: 4,
+        payload: {
+          messageId: "missed",
+          role: "bot",
+          blocks: [{ kind: "text", text: "from the discarded snapshot" }],
+        },
+      },
+      {
+        type: "thread.message.created",
+        seq: 5,
+        payload: {
+          messageId: "also-missed",
+          role: "bot",
+          blocks: [{ kind: "text", text: "also only in that snapshot" }],
+        },
+      },
+    ];
+    return events.reduce<MobileSnapshot>(
+      (view, event) => (event.seq > cursor ? (applyMobileThreadEvent(view, event) ?? view) : view),
+      onScreen,
+    );
+  }
+
+  it("shows events only a discarded refresh had seen when a newer refresh fails", () => {
+    for (const discard of [{ currentGeneration: 2 }, { currentEpoch: 2 }]) {
+      const result = mobileThreadRefreshResult({ ...gate, ...discard });
+      const shown = shownAfter(result.snapshot?.cursor ?? -1);
+      expect(result.commit).toBe(false);
+      expect(shown.messages.map((message) => message.id)).toEqual([
+        "shown",
+        "missed",
+        "also-missed",
+      ]);
+    }
+  });
+
+  it("starts the subscription at a snapshot the refresh committed", () => {
+    const result = mobileThreadRefreshResult(gate);
+    expect(result.commit).toBe(true);
+    expect(result.snapshot?.cursor).toBe(fetched.cursor);
   });
 });
 

@@ -1,10 +1,11 @@
-import { callIdFromClientNonce } from "@cortexai-agent-hub/core";
+import { AiConsentBlocked, callIdFromClientNonce } from "@cortexai-agent-hub/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallClip, CallDeps, CallEnded, DictationHandlers } from "./call-session";
 import {
   endCall,
   getSnapshot,
   INTERIM_BARGE_IN_MS,
+  setCallProviderTranscribe,
   startCall,
   subscribe,
   toggleMute,
@@ -20,14 +21,20 @@ vi.mock("./api", () => ({
   subscribeThread: vi.fn(),
 }));
 
-type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+};
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -123,6 +130,25 @@ describe("mobile call session", () => {
     expect(getSnapshot()).toMatchObject({ phase: "thinking", heard: "how is the deploy going" });
   });
 
+  it("mutes after a consent refusal instead of reopening the microphone or resending", async () => {
+    const fake = fakes({ onDevice: true });
+    fake.send.mockRejectedValueOnce(new AiConsentBlocked("consent denied"));
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+
+    fake.hear("status please");
+    await flush();
+
+    expect(fake.send).toHaveBeenCalledOnce();
+    expect(fake.signals).toHaveLength(1);
+    expect(fake.recordings).toHaveLength(0);
+    expect(getSnapshot()).toMatchObject({
+      phase: "listening",
+      muted: true,
+      caption: "consent denied",
+    });
+  });
+
   it("tags every message in one call with the same call id", async () => {
     const fake = fakes();
     startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
@@ -157,6 +183,38 @@ describe("mobile call session", () => {
     await flush();
     expect(getSnapshot()?.phase).toBe("listening");
     expect(fake.recordings).toHaveLength(2);
+  });
+
+  it("mutes after a speech-provider consent refusal without recording another turn", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    fake.say("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+    fake.speeches[0]?.reject(new AiConsentBlocked("voice consent denied"));
+    await flush();
+
+    expect(fake.recordings).toHaveLength(1);
+    expect(getSnapshot()).toMatchObject({
+      phase: "listening",
+      muted: true,
+      caption: "voice consent denied",
+    });
+  });
+
+  it("keeps retrying ordinary speech errors", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    fake.say("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+    fake.speeches[0]?.reject(new Error("voice offline"));
+    await flush();
+
+    expect(fake.recordings).toHaveLength(2);
+    expect(getSnapshot()).toMatchObject({ phase: "listening", muted: false });
   });
 
   it("stops recording while muted", async () => {
@@ -368,6 +426,81 @@ describe("mobile call session", () => {
     ]);
   });
 
+  it("does not enable provider transcription when no call is active", async () => {
+    setCallProviderTranscribe(true);
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    expect(fake.recordings).toHaveLength(0);
+  });
+
+  it("uses provider transcription after it is enabled during an active call", async () => {
+    const gate = deferred<void>();
+    const fake = fakes();
+    const startedCallId = startCall(
+      { botId: "bot-1", botName: "Ada", transcribe: false },
+      {
+        ...fake.deps,
+        dictate: async () => {
+          await gate.promise;
+          return false;
+        },
+      },
+    );
+    await flush();
+    expect(fake.recordings).toHaveLength(0);
+
+    setCallProviderTranscribe(true, startedCallId);
+    gate.resolve();
+    await flush();
+    expect(fake.recordings).toHaveLength(1);
+  });
+
+  it("ignores a transcribe probe for another call and resumes listening for this one", async () => {
+    const fake = fakes();
+    const startedCallId = startCall(
+      { botId: "bot-1", botName: "Ada", transcribe: false },
+      fake.deps,
+    );
+    await flush();
+    expect(fake.recordings).toHaveLength(0);
+
+    setCallProviderTranscribe(true, "other-call");
+    // Unmute listens again, so a probe that flipped this call would record.
+    toggleMute();
+    toggleMute();
+    await flush();
+    expect(fake.recordings).toHaveLength(0);
+
+    setCallProviderTranscribe(true, startedCallId);
+    await flush();
+    expect(fake.recordings).toHaveLength(1);
+  });
+
+  it("does not apply a finished probe to a later speak-only call", async () => {
+    const fake = fakes();
+    const firstCallId = startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    const secondCallId = startCall(
+      { botId: "bot-1", botName: "Ada", transcribe: false },
+      fake.deps,
+    );
+    await flush();
+    expect(secondCallId).not.toBe(firstCallId);
+    expect(fake.recordings).toHaveLength(0);
+
+    setCallProviderTranscribe(true, firstCallId);
+    // Unmute listens again, so a probe that flipped this call would record.
+    toggleMute();
+    toggleMute();
+    await flush();
+    expect(fake.recordings).toHaveLength(0);
+
+    setCallProviderTranscribe(true, secondCallId);
+    await flush();
+    expect(fake.recordings).toHaveLength(1);
+  });
+
   it("speaks each reply once", async () => {
     const fake = fakes({ onDevice: true });
     startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
@@ -378,6 +511,26 @@ describe("mobile call session", () => {
     fake.replyWith("message-1", "It is green.");
 
     expect(fake.spoken).toEqual(["It is green."]);
+  });
+
+  it("does not let a stale speech refusal mute a newer call", async () => {
+    const fake = fakes({ onDevice: true });
+    const firstCallId = startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    fake.hear("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+
+    const secondCallId = startCall(
+      { botId: "bot-1", botName: "Ada", transcribe: false },
+      fake.deps,
+    );
+    await flush();
+    fake.speeches[0]?.reject(new AiConsentBlocked("stale consent denied"));
+    await flush();
+
+    expect(secondCallId).not.toBe(firstCallId);
+    expect(getSnapshot()).toMatchObject({ botId: "bot-1", muted: false });
   });
 });
 
@@ -432,6 +585,74 @@ describe("mobile call session on a timer", () => {
     expect(vi.mocked(subscribeThread).mock.calls[0]?.[1]).toBe(3);
     vi.mocked(rpc).mockReset();
     vi.mocked(subscribeThread).mockReset();
+  });
+
+  it("does not hang up after a farewell whose send was blocked by consent", async () => {
+    const fake = fakes({ onDevice: true });
+    fake.send.mockRejectedValueOnce(new AiConsentBlocked("consent denied"));
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await tick();
+
+    fake.hear("goodbye");
+    await tick();
+    expect(getSnapshot()).toMatchObject({
+      phase: "listening",
+      muted: true,
+      caption: "consent denied",
+    });
+
+    await tick(20_000);
+    expect(fake.closeCall).not.toHaveBeenCalled();
+    expect(getSnapshot()?.botId).toBe("bot-1");
+
+    toggleMute();
+    await tick();
+    expect(fake.closeCall).not.toHaveBeenCalled();
+    expect(getSnapshot()).toMatchObject({ botId: "bot-1", muted: false, phase: "listening" });
+  });
+
+  it("still ends a bot-ended call when farewell speech consent is refused", async () => {
+    const fake = fakes({ onDevice: true });
+    const id = startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await tick();
+    fake.endedCall(id, "Talk soon.");
+    await tick();
+    fake.speeches[0]?.reject(new AiConsentBlocked("voice consent denied"));
+    await tick();
+
+    expect(getSnapshot()).toBeNull();
+    // Bot already closed server-side; local endCall must not re-hit threads/endCall.
+    expect(fake.closeCall).not.toHaveBeenCalled();
+  });
+
+  it("ends immediately when speech consent is refused after a goodbye already sent", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await tick();
+    fake.hear("goodbye");
+    await tick();
+    fake.replyWith("message-1", "Talk soon.");
+    await tick();
+    fake.speeches[0]?.reject(new AiConsentBlocked("voice consent denied"));
+    await tick();
+
+    expect(getSnapshot()).toBeNull();
+    expect(fake.closeCall).toHaveBeenCalledOnce();
+  });
+
+  it("does not start speech again after consent refuse until the caller unmutes", async () => {
+    const fake = fakes({ onDevice: true });
+    fake.send.mockRejectedValueOnce(new AiConsentBlocked("consent denied"));
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await tick();
+    fake.hear("status please");
+    await tick();
+    expect(getSnapshot()).toMatchObject({ muted: true });
+
+    fake.replyWith("message-1", "It is green.");
+    await tick();
+    expect(fake.spoken).toEqual([]);
+    expect(getSnapshot()).toMatchObject({ muted: true, botId: "bot-1" });
   });
 
   it("does not let an earlier farewell timer end the next call", async () => {

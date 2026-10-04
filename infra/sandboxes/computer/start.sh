@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
+source /usr/local/lib/cortexai-agent-hub-user-env.sh
 export DISPLAY="${DISPLAY:-:1}"
 export HOME="${HOME:-/home/cortexai-agent-hub}"
 AGENT_HOME="$HOME"

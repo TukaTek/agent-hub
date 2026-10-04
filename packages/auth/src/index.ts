@@ -268,6 +268,18 @@ async function claimUnverifiedFirstAccount(prisma: PrismaClient, userId: string)
   });
 }
 
+const CREDENTIAL_PATHS = ["/sign-in/email", "/sign-up/email", "/request-password-reset"] as const;
+
+/** Shared across API processes. Off outside production so tests can sign in freely. */
+export function authRateLimitOptions(nodeEnv = process.env.NODE_ENV) {
+  const rule = { window: 15 * 60, max: 10 };
+  return {
+    enabled: nodeEnv === "production",
+    storage: nodeEnv === "production" ? ("database" as const) : ("memory" as const),
+    customRules: Object.fromEntries(CREDENTIAL_PATHS.map((path) => [path, rule])),
+  };
+}
+
 export function createAuth(prisma: PrismaClient, env: AuthEnv) {
   if (env.hub && !env.tokenEncryptionKey) throw new Error("Hub token encryption key is required");
   const hub = env.hub
@@ -278,8 +290,11 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     secret: env.secret,
     baseURL: env.baseURL,
     trustedOrigins: buildTrustedOrigins(env),
-    // Better Auth's strict /sign-in* rule does not match the Hub endpoints.
-    rateLimit: { customRules: HUB_SIGN_IN_RATE_LIMITS },
+    // Preserve the Hub sign-in path limits alongside the local credential limits.
+    rateLimit: {
+      ...authRateLimitOptions(),
+      customRules: { ...authRateLimitOptions().customRules, ...HUB_SIGN_IN_RATE_LIMITS },
+    },
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     emailAndPassword: {
       enabled: !hub,
@@ -601,7 +616,7 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /** Same-scheme/port localhost and 127.0.0.1 variants when `origin` is loopback. */
-function loopbackTwinOrigins(origin: string): string[] {
+export function loopbackTwinOrigins(origin: string): string[] {
   try {
     const url = new URL(origin);
     if (!isLoopbackHost(url.hostname)) return [];

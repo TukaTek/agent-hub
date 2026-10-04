@@ -201,6 +201,7 @@ import {
   rightPanelStorageKey,
   writeRightPanelState,
 } from "../lib/right-panel-state";
+import { rosterWorkStatusLabel } from "../lib/roster-status";
 import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/rpc";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
 import { sharedInflight } from "../lib/shared-inflight";
@@ -2201,8 +2202,8 @@ export function ShellPage() {
         }
         if (groupTarget && activeGroupId.current === groupTarget) setAttachmentNotice(null);
         if (botTarget && activeBotId.current === botTarget) setAttachmentNotice(null);
-        if (groupTarget) await refreshGroupThreadRef.current(groupTarget);
-        else if (botTarget) await refreshThreadRef.current(botTarget);
+        if (groupTarget) void refreshGroupThreadRef.current(groupTarget).catch(() => undefined);
+        else if (botTarget) void refreshThreadRef.current(botTarget).catch(() => undefined);
       } catch (error) {
         if (reroutedToGroup && groupTarget) {
           setSendError(error instanceof Error ? error.message : t`Failed to send message`);
@@ -3064,6 +3065,15 @@ export function ShellPage() {
                         const selected =
                           (item.kind === "bot" && !inGroup && active?.id === item.chat.id) ||
                           (item.kind === "group" && inGroup && activeGroup?.id === item.chat.id);
+                        const workStatusLabel =
+                          item.kind === "bot" ? rosterWorkStatusLabel(item.chat.status) : null;
+                        const rosterLine =
+                          workStatusLabel ??
+                          (item.kind === "bot"
+                            ? item.chat.preview ||
+                              (item.chat.status !== "idle" ? item.chat.status : "")
+                            : item.chat.preview ||
+                              item.chat.members.map((member) => member.name).join(", "));
                         return (
                           <div
                             key={`${item.kind}:${item.chat.id}`}
@@ -3239,16 +3249,12 @@ export function ShellPage() {
                                 <div
                                   dir="auto"
                                   className={`mt-1 line-clamp-2 text-[12.5px] break-words whitespace-normal ${
-                                    item.chat.unread
+                                    workStatusLabel || item.chat.unread
                                       ? "font-medium text-foreground/75"
                                       : "text-muted-foreground/60"
                                   }`}
                                 >
-                                  {item.kind === "bot"
-                                    ? item.chat.preview ||
-                                      (item.chat.status !== "idle" ? item.chat.status : "")
-                                    : item.chat.preview ||
-                                      item.chat.members.map((member) => member.name).join(", ")}
+                                  {rosterLine}
                                 </div>
                               </div>
                             </button>

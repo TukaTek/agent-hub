@@ -149,31 +149,46 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "computer_act",
     description:
-      "Perform up to 24 ordered desktop actions on this bot's computer and return the resulting screen. Batch only predictable actions; stop before an outcome you need to inspect. Action kinds: click, move, down, up, type, key, scroll, wait.",
+      "Perform up to 24 ordered desktop actions on this bot's computer and return the resulting screen. Batch only predictable actions; stop before an outcome you need to inspect. Action kinds: click, move, down, up, type, key, scroll, wait, focus (raises the application's window, launching it if absent).",
     inputSchema: {
       type: "object",
       properties: {
         actions: {
           type: "array",
           items: {
-            type: "object",
-            properties: {
-              kind: {
-                type: "string",
-                enum: ["click", "move", "down", "up", "type", "key", "scroll", "wait"],
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  kind: { type: "string", enum: ["focus"] },
+                  application: { type: "string", minLength: 1, pattern: "\\S" },
+                  uri: { type: "string" },
+                },
+                required: ["kind", "application"],
               },
-              x: { type: "number" },
-              y: { type: "number" },
-              button: { type: "string", enum: ["left", "right"] },
-              double: { type: "boolean" },
-              text: { type: "string" },
-              key: { type: "string" },
-              modifiers: { type: "array", items: { type: "string" } },
-              direction: { type: "string", enum: ["up", "down"] },
-              amount: { type: "number" },
-              ms: { type: "number" },
-            },
-            required: ["kind"],
+              {
+                type: "object",
+                properties: {
+                  kind: {
+                    type: "string",
+                    enum: ["click", "move", "down", "up", "type", "key", "scroll", "wait"],
+                  },
+                  x: { type: "number" },
+                  y: { type: "number" },
+                  button: { type: "string", enum: ["left", "right"] },
+                  double: { type: "boolean" },
+                  text: { type: "string" },
+                  key: { type: "string" },
+                  modifiers: { type: "array", items: { type: "string" } },
+                  direction: { type: "string", enum: ["up", "down"] },
+                  amount: { type: "number" },
+                  ms: { type: "number" },
+                  application: { type: "string" },
+                  uri: { type: "string" },
+                },
+                required: ["kind"],
+              },
+            ],
           },
         },
         observe: { type: "boolean" },
@@ -303,7 +318,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "launch_app",
     description:
-      "Launch an installed graphical application on this bot's computer, optionally with a URI, and return the resulting screen.",
+      "Launch an installed graphical application on this bot's computer, or raise its window if already open; optionally with a URI. Returns the resulting screen.",
     inputSchema: {
       type: "object",
       properties: {
@@ -364,8 +379,9 @@ export const builtinAgentTools: ConnectorTool[] = [
     get description() {
       return secretAskToolSurface().description;
     },
-    // Exactly one destination: credential XOR connectionId. Sibling optionals
-    // looked schema-valid to models but the executor rejects both and neither.
+    // The original schema is credential XOR connectionId. The wire schema is one
+    // object, so a valid credential may also carry connectionId; the executor
+    // keeps that credential and uses connectionId only when no credential was sent.
     get inputSchema() {
       return secretAskToolSurface().inputSchema;
     },
@@ -488,6 +504,19 @@ export const builtinAgentTools: ConnectorTool[] = [
         path: { type: "string" },
       },
       required: ["content"],
+    },
+  },
+  {
+    name: "save_shared_memory",
+    description:
+      "Save a Space shared memory document every bot reads. Replaces the full content, so include everything it should keep.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Document name, for example MEMORY.md." },
+        content: { type: "string", description: "The document's complete new content." },
+      },
+      required: ["path", "content"],
     },
   },
   {
@@ -1028,3 +1057,16 @@ export const agentConnectionTools: ConnectorTool[] = [
     },
   },
 ];
+
+/** Shared documents are read by every bot, so a single save stays bounded. */
+export const MAX_SHARED_MEMORY_CHARS = 4_000;
+
+export function sharedMemorySaveError(args: Record<string, unknown>): string | undefined {
+  const path = String(args.path ?? "").trim();
+  if (!path) return "path is required";
+  const content = String(args.content ?? "");
+  if (content.length > MAX_SHARED_MEMORY_CHARS) {
+    return `content exceeds ${MAX_SHARED_MEMORY_CHARS} characters`;
+  }
+  return undefined;
+}

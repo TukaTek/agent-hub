@@ -89,7 +89,7 @@ import {
   IntegrationSetupStateSchema,
 } from "./integration-settings.js";
 import { MessageReactionSchema } from "./reactions.js";
-import { RunsListOutputSchema } from "./runs.js";
+import { RoutineHistorySchema, RoutineRunCursorSchema, RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
 
 const botId = z.object({ botId: Id });
@@ -457,6 +457,9 @@ export const appContract = {
   },
   routines: {
     list: oc.input(botId).output(z.array(RoutineSchema)),
+    history: oc
+      .input(z.object({ routineId: Id, before: RoutineRunCursorSchema.optional() }))
+      .output(RoutineHistorySchema),
     create: oc.input(CreateRoutineInput).output(RoutineSchema),
     update: oc
       .input(

@@ -14,7 +14,7 @@ import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { afterAll, describe, expect, it } from "vitest";
 import { sessionCookieHeader } from "./index.js";
 
-if (process.env.VERIFY_PROVIDERS) loadRootEnv();
+if (process.env.VERIFY_PROVIDERS) loadRootEnv({ allowInTests: true });
 
 const liveE2b = Boolean(process.env.VERIFY_PROVIDERS && process.env.E2B_API_KEY);
 const liveBox = Boolean(process.env.VERIFY_PROVIDERS && process.env.BOX_API_KEY);
