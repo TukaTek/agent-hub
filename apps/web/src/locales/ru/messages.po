@@ -205,6 +205,11 @@ msgstr "Аккаунт"
 msgid "Account default"
 msgstr "Учетная запись по умолчанию"
 
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Account ID"
+msgstr "ID аккаунта"
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Account label"
 msgstr "Ярлык аккаунта"
@@ -1685,8 +1690,9 @@ msgstr "Отклонить"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/shell/avatar-studio-popover.tsx
 msgid "Default"
-msgstr ""
+msgstr "По умолчанию"
 
 #. js-lingui-explicit-id
 #. placeholder {0}: thinkingLevelLabel("medium")
@@ -2079,6 +2085,11 @@ msgstr "Бесплатно"
 #: src/pages/WindowChrome.tsx
 msgid "Fullscreen"
 msgstr "Полноэкранный"
+
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Gateway ID"
+msgstr "ID шлюза"
 
 #: src/pages/SettingsOverlay.tsx
 msgid "General"
@@ -3107,8 +3118,12 @@ msgid "Read replies aloud"
 msgstr "Читать ответы вслух"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "read-only"
-msgstr "только для чтения"
+msgid "Built-in"
+msgstr "Встроенный"
+
+#: src/pages/KnowledgeSection.tsx
+msgid "Plugin"
+msgstr "Плагин"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -3668,8 +3683,8 @@ msgid "Skill {0}"
 msgstr "Навык {0}"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "Skills"
-msgstr "Навыки"
+msgid "Shared skills"
+msgstr "Общие навыки"
 
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/Shell.tsx

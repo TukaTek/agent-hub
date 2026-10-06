@@ -1560,6 +1560,38 @@ describe("mobile API authentication", () => {
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-b");
   });
 
+  it("does not commit a selection superseded during rollback cleanup", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-current"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    let releaseOlderCleanup!: () => void;
+    let heldOlderCleanup = false;
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.space_rollback" && !heldOlderCleanup) {
+        heldOlderCleanup = true;
+        await new Promise<void>((resolve) => {
+          releaseOlderCleanup = resolve;
+        });
+      }
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    await loadApiBase();
+    expect(selectedSpaceId()).toBe("space-current");
+
+    const pendingOlder = selectSpace("space-older");
+    await vi.waitFor(() => expect(heldOlderCleanup).toBe(true));
+    await expect(selectSpace("space-newer")).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-newer");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-newer");
+
+    releaseOlderCleanup();
+    await expect(pendingOlder).resolves.toBe(false);
+    expect(selectedSpaceId()).toBe("space-newer");
+    expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-newer");
+  });
+
   it("converges durable state to the latest overlapping selection", async () => {
     const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-support"]]);
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
@@ -2775,5 +2807,16 @@ describe("mobile clipboard text", () => {
         ],
       }),
     ).toBe("Hello\nSMS · Sender: Reply");
+  });
+
+  it("keeps leading whitespace for selection while copying trims it", async () => {
+    const { copyableMobileMessageText, selectableMobileMessageText } = await import("./api");
+    const message: MobileMessage = {
+      id: "message",
+      role: "user",
+      blocks: [{ kind: "text", text: "    indented\nnext  " }],
+    };
+    expect(selectableMobileMessageText(message)).toBe("    indented\nnext  ");
+    expect(copyableMobileMessageText(message)).toBe("indented\nnext");
   });
 });

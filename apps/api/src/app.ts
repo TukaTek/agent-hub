@@ -577,6 +577,15 @@ export async function createApp(
     return auth.handler(c.req.raw);
   });
   mountLocalSettings(app, { token: env.desktopStackToken, prisma, rpc });
+  const sessionActor = async (request: Request) => {
+    const session = await auth.api.getSession({ headers: sessionHeaders(request) });
+    if (!session?.user) return null;
+    return requireMembership(
+      prisma,
+      session.user.id,
+      request.headers.get("x-cortexai-agent-hub-space-id"),
+    ).catch(() => null);
+  };
   app.use("/rpc/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
     const requestedSpaceId = c.req.header("x-cortexai-agent-hub-space-id");
@@ -598,19 +607,23 @@ export async function createApp(
     }
     const { matched, response } = await rpc.handle(c.req.raw, {
       prefix: "/rpc",
-      context: { actor, signal: requestSignal },
+      context: {
+        actor,
+        signal: requestSignal,
+        // Ending a session or leaving its space also ends an active stream.
+        stillAuthorized: async () => {
+          const current = await sessionActor(c.req.raw);
+          return Boolean(
+            actor && current?.userId === actor.userId && current.spaceId === actor.spaceId,
+          );
+        },
+      },
     });
     if (matched) return c.newResponse(response.body, response);
     await next();
   });
   mountVoiceHttpRoutes(app, { prisma, secrets }, async (c) => {
-    const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
-    if (!session?.user) return null;
-    const actor = await requireMembership(
-      prisma,
-      session.user.id,
-      c.req.header("x-cortexai-agent-hub-space-id"),
-    ).catch(() => null);
+    const actor = await sessionActor(c.req.raw);
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
   });

@@ -205,6 +205,11 @@ msgstr "Account"
 msgid "Account default"
 msgstr "Account default"
 
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Account ID"
+msgstr "Account ID"
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Account label"
 msgstr "Account label"
@@ -1685,6 +1690,7 @@ msgstr "Decline"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/shell/avatar-studio-popover.tsx
 msgid "Default"
 msgstr "Default"
 
@@ -2079,6 +2085,11 @@ msgstr "Free"
 #: src/pages/WindowChrome.tsx
 msgid "Fullscreen"
 msgstr "Fullscreen"
+
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Gateway ID"
+msgstr "Gateway ID"
 
 #: src/pages/SettingsOverlay.tsx
 msgid "General"
@@ -3107,8 +3118,12 @@ msgid "Read replies aloud"
 msgstr "Read replies aloud"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "read-only"
-msgstr "read-only"
+msgid "Built-in"
+msgstr "Built-in"
+
+#: src/pages/KnowledgeSection.tsx
+msgid "Plugin"
+msgstr "Plugin"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -3668,8 +3683,8 @@ msgid "Skill {0}"
 msgstr "Skill {0}"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "Skills"
-msgstr "Skills"
+msgid "Shared skills"
+msgstr "Shared skills"
 
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/Shell.tsx

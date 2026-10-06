@@ -2,17 +2,11 @@ import type { ProductEvent, ThreadMessage, ThreadSnapshot } from "@cortexai-agen
 import {
   callIdFromClientNonce,
   groupVoiceChats,
+  INTERIM_BARGE_IN_MS,
   runThreadSubscription,
 } from "@cortexai-agent-hub/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ECHO_GUARD_MS,
-  endCall,
-  getSnapshot,
-  INTERIM_BARGE_IN_MS,
-  startCall,
-  toggleMute,
-} from "./call-session";
+import { ECHO_GUARD_MS, endCall, getSnapshot, startCall, toggleMute } from "./call-session";
 import { dictation } from "./dictation.js";
 import { rpc } from "./rpc.js";
 import { reduceThreadSnapshot } from "./thread-events.js";

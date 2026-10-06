@@ -324,9 +324,9 @@ class CortexAiAgentHubNotificationService : Service() {
       packageManager.getLaunchIntentForPackage(packageName) ?: Intent(Intent.ACTION_VIEW, Uri.parse("cortexai-agent-hub://"))
     } else {
       val destination = if (run.groupId != null) {
-        "cortexai-agent-hub://group-thread?groupId=${Uri.encode(run.groupId)}&name=${Uri.encode(run.groupName.orEmpty())}&spaceId=${Uri.encode(run.spaceId)}"
+        "cortexai-agent-hub://group-thread?groupId=${Uri.encode(run.groupId)}&name=${Uri.encode(run.groupName.orEmpty())}&spaceId=${Uri.encode(run.spaceId)}&threadId=${Uri.encode(run.threadId)}"
       } else {
-        "cortexai-agent-hub://thread?botId=${Uri.encode(run.botId)}&name=${Uri.encode(run.botName)}&spaceId=${Uri.encode(run.spaceId)}"
+        "cortexai-agent-hub://thread?botId=${Uri.encode(run.botId)}&name=${Uri.encode(run.botName)}&spaceId=${Uri.encode(run.spaceId)}&threadId=${Uri.encode(run.threadId)}"
       }
       Intent(
         Intent.ACTION_VIEW,

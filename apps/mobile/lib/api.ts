@@ -61,6 +61,9 @@ let cachedSpaceId = "";
 /** Bumped on every in-memory Space selection change so a delayed response
  * cannot treat a later reselection of the same Space id as its own. */
 let spaceSelectionGeneration = 0;
+/** Counts selectSpace attempts so one still cleaning up a rollback record
+ * cannot claim the selection after a newer attempt has started. */
+let spaceSelectionRequestGeneration = 0;
 
 function bumpSpaceSelectionGeneration(): void {
   spaceSelectionGeneration += 1;
@@ -106,7 +109,11 @@ export async function loadApiBase() {
 }
 
 export async function selectSpace(id: string) {
+  const requestGeneration = ++spaceSelectionRequestGeneration;
   if (!(await clearStoredValue(SPACE_ROLLBACK_KEY))) return false;
+  // Rollback cleanup is the first await. A newer selection may have claimed
+  // the live space while this call was still deleting the rollback record.
+  if (requestGeneration !== spaceSelectionRequestGeneration) return false;
   // Claim memory before persisting: recovery paths reconcile against the
   // in-memory selection, so a durable write must never precede its owner.
   const previousSpaceId = cachedSpaceId;
@@ -953,7 +960,8 @@ export function messagingProviderLabel(provider: string, transport?: string): st
   return MESSAGING_PROVIDER_LABELS[provider] ?? provider;
 }
 
-export function copyableMobileMessageText(message: MobileMessage): string {
+/** The message's text exactly as written, for a view that selects part of it. */
+export function selectableMobileMessageText(message: MobileMessage): string {
   return message.blocks
     .map((block) => {
       if (block.kind === "channel_message") {
@@ -964,8 +972,11 @@ export function copyableMobileMessageText(message: MobileMessage): string {
       return "";
     })
     .filter(Boolean)
-    .join("\n")
-    .trim();
+    .join("\n");
+}
+
+export function copyableMobileMessageText(message: MobileMessage): string {
+  return selectableMobileMessageText(message).trim();
 }
 
 export function blockText(message: MobileMessage) {
