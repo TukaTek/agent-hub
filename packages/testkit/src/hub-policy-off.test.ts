@@ -14,7 +14,8 @@ const hasDb = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABAS
 const describeIntegration = hasDb ? describe : describe.skip;
 
 const HUB = "https://hub.example.test";
-const WEB = "http://127.0.0.1:5173";
+// Hub sign-in only accepts the configured web origin.
+const WEB = process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173";
 const TERMINAL = ["completed", "failed", "cancelled"];
 
 /** CAAH-83: Hub mode with HUB_POLICY_ENFORCEMENT=off and no Hub registration at all. */
