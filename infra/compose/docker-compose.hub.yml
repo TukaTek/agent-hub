@@ -13,6 +13,7 @@
 # host owner and mode, so make it readable by that uid, e.g. `chown 1000:1000` and `chmod 0400`.
 # When the updater profile is enabled, mirror the file list into
 # CORTEXAI_AGENT_HUB_COMPOSE_FILE (see docs/self-host.md). See docs/hub-auth.md#configuring-hub-mode.
+# Registered deployments only: with HUB_POLICY_ENFORCEMENT=off, leave this overlay out.
 
 services:
   api:

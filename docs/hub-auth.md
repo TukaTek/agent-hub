@@ -1,6 +1,6 @@
 # CortexAI Hub authentication
 
-Set `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN=https://hub.example.test` and `HUB_AUTH_TENANT_ID`. The origin is server configuration, never a login input. The tenant pins the deployment to the one tenant whose Agent Hub policy it uses (see [Hub policy](#hub-policy)). The API also needs `HUB_SERVICE_API_ID` and `HUB_SERVICE_SECRET_FILE` to read that policy, whether or not SSO is enabled. OAuth client credentials, audience and callback registration are not required. [Configuring Hub mode](#configuring-hub-mode) has the full checklist.
+Set `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN=https://hub.example.test` and `HUB_AUTH_TENANT_ID`. The origin is server configuration, never a login input. The tenant pins the deployment to the one tenant whose Agent Hub policy it uses (see [Hub policy](#hub-policy)). The API also needs `HUB_SERVICE_API_ID` and `HUB_SERVICE_SECRET_FILE` to read that policy, whether or not SSO is enabled. OAuth client credentials, audience and callback registration are not required. [Configuring Hub mode](#configuring-hub-mode) has the full checklist. A deployment that is not registered with Hub yet can turn Hub policy off instead (see [Running without Hub registration](#running-without-hub-registration)).
 
 Web and the shared desktop renderer ask for the email first, like Workbench. `POST /api/auth/hub/sign-in/continue` runs the same `/api/tenant-auth/lookup` that password sign-in uses. It answers `{ "next": "password" }` for native sign-in, `{ "next": "sso_unavailable" }` for Entra, and `{ "next": "other_sso_unavailable" }` for Google. Hub resolves an unprovisioned email by its domain when the domain belongs to a configured tenant, so that email follows the tenant's IdP. Other-tenant, invalid and failed lookups get the same password response as native users. The response can reveal an Always Native override within an SSO tenant. Mobile keeps its single email/password form. Agent Hub's server signs in through `/api/tenant-auth/login` and verifies the authenticated identity and Agent Hub product entitlement. Non-native tenant IdPs are currently unsupported, matching Workbench; Always Native users sign in with their password.
 
@@ -23,8 +23,9 @@ Hub mode needs these settings. `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN` and `HUB_AUTH_
 | `HUB_AUTH_TENANT_ID` | API, worker | The one tenant this deployment serves |
 | `HUB_SERVICE_API_ID` | API | The service credential's API id |
 | `HUB_SERVICE_SECRET_FILE` | API | Path to a file holding only the service credential's secret |
+| `HUB_POLICY_ENFORCEMENT` | API, worker | `on` (default) or `off`. Any other value stops the process at startup. Leave it unset on registered deployments; `off` is for [running without Hub registration](#running-without-hub-registration) |
 
-A malformed value (a bad origin, an oversized id, an oversized secret, or SSO without `HUB_DEPLOYMENT_ID`) stops the process at startup with a message naming the setting. A **missing** tenant, API id or secret file (unset, unreadable or empty) does not stop it. The process starts in a not-configured state instead:
+A malformed value (a bad origin, an oversized id, an oversized secret, or SSO without `HUB_DEPLOYMENT_ID`) stops the process at startup with a message naming the setting. With `HUB_POLICY_ENFORCEMENT` unset or `on`, a **missing** tenant, API id or secret file (unset, unreadable or empty) does not stop it. The process starts in a not-configured state instead:
 
 - Every sign-in is refused with `HUB_NOT_CONFIGURED`, including Continue, password sign-in on web, desktop and mobile, and SSO. Local email sign-in and sign-up stay closed, as they always are in Hub mode.
 - No session is authorized and no work runs. A policy supplied any other way is ignored.
@@ -47,6 +48,29 @@ Fix the settings and restart the process.
    ```
 5. Pin `CORTEXAI_AGENT_HUB_IMAGE_TAG` to a release or commit tag rather than `edge`, so a Hub-mode deployment changes only when you choose.
 6. Restart, then check `/internal/health`: `status` is `ok` and `hubPolicy.state` is `ok` once the first policy has been read.
+
+## Running without Hub registration
+
+A deployment that Hub has not registered yet (no tenant grant and no service credential) can run Hub mode with Hub policy turned off. Set, on both the API and the worker:
+
+```
+AUTH_MODE=hub
+HUB_AUTH_ORIGIN=https://hub.example.test
+HUB_POLICY_ENFORCEMENT=off
+# Recommended: pin the deployment to its tenant.
+HUB_AUTH_TENANT_ID=example-tenant
+```
+
+This works as Hub mode did before Hub policy (CAAH-36):
+
+- **Still applies:** email-first Continue and password sign-in through Hub (web, desktop and mobile), Hub's product entitlement check, the [verification cache](#verification-cache-and-revoke-semantics), token refresh and revoke. Bots run for signed-in Hub users.
+- **Turned off:** the API never reads Hub's service config, so there are no assignments, no Hub-managed settings and no policy refusals (`HUB_UNAVAILABLE`, `HUB_CONFIG_INVALID`, `TENANT_DISABLED`, `HUB_CREDENTIAL_INVALID`, `HUB_NOT_CONFIGURED`, `HUB_CONFIG_RESTART_REQUIRED`). `HUB_SERVICE_API_ID` and `HUB_SERVICE_SECRET_FILE` are not read, and a stored policy snapshot is ignored.
+- **Tenant pin:** without assignments, any Hub user whose tenant enables Agent Hub can sign in. Setting `HUB_AUTH_TENANT_ID` is recommended. It limits the deployment to that tenant: a user from another tenant is refused at sign-in with `HUB_ACCESS_DENIED` ("Ask your admin for access"), and nothing is created for them.
+- **SSO:** Entra SSO needs Hub registration, so `HUB_SSO_ENABLED=true` with `HUB_POLICY_ENFORCEMENT=off` stops the API and the worker at startup with an error that names both settings.
+- **Signals:** each process logs a warning at startup that Hub policy is off. `/internal/health` reports `"status": "ok"` with `hubPolicy.state: "disabled"`.
+- **Compose:** don't layer `infra/compose/docker-compose.hub.yml`. It only mounts the service secret, which this mode doesn't use.
+
+To register the deployment later, follow [Configuring Hub mode](#configuring-hub-mode), then remove `HUB_POLICY_ENFORCEMENT` (or set it to `on`) and restart both processes. The setting is opt-out only on purpose. If it is unset, a registered deployment that loses its tenant or service credential still starts locked in `HUB_NOT_CONFIGURED`, rather than silently running without policy.
 
 ## Entra SSO
 
@@ -154,7 +178,7 @@ The source is `env:<NAME>` or `deployment_settings.<field>`. Other signals are `
 
 **Assignments (CAH-204).** Hub marks its Agent Hub assignment projection with `access.contract: "agent-hub-assignments.v1"`, and the rows are `{ tenantUserId, tenantId, productId: "cortexai-agent-hub", role }`. A row for another tenant makes the document invalid. Under the marker a row for another product does too (`assignments_product`), rather than being skipped, and so does any key outside that row shape or outside `access`'s `status`, `contract` and `productAssignments` (`assignments_fields`). A new field comes with a new contract version. Under that marker the list is authoritative: only listed users may sign in or start work, and an empty list means nobody is assigned. Sign-in is then refused with `HUB_ACCESS_DENIED`, and active sessions lose work access at once and are refused once the CAAH-40 window ends. Last-known-good assignments are not kept in that case. A `contract` with any other value is rejected as `HUB_CONFIG_INVALID`, so it never grants access. Without the marker, an empty or unattributable `access.productAssignments` is treated as unknown, never as "no access". The last configured assignments are kept when there are any. With none, sign-in is allowed but no product or tool access is granted, and `/internal/health` reports `assignments: "pending"`. `role` is accepted but not used. The marker is sticky: once an accepted document has carried it, a later document without it is rejected as `HUB_CONFIG_INVALID` (reason `assignments_contract_missing`) and last-known-good is kept, so losing the marker can never turn "nobody is assigned" back into "unknown".
 
-**Status.** `/internal/health` includes `hubPolicy` with the state, code, tenant, Hub revision, applied revision, fetch and check times, source, and assignment and toolkit status, and its top-level `status` is `degraded` whenever that state is not `ok`. It never includes a setting value. The digest that detects a changed revision is an HMAC keyed from `ENCRYPTION_KEY`, so the stored digest reveals nothing about the settings.
+**Status.** `/internal/health` includes `hubPolicy` with the state, code, tenant, Hub revision, applied revision, fetch and check times, source, and assignment and toolkit status, and its top-level `status` is `degraded` whenever that state is not `ok` (or `disabled`, see [Running without Hub registration](#running-without-hub-registration)). It never includes a setting value. The digest that detects a changed revision is an HMAC keyed from `ENCRYPTION_KEY`, so the stored digest reveals nothing about the settings.
 
 ## Verification cache and revoke semantics
 
