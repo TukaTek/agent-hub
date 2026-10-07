@@ -52,4 +52,11 @@ describe("health routes", () => {
       expect(hubPolicyHealth({ state }).status).toBe("degraded");
     expect(hubPolicyHealth(null)).toEqual({ status: "ok", hubPolicy: null });
   });
+
+  it("reports ok with the disabled policy visible (CAAH-83)", () => {
+    expect(hubPolicyHealth({ state: "disabled" })).toEqual({
+      status: "ok",
+      hubPolicy: { state: "disabled" },
+    });
+  });
 });

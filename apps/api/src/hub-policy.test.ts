@@ -51,6 +51,39 @@ describe("API Hub policy startup", () => {
     await runtime!.close();
   });
 
+  it("starts with policy off: warns once, opens no pool and never contacts Hub (CAAH-83)", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    try {
+      // No DATABASE_URL: a process with policy off never opens a policy pool.
+      const runtime = await startApiHubPolicy({ ...hub, HUB_POLICY_ENFORCEMENT: "off" }, logger);
+      expect((await runtime!.policy.status()).state).toBe("disabled");
+      await expect(runtime!.policy.check()).resolves.toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledOnce();
+      expect(logger.warn.mock.calls[0]![0]).toContain("HUB_POLICY_ENFORCEMENT=off");
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+      await runtime!.close();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("refuses to start with policy off and SSO on (CAAH-83)", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await expect(
+      startApiHubPolicy({ ...hub, HUB_POLICY_ENFORCEMENT: "off", HUB_SSO_ENABLED: "true" }, logger),
+    ).rejects.toThrow("HUB_SSO_ENABLED=true requires HUB_POLICY_ENFORCEMENT=on");
+  });
+
+  it("refuses to start with an unknown HUB_POLICY_ENFORCEMENT (CAAH-83)", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await expect(
+      startApiHubPolicy({ ...hub, HUB_POLICY_ENFORCEMENT: "false" }, logger),
+    ).rejects.toThrow("HUB_POLICY_ENFORCEMENT must be on or off");
+  });
+
   it("shares the not-configured policy shape with the auth package", async () => {
     const policy = notConfiguredHubPolicy({ missing: ["HUB_AUTH_TENANT_ID"] });
     expect(await policy.workAllowed({ tenant: "t", subject: "s" })).toBe(false);
