@@ -18,12 +18,14 @@ export function healthRoutes(
 }
 
 /**
- * Hub policy's part of `/internal/health`. Anything but an ok policy is `degraded`,
- * including Hub mode started without its tenant or service credential. Liveness
- * (`/health`) stays up so the process keeps serving its fail-closed refusals.
+ * Hub policy's part of `/internal/health`. Anything but an ok or deliberately disabled
+ * policy is `degraded`, including Hub mode started without its tenant or service
+ * credential. Liveness (`/health`) stays up so the process keeps serving its fail-closed
+ * refusals.
  */
 export function hubPolicyHealth<T extends { state: string }>(
   status: T | null,
 ): { status: "ok" | "degraded"; hubPolicy: T | null } {
-  return { status: !status || status.state === "ok" ? "ok" : "degraded", hubPolicy: status };
+  const ok = !status || status.state === "ok" || status.state === "disabled";
+  return { status: ok ? "ok" : "degraded", hubPolicy: status };
 }

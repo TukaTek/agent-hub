@@ -732,7 +732,9 @@ the Hub service secret into the API. It adds no service, so nothing goes in
 CORTEXAI_AGENT_HUB_COMPOSE_FILE=infra/compose/docker-compose.prod.yml:infra/compose/docker-compose.hub.yml
 ```
 
-See [Configuring Hub mode](hub-auth.md#configuring-hub-mode) for the secret file and settings.
+See [Configuring Hub mode](hub-auth.md#configuring-hub-mode) for the secret file and settings. A
+deployment Hub has not registered yet sets `HUB_POLICY_ENFORCEMENT=off` and skips the overlay
+(see [Running without Hub registration](hub-auth.md#running-without-hub-registration)).
 
 The value therefore has to be the path **the daemon** sees, which is not always the path your shell
 sees:

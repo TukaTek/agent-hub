@@ -12,6 +12,7 @@ import { HubRequestError } from "./hub-client.js";
 import {
   applyHubPolicyAtStartup,
   createHubPolicy,
+  disabledHubPolicy,
   type HubConfigFetch,
   type HubPolicySignal,
   hubPolicyDigest,
@@ -514,6 +515,43 @@ describe("Hub not configured (F1)", () => {
       missing,
       hubRevision: null,
       appliedRevision: null,
+      assignments: "pending",
+      toolkits: "unknown",
+    });
+  });
+});
+
+describe("Hub policy disabled (CAAH-83)", () => {
+  it("admits sign-in, sessions and work without contacting Hub", async () => {
+    const policy = disabledHubPolicy({});
+    const identity = { tenant: "any-tenant", subject: "user-1" };
+    expect(await codeOf(policy.check())).toBe("admitted");
+    expect(await policy.admit(identity)).toBe("assigned");
+    expect(await policy.sessionAllowed(identity)).toBe(true);
+    expect(await policy.workAllowed(identity)).toBe(true);
+    expect(await policy.needsRestart()).toBeNull();
+  });
+
+  it("still honours an optional tenant pin", async () => {
+    const policy = disabledHubPolicy({ tenantId: TENANT });
+    const other = { tenant: "tenant-b", subject: "subject-1" };
+    expect(await codeOf(policy.admit(other))).toBe("HUB_ACCESS_DENIED");
+    expect(await policy.sessionAllowed(other)).toBe(false);
+    expect(await policy.workAllowed(other)).toBe(false);
+    expect(await policy.admit(assigned)).toBe("assigned");
+    expect(await policy.workAllowed(assigned)).toBe(true);
+  });
+
+  it("reports disabled", async () => {
+    expect(await disabledHubPolicy({ tenantId: TENANT }).status()).toEqual({
+      state: "disabled",
+      code: null,
+      tenant: TENANT,
+      hubRevision: null,
+      appliedRevision: null,
+      fetchedAt: null,
+      checkedAt: null,
+      source: null,
       assignments: "pending",
       toolkits: "unknown",
     });

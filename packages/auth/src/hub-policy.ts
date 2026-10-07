@@ -55,8 +55,11 @@ export type HubPolicySignal =
     };
 
 export interface HubPolicyStatus {
-  /** `stale`: no successful Hub contact within the snapshot max age (F5). */
-  state: HubPolicyState | "missing" | "restart_required" | "stale" | "not_configured";
+  /**
+   * `stale`: no successful Hub contact within the snapshot max age (F5). `disabled`:
+   * `HUB_POLICY_ENFORCEMENT=off`, an operator choice rather than a fault (CAAH-83).
+   */
+  state: HubPolicyState | "missing" | "restart_required" | "stale" | "not_configured" | "disabled";
   code: HubPolicyCode | null;
   tenant: string;
   hubRevision: number | null;
@@ -441,6 +444,54 @@ export function notConfiguredHubPolicy(options: {
       assignments: "pending",
       toolkits: "unknown",
       missing: [...options.missing],
+    }),
+  };
+}
+
+/**
+ * The policy of a Hub-mode process run with `HUB_POLICY_ENFORCEMENT=off` (CAAH-83). It
+ * never contacts Hub or reads the stored snapshot. Hub login and session verification
+ * still gate every sign-in, session and job; only tenant policy is off. A pinned tenant
+ * still refuses other tenants.
+ */
+export function disabledHubPolicy(options: { tenantId?: string }): HubPolicy {
+  const tenant = options.tenantId ?? "";
+  const pinned = (identity: HubPolicyIdentity) => !tenant || identity.tenant === tenant;
+  const record = (): HubPolicyRecord => ({
+    tenant,
+    document: null,
+    revision: null,
+    etag: null,
+    digest: null,
+    state: "ok",
+    reason: "disabled",
+    source: "hub",
+    assignmentsSource: "hub",
+    fetchedAt: null,
+    checkedAt: null,
+    attemptedAt: new Date(0),
+  });
+  return {
+    refresh: async () => record(),
+    check: async () => undefined,
+    admit: async (identity) => {
+      if (!pinned(identity)) throw new HubPolicyError(HUB_ACCESS_DENIED, "other_tenant");
+      return "assigned";
+    },
+    sessionAllowed: async (identity) => pinned(identity),
+    workAllowed: async (identity) => pinned(identity),
+    needsRestart: async () => null,
+    status: async () => ({
+      state: "disabled",
+      code: null,
+      tenant,
+      hubRevision: null,
+      appliedRevision: null,
+      fetchedAt: null,
+      checkedAt: null,
+      source: null,
+      assignments: "pending",
+      toolkits: "unknown",
     }),
   };
 }

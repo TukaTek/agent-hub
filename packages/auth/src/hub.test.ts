@@ -11,7 +11,12 @@ import {
   HubUnsupportedIdpError,
   hubUserId,
 } from "./hub-client.js";
-import { applyHubPolicyAtStartup, createHubPolicy, type HubPolicy } from "./hub-policy.js";
+import {
+  applyHubPolicyAtStartup,
+  createHubPolicy,
+  type HubPolicy,
+  notConfiguredHubPolicy,
+} from "./hub-policy.js";
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
 import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
 import { createHubSessionAuthorizer, createUserWorkAuthorizer } from "./hub-sessions.js";
@@ -1487,6 +1492,58 @@ describe("Hub mode started without its tenant or service credential (F1)", () =>
     });
     expect(await work(userId)).toBe(false);
     expect(f.data.session).toHaveLength(1);
+  });
+});
+
+describe("Hub mode with policy enforcement off (CAAH-83)", () => {
+  const disabled: HubAuthConfig = { origin: config.origin, policyDisabled: true };
+  // A policy that refuses everything: the config wins, as it does when not configured.
+  const refusing = () =>
+    notConfiguredHubPolicy({ missing: ["HUB_AUTH_TENANT_ID", "HUB_SERVICE_SECRET_FILE"] });
+
+  it("signs a Hub user in with no Hub registration, without reading Hub policy", async () => {
+    const f = fixture(undefined, { hub: disabled, policy: refusing() });
+    const continued = await f.request("/hub/sign-in/continue", "", { email: "user@example.test" });
+    expect(await continued.json()).toEqual({ next: "password" });
+    const { headers } = await f.login();
+    expect((await f.auth.api.getSession({ headers }))?.user.id).toBe(userId);
+    expect(f.client.verify).toHaveBeenCalled();
+    expect(f.client.serviceConfig).not.toHaveBeenCalled();
+  });
+
+  it("runs work for a signed-in Hub user and still never for local users", async () => {
+    const f = fixture(undefined, { hub: disabled, policy: refusing() });
+    expect(await f.work(userId)).toBe(false);
+    await f.login();
+    expect(await f.work(userId)).toBe(true);
+    expect(await f.work("local-user")).toBe(false);
+  });
+
+  it("still requires Hub login and current entitlement", async () => {
+    const f = fixture(undefined, { hub: disabled });
+    f.client.login.mockRejectedValueOnce(new HubRequestError(403, "access_denied"));
+    const refused = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(f.data.session).toHaveLength(0);
+    const { headers } = await f.login();
+    f.client.verify.mockRejectedValue(new Error("entitlement removed"));
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(await f.work(userId)).toBe(false);
+  });
+
+  it("refuses another tenant with HUB_ACCESS_DENIED when a tenant is pinned, creating nothing", async () => {
+    const f = fixture(undefined, { hub: { ...disabled, tenantId: "tenant-2" } });
+    const response = await f.request("/hub/sign-in", "", {
+      email: "user@example.test",
+      password: "test-password",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "HUB_ACCESS_DENIED" });
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
   });
 });
 

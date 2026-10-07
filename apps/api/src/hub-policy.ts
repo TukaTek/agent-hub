@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import {
+  disabledHubPolicy,
   type HubPolicyRestart,
   type HubPolicyRuntime,
   hubAuthFromEnv,
   hubConfigFetch,
   hubNotConfiguredLogEntry,
   hubPolicyAutoRestart,
+  hubPolicyDisabledLogEntry,
   hubPolicyLogEntry,
   notConfiguredHubPolicy,
   prismaHubPolicyStore,
@@ -23,6 +25,9 @@ import type { Logger } from "@cortexai-agent-hub/logging";
  * Without its tenant or service credential the API still starts, fail closed: every
  * sign-in is refused with HUB_NOT_CONFIGURED, no session or work is admitted, health
  * reports degraded, and the log names what is missing (F1).
+ *
+ * With `HUB_POLICY_ENFORCEMENT=off` it never contacts Hub or opens a pool: it warns once
+ * and returns the disabled policy (CAAH-83).
  *
  * When Hub changes a startup-bound setting, `onRestartRequired` is called once so the
  * entry point can drain and exit for the supervisor to restart it (F3).
@@ -42,6 +47,16 @@ export async function startApiHubPolicy(
     });
     return {
       policy,
+      applied: { revision: null, digest: "" },
+      stop: () => undefined,
+      close: async () => undefined,
+    };
+  }
+  if (hub.policyDisabled) {
+    const entry = hubPolicyDisabledLogEntry();
+    logger.warn(entry.message, entry.attributes);
+    return {
+      policy: disabledHubPolicy({ tenantId: hub.tenantId }),
       applied: { revision: null, digest: "" },
       stop: () => undefined,
       close: async () => undefined,

@@ -1,15 +1,6 @@
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
 import { ComposioConnector, IntegrationProviderSettings } from "@cortexai-agent-hub/adapters";
-import {
-  createUserWorkAuthorizer,
-  hubAuthFromEnv,
-  hubNotConfiguredLogEntry,
-  hubPolicyAutoRestart,
-  hubPolicyLogEntry,
-  notConfiguredHubPolicy,
-  prismaHubPolicyStore,
-  startHubPolicyRuntime,
-} from "@cortexai-agent-hub/auth";
+import { createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 
 loadRootEnv();
@@ -67,6 +58,7 @@ import {
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { MarkdownMemoryStore } from "@cortexai-agent-hub/memory";
+import { startWorkerHubPolicy } from "./hub-policy.js";
 
 const logger = createRootLogger(SERVICE_NAMES.worker);
 /** EX_TEMPFAIL: the supervisor restarts the worker onto Hub's new revision (F3). */
@@ -84,46 +76,22 @@ async function main() {
     poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 8),
     applicationName: "cortexai-agent-hub-worker",
   });
-  // CAAH-36: before anything reads settings, apply the Hub revision the API stored.
-  // The worker never contacts Hub; it uses the same revision as the API.
-  const hubConfig = hubAuthFromEnv(process.env);
   // Bound once stop exists; a restart before then simply exits.
   let restartForHubPolicy: () => void = () => process.exit(HUB_POLICY_RESTART_EXIT_CODE);
-  if (hubConfig?.notConfigured) {
-    // F1: start fail closed. The not-configured policy admits no work.
-    const entry = hubNotConfiguredLogEntry(hubConfig.notConfigured.missing);
-    logger.error(entry.message, entry.attributes);
-  } else if (hubConfig && !hubConfig.tenantId) {
-    throw new Error("Hub mode requires HUB_AUTH_TENANT_ID");
-  }
-  const hubPolicy = hubConfig?.notConfigured
-    ? {
-        policy: notConfiguredHubPolicy({
-          missing: hubConfig.notConfigured.missing.map((item) => item.name),
-        }),
-      }
-    : hubConfig?.tenantId
-      ? await startHubPolicyRuntime({
-          store: prismaHubPolicyStore(prisma, resolveEncryptionKey(process.env)),
-          tenantId: hubConfig.tenantId,
-          env: process.env,
-          deploymentSettings: () =>
-            prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
-          log: (signal) => {
-            const entry = hubPolicyLogEntry(signal);
-            logger[entry.level](entry.message, entry.attributes);
-          },
-          onRestartRequired: !hubPolicyAutoRestart(process.env)
-            ? undefined
-            : (restart) => {
-                logger.warn("hub policy changed a startup-bound setting; restarting to apply it", {
-                  "hub.policy.applied_revision": restart.appliedRevision,
-                  "hub.policy.hub_revision": restart.hubRevision,
-                });
-                restartForHubPolicy();
-              },
-        })
-      : undefined;
+  const { config: hubConfig, policy: hubPolicy } = await startWorkerHubPolicy(
+    process.env,
+    logger,
+    prisma,
+    {
+      onRestartRequired: (restart) => {
+        logger.warn("hub policy changed a startup-bound setting; restarting to apply it", {
+          "hub.policy.applied_revision": restart.appliedRevision,
+          "hub.policy.hub_revision": restart.hubRevision,
+        });
+        restartForHubPolicy();
+      },
+    },
+  );
   const realtime = new PostgresRealtimeFanout({
     connectionString: process.env.REALTIME_DATABASE_URL ?? databaseUrl,
     publisher: pool,
@@ -225,7 +193,7 @@ async function main() {
         ? {
             verifyCacheTtlMs: hubConfig.verifyCacheTtlMs,
             verifyCacheEnabled: hubConfig.verifyCacheEnabled,
-            policy: hubPolicy?.policy,
+            policy: hubPolicy,
           }
         : {},
     ),
