@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import contract from "../../auth/src/fixtures/agent-hub-auth.v2.json" with { type: "json" };
+import { hubAuthFromEnv } from "../../auth/src/hub-client.js";
 
 process.env.WAKEUP_DRIVER = "memory";
 process.env.SANDBOX_PROVIDER = "fake";
@@ -45,6 +45,8 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
       if (url.pathname === "/api/tenant-auth/login")
         return Response.json({
           ...contract.sessionResponse,
+          // Hub access tokens last a day; the request signal times out at expiry.
+          accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
           user: { ...contract.sessionResponse.user, id: subject },
         });
       return Response.json({ error: "not_found" }, { status: 404 });
