@@ -182,6 +182,72 @@ describe("Hub Workbench-style tenant authentication", () => {
     ).rejects.toThrow();
     expect(f.fetcher).toHaveBeenCalledTimes(1);
   });
+  describe("HUB_POLICY_ENFORCEMENT (CAAH-83)", () => {
+    const hub = { AUTH_MODE: "hub", HUB_AUTH_ORIGIN: origin };
+    const read = { readSecretFile: () => "synthetic-secret" };
+
+    it("defaults to on: missing Hub values still start not configured", () => {
+      for (const env of [{ ...hub }, { ...hub, HUB_POLICY_ENFORCEMENT: "on" }])
+        expect(hubAuthFromEnv(env, read)?.notConfigured?.missing.map((m) => m.name)).toEqual([
+          "HUB_AUTH_TENANT_ID",
+          "HUB_SERVICE_API_ID",
+          "HUB_SERVICE_SECRET_FILE",
+        ]);
+    });
+
+    it("off needs no tenant or service credential, in the API and the worker", () => {
+      for (const options of [read, {}])
+        expect(hubAuthFromEnv({ ...hub, HUB_POLICY_ENFORCEMENT: "off" }, options)).toEqual({
+          origin,
+          policyDisabled: true,
+        });
+    });
+
+    it("off keeps an optional tenant pin and never reads the service secret", () => {
+      const readSecretFile = vi.fn(() => "synthetic-secret");
+      const config = hubAuthFromEnv(
+        {
+          ...hub,
+          HUB_POLICY_ENFORCEMENT: "off",
+          HUB_AUTH_TENANT_ID: "tenant-1",
+          HUB_SERVICE_API_ID: "api-id-1",
+          HUB_SERVICE_SECRET_FILE: "/run/secrets/synthetic",
+        },
+        { readSecretFile },
+      );
+      expect(config).toEqual({ origin, tenantId: "tenant-1", policyDisabled: true });
+      expect(readSecretFile).not.toHaveBeenCalled();
+    });
+
+    it("off still validates the values it keeps", () => {
+      const env = { ...hub, HUB_POLICY_ENFORCEMENT: "off" };
+      expect(() => hubAuthFromEnv({ ...env, HUB_AUTH_TENANT_ID: "t".repeat(257) })).toThrow(
+        "HUB_AUTH_TENANT_ID must be at most 256 characters",
+      );
+      expect(() => hubAuthFromEnv({ ...env, HUB_DEPLOYMENT_ID: "not-a-uuid" })).toThrow(
+        "HUB_DEPLOYMENT_ID",
+      );
+    });
+
+    it("off with SSO stops startup in both processes", () => {
+      const env = { ...hub, HUB_POLICY_ENFORCEMENT: "off", HUB_SSO_ENABLED: "true" };
+      for (const options of [read, {}])
+        expect(() => hubAuthFromEnv(env, options)).toThrow(
+          "HUB_SSO_ENABLED=true requires HUB_POLICY_ENFORCEMENT=on",
+        );
+    });
+
+    it("rejects any other value", () => {
+      for (const value of ["false", "OFF", "disabled", "0"])
+        expect(() => hubAuthFromEnv({ ...hub, HUB_POLICY_ENFORCEMENT: value }, read)).toThrow(
+          "HUB_POLICY_ENFORCEMENT must be on or off",
+        );
+    });
+
+    it("is ignored in local mode", () => {
+      expect(hubAuthFromEnv({ AUTH_MODE: "local", HUB_POLICY_ENFORCEMENT: "off" })).toBeUndefined();
+    });
+  });
   it("keeps ownership stable across transport changes and distinct across tenants", () => {
     expect(hubUserId(origin, "tenant", "user")).toBe(hubUserId(origin, "tenant", "user"));
     expect(hubUserId(origin, "other", "user")).not.toBe(hubUserId(origin, "tenant", "user"));

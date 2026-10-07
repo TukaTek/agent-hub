@@ -26,6 +26,11 @@ export interface HubAuthConfig {
    * Only setting names are recorded, never values.
    */
   notConfigured?: { missing: readonly HubConfigProblem[] };
+  /**
+   * `HUB_POLICY_ENFORCEMENT=off`: Hub mode without Hub registration (CAAH-83). Hub
+   * sign-in and entitlement still apply; Hub tenant policy is never fetched or enforced.
+   */
+  policyDisabled?: true;
 }
 
 export interface HubConfigProblem {
@@ -54,6 +59,12 @@ export function hubAuthFromEnv(
   if (ssoEnabled && mode !== "hub") throw configError("HUB_SSO_ENABLED requires AUTH_MODE=hub");
   if (mode === "local") return undefined;
   if (mode !== "hub") throw configError("AUTH_MODE must be local or hub");
+  const enforcement = source.HUB_POLICY_ENFORCEMENT?.trim() || "on";
+  if (enforcement !== "on" && enforcement !== "off")
+    throw configError("HUB_POLICY_ENFORCEMENT must be on or off");
+  // SSO needs Hub registration; checked on the raw flag so the worker refuses too.
+  if (enforcement === "off" && ssoFlag === "true")
+    throw configError("HUB_SSO_ENABLED=true requires HUB_POLICY_ENFORCEMENT=on");
   const rawOrigin = source.HUB_AUTH_ORIGIN?.trim();
   if (!rawOrigin) throw configError("AUTH_MODE=hub requires HUB_AUTH_ORIGIN");
   let url: URL;
@@ -91,18 +102,30 @@ export function hubAuthFromEnv(
       ? undefined
       : source.HUB_VERIFY_CACHE_ENABLED !== "false";
 
-  // Hub policy is tenant-scoped and read with the service credential (CAAH-36). Missing
-  // ones start Hub mode not configured (fail closed) instead of crashing; malformed
-  // values still stop the process, because they are typos rather than a rollout gap.
-  const missing: HubConfigProblem[] = [];
   const tenantId = source.HUB_AUTH_TENANT_ID?.trim();
-  if (!tenantId) missing.push({ name: "HUB_AUTH_TENANT_ID", problem: "unset" });
-  else if (tenantId.length > 256)
+  if (tenantId && tenantId.length > 256)
     throw configError("HUB_AUTH_TENANT_ID must be at most 256 characters");
   const deploymentId = source.HUB_DEPLOYMENT_ID?.trim();
   if (deploymentId && !UUID.test(deploymentId)) {
     throw configError("HUB_DEPLOYMENT_ID must be the deployment UUID issued by CortexAI Hub");
   }
+  // Without enforcement the tenant is an optional pin and the service credential is
+  // never read, as before CAAH-36.
+  if (enforcement === "off")
+    return {
+      origin: url.origin,
+      ...(tenantId ? { tenantId } : {}),
+      ...(deploymentId ? { deploymentId: deploymentId.toLowerCase() } : {}),
+      ...(cacheTtlMs !== undefined ? { verifyCacheTtlMs: cacheTtlMs } : {}),
+      ...(cacheEnabled !== undefined ? { verifyCacheEnabled: cacheEnabled } : {}),
+      policyDisabled: true,
+    };
+
+  // Hub policy is tenant-scoped and read with the service credential (CAAH-36). Missing
+  // ones start Hub mode not configured (fail closed) instead of crashing; malformed
+  // values still stop the process, because they are typos rather than a rollout gap.
+  const missing: HubConfigProblem[] = [];
+  if (!tenantId) missing.push({ name: "HUB_AUTH_TENANT_ID", problem: "unset" });
   if (ssoEnabled && !deploymentId) throw configError("HUB_SSO_ENABLED requires HUB_DEPLOYMENT_ID");
   let service: HubServiceCredential | undefined;
   if (options.readSecretFile) {
