@@ -37,6 +37,7 @@ export {
   type AppliedHubPolicy,
   applyHubPolicyAtStartup,
   createHubPolicy,
+  disabledHubPolicy,
   type HubConfigFetch,
   type HubPolicy,
   type HubPolicySignal,
@@ -49,6 +50,7 @@ export {
   type HubPolicyRuntime,
   hubNotConfiguredLogEntry,
   hubPolicyAutoRestart,
+  hubPolicyDisabledLogEntry,
   hubPolicyLogEntry,
   startHubPolicyRuntime,
 } from "./hub-policy-runtime.js";

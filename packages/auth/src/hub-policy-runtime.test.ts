@@ -4,6 +4,7 @@ import type { HubConfigFetch } from "./hub-policy.js";
 import {
   hubNotConfiguredLogEntry,
   hubPolicyAutoRestart,
+  hubPolicyDisabledLogEntry,
   hubPolicyLogEntry,
   startHubPolicyRuntime,
 } from "./hub-policy-runtime.js";
@@ -268,5 +269,13 @@ describe("restart and not-configured settings", () => {
         "this is fixed and the process restarts. See docs/hub-auth.md#configuring-hub-mode",
     );
     expect(entry.attributes["hub.missing"]).toBe("HUB_AUTH_TENANT_ID,HUB_SERVICE_SECRET_FILE");
+  });
+
+  it("warns that Hub policy is off, linking the runbook (CAAH-83)", () => {
+    const doc = "docs/hub-auth.md#running-without-hub-registration";
+    const entry = hubPolicyDisabledLogEntry();
+    expect(entry.message).toContain("HUB_POLICY_ENFORCEMENT=off");
+    expect(entry.message).toContain(doc);
+    expect(entry.attributes).toEqual({ "hub.policy": "disabled", "hub.doc": doc });
   });
 });

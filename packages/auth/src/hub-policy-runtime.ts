@@ -148,6 +148,22 @@ export function hubNotConfiguredLogEntry(missing: readonly HubConfigProblem[]): 
   };
 }
 
+const HUB_POLICY_DISABLED_DOC = "docs/hub-auth.md#running-without-hub-registration";
+
+/** The operator warning for a Hub-mode process run with `HUB_POLICY_ENFORCEMENT=off`. */
+export function hubPolicyDisabledLogEntry(): {
+  message: string;
+  attributes: Record<string, string>;
+} {
+  return {
+    message:
+      "Hub policy is off (HUB_POLICY_ENFORCEMENT=off): Hub sign-in and entitlement still " +
+      "apply, but tenant policy, assignments and Hub-managed settings are not enforced. " +
+      `See ${HUB_POLICY_DISABLED_DOC}`,
+    attributes: { "hub.policy": "disabled", "hub.doc": HUB_POLICY_DISABLED_DOC },
+  };
+}
+
 /**
  * `HUB_POLICY_AUTO_RESTART` (default `true`): exit for the supervisor to restart the
  * process when Hub changes a startup-bound setting. `false` keeps the manual restart
