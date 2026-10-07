@@ -68,7 +68,7 @@ test("a saved host choice closes when refreshing the profile fails", async ({ pa
   );
   await completeOnboarding(page);
   await page.addInitScript(() => {
-    Object.defineProperty(window, "cortexai-agent-hubDesktop", {
+    Object.defineProperty(window, "cortexAiAgentHubDesktop", {
       value: {
         platform: "darwin",
         window: {
