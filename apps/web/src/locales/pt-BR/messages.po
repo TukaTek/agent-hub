@@ -205,6 +205,11 @@ msgstr "Conta"
 msgid "Account default"
 msgstr "Padrão da conta"
 
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Account ID"
+msgstr "ID da conta"
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Account label"
 msgstr ""
@@ -1685,6 +1690,7 @@ msgstr ""
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/shell/avatar-studio-popover.tsx
 msgid "Default"
 msgstr "Padrão"
 
@@ -2079,6 +2085,11 @@ msgstr ""
 #: src/pages/WindowChrome.tsx
 msgid "Fullscreen"
 msgstr "Tela Cheia"
+
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Gateway ID"
+msgstr "ID do gateway"
 
 #: src/pages/SettingsOverlay.tsx
 msgid "General"
@@ -3107,8 +3118,12 @@ msgid "Read replies aloud"
 msgstr "Leia as respostas em voz alta"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "read-only"
-msgstr "somente leitura"
+msgid "Built-in"
+msgstr "Integrado"
+
+#: src/pages/KnowledgeSection.tsx
+msgid "Plugin"
+msgstr "Plugin"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -3668,8 +3683,8 @@ msgid "Skill {0}"
 msgstr "Habilidade {0}"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "Skills"
-msgstr "Habilidades"
+msgid "Shared skills"
+msgstr "Habilidades compartilhadas"
 
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/Shell.tsx

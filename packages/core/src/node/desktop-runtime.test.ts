@@ -220,6 +220,9 @@ describe("shared Linux desktop lifecycle", () => {
     expect(command).toContain("*libnss_wrapper.so");
     expect(command).toContain("unset LD_PRELOAD");
     expect(command).toContain(
+      '[ "$(cat /tmp/cortexai-agent-hub/desktop-targets/view-1)" != "$desired" ]',
+    );
+    expect(command).toContain(
       "browser=$(command -v cortexai-agent-hub-browser || command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)",
     );
     const lines = command.split("\n");

@@ -1,10 +1,13 @@
-import { AiConsentBlocked, callIdFromClientNonce } from "@cortexai-agent-hub/core";
+import {
+  AiConsentBlocked,
+  callIdFromClientNonce,
+  INTERIM_BARGE_IN_MS,
+} from "@cortexai-agent-hub/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallClip, CallDeps, CallEnded, DictationHandlers } from "./call-session";
 import {
   endCall,
   getSnapshot,
-  INTERIM_BARGE_IN_MS,
   setCallProviderTranscribe,
   startCall,
   subscribe,

@@ -205,6 +205,11 @@ msgstr "खाता"
 msgid "Account default"
 msgstr "खाता डिफ़ॉल्ट"
 
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Account ID"
+msgstr "खाता आईडी"
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Account label"
 msgstr ""
@@ -1685,6 +1690,7 @@ msgstr ""
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/shell/avatar-studio-popover.tsx
 msgid "Default"
 msgstr "डिफ़ॉल्ट"
 
@@ -2079,6 +2085,11 @@ msgstr ""
 #: src/pages/WindowChrome.tsx
 msgid "Fullscreen"
 msgstr "फ़ुलस्क्रीन"
+
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Gateway ID"
+msgstr "गेटवे आईडी"
 
 #: src/pages/SettingsOverlay.tsx
 msgid "General"
@@ -3107,8 +3118,12 @@ msgid "Read replies aloud"
 msgstr "उत्तर पढ़कर सुनाएं"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "read-only"
-msgstr "केवल पढ़ने योग्य"
+msgid "Built-in"
+msgstr "अंतर्निहित"
+
+#: src/pages/KnowledgeSection.tsx
+msgid "Plugin"
+msgstr "प्लगइन"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -3668,8 +3683,8 @@ msgid "Skill {0}"
 msgstr "स्किल {0}"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "Skills"
-msgstr "स्किल्स"
+msgid "Shared skills"
+msgstr "साझा स्किल्स"
 
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/Shell.tsx

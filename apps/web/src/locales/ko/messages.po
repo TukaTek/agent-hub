@@ -205,6 +205,11 @@ msgstr "계정"
 msgid "Account default"
 msgstr "계정 기본값"
 
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Account ID"
+msgstr "계정 ID"
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Account label"
 msgstr ""
@@ -1685,6 +1690,7 @@ msgstr "거절"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/shell/avatar-studio-popover.tsx
 msgid "Default"
 msgstr "기본값"
 
@@ -2079,6 +2085,11 @@ msgstr "무료"
 #: src/pages/WindowChrome.tsx
 msgid "Fullscreen"
 msgstr "전체 화면"
+
+#: src/pages/ModelSettingsOverlay.tsx
+#: src/pages/Onboarding.tsx
+msgid "Gateway ID"
+msgstr "게이트웨이 ID"
 
 #: src/pages/SettingsOverlay.tsx
 msgid "General"
@@ -3107,8 +3118,12 @@ msgid "Read replies aloud"
 msgstr "답변을 자동으로 읽기"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "read-only"
-msgstr "읽기 전용"
+msgid "Built-in"
+msgstr "기본 제공"
+
+#: src/pages/KnowledgeSection.tsx
+msgid "Plugin"
+msgstr "플러그인"
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -3668,8 +3683,8 @@ msgid "Skill {0}"
 msgstr "작업 기술 {0}"
 
 #: src/pages/KnowledgeSection.tsx
-msgid "Skills"
-msgstr "스킬"
+msgid "Shared skills"
+msgstr "공유 스킬"
 
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/Shell.tsx
