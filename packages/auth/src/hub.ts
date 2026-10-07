@@ -21,7 +21,7 @@ import {
   HubUnsupportedIdpError,
   hubUserId,
 } from "./hub-client.js";
-import { type HubPolicy, notConfiguredHubPolicy } from "./hub-policy.js";
+import { disabledHubPolicy, type HubPolicy, notConfiguredHubPolicy } from "./hub-policy.js";
 import { HubPolicyError } from "./hub-policy-contract.js";
 import { createHubSessionAuthorizer } from "./hub-sessions.js";
 
@@ -199,11 +199,13 @@ export function createHubAuth(
   },
   client = createHubClient(config),
 ) {
-  // Hub mode without its tenant or service credential admits nothing, whatever policy
-  // the caller passed: the config is the authority on whether Hub can be asked (F1).
+  // The config is the authority on whether Hub policy applies, whatever policy the
+  // caller passed: not configured admits nothing (F1), disabled skips it (CAAH-83).
   const policy = config.notConfigured
     ? notConfiguredHubPolicy({ missing: config.notConfigured.missing.map((item) => item.name) })
-    : env.hubPolicy;
+    : config.policyDisabled
+      ? disabledHubPolicy({ tenantId: config.tenantId })
+      : env.hubPolicy;
   if (!policy) throw new Error("Hub mode requires the Hub policy gate");
   const encrypt = (data: string) => symmetricEncrypt({ key: env.tokenEncryptionKey, data });
   const redirectUri = new URL(`/api/auth${HUB_SSO_CALLBACK_PATH}`, env.baseURL).href;

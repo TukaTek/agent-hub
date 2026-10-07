@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { createHubClient, type HubAuthConfig } from "./hub-client.js";
-import type { HubPolicy } from "./hub-policy.js";
+import { disabledHubPolicy, type HubPolicy } from "./hub-policy.js";
 import { createHubVerifyCache, logCacheMetrics } from "./hub-verify-cache.js";
 
 export interface HubSessionAuthorizerConfig {
@@ -139,9 +139,11 @@ export function createUserWorkAuthorizer(
   options: HubSessionAuthorizerConfig & { policy?: HubSessionPolicy } = {},
   client?: ReturnType<typeof createHubClient>,
 ) {
-  const { policy } = options;
   // Hub mode without its tenant or service credential admits no work (F1).
   if (config?.notConfigured) return async (_userId: string): Promise<boolean> => false;
+  const policy = config?.policyDisabled
+    ? disabledHubPolicy({ tenantId: config.tenantId })
+    : options.policy;
   if (config && !policy) throw new Error("Hub mode requires the Hub policy gate");
   const authorize =
     config && policy
