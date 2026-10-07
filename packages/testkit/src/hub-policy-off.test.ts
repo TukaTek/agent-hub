@@ -134,7 +134,10 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
   async function waitForRuns(botId: string) {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
-      const runs = await handles.prisma.run.findMany({ where: { botId }, select: { status: true } });
+      const runs = await handles.prisma.run.findMany({
+        where: { botId },
+        select: { status: true },
+      });
       if (runs.every((run) => TERMINAL.includes(run.status))) return;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }

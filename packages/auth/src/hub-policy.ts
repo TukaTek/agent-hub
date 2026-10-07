@@ -55,15 +55,11 @@ export type HubPolicySignal =
     };
 
 export interface HubPolicyStatus {
-  /** `stale`: no successful Hub contact within the snapshot max age (F5). */
-  /** `disabled`: `HUB_POLICY_ENFORCEMENT=off`, an operator choice rather than a fault. */
-  state:
-    | HubPolicyState
-    | "missing"
-    | "restart_required"
-    | "stale"
-    | "not_configured"
-    | "disabled";
+  /**
+   * `stale`: no successful Hub contact within the snapshot max age (F5). `disabled`:
+   * `HUB_POLICY_ENFORCEMENT=off`, an operator choice rather than a fault (CAAH-83).
+   */
+  state: HubPolicyState | "missing" | "restart_required" | "stale" | "not_configured" | "disabled";
   code: HubPolicyCode | null;
   tenant: string;
   hubRevision: number | null;

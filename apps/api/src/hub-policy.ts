@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import {
+  disabledHubPolicy,
   type HubPolicyRestart,
   type HubPolicyRuntime,
-  disabledHubPolicy,
   hubAuthFromEnv,
   hubConfigFetch,
   hubNotConfiguredLogEntry,
