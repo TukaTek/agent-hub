@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactBindings, redactSensitiveText } from "./redaction.js";
+import { redactBindings, redactSecretText, redactSensitiveText } from "./redaction.js";
 
 describe("redaction", () => {
   it("redacts secrets, credentials, and message bodies", () => {
@@ -104,5 +104,15 @@ describe("redaction", () => {
     expect(redacted).toContain('"password":"[Redacted]"');
     expect(redacted).toContain('"token":"[Redacted]"');
     expect(redacted).toContain('"authorization":"[Redacted]"');
+  });
+
+  it("redacts credentials but keeps email addresses in redactSecretText", () => {
+    const text =
+      'mail bob@example.com password=hunter2 Bearer abc.def {"token":"t-1"} sk-live-12345678';
+    const redacted = redactSecretText(text);
+    expect(redacted).toContain("bob@example.com");
+    expect(redacted).not.toMatch(/hunter2|abc\.def|t-1|sk-live-12345678/);
+    expect(redactSecretText(redacted)).toBe(redacted);
+    expect(redactSensitiveText(text)).not.toContain("bob@example.com");
   });
 });

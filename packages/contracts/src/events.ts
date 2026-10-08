@@ -216,6 +216,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
       failureHandling: z.string(),
     }),
     status: z.enum(["draft", "saved"]),
+    /** The skill row's updatedAt this card shows; sent back as updateDraft's expectedUpdatedAt. */
+    updatedAt: z.string().optional(),
   }),
   ChartBlock,
   z.object({
