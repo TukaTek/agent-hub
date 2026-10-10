@@ -130,6 +130,9 @@ describe.skipIf(process.env.RUN_COMPUTER_REPLAY_DOCKER !== "1")(
 
         const first = await sandbox.observe(computer, context);
         expect([first.width, first.height, first.mimeType]).toEqual([1280, 800, "image/png"]);
+        // Preparing the desktop starts the bot's Chromium. A launch that lands before its window
+        // maps starts a second Chromium on the same profile, which drops the URL.
+        await waitForTitle(sandbox, computer, context, (title) => title.endsWith("Chromium"));
 
         await sandbox.act(
           computer,
