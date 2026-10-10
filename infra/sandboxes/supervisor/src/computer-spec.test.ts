@@ -262,6 +262,17 @@ describe("graphical computer spec", () => {
     expect(dockerfile).toMatch(/import openpyxl/);
   });
 
+  it("builds the computer image from every file the Dockerfile copies", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
+    const copied = [...dockerfile.matchAll(/^COPY (?:--chmod=\d+ )?(?!--from)(\S+) /gm)].map(
+      (match) => match[1]!.split("/")[0]!,
+    );
+    const listed = readFileSync(path.join(import.meta.dirname, "index.ts"), "utf8");
+    for (const file of new Set(copied)) expect(listed).toContain(`"${file}"`);
+    expect(copied).toContain("desktop_smoke.py");
+  });
+
   it.skipIf(process.platform === "win32")(
     "delivers desktop menu exec arguments intact through /bin/sh",
     () => {

@@ -134,11 +134,12 @@ COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
 # volume hides /etc/skel, so ~/.local/bin has to be restored from the image.
 COPY --chmod=644 cortexai-agent-hub-local-bin.sh /etc/profile.d/cortexai-agent-hub-local-bin.sh
 COPY --chmod=644 office_smoke.py /usr/local/share/cortexai-agent-hub-office-smoke.py
+COPY --chmod=644 desktop_smoke.py /usr/local/share/cortexai-agent-hub-desktop-smoke.py
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
   && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/lib/cortexai-agent-hub-user-env.sh /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-page-browser \
     /etc/cortexai-agent-hub/fluxbox/init /etc/cortexai-agent-hub/fluxbox/apps /etc/cortexai-agent-hub/fluxbox/menu \
-    /etc/profile.d/cortexai-agent-hub-local-bin.sh
+    /etc/profile.d/cortexai-agent-hub-local-bin.sh /usr/local/share/cortexai-agent-hub-desktop-smoke.py
 EXPOSE 7070 6080 6081 6082 6083 6084 6085 6086 6087 6088 6089 6090 6091 6092 6093 6094 6095
 # Docker exec does not inherit PID 1's exports, so every process gets the same
 # identity lookup. Startup creates these private files for the effective UID/GID.
