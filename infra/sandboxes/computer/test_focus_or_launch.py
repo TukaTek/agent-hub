@@ -36,6 +36,12 @@ class WmClassTest(unittest.TestCase):
         self.assertEqual(helper.wm_class("cortexai-agent-hub-browser"), "chromium")
         self.assertEqual(helper.wm_class("xterm"), "xterm")
 
+    def test_per_screen_browser_launchers_raise_chromium(self):
+        self.assertEqual(helper.wm_class("/tmp/cortexai-agent-hub/browser-launch-7"), "chromium")
+        self.assertTrue(helper.is_browser_launcher("/tmp/cortexai-agent-hub/browser-launch-7"))
+        self.assertTrue(helper.is_browser_launcher("cortexai-agent-hub-browser"))
+        self.assertFalse(helper.is_browser_launcher("xterm"))
+
     def test_other_launchers_match_their_binary_basename(self):
         self.assertEqual(helper.wm_class("/usr/bin/xterm"), "xterm")
         self.assertEqual(helper.wm_class("XTerm"), "xterm")
@@ -143,7 +149,7 @@ class MainTest(unittest.TestCase):
             calls,
             [
                 ("popen", ["cortexai-agent-hub-browser", "https://example.test"]),
-                ("wait", helper.LAUNCH_WAIT_SEC["cortexai-agent-hub-browser"]),
+                ("wait", helper.BROWSER_LAUNCH_WAIT_SEC),
                 ("run", ["wmctrl", "-ia", "0x01800003"]),
             ],
         )
@@ -177,7 +183,7 @@ class MainTest(unittest.TestCase):
             calls = self.run_wrapper(["cortexai-agent-hub-browser"])
         self.assertEqual(
             calls,
-            [("popen", ["cortexai-agent-hub-browser"]), ("wait", helper.LAUNCH_WAIT_SEC["cortexai-agent-hub-browser"])],
+            [("popen", ["cortexai-agent-hub-browser"]), ("wait", helper.BROWSER_LAUNCH_WAIT_SEC)],
         )
 
 
