@@ -426,6 +426,7 @@ describe("graphical computer spec", () => {
       mkdirSync(bin);
       writeFileSync(
         path.join(bin, "chromium"),
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
         '#!/bin/sh\nprintf "%s" "${LD_PRELOAD-unset}" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n',
       );
       chmodSync(path.join(bin, "chromium"), 0o755);
