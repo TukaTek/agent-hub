@@ -36,20 +36,37 @@ interface PageState {
   file: string;
 }
 
-async function run(
+async function exec(
   sandbox: SandboxProvider,
   computer: ComputerRef,
   context: AdapterContext,
   command: string,
 ) {
   let code: number | undefined;
+  let stdout = "";
   let stderr = "";
   for await (const event of sandbox.execute(computer, { argv: ["bash", "-c", command] }, context)) {
     if (event.type === "exit") code = event.code;
+    if (event.type === "stdout") stdout += event.data;
     if (event.type === "stderr") stderr += event.data;
   }
+  return { code, stdout, stderr };
+}
+
+async function run(
+  sandbox: SandboxProvider,
+  computer: ComputerRef,
+  context: AdapterContext,
+  command: string,
+) {
+  const { code, stderr } = await exec(sandbox, computer, context, command);
   expect(code, stderr.slice(0, 1000)).toBe(0);
 }
+
+// CI runners can't be inspected after a failure, so a timed-out wait carries the desktop state.
+const DIAGNOSE =
+  "wmctrl -lx; ps -eo pid,etime,args --cols 200 | grep -E '[c]hrom|[c]ortexai-agent-hub-(browser|focus)' | head -20; " +
+  "tail -n 40 /tmp/cortexai-agent-hub/control.log";
 
 async function waitForTitle(
   sandbox: SandboxProvider,
@@ -63,7 +80,10 @@ async function waitForTitle(
     if (matches(title)) return title;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`Active window never matched; last title: ${JSON.stringify(title)}`);
+  const state = await exec(sandbox, computer, context, DIAGNOSE);
+  throw new Error(
+    `Active window never matched; last title: ${JSON.stringify(title)}\n${state.stdout}${state.stderr}`,
+  );
 }
 
 async function waitForPage(

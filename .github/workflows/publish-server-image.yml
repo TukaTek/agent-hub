@@ -132,7 +132,7 @@ jobs:
             echo "- Desktop smoke: \`$(cat "$out/metrics.json")\`"
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: matrix.name == 'computer'
+        if: always() && matrix.name == 'computer'
         with:
           name: computer-desktop
           path: ${{ runner.temp }}/computer-desktop

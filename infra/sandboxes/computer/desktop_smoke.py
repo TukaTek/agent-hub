@@ -137,15 +137,37 @@ def window_list():
     return run("wmctrl", "-lx").stdout
 
 
+def diagnose(out):
+    """Print what a CI log needs to explain a failed wait; the runner can't be inspected later."""
+    print("--- windows\n" + window_list(), file=sys.stderr)
+    print("--- processes\n" + run("ps", "-eo", "pid,etime,args", "--cols", "220").stdout, file=sys.stderr)
+    for log in sorted(Path("/tmp/cortexai-agent-hub").glob("*.log")):
+        print(f"--- {log.name}\n" + log.read_text(errors="replace")[-3000:], file=sys.stderr)
+    try:
+        Capture().png(out / "failure.png" if out else None)
+    except Exception as error:
+        print(f"--- no failure screenshot: {error}", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path)
     parser.add_argument("--expect", choices=["modern"])
     args = parser.parse_args()
-    home = Path(os.environ["HOME"])
-
-    started = time.monotonic()
     computer = subprocess.Popen(["/usr/local/bin/cortexai-agent-hub-computer"])
+    try:
+        smoke(args)
+    except Exception:
+        diagnose(args.out)
+        raise
+    finally:
+        computer.terminate()
+        computer.wait(15)
+
+
+def smoke(args):
+    home = Path(os.environ["HOME"])
+    started = time.monotonic()
     wait(lambda: wm_name() != "", 15, "a window manager")
     ready_ms = int((time.monotonic() - started) * 1000)
     time.sleep(3)
@@ -188,12 +210,8 @@ def main():
         "idle_seconds": IDLE_SECONDS,
     }
     print(json.dumps(metrics), flush=True)
-    try:
-        if args.expect == "modern":
-            modern_checks(metrics, home)
-    finally:
-        computer.terminate()
-        computer.wait(15)
+    if args.expect == "modern":
+        modern_checks(metrics, home)
 
 
 def modern_checks(metrics, home):
