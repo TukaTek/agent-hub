@@ -397,6 +397,23 @@ fi
 # WebGL still needs SwiftShader: --disable-software-rasterizer blocks it, and
 # current Chromium allows that fallback only with --enable-unsafe-swiftshader.
 FLAGS="--test-type --no-sandbox --disable-dev-shm-usage --disable-gpu --enable-unsafe-swiftshader --no-first-run --no-default-browser-check --disable-session-crashed-bubble --hide-crash-restore-bubble --password-store=basic --restore-last-session --start-maximized --remote-debugging-address=127.0.0.1 --remote-debugging-port=$DEBUG_PORT"
+# The image preloads libnss_wrapper so arbitrary UIDs resolve. On some hosts Chromium
+# hangs at startup with it loaded and never opens a window or its debugging port.
+if [ -n "${LD_PRELOAD:-}" ]; then
+  kept=""
+  rest="$LD_PRELOAD"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *:*) entry="${rest%%:*}"; rest="${rest#*:}" ;;
+      *) entry="$rest"; rest="" ;;
+    esac
+    case "$entry" in
+      *libnss_wrapper.so|"") ;;
+      *) kept="${kept:+$kept:}$entry" ;;
+    esac
+  done
+  if [ -n "$kept" ]; then export LD_PRELOAD="$kept"; else unset LD_PRELOAD; fi
+fi
 if [ "$USER_DATA_DIR_SET" -eq 0 ]; then
   exec "$BIN" $FLAGS --user-data-dir="$PROFILE" "$@"
 fi

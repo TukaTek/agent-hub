@@ -1,0 +1,11 @@
+XTerm*title: Terminal
+XTerm*faceName: JetBrains Mono
+XTerm*faceSize: 11
+XTerm*background: #0B0C0E
+XTerm*foreground: #ECECEE
+XTerm*cursorColor: #ECECEE
+XTerm*internalBorder: 14
+XTerm*scrollBar: false
+XTerm*selectToClipboard: true
+XTerm*termName: xterm-256color
+XTerm*geometry: 100x30

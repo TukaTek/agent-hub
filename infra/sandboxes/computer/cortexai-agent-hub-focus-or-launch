@@ -17,12 +17,20 @@ WM_CLASS = {"cortexai-agent-hub-browser": "chromium"}
 WMCTRL_TIMEOUT_SEC = 5
 # control.py uses the same bounds: a browser may still be forwarding a URL
 # after its profile scan, and other apps only need an immediate-failure window.
-LAUNCH_WAIT_SEC = {"cortexai-agent-hub-browser": 2.4}
+BROWSER_LAUNCH_WAIT_SEC = 2.4
 DEFAULT_LAUNCH_WAIT_SEC = 1.0
+
+
+def is_browser_launcher(launcher):
+    """The browser wrapper, or a team screen's generated launcher that execs it."""
+    name = launcher.rsplit("/", 1)[-1]
+    return name == "cortexai-agent-hub-browser" or name.startswith("browser-launch-")
 
 
 def wm_class(launcher):
     """WM_CLASS component for a launcher; X11 instance defaults to the binary basename."""
+    if is_browser_launcher(launcher):
+        return "chromium"
     return WM_CLASS.get(launcher, launcher.rsplit("/", 1)[-1]).lower()
 
 
@@ -110,7 +118,6 @@ def run_launcher(launcher, args):
     The exit code is returned when the process ends within the launch bound.
     None means it is still running, which is a live GUI rather than a failure.
     """
-    name = launcher.rsplit("/", 1)[-1]
     # Detach stdio so a GUI that stays up cannot hold the caller's pipes open.
     child = subprocess.Popen(
         [launcher, *args],
@@ -119,8 +126,9 @@ def run_launcher(launcher, args):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    wait = BROWSER_LAUNCH_WAIT_SEC if is_browser_launcher(launcher) else DEFAULT_LAUNCH_WAIT_SEC
     try:
-        return child.wait(timeout=LAUNCH_WAIT_SEC.get(name, DEFAULT_LAUNCH_WAIT_SEC))
+        return child.wait(timeout=wait)
     except subprocess.TimeoutExpired:
         return None
 
@@ -143,7 +151,7 @@ def main(argv):
         ).stdout
     except (OSError, subprocess.SubprocessError):
         listing = ""
-    profile = browser_profile() if launcher.rsplit("/", 1)[-1] == "cortexai-agent-hub-browser" else None
+    profile = browser_profile() if is_browser_launcher(launcher) else None
     window = matching_window(listing, wm_class(launcher), profile)
     if not window:
         code = run_launcher(launcher, args)

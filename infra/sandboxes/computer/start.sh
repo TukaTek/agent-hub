@@ -4,7 +4,7 @@ source /usr/local/lib/cortexai-agent-hub-user-env.sh
 export DISPLAY="${DISPLAY:-:1}"
 export HOME="${HOME:-/home/cortexai-agent-hub}"
 AGENT_HOME="$HOME"
-mkdir -p "$AGENT_HOME" "$AGENT_HOME/.local/bin" "$AGENT_HOME/.config" /tmp/cortexai-agent-hub /tmp/.X11-unix /tmp/fluxbox-home
+mkdir -p "$AGENT_HOME" "$AGENT_HOME/.local/bin" "$AGENT_HOME/.config" /tmp/cortexai-agent-hub /tmp/.X11-unix
 # Login shells re-apply ~/.local/bin from /etc/profile.d/cortexai-agent-hub-local-bin.sh.
 
 export PATH="$AGENT_HOME/.local/bin:/usr/local/bin:$PATH"
@@ -67,21 +67,12 @@ fi
 # daemons install as flat files in /usr/libexec on Debian bookworm.
 if [ -x /usr/libexec/xdg-desktop-portal ] && [ -x /usr/libexec/xdg-desktop-portal-gtk ]; then
   /usr/libexec/xdg-desktop-portal >/tmp/cortexai-agent-hub/portal.log 2>&1 &
-  /usr/libexec/xdg-desktop-portal-gtk >/tmp/cortexai-agent-hub/portal-gtk.log 2>&1 &
+  # Theme the file chooser from the desktop's own GTK settings; Chromium keeps the defaults.
+  XDG_CONFIG_DIRS=/usr/local/share/cortexai-agent-hub/desktop:/etc/xdg \
+    /usr/libexec/xdg-desktop-portal-gtk >/tmp/cortexai-agent-hub/portal-gtk.log 2>&1 &
 fi
 
-xsetroot -solid "#111113" >/dev/null 2>&1 || true
-mkdir -p /tmp/fluxbox-home/.fluxbox
-cp /etc/cortexai-agent-hub/fluxbox/init /tmp/fluxbox-home/.fluxbox/init
-cp /etc/cortexai-agent-hub/fluxbox/apps /tmp/fluxbox-home/.fluxbox/apps 2>/dev/null || true
-cp /etc/cortexai-agent-hub/fluxbox/menu /tmp/fluxbox-home/.fluxbox/menu 2>/dev/null || true
-cat > /tmp/fluxbox-home/.fluxbox/startup <<'EOF'
-#!/bin/sh
-xsetroot -solid "#111113"
-exec fluxbox -rc /tmp/fluxbox-home/.fluxbox/init
-EOF
-chmod +x /tmp/fluxbox-home/.fluxbox/startup
-HOME=/tmp/fluxbox-home /tmp/fluxbox-home/.fluxbox/startup >/tmp/cortexai-agent-hub/fluxbox.log 2>&1 &
+/usr/local/bin/cortexai-agent-hub-desktop-session :1 >/tmp/cortexai-agent-hub/desktop.log 2>&1 &
 
 register_browser_handler() {
   local mime="$1"

@@ -783,6 +783,7 @@ describe("sandbox supervisor input containment", () => {
     const extra = stopExtraScreenCommand(1, "researcher");
     expect(extra).toContain("[X]vfb :2 -screen");
     expect(extra).toContain("[f]luxbox -rc /tmp/fluxbox-home-2/.fluxbox/init");
+    expect(extra).toContain("[c]ortexai-agent-hub-desktop-session :2");
     expect(extra).toContain("sockets/view-2-");
     expect(extra).not.toContain("websockify");
     expect(extra).toContain(`--user-data-dir=${browserProfilePathForScreen("researcher")}`);
@@ -793,7 +794,7 @@ describe("sandbox supervisor input containment", () => {
     expect(stop).toContain(`--user-data-dir=${browserProfilePathForScreen("writer")}`);
     expect(stop).not.toContain(`--user-data-dir=${browserProfilePathForScreen("researcher")}`);
     expect(stop).not.toContain("Xvfb");
-    expect(stop).not.toContain("fluxbox");
+    expect(stop).not.toMatch(/fluxbox|desktop-session/);
   });
 
   it("does not stop the primary browser when a present registry rejects release", () => {

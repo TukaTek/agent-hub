@@ -262,64 +262,52 @@ describe("graphical computer spec", () => {
     expect(dockerfile).toMatch(/import openpyxl/);
   });
 
-  it.skipIf(process.platform === "win32")(
-    "delivers desktop menu exec arguments intact through /bin/sh",
-    () => {
-      const root = path.resolve(import.meta.dirname, "../../computer");
-      const menu = readFileSync(path.join(root, "fluxbox.menu"), "utf8");
-      const temp = mkdtempSync(path.join(tmpdir(), "fluxbox-menu-"));
-      const bin = path.join(temp, "bin");
-      mkdirSync(bin);
-      try {
-        for (const name of ["xterm", "cortexai-agent-hub-browser"]) {
-          const stub = path.join(bin, name);
-          writeFileSync(stub, '#!/bin/sh\nprintf "%s\\n" "$@" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n');
-          chmodSync(stub, 0o755);
-        }
-        const argvFor = (label: string) => {
-          const command = menu
-            .split("\n")
-            .map((entry) => entry.match(/\[exec\] \(([^)]*)\) \{([^}]*)\}/))
-            .find((match) => match?.[1] === label)?.[2];
-          expect(command, label).toBeTruthy();
-          const capture = path.join(temp, `${label}-args`);
-          const result = spawnSync("sh", ["-c", command!], {
-            env: {
-              ...process.env,
-              PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-              CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
-            },
-            encoding: "utf8",
-          });
-          expect(result.status, result.stderr).toBe(0);
-          return readFileSync(capture, "utf8").trim().split("\n").filter(Boolean);
-        };
-        expect(argvFor("Terminal")).toEqual([
-          "-bg",
-          "rgb:11/11/13",
-          "-fg",
-          "rgb:e8/e8/ea",
-          "-cr",
-          "rgb:e8/e8/ea",
-          "-title",
-          "Terminal",
-          "-xrm",
-          "XTerm*selectToClipboard: true",
-        ]);
-        expect(argvFor("Browser")).toEqual([]);
-      } finally {
-        rmSync(temp, { recursive: true, force: true });
-      }
-    },
-  );
+  it("builds the computer image from every file the Dockerfile copies", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
+    const copied = [...dockerfile.matchAll(/^COPY (?:--chmod=\d+ )?(?!--from)(\S+) /gm)].map(
+      (match) => match[1]!.split("/")[0]!,
+    );
+    const listed = readFileSync(path.join(import.meta.dirname, "index.ts"), "utf8");
+    for (const file of new Set(copied)) expect(listed).toContain(`"${file}"`);
+    expect(copied).toContain("desktop_smoke.py");
+  });
+
+  it("installs the modern desktop and no full XFCE or Fluxbox", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
+    for (const pkg of [
+      "xfwm4",
+      "xfconf",
+      "picom",
+      "tint2",
+      "hsetroot",
+      "arc-theme",
+      "fonts-inter",
+      "fonts-jetbrains-mono",
+    ])
+      expect(dockerfile).toMatch(new RegExp(`^\\s+${pkg} \\\\$`, "m"));
+    for (const pkg of [
+      "fluxbox",
+      "xfce4",
+      "xfdesktop4",
+      "xfce4-panel",
+      "xfce4-session",
+      "xfce4-settings",
+      "plank",
+    ])
+      expect(dockerfile).not.toMatch(new RegExp(`^\\s+${pkg} \\\\$`, "m"));
+    expect(dockerfile).not.toContain("fbsetbg");
+    expect(dockerfile).toContain("/usr/local/bin/cortexai-agent-hub-desktop-session");
+    expect(readFileSync(path.join(root, "start.sh"), "utf8")).toContain(
+      "cortexai-agent-hub-desktop-session :1",
+    );
+  });
 
   it.skipIf(process.platform === "win32")(
-    "keeps the baked and generated desktop menus in sync",
+    "rewrites the fallback Fluxbox menu without touching its init",
     () => {
-      const root = path.resolve(import.meta.dirname, "../../computer");
-      const baked = readFileSync(path.join(root, "fluxbox.menu"), "utf8");
       const terminalLine = `[exec] (Terminal) {${TERMINAL_MENU_COMMAND}}`;
-      expect(baked.split("\n").map((line) => line.trim())).toContain(terminalLine);
 
       const generated = ensureScreenCommand(0, "bot", "view-token", {
         ...DEFAULT_DESKTOP_ENV,
@@ -421,6 +409,47 @@ describe("graphical computer spec", () => {
         expect(explicit).toContain("--restore-last-session");
         expect(explicit).not.toContain(
           `--user-data-dir=${home}/.browser-profiles/chromium-screen-3`,
+        );
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "drops only libnss_wrapper from Chromium's preload list",
+    () => {
+      const root = path.resolve(import.meta.dirname, "../../computer");
+      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-browser-preload-"));
+      const bin = path.join(temp, "bin");
+      const capture = path.join(temp, "preload");
+      mkdirSync(bin);
+      writeFileSync(
+        path.join(bin, "chromium"),
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
+        '#!/bin/sh\nprintf "%s" "${LD_PRELOAD-unset}" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n',
+      );
+      chmodSync(path.join(bin, "chromium"), 0o755);
+      const preloadFor = (preload: string) => {
+        const result = spawnSync("sh", [path.join(root, "cortexai-agent-hub-browser")], {
+          env: {
+            ...process.env,
+            DISPLAY: ":4",
+            HOME: path.join(temp, "home"),
+            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+            CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
+            // Missing preload objects only make the loader warn.
+            LD_PRELOAD: preload,
+          },
+          encoding: "utf8",
+        });
+        expect(result.status, result.stderr).toBe(0);
+        return readFileSync(capture, "utf8");
+      };
+      try {
+        expect(preloadFor("/nonexistent/libnss_wrapper.so")).toBe("unset");
+        expect(preloadFor("/nonexistent/libkeep.so:/nonexistent/libnss_wrapper.so")).toBe(
+          "/nonexistent/libkeep.so",
         );
       } finally {
         rmSync(temp, { recursive: true, force: true });

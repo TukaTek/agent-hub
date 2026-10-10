@@ -13,6 +13,17 @@ COPY xcapture.c .
 RUN cc -O3 -fPIC -shared -Wall -Wextra -Werror -o libcortexai_agent_hub-xcapture.so xcapture.c \
     -lX11 -lXext -lXdamage -lXfixes -lXtst -lpng
 
+# Papirus ships every size up to 512px. The dock draws 48px icons; the file chooser uses 16px and symbolic.
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS icon-builder
+RUN apt-get update && apt-get install -y --no-install-recommends papirus-icon-theme \
+  && cd /usr/share/icons \
+  && for theme in Papirus Papirus-Dark; do \
+       find "$theme" -mindepth 1 -maxdepth 1 -type d \
+         ! -name 16x16 ! -name 48x48 ! -name symbolic \
+         -exec rm -rf {} +; \
+     done \
+  && du -sm Papirus Papirus-Dark
+
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 # Dev tools let bots clone repos and fetch artifacts; containers run uid 1000
 # with no privilege escalation, so nothing can be installed at runtime.
@@ -20,7 +31,14 @@ FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
-    fluxbox \
+    xfwm4 \
+    xfconf \
+    picom \
+    tint2 \
+    hsetroot \
+    arc-theme \
+    fonts-inter \
+    fonts-jetbrains-mono \
     xterm \
     xdotool \
     wmctrl \
@@ -60,9 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && python3 -c 'import openpyxl; print(openpyxl.__version__)' \
   && groupadd --gid 1000 cortexai-agent-hub \
   && useradd --uid 1000 --gid cortexai-agent-hub --create-home --shell /bin/bash cortexai-agent-hub \
-  && mkdir -p /etc/cortexai-agent-hub/fluxbox \
-  && printf '%s\n' '#!/bin/sh' 'exec xsetroot -solid "#111113" "$@"' > /usr/bin/fbsetbg \
-  && chmod +x /usr/bin/fbsetbg \
+  && install -d -m 755 /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0 \
   && ln -sfn /bin/true /usr/bin/xmessage
 RUN ln -s "$(dpkg -L libnss-wrapper | grep '/libnss_wrapper.so$')" /usr/local/lib/libnss_wrapper.so
 ARG TARGETARCH
@@ -124,9 +140,12 @@ COPY --chmod=755 cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-br
 COPY --chmod=755 cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-focus-or-launch
 COPY --chmod=755 cortexai-agent-hub-page-browser /usr/local/bin/cortexai-agent-hub-page-browser
 COPY --chmod=644 cortexai-agent-hub-browser.desktop /usr/share/applications/cortexai-agent-hub-browser.desktop
-COPY --chmod=644 fluxbox.init /etc/cortexai-agent-hub/fluxbox/init
-COPY --chmod=644 fluxbox.apps /etc/cortexai-agent-hub/fluxbox/apps
-COPY --chmod=644 fluxbox.menu /etc/cortexai-agent-hub/fluxbox/menu
+COPY --from=icon-builder /usr/share/icons/Papirus /usr/share/icons/Papirus
+COPY --from=icon-builder /usr/share/icons/Papirus-Dark /usr/share/icons/Papirus-Dark
+COPY --chmod=755 desktop/session.sh /usr/local/bin/cortexai-agent-hub-desktop-session
+COPY --chmod=644 desktop/xfwm4.xml desktop/xfce4-keyboard-shortcuts.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
+COPY --chmod=644 desktop/picom.conf desktop/tint2rc.in desktop/Xresources desktop/browser.desktop.in desktop/terminal.desktop /usr/local/share/cortexai-agent-hub/desktop/
+COPY --chmod=644 desktop/gtk-3.0/settings.ini /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0/settings.ini
 COPY --chmod=644 embed.html /usr/share/novnc/embed.html
 COPY --chmod=644 clipboard-bridge.js /usr/share/novnc/clipboard-bridge.js
 COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
@@ -134,11 +153,16 @@ COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
 # volume hides /etc/skel, so ~/.local/bin has to be restored from the image.
 COPY --chmod=644 cortexai-agent-hub-local-bin.sh /etc/profile.d/cortexai-agent-hub-local-bin.sh
 COPY --chmod=644 office_smoke.py /usr/local/share/cortexai-agent-hub-office-smoke.py
+COPY --chmod=644 desktop_smoke.py /usr/local/share/cortexai-agent-hub-desktop-smoke.py
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
   && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/lib/cortexai-agent-hub-user-env.sh /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-page-browser \
-    /etc/cortexai-agent-hub/fluxbox/init /etc/cortexai-agent-hub/fluxbox/apps /etc/cortexai-agent-hub/fluxbox/menu \
-    /etc/profile.d/cortexai-agent-hub-local-bin.sh
+    /usr/local/bin/cortexai-agent-hub-desktop-session \
+    /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml \
+    /usr/local/share/cortexai-agent-hub/desktop/picom.conf /usr/local/share/cortexai-agent-hub/desktop/tint2rc.in \
+    /usr/local/share/cortexai-agent-hub/desktop/Xresources /usr/local/share/cortexai-agent-hub/desktop/browser.desktop.in \
+    /usr/local/share/cortexai-agent-hub/desktop/terminal.desktop /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0/settings.ini \
+    /etc/profile.d/cortexai-agent-hub-local-bin.sh /usr/local/share/cortexai-agent-hub-desktop-smoke.py
 EXPOSE 7070 6080 6081 6082 6083 6084 6085 6086 6087 6088 6089 6090 6091 6092 6093 6094 6095
 # Docker exec does not inherit PID 1's exports, so every process gets the same
 # identity lookup. Startup creates these private files for the effective UID/GID.
