@@ -13,13 +13,13 @@ COPY xcapture.c .
 RUN cc -O3 -fPIC -shared -Wall -Wextra -Werror -o libcortexai_agent_hub-xcapture.so xcapture.c \
     -lX11 -lXext -lXdamage -lXfixes -lXtst -lpng
 
-# Papirus ships every size up to 512px; the dock and file chooser only use these.
+# Papirus ships every size up to 512px. The dock draws 48px icons; the file chooser uses 16px and symbolic.
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS icon-builder
 RUN apt-get update && apt-get install -y --no-install-recommends papirus-icon-theme \
   && cd /usr/share/icons \
   && for theme in Papirus Papirus-Dark; do \
        find "$theme" -mindepth 1 -maxdepth 1 -type d \
-         ! -name 16x16 ! -name 22x22 ! -name 24x24 ! -name 32x32 ! -name 48x48 ! -name 64x64 ! -name symbolic \
+         ! -name 16x16 ! -name 48x48 ! -name symbolic \
          -exec rm -rf {} +; \
      done \
   && du -sm Papirus Papirus-Dark
