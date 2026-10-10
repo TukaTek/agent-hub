@@ -1011,3 +1011,12 @@ it("stops both the desktop session and a fallback Fluxbox", () => {
 3. **Wallpaper:** neutral token gradient (default), or a subtle CortexAI mark? A mark needs a vector asset from the brand owner.
 4. **Dock behind maximized windows:** I recommend keeping bots' browser at the full 1280x800, so the dock shows only on the idle desktop and around unmaximized windows. Is that acceptable, or should the dock stay visible at the cost of about 64 px of browser height for every bot?
 5. **Chromium UI:** leave Chromium's own frame and tabs as today (default), or force a dark browser UI? Forcing it risks changing pages' `prefers-color-scheme`, so I'd only do it in a separate ticket.
+
+## Decisions and implementation notes
+
+The PM chose tint2 styled like Plank, Arc-Dark, the neutral token gradient, the dock under maximized windows, and no change to Chromium's own UI. Where the build departed from the tasks above:
+
+- **The dock shows launchers only.** tint2 can't merge a launcher with its running window the way Plank does, so there is no taskbar. Each launcher runs through `cortexai-agent-hub-focus-or-launch`, which raises an open window instead of starting another copy. The terminal launcher takes no arguments, because the helper re-runs a launcher that has arguments; its title comes from `XTerm*title`.
+- **xfconfd and xfwm4 keep state in `/tmp`.** Bus activation would start xfconfd with the bot's `HOME` and save channel files there. The session starts xfconfd itself and gives xfwm4 per-display XDG directories.
+- **Papirus keeps only 16 px, 48 px and symbolic icons.** With every size up to 64 px, CI measured +123 MB; trimmed, it measures +49 MB.
+- **The browser wrapper drops `libnss_wrapper` before exec.** On the CI runner, Chromium hangs at startup with it preloaded. That was hidden because `tee` swallowed the smoke's exit code; the step now uses `pipefail`.
