@@ -19,6 +19,7 @@
     "zod": "4.6.2"
   },
   "devDependencies": {
+    "@cortexai-agent-hub/ui-tokens": "workspace:*",
     "@types/dockerode": "4.0.1",
     "typescript": "7.0.2",
     "vitest": "4.1.11"

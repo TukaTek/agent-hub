@@ -107,8 +107,16 @@ def main():
     assert_file_chooser_portals()
     run(commands, "seed")
     run(commands, "ensureb")
-    menu = Path(f"/tmp/fluxbox-home-{commands['displayb']}/.fluxbox/menu").read_text()
-    assert "(Terminal)" in menu, f"generated screen menu is missing its Terminal entry: {menu}"
+    dock = Path(f"/tmp/cortexai-agent-hub/desktop-{commands['displayb']}/applications")
+    wm_check = ["xprop", "-display", f":{commands['displayb']}", "-root", "_NET_SUPPORTING_WM_CHECK"]
+    for _ in range(100):
+        wm = subprocess.run(wm_check, capture_output=True, text=True)
+        if "window id" in wm.stdout and (dock / "terminal.desktop").exists():
+            break
+        time.sleep(0.1)
+    assert "window id" in wm.stdout, f"no window manager on screen b: {wm.stdout} {wm.stderr}"
+    assert "Name=Terminal" in (dock / "terminal.desktop").read_text(), "screen dock is missing Terminal"
+    assert f"browser-launch-{commands['displayb']}" in (dock / "browser.desktop").read_text()
     with ThreadPoolExecutor(2) as pool:
         list(pool.map(lambda step: run(commands, step), ["opena", "openb"]))
     for bot in "ab":

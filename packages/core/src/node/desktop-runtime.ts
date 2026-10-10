@@ -336,6 +336,8 @@ export function resetDesktopRuntimeCommand(env = DEFAULT_DESKTOP_ENV) {
     'pkill -f "[X]vfb :${desktop_display} -screen" || true',
     // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
     'pkill -f "[f]luxbox -rc /tmp/fluxbox-home-${desktop_display}/.fluxbox/init" || true',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
+    'pkill -f "[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)" || true',
     ...(env.preservePrimaryDisplay ? ["fi"] : []),
   ].join("\n");
   return [
@@ -360,9 +362,11 @@ export function resetDesktopRuntimeCommand(env = DEFAULT_DESKTOP_ENV) {
 }
 
 const TARGETS = "/tmp/cortexai-agent-hub/desktop-targets";
+/** Baked into the computer image; remote providers and older images fall back to Fluxbox. */
+export const DESKTOP_SESSION = "/usr/local/bin/cortexai-agent-hub-desktop-session";
 
-// Menu exec strings run through `/bin/sh -c`, where `#` starts a comment; rgb:a/b/c keeps
-// hex colors intact. infra/sandboxes/computer/fluxbox.menu carries the same entry.
+// The Fluxbox fallback menu for images without DESKTOP_SESSION. Menu exec strings run through
+// `/bin/sh -c`, where `#` starts a comment; rgb:a/b/c keeps hex colors intact.
 // selectToClipboard puts selections in CLIPBOARD, which x11vnc forwards to the host.
 export const TERMINAL_MENU_COMMAND =
   "xterm -bg rgb:11/11/13 -fg rgb:e8/e8/ea -cr rgb:e8/e8/ea -title Terminal -xrm 'XTerm*selectToClipboard: true'";
@@ -480,6 +484,7 @@ function renderStopExtraScreenCommand(
             : []),
           `pkill -f ${quoteLayout(`[X]vfb ${layout.display} -screen`)} || true`,
           `pkill -f ${quoteLayout(`[f]luxbox -rc ${fluxHome}/.fluxbox/init`)} || true`,
+          `pkill -f ${quoteLayout(`[c]ortexai-agent-hub-desktop-session ${layout.display}( |$)`)} || true`,
           `for i in $(seq 1 20); do if ! xdpyinfo -display ${layout.display} >/dev/null 2>&1; then break; fi; sleep 0.1; done`,
           `if xdpyinfo -display ${layout.display} >/dev/null 2>&1; then echo 'computer screen failed to stop' >&2; exit 1; fi`,
           `rm -f /tmp/.X${layout.displayNumber}-lock /tmp/.X11-unix/X${layout.displayNumber}`,
@@ -528,11 +533,14 @@ function renderEnsureScreenCommand(
           `  nohup Xvfb ${layout.display} -screen 0 1280x800x24 -ac +extension RANDR +render -noreset -nolisten tcp 8>&- 9>&- </dev/null >${log}-xvfb.log 2>&1 &`,
           `  for i in $(seq 1 100); do xdpyinfo -display ${layout.display} >/dev/null 2>&1 && break; sleep 0.1; done`,
           `  xdpyinfo -display ${layout.display} >/dev/null 2>&1 || exit 1`,
-          `  if [ -f /etc/cortexai-agent-hub/fluxbox/init ]; then cp /etc/cortexai-agent-hub/fluxbox/init ${fluxHome}/.fluxbox/init; else printf "session.screen0.toolbar.visible: false\\n" >${fluxHome}/.fluxbox/init; fi`,
-          `  cp /etc/cortexai-agent-hub/fluxbox/apps ${fluxHome}/.fluxbox/apps 2>/dev/null || true`,
-
-          `  printf '\\nsession.menuFile: %s\\n' ${fluxHome}/.fluxbox/menu >>${fluxHome}/.fluxbox/init`,
-          `  HOME=${shellQuote(env.homeDir)} CHROME_USER_DATA_DIR=${shellQuote(profile)} BROWSER=${browserLauncherPath(layout.displayNumber)} DISPLAY=${layout.display} nohup fluxbox -rc ${fluxHome}/.fluxbox/init 8>&- 9>&- </dev/null >${log}-fluxbox.log 2>&1 &`,
+          `  if [ -x ${DESKTOP_SESSION} ]; then`,
+          `    HOME=${shellQuote(env.homeDir)} CHROME_USER_DATA_DIR=${shellQuote(profile)} BROWSER=${browserLauncherPath(layout.displayNumber)} nohup ${DESKTOP_SESSION} ${layout.display} 8>&- 9>&- </dev/null >${log}-desktop.log 2>&1 &`,
+          "  else",
+          `    if [ -f /etc/cortexai-agent-hub/fluxbox/init ]; then cp /etc/cortexai-agent-hub/fluxbox/init ${fluxHome}/.fluxbox/init; else printf "session.screen0.toolbar.visible: false\\n" >${fluxHome}/.fluxbox/init; fi`,
+          `    cp /etc/cortexai-agent-hub/fluxbox/apps ${fluxHome}/.fluxbox/apps 2>/dev/null || true`,
+          `    printf '\\nsession.menuFile: %s\\n' ${fluxHome}/.fluxbox/menu >>${fluxHome}/.fluxbox/init`,
+          `    HOME=${shellQuote(env.homeDir)} CHROME_USER_DATA_DIR=${shellQuote(profile)} BROWSER=${browserLauncherPath(layout.displayNumber)} DISPLAY=${layout.display} nohup fluxbox -rc ${fluxHome}/.fluxbox/init 8>&- 9>&- </dev/null >${log}-fluxbox.log 2>&1 &`,
+          "  fi",
           "fi",
         ];
   const targetFile = `${TARGETS}/view-${layout.displayNumber}`;

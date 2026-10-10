@@ -98,6 +98,45 @@ jobs:
         env:
           IMAGE: ${{ steps.meta.outputs.tags }}
         run: docker run --rm --network none "$IMAGE" python3 /usr/local/share/cortexai-agent-hub-office-smoke.py
+      - name: Desktop smoke and screenshots
+        if: matrix.name == 'computer'
+        env:
+          IMAGE: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -o pipefail
+          out="$RUNNER_TEMP/computer-desktop"
+          mkdir -p "$out" && chmod 777 "$out"
+          docker run --rm --network none -v "$out:/out" "$IMAGE" \
+            python3 /usr/local/share/cortexai-agent-hub-desktop-smoke.py --out /out --expect modern \
+            | tee "$out/smoke.log"
+          grep '^{' "$out/smoke.log" | tail -n 1 > "$out/metrics.json"
+      - name: Image size and idle cost
+        if: matrix.name == 'computer'
+        env:
+          IMAGE: ${{ steps.meta.outputs.tags }}
+        run: |
+          out="$RUNNER_TEMP/computer-desktop"
+          size=$(docker image inspect -f '{{.Size}}' "$IMAGE")
+          id=$(docker run -d --network none "$IMAGE")
+          sleep 20
+          for _ in $(seq 1 10); do
+            docker stats --no-stream --format '{{.MemUsage}} {{.CPUPerc}}' "$id"
+            sleep 2
+          done > "$out/stats.txt"
+          docker rm -f "$id" >/dev/null
+          {
+            echo "### Computer image"
+            echo "- Size: $((size / 1048576)) MB ($size bytes)"
+            echo "- Idle container samples (memory, CPU), 10 x 2 s after a 20 s warm-up:"
+            sed 's/^/  - /' "$out/stats.txt"
+            echo "- Desktop smoke: \`$(cat "$out/metrics.json")\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && matrix.name == 'computer'
+        with:
+          name: computer-desktop
+          path: ${{ runner.temp }}/computer-desktop
+          retention-days: 30
 
   build:
     name: Build ${{ matrix.name }} ${{ matrix.arch }}

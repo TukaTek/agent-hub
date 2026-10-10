@@ -479,6 +479,9 @@ importers:
         specifier: 4.6.2
         version: 4.6.2
     devDependencies:
+      '@cortexai-agent-hub/ui-tokens':
+        specifier: workspace:*
+        version: link:../../../packages/ui-tokens
       '@types/dockerode':
         specifier: 4.0.1
         version: 4.0.1

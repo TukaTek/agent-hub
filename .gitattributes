@@ -2,7 +2,7 @@
 
 *.sh text eol=lf
 infra/sandboxes/computer/cortexai-agent-hub-browser text eol=lf
-infra/sandboxes/computer/fluxbox.* text eol=lf
+infra/sandboxes/computer/desktop/** text eol=lf
 *.png binary
 *.jpg binary
 *.ico binary

@@ -1,0 +1,47 @@
+# Backgrounds: 1 dock, 2 tooltip
+rounded = 18
+border_width = 1
+border_sides = TBLR
+background_color = #141518 82
+border_color = #ECECEE 12
+
+rounded = 6
+border_width = 0
+background_color = #141518 100
+border_color = #ECECEE 0
+
+panel_items = L
+panel_size = 0 64
+panel_shrink = 1
+panel_margin = 0 10
+panel_padding = 10 8 10
+panel_background_id = 1
+panel_position = bottom center horizontal
+panel_layer = bottom
+panel_dock = 0
+panel_window_name = cortexai-agent-hub-dock
+wm_menu = 0
+strut_policy = none
+autohide = 0
+disable_transparency = 0
+mouse_effects = 1
+mouse_hover_icon_asb = 100 0 14
+mouse_pressed_icon_asb = 100 0 -8
+
+launcher_padding = 0 0 10
+launcher_background_id = 0
+launcher_icon_background_id = 0
+launcher_icon_size = 44
+launcher_icon_theme = Papirus-Dark
+launcher_icon_theme_override = 1
+launcher_tooltip = 1
+startup_notifications = 0
+launcher_item_app = @STATE@/applications/browser.desktop
+launcher_item_app = @STATE@/applications/terminal.desktop
+
+tooltip_show_timeout = 0.4
+tooltip_hide_timeout = 0.1
+tooltip_padding = 8 6
+tooltip_background_id = 2
+tooltip_font_color = #ECECEE 100
+tooltip_font = Inter 10
