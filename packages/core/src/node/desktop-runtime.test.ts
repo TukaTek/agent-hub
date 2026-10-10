@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   browserCloseProgram,
   DEFAULT_DESKTOP_ENV,
+  DESKTOP_SESSION,
   desktopControlCommand,
   desktopTerminalCommand,
   desktopUrl,
@@ -230,6 +231,25 @@ describe("shared Linux desktop lifecycle", () => {
     const execAt = lines.findIndex((line) => line.startsWith("exec "));
     expect(unsetAt).toBeGreaterThan(-1);
     expect(execAt).toBeGreaterThan(unsetAt);
+  });
+
+  it("starts extra displays with the baked desktop session and keeps the Fluxbox fallback", () => {
+    const ensure = ensureScreenCommand(1, "researcher", "view-token");
+    expect(ensure).toContain(`if [ -x ${DESKTOP_SESSION} ]; then`);
+    expect(ensure).toContain(
+      `BROWSER=/tmp/cortexai-agent-hub/browser-launch-2 nohup ${DESKTOP_SESSION} :2`,
+    );
+    expect(ensure).toContain("fluxbox -rc /tmp/fluxbox-home-2/.fluxbox/init");
+  });
+
+  it("stops both the desktop session and a fallback Fluxbox", () => {
+    const stop = stopExtraScreenCommand(1, "researcher");
+    expect(stop).toContain("[c]ortexai-agent-hub-desktop-session :2( |$)");
+    expect(stop).toContain("[f]luxbox -rc /tmp/fluxbox-home-2/.fluxbox/init");
+    expect(resetDesktopRuntimeCommand()).toContain(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
+      "[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)",
+    );
   });
 
   it("stops the terminal with the control lease and the screen transports", () => {
