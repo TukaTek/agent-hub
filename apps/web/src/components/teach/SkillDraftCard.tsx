@@ -12,7 +12,14 @@ type SkillDraftBlock = {
   goal: string;
   playbook: SkillPlaybook;
   status: "draft" | "saved";
+  updatedAt?: string;
 };
+
+function isConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, status } = error as { code?: unknown; status?: unknown };
+  return code === "CONFLICT" || status === 409;
+}
 
 function fieldLabel(id: string, title: React.ReactNode) {
   return (
@@ -35,20 +42,51 @@ export function SkillDraftCard({
   const [playbook, setPlaybook] = useState(block.playbook);
   const [saved, setSaved] = useState(block.status === "saved");
   const [busy, setBusy] = useState(false);
+  // CAAH-71: the skill version this card's edits are based on. The server rejects a missing
+  // or stale version with 409, so a card read before a scrub cannot write old steps back.
+  const [version, setVersion] = useState(block.updatedAt);
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     setName(block.name);
     setPlaybook(block.playbook);
     setSaved(block.status === "saved");
-  }, [block.skillId, block.status]);
+    setVersion(block.updatedAt);
+  }, [block.skillId, block.status, block.updatedAt]);
+
+  async function reloadAfterConflict() {
+    const fresh = await rpc.skills.get({ skillId: block.skillId });
+    setName(fresh.name);
+    setPlaybook(fresh.playbook);
+    setSaved(fresh.status === "saved");
+    setVersion(fresh.updatedAt);
+    setStale(true);
+  }
+
+  async function writeDraft() {
+    const updated = await rpc.skills.updateDraft({
+      skillId: block.skillId,
+      name,
+      playbook,
+      expectedUpdatedAt: version,
+    });
+    // Show what the server kept (placeholders instead of literals) and track its version.
+    setPlaybook(updated.playbook);
+    setVersion(updated.updatedAt);
+    setStale(false);
+  }
 
   async function saveDraft() {
     setBusy(true);
     try {
-      await rpc.skills.updateDraft({ skillId: block.skillId, name, playbook });
-      await rpc.skills.save({ skillId: block.skillId, name });
+      await writeDraft();
+      const savedSkill = await rpc.skills.save({ skillId: block.skillId, name });
+      setVersion(savedSkill.updatedAt);
       setSaved(true);
       await onRefresh();
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+      await reloadAfterConflict();
     } finally {
       setBusy(false);
     }
@@ -57,9 +95,12 @@ export function SkillDraftCard({
   async function testDraft() {
     setBusy(true);
     try {
-      await rpc.skills.updateDraft({ skillId: block.skillId, name, playbook });
+      await writeDraft();
       await rpc.skills.testRun({ skillId: block.skillId });
       await onRefresh();
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+      await reloadAfterConflict();
     } finally {
       setBusy(false);
     }
@@ -137,6 +178,15 @@ export function SkillDraftCard({
         onChange={(event) => setPlaybook({ ...playbook, failureHandling: event.target.value })}
         rows={2}
       />
+      {stale ? (
+        <div
+          data-testid="skill-draft-stale"
+          role="status"
+          className="mt-3 text-[13px] text-foreground"
+        >
+          <Trans>This draft changed since you opened it. Review it and save again.</Trans>
+        </div>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button disabled={busy} onClick={() => void saveDraft()}>
           {saved ? <Trans>Saved</Trans> : busy ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}

@@ -166,9 +166,12 @@ export async function runTrial(
         goal: "Dispatch label",
       });
       await rpc(app, cookie, "computer/input", { botId, kind: "key", payload: { key: "x" } });
-      await rpc(app, cookie, "skills/stop", { skillId: skill.id });
+      const stopped = await rpc<{ updatedAt: string }>(app, cookie, "skills/stop", {
+        skillId: skill.id,
+      });
       await rpc(app, cookie, "skills/updateDraft", {
         skillId: skill.id,
+        expectedUpdatedAt: stopped.updatedAt,
         name: "Dispatch label",
         playbook: {
           whenToUse: "When asked to run Dispatch label for a city and item count.",

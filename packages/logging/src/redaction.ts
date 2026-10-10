@@ -59,13 +59,22 @@ const JSON_SECRET_FIELD =
 const BARE_SECRET =
   /\b(?:sk-(?:or-v1-)?[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:ak_|ck_)[A-Za-z0-9]+)\b/g;
 
-export function redactSensitiveText(text: string): string {
+const JSON_CREDENTIAL_FIELD =
+  /"(password|passwd|secret|token|authorization|apikey|api_key|accesstoken|refreshtoken|cookie)"\s*:\s*"(?:\\.|[^"\\])*"/gi;
+
+/** Credentials only (tokens, keys, `password=…`); leaves email addresses alone. */
+export function redactSecretText(text: string): string {
   return text
-    .replace(EMAIL, REDACTED)
-    .replace(JSON_SECRET_FIELD, `"$1":"${REDACTED}"`)
+    .replace(JSON_CREDENTIAL_FIELD, `"$1":"${REDACTED}"`)
     .replace(BEARER, `Bearer ${REDACTED}`)
     .replace(SECRET_ASSIGNMENT, (_match, key: string) => `${key}=${REDACTED}`)
     .replace(BARE_SECRET, REDACTED);
+}
+
+export function redactSensitiveText(text: string): string {
+  return redactSecretText(
+    text.replace(EMAIL, REDACTED).replace(JSON_SECRET_FIELD, `"$1":"${REDACTED}"`),
+  );
 }
 
 function shouldRedactKey(key: string): boolean {

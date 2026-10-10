@@ -26,9 +26,15 @@ try {
     },
   });
   const env = loadEnv();
-  const { app, stop } = await createApp({ ...env, logger, hubPolicy: hubPolicy?.policy });
+  const { app, stop, startBackgroundMaintenance } = await createApp({
+    ...env,
+    logger,
+    hubPolicy: hubPolicy?.policy,
+  });
   const server = serve({ fetch: app.fetch, port: env.port, hostname: env.apiHost }, () => {
     logger.info("api listening", { "http.host": env.apiHost, "http.port": env.port });
+    // After listen, so one-time maintenance never delays readiness (CAAH-71).
+    void startBackgroundMaintenance();
   });
 
   // Long-lived connections (threads.subscribe SSE streams) never end on their

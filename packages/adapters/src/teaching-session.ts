@@ -14,7 +14,6 @@ import {
   buildPlaybookFromRecording,
   computerInputForDomKey,
   type SkillPlaybook,
-  sanitizeTeachRecordingEvent,
   type TeachRecordingEvent,
   type TeachSnapshot,
 } from "@cortexai-agent-hub/core";
@@ -30,6 +29,7 @@ import { revokeScreenControl } from "./computer-control.js";
 
 import { scheduleComputerSleep } from "./computer-idle.js";
 import { toComputerRef } from "./computer-support.js";
+import { redactPlaybook, sanitizeStoredTeachEvent } from "./teaching-secrets.js";
 
 export type TaughtSkillRow = {
   id: string;
@@ -60,6 +60,12 @@ export type TeachComputerInput = (
 ) & {
   sensitive?: boolean;
   skillId?: string;
+  /** Optional metadata about the focused field, never its value. */
+  fieldType?: string;
+  autocomplete?: string;
+  fieldLabel?: string;
+  /** The user explicitly asked to keep this text in the skill. */
+  keepLiteral?: boolean;
 };
 
 export interface TeachingSessionDeps {
@@ -223,7 +229,12 @@ async function finalizeTeachingRecording(
         summary: stopSnapshot.summary,
       });
     }
-    const playbook = buildPlaybookFromRecording(skill.goal, recording.events, recording.snapshots);
+    // Events are sanitized when captured; re-check here so rows recorded by an older build
+    // that is still finishing a session never reach the draft with raw input.
+    recording.events = recording.events.map(sanitizeStoredTeachEvent);
+    const playbook = redactPlaybook(
+      buildPlaybookFromRecording(skill.goal, recording.events, recording.snapshots),
+    );
     const updated = await tx.taughtSkill.update({
       where: { id: skillId },
       data: {
@@ -264,7 +275,7 @@ export async function appendRecordingEvent(
     deps,
     skillId,
     (recording) => {
-      const stored = sanitizeTeachRecordingEvent(event);
+      const stored = sanitizeStoredTeachEvent(event);
       const key = recordingEventKey(stored);
       if (recording.events.some((existing) => recordingEventKey(existing) === key)) {
         return { recording, changed: false };
@@ -346,6 +357,7 @@ function skillDraftBlocks(skill: TaughtSkillRow): MessageBlock[] {
       goal: skill.goal,
       playbook: parsePlaybook(skill.playbook),
       status: "draft",
+      updatedAt: skill.updatedAt.toISOString(),
     },
   ];
 }
@@ -529,7 +541,14 @@ export async function applyTeachingDesktopInput(
     );
     return;
   }
-  const { skillId: _skillId, ...desktop } = mapped;
+  const {
+    skillId: _skillId,
+    fieldType: _fieldType,
+    autocomplete: _autocomplete,
+    fieldLabel: _fieldLabel,
+    keepLiteral: _keepLiteral,
+    ...desktop
+  } = mapped;
   const input: ComputerInput =
     desktop.kind === "key" && desktop.key && !desktop.modifiers?.length
       ? computerInputForDomKey(desktop.key)
@@ -558,10 +577,16 @@ export async function recordTeachingInputEvent(
     await expireTaughtSkillTeaching(deps, skill.id);
     return "stale";
   }
-  const event = sanitizeTeachRecordingEvent({
+  const event = sanitizeStoredTeachEvent({
     at: new Date().toISOString(),
     kind: mapped.kind === "scroll" ? "scroll" : mapped.kind,
     ...(mapped.sensitive ? { sensitive: true as const } : {}),
+    ...(mapped.fieldType ? { fieldType: mapped.fieldType } : {}),
+    ...(mapped.autocomplete ? { autocomplete: mapped.autocomplete } : {}),
+    ...(mapped.fieldLabel ? { fieldLabel: mapped.fieldLabel } : {}),
+    ...(mapped.keepLiteral === true && mapped.kind === "clipboard"
+      ? { keepLiteral: true as const }
+      : {}),
     ...(mapped.kind === "key"
       ? { key: mapped.key }
       : mapped.kind === "clipboard"
