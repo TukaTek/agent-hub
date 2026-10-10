@@ -416,6 +416,46 @@ describe("graphical computer spec", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "drops only libnss_wrapper from Chromium's preload list",
+    () => {
+      const root = path.resolve(import.meta.dirname, "../../computer");
+      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-browser-preload-"));
+      const bin = path.join(temp, "bin");
+      const capture = path.join(temp, "preload");
+      mkdirSync(bin);
+      writeFileSync(
+        path.join(bin, "chromium"),
+        '#!/bin/sh\nprintf "%s" "${LD_PRELOAD-unset}" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n',
+      );
+      chmodSync(path.join(bin, "chromium"), 0o755);
+      const preloadFor = (preload: string) => {
+        const result = spawnSync("sh", [path.join(root, "cortexai-agent-hub-browser")], {
+          env: {
+            ...process.env,
+            DISPLAY: ":4",
+            HOME: path.join(temp, "home"),
+            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+            CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
+            // Missing preload objects only make the loader warn.
+            LD_PRELOAD: preload,
+          },
+          encoding: "utf8",
+        });
+        expect(result.status, result.stderr).toBe(0);
+        return readFileSync(capture, "utf8");
+      };
+      try {
+        expect(preloadFor("/nonexistent/libnss_wrapper.so")).toBe("unset");
+        expect(preloadFor("/nonexistent/libkeep.so:/nonexistent/libnss_wrapper.so")).toBe(
+          "/nonexistent/libkeep.so",
+        );
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.skipIf(process.platform !== "linux")(
     "spawns Chromium when the caller passes the profile and debug flags itself",
     () => {
