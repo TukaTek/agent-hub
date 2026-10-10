@@ -286,6 +286,12 @@ class ScriptTest(unittest.TestCase):
             ]
         )
         try:
+            # Popen returns before the child execs; until then /proc shows the parent's argv.
+            for proc in (equals, separate):
+                for _ in range(100):
+                    if b"--user-data-dir" in Path(f"/proc/{proc.pid}/cmdline").read_bytes():
+                        break
+                    time.sleep(0.01)
             self.assertEqual(helper.window_profile(str(equals.pid)), "/profiles/mine")
             self.assertEqual(helper.window_profile(str(separate.pid)), "/profiles/other")
             self.assertIsNone(helper.window_profile("99999999"))
