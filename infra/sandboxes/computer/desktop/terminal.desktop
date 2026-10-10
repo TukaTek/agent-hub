@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Icon=utilities-terminal
+Exec=cortexai-agent-hub-focus-or-launch xterm
