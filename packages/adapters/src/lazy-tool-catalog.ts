@@ -5,6 +5,7 @@ import type {
   ConnectorTool,
 } from "@cortexai-agent-hub/adapter-kit";
 import { z } from "zod";
+import { boundedResultChars } from "./mcp-result-budget.js";
 
 export const DIRECT_TOOL_LIMIT = 20;
 export const TOOL_SEARCH_LIMIT = 10;
@@ -95,6 +96,12 @@ export function lazyCatalogTools(
     },
     {
       name: `${prefix}_execute_tool`,
+      resultCharsByToolId: Object.fromEntries(
+        entries.flatMap(({ id, tool }) => {
+          const budget = boundedResultChars(tool.maxResultChars);
+          return budget === undefined ? [] : [[id, budget]];
+        }),
+      ),
       description: `Run an ${label} tool by id.`,
       inputSchema: {
         type: "object",

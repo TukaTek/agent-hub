@@ -231,6 +231,10 @@ export interface ConnectorTool {
   inputSchema: Record<string, unknown>;
   /** Declared effect. `false` forces approval; `true` never relaxes the name-based gate. */
   readOnly?: boolean;
+  /** Optional bounded model-delivery budget; runtime enforces its own ceiling. */
+  maxResultChars?: number;
+  /** Catalog wrapper budgets keyed by discovered tool ID, never model-supplied limits. */
+  resultCharsByToolId?: Record<string, number>;
   /** In-process routing metadata. It is never exposed to the model. */
   route?: ConnectorRoute;
 }

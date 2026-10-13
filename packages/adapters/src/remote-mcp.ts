@@ -11,6 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Agent } from "undici";
 import { combineSignals } from "./connector-safety.js";
+import { mcpResultBudget } from "./mcp-result-budget.js";
 import {
   createAddressCheckedLookup,
   isCloudMetadataAddress,
@@ -81,6 +82,7 @@ export async function listRemoteMcpTools(options: RemoteMcpOptions): Promise<Con
           description: tool.description ?? tool.title ?? tool.name,
           inputSchema: tool.inputSchema,
           readOnly: tool.annotations?.readOnlyHint,
+          ...mcpResultBudget(tool),
         });
       }
       cursor = result.nextCursor;

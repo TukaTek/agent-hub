@@ -323,6 +323,58 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     ).toBe(true);
   });
 
+  it.each([false, true])(
+    "delivers bounded larger tool pages through the real model transcript (native result %s)",
+    async (native) => {
+      const payload = JSON.stringify({
+        records: [{ text: "x".repeat(110_000) }],
+        endOfResults: true,
+      });
+      const server = await startModelEmulator({
+        steps: [
+          {
+            expect() {},
+            response: { type: "tool", id: "page-1", name: "read_page", arguments: {} },
+          },
+          {
+            expect(request) {
+              const text = String(latestToolResult(request)?.content);
+              const decoded = native ? text : JSON.parse(text).content[0].text;
+              expect(JSON.parse(decoded)).toEqual(JSON.parse(payload));
+            },
+            response: { type: "text", text: "Received every record." },
+          },
+        ],
+      });
+      cleanups.push(() => server.close());
+      await collect(
+        new PiAgentRuntime().run(
+          runRequest(
+            { ...server.model, contextWindow: 128_000, maxTokens: 4096 },
+            {
+              tools: [
+                {
+                  name: "read_page",
+                  description: "Read a bounded cached page",
+                  inputSchema: { type: "object", properties: {} },
+                  maxResultChars: 128_000,
+                },
+              ],
+              executeTool: async () =>
+                native
+                  ? {
+                      kind: "agent_tool_result",
+                      content: [{ type: "text", text: payload }],
+                      details: {},
+                    }
+                  : { content: [{ type: "text", text: payload }] },
+            },
+          ),
+        ),
+      );
+      server.assertComplete();
+    },
+  );
   it("assembles fragmented tool arguments, executes the write, and sends its result back", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-pi-offline-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
