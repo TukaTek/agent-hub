@@ -323,4 +323,19 @@ describe("OIDC environment", () => {
       loadEnv({ ...base, ...oidc, OIDC_ALLOW_SIGNUP_BYPASS: "true" }).oidc?.allowSignupBypass,
     ).toBe(true);
   });
+  it("refuses direct OIDC and billing in Hub mode", () => {
+    const hub = {
+      ...base,
+      AUTH_MODE: "hub",
+      HUB_AUTH_ORIGIN: "https://hub.example.test",
+      HUB_POLICY_ENFORCEMENT: "off",
+    };
+    expect(loadEnv({ ...hub, AUTH_PASSWORD_ENABLED: "false" }).hubAuth).toBeDefined();
+    expect(() => loadEnv({ ...hub, ...oidc })).toThrow(
+      "OIDC sign-in can't be combined with Hub sign-in",
+    );
+    expect(() => loadEnv({ ...hub, STRIPE_SECRET_KEY: "sk_test_fake" })).toThrow(
+      "Billing can't be combined with Hub sign-in",
+    );
+  });
 });
