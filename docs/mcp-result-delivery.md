@@ -23,11 +23,20 @@ the original limit. It does not grant authorization or change approval behavior.
 HTTP transport limits are unchanged. Result bodies and model arguments cannot ask
 for a larger budget.
 
+Both `readOnlyHint` and the budget hint come from the server and are untrusted: a
+server can mark any tool read-only. The read-only check only keeps write tools at
+the default by mistake; it is not a security boundary. The 128,000-character cap is
+the backstop on how much text any one server can place in front of the model per
+call.
+
 The discovered budget follows direct tools and catalog wrapper calls through both
-JSON and native tool-result delivery. Catalog budgets are keyed to discovered tool
-IDs; other tools retain their existing default. The runtime enforces the bound
-again and shares it across all text parts. This behavior is in the shared adapter
-package used by hosted and desktop runtimes; no native UI setting is required.
+JSON and native tool-result delivery. A catalog call keeps the budget of the tool it
+executes, whether addressed by ID, full name, or unique short name; an ambiguous
+name or a tool whose name collides with another connector's tool keeps the default.
+The runtime enforces the bound again and shares it across all text parts. A clipped
+result ends with an explicit truncation notice. This behavior is in the shared
+adapter package used by hosted and desktop runtimes; no native UI setting is
+required.
 
 A larger limit does not guarantee that arbitrary raw output fits. Servers should
 return whole, byte-bounded pages and continuation cursors, with no duplicated large
