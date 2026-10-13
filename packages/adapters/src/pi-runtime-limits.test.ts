@@ -8,6 +8,7 @@ import {
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
   TOOL_RESULT_TEXT_LIMIT,
+  toolResultTruncationNotice,
 } from "./pi-runtime-limits.js";
 
 describe("modelStreamMaxRetries", () => {
@@ -128,8 +129,23 @@ describe("clipToolResultText", () => {
   it("bounds oversized tool output for the in-turn transcript", () => {
     const text = "x".repeat(TOOL_RESULT_TEXT_LIMIT + 50);
     const clipped = clipToolResultText(text);
-    expect(clipped.endsWith("…")).toBe(true);
-    expect(clipped.length).toBe(TOOL_RESULT_TEXT_LIMIT + 1);
+    expect(clipped).toBe(
+      `${"x".repeat(TOOL_RESULT_TEXT_LIMIT)}…\n${toolResultTruncationNotice(TOOL_RESULT_TEXT_LIMIT)}`,
+    );
+  });
+
+  it("marks a clip as incomplete without claiming delivery", () => {
+    const notice = toolResultTruncationNotice(20_000);
+    expect(notice).toContain("truncated");
+    expect(notice).toContain("20000");
+    expect(notice).toContain("incomplete");
+    expect(clipToolResultText("x".repeat(20_001), 20_000).endsWith(notice)).toBe(true);
+    expect(clipToolResultText("x".repeat(20_000), 20_000)).toBe("x".repeat(20_000));
+  });
+
+  it("is stable when a clipped result is bounded again", () => {
+    const once = clipToolResultText("x".repeat(30_000), 20_000);
+    expect(clipToolResultText(once, 20_000)).toBe(once);
   });
 });
 
@@ -149,12 +165,33 @@ describe("clipToolResultContent", () => {
     expect(clipped[1]).toEqual(image);
     const overflow = clipped[2] as { type: "text"; text: string };
     expect(overflow.type).toBe("text");
-    expect(overflow.text.endsWith("…")).toBe(true);
-    expect(overflow.text.startsWith("b")).toBe(true);
-    expect(overflow.text.length).toBe(11);
-    const textChars = clipped
-      .filter((part) => part.type === "text")
-      .reduce((sum, part) => sum + part.text.replace(/…$/, "").length, 0);
-    expect(textChars).toBe(TOOL_RESULT_TEXT_LIMIT);
+    expect(overflow.text).toBe(
+      `${"b".repeat(10)}…\n${toolResultTruncationNotice(TOOL_RESULT_TEXT_LIMIT)}`,
+    );
+  });
+
+  it("adds a notice when later text parts are dropped at an exact boundary", () => {
+    const clipped = clipToolResultContent(
+      [
+        { type: "text" as const, text: "a".repeat(15_000) },
+        { type: "text" as const, text: "b".repeat(5_000) },
+        { type: "text" as const, text: "dropped" },
+      ],
+      20_000,
+    );
+    expect(clipped).toEqual([
+      { type: "text", text: "a".repeat(15_000) },
+      { type: "text", text: "b".repeat(5_000) },
+      { type: "text", text: toolResultTruncationNotice(20_000) },
+    ]);
+  });
+
+  it("leaves content that fits untouched", () => {
+    const content = [
+      { type: "text" as const, text: "a".repeat(15_000) },
+      { type: "text" as const, text: "b".repeat(5_000) },
+      { type: "text" as const, text: "" },
+    ];
+    expect(clipToolResultContent(content, 20_000)).toEqual(content);
   });
 });

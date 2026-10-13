@@ -323,6 +323,166 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     ).toBe(true);
   });
 
+  it.each([false, true])(
+    "delivers bounded larger tool pages through the real model transcript (native result %s)",
+    async (native) => {
+      const payload = JSON.stringify({
+        records: [{ text: "x".repeat(110_000) }],
+        endOfResults: true,
+      });
+      const server = await startModelEmulator({
+        steps: [
+          {
+            expect() {},
+            response: { type: "tool", id: "page-1", name: "read_page", arguments: {} },
+          },
+          {
+            expect(request) {
+              const text = String(latestToolResult(request)?.content);
+              const decoded = native ? text : JSON.parse(text).content[0].text;
+              expect(JSON.parse(decoded)).toEqual(JSON.parse(payload));
+            },
+            response: { type: "text", text: "Received every record." },
+          },
+        ],
+      });
+      cleanups.push(() => server.close());
+      await collect(
+        new PiAgentRuntime().run(
+          runRequest(
+            { ...server.model, contextWindow: 128_000, maxTokens: 4096 },
+            {
+              tools: [
+                {
+                  name: "read_page",
+                  description: "Read a bounded cached page",
+                  inputSchema: { type: "object", properties: {} },
+                  maxResultChars: 128_000,
+                },
+              ],
+              executeTool: async () =>
+                native
+                  ? {
+                      kind: "agent_tool_result",
+                      content: [{ type: "text", text: payload }],
+                      details: {},
+                    }
+                  : { content: [{ type: "text", text: payload }] },
+            },
+          ),
+        ),
+      );
+      server.assertComplete();
+    },
+  );
+  it("delivers a whole catalog wrapper page through the real model transcript", async () => {
+    const payload = JSON.stringify({
+      records: [{ text: "x".repeat(110_000) }],
+      endOfResults: true,
+    });
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "tool",
+            id: "page-1",
+            name: "connectors_execute_tool",
+            arguments: { id: "docs:read_page", arguments: {} },
+          },
+        },
+        {
+          expect(request) {
+            expect(JSON.parse(String(latestToolResult(request)?.content))).toEqual(
+              JSON.parse(payload),
+            );
+          },
+          response: { type: "text", text: "Received every record." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    await collect(
+      new PiAgentRuntime().run(
+        runRequest(
+          { ...server.model, contextWindow: 128_000, maxTokens: 4096 },
+          {
+            tools: [
+              {
+                name: "connectors_execute_tool",
+                description: "Run an MCP tool by id.",
+                inputSchema: {
+                  type: "object",
+                  properties: { id: { type: "string" }, arguments: { type: "object" } },
+                  required: ["id", "arguments"],
+                },
+                resultCharsByToolId: { "docs:read_page": 128_000 },
+                route: { connectorId: "mcp", toolName: "__catalog_execute" },
+              },
+            ],
+            executeTool: async () => ({
+              kind: "agent_tool_result",
+              content: [{ type: "text", text: payload }],
+              details: {},
+            }),
+          },
+        ),
+      ),
+    );
+    server.assertComplete();
+  });
+
+  it("explicitly shortens a raised-budget page for a small-context model", async () => {
+    const payload = JSON.stringify({
+      records: [{ text: "x".repeat(110_000) }],
+      endOfResults: true,
+    });
+    const decisions: Array<{ truncatedToolResults: number }> = [];
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "tool", id: "page-1", name: "read_page", arguments: {} },
+        },
+        {
+          expect(request) {
+            const text = String(latestToolResult(request)?.content);
+            expect(text.length).toBeLessThan(payload.length / 2);
+            expect(text).toContain("Tool result truncated");
+            expect(Buffer.byteLength(JSON.stringify(request.messages))).toBeLessThan(16_384 * 4);
+          },
+          response: { type: "text", text: "Read what fit." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events = await collect(
+      new PiAgentRuntime({ onContextDecision: (decision) => decisions.push(decision) }).run(
+        runRequest(
+          { ...server.model, contextWindow: 16_384, maxTokens: 1024 },
+          {
+            tools: [
+              {
+                name: "read_page",
+                description: "Read a bounded cached page",
+                inputSchema: { type: "object", properties: {} },
+                maxResultChars: 128_000,
+              },
+            ],
+            executeTool: async () => ({
+              kind: "agent_tool_result",
+              content: [{ type: "text", text: payload }],
+              details: {},
+            }),
+          },
+        ),
+      ),
+    );
+    server.assertComplete();
+    expect(events.some((event) => event.type === "done")).toBe(true);
+    expect(decisions.at(-1)!.truncatedToolResults).toBeGreaterThan(0);
+  });
+
   it("assembles fragmented tool arguments, executes the write, and sends its result back", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-pi-offline-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));

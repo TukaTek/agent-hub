@@ -56,7 +56,13 @@ function mcpFetch(
     failNext: boolean;
     initializations: number;
     headers?: Record<string, string>[];
-    tools?: Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }>;
+    tools?: Array<{
+      name: string;
+      description?: string;
+      inputSchema: Record<string, unknown>;
+      annotations?: { readOnlyHint?: boolean };
+      _meta?: Record<string, unknown>;
+    }>;
     calls?: string[];
   },
   expectedUrl = "https://mcp.example.test/mcp",
@@ -375,6 +381,40 @@ describe("MCP connector session cache", () => {
     }
   });
 
+  it("propagates bounded read-only delivery hints without changing old tools or approval hints", async () => {
+    const state = {
+      failNext: false,
+      initializations: 0,
+      tools: [
+        {
+          name: "paged",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+          _meta: { "io.cortexai/max-result-chars": 120_000 },
+        },
+        { name: "old", inputSchema: { type: "object" } },
+        {
+          name: "write",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: false },
+          _meta: { "io.cortexai/max-result-chars": 120_000 },
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", mcpFetch(state));
+    const prisma = { botMcpServer: { findMany: vi.fn().mockResolvedValue([ASSIGNMENT]) } };
+    const connector = new McpConnector(prisma as never, {} as never, { network: TEST_NETWORK });
+    const tools = await connector.discoverTools({
+      spaceId: "w1",
+      userId: "u1",
+      botId: "bot-1",
+      signal: new AbortController().signal,
+    } as never);
+    expect(tools.find((t) => t.name.endsWith("__paged"))?.maxResultChars).toBe(120_000);
+    expect(tools.find((t) => t.name.endsWith("__old"))?.maxResultChars).toBeUndefined();
+    expect(tools.find((t) => t.name.endsWith("__write"))?.maxResultChars).toBeUndefined();
+    expect(tools.every((t) => t.readOnly === undefined)).toBe(true);
+  });
   it("keeps large MCP schemas out of the initial runtime tool catalog", async () => {
     const state = {
       failNext: false,

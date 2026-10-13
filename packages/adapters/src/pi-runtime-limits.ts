@@ -19,19 +19,30 @@ export function modelStreamMaxRetries(): number {
 
 export const TOOL_RESULT_TEXT_LIMIT = 12_000;
 
+export function toolResultTruncationNotice(limit: number): string {
+  return `[Tool result truncated after ${limit} characters; the remainder was not delivered and this result is incomplete.]`;
+}
+
 export function clipToolResultText(text: string, limit: number = TOOL_RESULT_TEXT_LIMIT): string {
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+  return text.length > limit ? clipText(text, limit, limit) : text;
+}
+
+function clipText(text: string, keep: number, limit: number): string {
+  return `${text.slice(0, keep)}…\n${toolResultTruncationNotice(limit)}`;
 }
 
 /**
  * Share one remaining character budget across all text parts.
  * Later text is omitted once the aggregate limit is exhausted; non-text parts stay.
+ * Any omission carries exactly one truncation notice.
  */
 export function clipToolResultContent<T>(
   content: T[],
   limit: number = TOOL_RESULT_TEXT_LIMIT,
 ): T[] {
   let remaining = limit;
+  let noticed = false;
+  let omitted = false;
   const clipped: T[] = [];
   for (const part of content) {
     if (
@@ -44,15 +55,23 @@ export function clipToolResultContent<T>(
       clipped.push(part);
       continue;
     }
-    if (remaining <= 0) continue;
     const text = String((part as { text: unknown }).text);
     if (text.length <= remaining) {
       clipped.push(part);
       remaining -= text.length;
       continue;
     }
-    clipped.push({ ...part, text: clipToolResultText(text, remaining) });
-    remaining = 0;
+    if (noticed) continue;
+    if (remaining > 0) {
+      clipped.push({ ...part, text: clipText(text, remaining, limit) });
+      remaining = 0;
+      noticed = true;
+      continue;
+    }
+    omitted = true;
+  }
+  if (omitted && !noticed) {
+    clipped.push({ type: "text", text: toolResultTruncationNotice(limit) } as T);
   }
   return clipped;
 }

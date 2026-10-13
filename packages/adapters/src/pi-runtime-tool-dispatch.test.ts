@@ -379,13 +379,14 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
 }));
 
 import { toolCompletionAuditPayload } from "./executor.js";
+import { catalogEntries, lazyCatalogTools } from "./lazy-tool-catalog.js";
 import {
   MISSING_TOOL_FINAL_RESPONSE_ERROR,
   maxToolCallsPerTurn,
   PiAgentRuntime,
   providerFailureText,
 } from "./pi-runtime.js";
-import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
+import { TOOL_RESULT_TEXT_LIMIT, toolResultTruncationNotice } from "./pi-runtime-limits.js";
 
 const destinationTool: ConnectorTool = {
   name: "destination.write",
@@ -1973,7 +1974,10 @@ describe("Pi connector tool dispatch", () => {
     expect(result.content).toHaveLength(3);
     expect(result.content[0]).toEqual({ type: "text", text: first });
     expect(result.content[1]).toEqual(image);
-    expect(result.content[2]).toEqual({ type: "text", text: "bbbbb…" });
+    expect(result.content[2]).toEqual({
+      type: "text",
+      text: `bbbbb…\n${toolResultTruncationNotice(TOOL_RESULT_TEXT_LIMIT)}`,
+    });
   });
 
   it("delivers a skill read larger than the tool result bound verbatim", async () => {
@@ -2062,5 +2066,158 @@ describe("Pi connector tool dispatch", () => {
       undefined,
       { onShellStillRunning: expect.any(Function) },
     );
+  });
+});
+
+describe("Pi bounded tool-result budgets", () => {
+  beforeEach(() => {
+    fakeAgentState.mode = "dispatch";
+    fakeAgentState.tools = [];
+    fakeAgentState.toolResult = undefined;
+  });
+
+  const nativeResult = (...content: unknown[]) => ({
+    kind: "agent_tool_result",
+    content,
+    details: {},
+  });
+  const text = (value: string) => ({ type: "text" as const, text: value });
+  const clipped = (value: string, limit: number) =>
+    `${value.slice(0, limit)}…\n${toolResultTruncationNotice(limit)}`;
+
+  async function deliver(
+    tools: ConnectorTool[],
+    invoke: { name: string; args: Record<string, unknown> },
+    result: unknown,
+    contextStrategy?: "current",
+  ) {
+    fakeAgentState.invoke = invoke;
+    for await (const _event of new PiAgentRuntime().run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: `budget-${invoke.name}`,
+        prompt: "read the page",
+        instructions: "Read it.",
+        history: [],
+        tools,
+        model: { provider: "test", id: "dispatch-test-model" },
+        executeTool: vi.fn(async () => result),
+        ...(contextStrategy ? { contextStrategy } : {}),
+      },
+      {
+        operationId: "budget",
+        traceId: "budget",
+        spaceId: "w",
+        userId: "u",
+        signal: new AbortController().signal,
+      },
+    )) {
+      // Exhaust so the fake agent executes the tool.
+    }
+    return (fakeAgentState.toolResult as { content: unknown[] }).content;
+  }
+
+  const pageTool = (maxResultChars: number, resourceId = "docs"): ConnectorTool => ({
+    name: `mcp__${resourceId}__read_page`,
+    description: "Read a page",
+    inputSchema: { type: "object", properties: {} },
+    maxResultChars,
+    route: { connectorId: "mcp", resourceId, toolName: "read_page", catalogGroup: resourceId },
+  });
+
+  it.each(["docs:read_page", "mcp__docs__read_page", "read_page"])(
+    "delivers a whole catalog page called through the wrapper as %s",
+    async (id) => {
+      const tools = lazyCatalogTools(
+        "connectors",
+        "mcp",
+        "MCP",
+        catalogEntries([pageTool(64_000)]),
+      );
+      const page = "p".repeat(50_000);
+      const content = await deliver(
+        tools,
+        { name: "connectors_execute_tool", args: { id, arguments: {} } },
+        nativeResult(text(page)),
+      );
+      expect(content).toEqual([text(page)]);
+    },
+  );
+
+  it("keeps the default limit for a wrapper call that does not resolve to a budgeted tool", async () => {
+    const tools = lazyCatalogTools(
+      "connectors",
+      "mcp",
+      "MCP",
+      catalogEntries([pageTool(64_000, "docs"), pageTool(64_000, "wiki")]),
+    );
+    const page = "p".repeat(50_000);
+    const content = await deliver(
+      tools,
+      { name: "connectors_execute_tool", args: { id: "read_page", arguments: {} } },
+      nativeResult(text(page)),
+    );
+    expect(content).toEqual([text(clipped(page, TOOL_RESULT_TEXT_LIMIT))]);
+  });
+
+  it("clamps an oversized declared budget at runtime", async () => {
+    const page = "x".repeat(200_000);
+    const content = await deliver(
+      [{ ...pageTool(1_000_000), name: "read_page" }],
+      { name: "read_page", args: {} },
+      nativeResult(text(page)),
+    );
+    expect(content).toEqual([text(clipped(page, 128_000))]);
+  });
+
+  it("still clips a native result larger than the raised limit", async () => {
+    const page = "y".repeat(30_000);
+    const content = await deliver(
+      [{ ...pageTool(20_000), name: "read_page" }],
+      { name: "read_page", args: {} },
+      nativeResult(text(page)),
+    );
+    expect(content).toEqual([text(clipped(page, 20_000))]);
+  });
+
+  it("still clips a JSON result larger than the raised limit under the current strategy", async () => {
+    const result = { page: "y".repeat(30_000) };
+    const content = await deliver(
+      [{ ...pageTool(20_000), name: "read_page" }],
+      { name: "read_page", args: {} },
+      result,
+      "current",
+    );
+    expect(content).toEqual([text(clipped(JSON.stringify(result), 20_000))]);
+  });
+
+  it("shares one raised budget across text blocks", async () => {
+    const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" as const };
+    const first = "a".repeat(15_000);
+    const second = "b".repeat(15_000);
+    const content = await deliver(
+      [{ ...pageTool(20_000), name: "read_page" }],
+      { name: "read_page", args: {} },
+      nativeResult(text(first), image, text(second), text("c".repeat(5_000))),
+    );
+    expect(content).toEqual([
+      text(first),
+      image,
+      text(`${"b".repeat(5_000)}…\n${toolResultTruncationNotice(20_000)}`),
+    ]);
+  });
+
+  it("applies the default limit when connector tool names collide", async () => {
+    const page = "z".repeat(30_000);
+    const content = await deliver(
+      [
+        { ...pageTool(64_000, "docs"), name: "lookup" },
+        { ...pageTool(64_000, "wiki"), name: "lookup" },
+      ],
+      { name: "lookup", args: {} },
+      nativeResult(text(page)),
+    );
+    expect(content).toEqual([text(clipped(page, TOOL_RESULT_TEXT_LIMIT))]);
   });
 });
