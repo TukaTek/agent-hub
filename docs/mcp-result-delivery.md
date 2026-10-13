@@ -34,3 +34,9 @@ return whole, byte-bounded pages and continuation cursors, with no duplicated la
 text/structured representations. Include serialization overhead in the budget.
 An oversized response is still clipped by the client; use a smaller page and
 verify intact end-to-end JSON delivery before relying on the larger budget.
+
+The model's total context budget is independent of this per-tool allowance. A page
+that cannot fit alongside required context may still be shortened by the context
+selector. Choose page sizes that fit the selected model, and consume pages
+incrementally; this hint does not disable context limits or guarantee that a whole
+audit fits in one model call.
