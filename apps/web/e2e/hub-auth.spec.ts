@@ -126,13 +126,20 @@ test("Hub SSO callback errors show a fixed message", async ({ page }, testInfo) 
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("capability network failure blocks authentication", async ({ page }) => {
+test("capability network failure blocks authentication", async ({ page }, testInfo) => {
   await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
   await page.route("**/api/auth/capabilities", (route) => route.abort("failed"));
   await page.goto("/sign-in");
   await expect(page.getByRole("alert")).toContainText("Could not load sign-in options");
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
+  await captureScreenshot(page, testInfo, "hub-sign-in-capabilities-unavailable");
+  await page.unroute("**/api/auth/capabilities");
+  await page.route("**/api/auth/capabilities", (route) =>
+    route.fulfill({ json: { mode: "hub", passwordReset: false, resetUrl: null } }),
+  );
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
 });
 
 test("local installations retain the welcome and signup flow", async ({ page }) => {
