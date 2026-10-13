@@ -442,6 +442,7 @@ export function rejectHubAccountMutation(path: string) {
       ...HUB_SESSION_PATHS,
       "/hub/sign-in/continue",
       "/get-session",
+      "/account-security",
       "/sign-out",
       "/list-sessions",
       "/revoke-session",

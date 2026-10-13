@@ -1,0 +1,119 @@
+appId: com.tukatek.cortexai.agenthub
+name: Settings
+---
+- runFlow:
+    file: ../subflows/sign-in.yaml
+    env:
+      CORTEXAI_AGENT_HUB_ACTIVE_EMAIL: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
+- openLink: "cortexai-agent-hub:///account"
+- extendedWaitUntil:
+    visible: ".*Change password.*"
+    timeout: 15000
+- takeScreenshot: 01-account
+- tapOn: "Dark"
+- takeScreenshot: 02-account-dark
+- tapOn: "System"
+- scrollUntilVisible:
+    element: "Advanced"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Advanced"
+- extendedWaitUntil:
+    visible: "Stream replies"
+    timeout: 10000
+- takeScreenshot: 03-account-advanced
+- openLink: "cortexai-agent-hub:///change-password"
+- extendedWaitUntil:
+    visible: "Current password"
+    timeout: 15000
+- takeScreenshot: 04-change-password
+- tapOn: "Current password"
+- inputText: "wrong-current"
+- tapOn: "New password"
+- inputText: "replacement-1"
+- tapOn: "Confirm password"
+- inputText: "replacement-2"
+- hideKeyboard
+- tapOn:
+    text: "Change password"
+    index: 1
+- extendedWaitUntil:
+    visible: "Passwords do not match"
+    timeout: 10000
+- takeScreenshot: 05-password-mismatch
+- tapOn: "Back"
+- openLink: "cortexai-agent-hub:///models"
+- extendedWaitUntil:
+    visible: "Active model"
+    timeout: 15000
+- takeScreenshot: 06-models
+- openLink: "cortexai-agent-hub:///integrations"
+- extendedWaitUntil:
+    visible: "Search apps"
+    timeout: 15000
+- takeScreenshot: 07-integrations
+- tapOn:
+    id: "integrations-advanced"
+- extendedWaitUntil:
+    visible: "Add MCP server"
+    timeout: 10000
+- takeScreenshot: 08-integrations-advanced
+- openLink: "cortexai-agent-hub:///voice"
+- extendedWaitUntil:
+    visible: ".*This device.*"
+    timeout: 15000
+- takeScreenshot: 09-voice
+- openLink: "cortexai-agent-hub:///ai-data-sharing"
+- extendedWaitUntil:
+    visible: "AI data sharing"
+    timeout: 15000
+- takeScreenshot: 10-ai-data-sharing
+- openLink: "cortexai-agent-hub:///routine?botId=${CORTEXAI_AGENT_HUB_SCREENSHOT_BOT_ID}&botName=Researcher&routineId=${CORTEXAI_AGENT_HUB_SCREENSHOT_ROUTINE_ID}"
+- extendedWaitUntil:
+    visible: ".*Weekly fixture review.*"
+    timeout: 15000
+- takeScreenshot: 11-routine
+- openLink: "cortexai-agent-hub:///bot-settings?botId=${CORTEXAI_AGENT_HUB_SCREENSHOT_BOT_ID}"
+- extendedWaitUntil:
+    visible: "Advanced"
+    timeout: 15000
+- tapOn: "Advanced"
+- takeScreenshot: 12-bot-settings
+- openLink: "cortexai-agent-hub:///group-settings?groupId=${CORTEXAI_AGENT_HUB_SCREENSHOT_GROUP_ID}"
+- extendedWaitUntil:
+    visible: ".*Delete group.*"
+    timeout: 15000
+- takeScreenshot: 13-group-settings
+- openLink: "cortexai-agent-hub:///computer?botId=${CORTEXAI_AGENT_HUB_SCREENSHOT_BOT_ID}&name=Researcher"
+- extendedWaitUntil:
+    visible: ".*Take control.*|.*Open computer.*"
+    timeout: 20000
+- takeScreenshot: 14-computer
+- openLink: "cortexai-agent-hub:///account"
+- scrollUntilVisible:
+    element: ".*Delete account.*"
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 50
+- tapOn: "Delete account"
+- extendedWaitUntil:
+    visible: ".*Delete your account.*"
+    timeout: 10000
+- takeScreenshot: 15-delete-prompt
+- tapOn: "Cancel"
+- openLink: "cortexai-agent-hub:///account"
+- extendedWaitUntil:
+    visible: ".*Language.*"
+    timeout: 15000
+- scrollUntilVisible:
+    element: "Language"
+    direction: UP
+    timeout: 15000
+    visibilityPercentage: 100
+    centerElement: true
+- tapOn: "Language"
+- extendedWaitUntil:
+    visible: ".*English.*|.*Cancel.*"
+    timeout: 10000
+- takeScreenshot: 16-language
+- tapOn: "Cancel"

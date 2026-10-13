@@ -288,7 +288,8 @@ describe("PiRuntimeCredentialStore", () => {
       failed?: ModelCredentialFailedState,
     ) => {
       const matches = failed ? matchesFailedOAuthSecret(() => rotated, failed) : undefined;
-      if (matches && !matches({ id: "secret-codex", ciphertext: "cipher-codex" })) return false;
+      if (matches && !(await matches({ id: "secret-codex", ciphertext: "cipher-codex" })))
+        return false;
       deleteCredential();
       return true;
     };
@@ -329,7 +330,8 @@ describe("PiRuntimeCredentialStore", () => {
       failed?: ModelCredentialFailedState,
     ) => {
       const matches = failed ? matchesFailedOAuthSecret(() => rotated, failed) : undefined;
-      if (matches && !matches({ id: "secret-codex", ciphertext: "cipher-codex" })) return false;
+      if (matches && !(await matches({ id: "secret-codex", ciphertext: "cipher-codex" })))
+        return false;
       deleteCredential();
       return true;
     };

@@ -1,6 +1,7 @@
 const OAUTH_POPUP_NAMES = new Set([
   "cortexai-agent-hub-app-connect",
   "cortexai-agent-hub-mcp-oauth",
+  "cortexai-agent-hub-sso-oauth",
   "cortexai-agent-hub-model-oauth",
   "cortexai-agent-hub-plugin-connect",
 ]);
@@ -17,7 +18,20 @@ export function shouldOpenInAppPopup(
     return false;
   }
 
+  if (childUrl === "about:blank" && frameName === "cortexai-agent-hub-sso-oauth") return true;
+
   const isHttp = target.protocol === "http:" || target.protocol === "https:";
   if (appOrigin !== null && target.origin === appOrigin) return isHttp;
   return target.protocol === "https:" && OAUTH_POPUP_NAMES.has(frameName);
+}
+
+/** Keep auth cookies in the parent app's server-specific session. */
+export function oauthPopupSessionPreferences(partition: string | null) {
+  return {
+    preload: "",
+    nodeIntegration: false,
+    contextIsolation: true,
+    sandbox: true,
+    ...(partition === null ? {} : { partition }),
+  };
 }

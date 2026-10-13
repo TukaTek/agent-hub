@@ -250,6 +250,64 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
     }
   });
 
+  it("never creates a session from direct OIDC in Hub mode", async () => {
+    const db = createDb(process.env.DATABASE_URL!);
+    const config = { origin: "https://hub.example.test", tenantId: "fixture-tenant" };
+    const options = {
+      secret: "offline-auth-secret-at-least-32-characters",
+      tokenEncryptionKey: "offline-test-encryption-key",
+      baseURL: "http://web.example.test",
+      webOrigin: "http://web.example.test",
+      hub: config,
+      hubPolicy: hubPolicyForTests(config.tenantId, []).policy,
+      signupsEnabled: "false",
+      signupAllowlist: "",
+    };
+    const fetch = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      expect(() =>
+        createAuth(db.prisma, {
+          ...options,
+          oidc: {
+            issuer: "https://identity.example.test",
+            clientId: "fake-client",
+            clientSecret: "fake-secret",
+            name: "SSO",
+            scopes: ["openid", "email", "profile"],
+            allowSignupBypass: true,
+          },
+        }),
+      ).toThrow("OIDC sign-in can't be combined with Hub sign-in");
+      const auth = createAuth(db.prisma, options);
+      const sessionsBefore = await db.prisma.session.count();
+      const headers = { origin: "http://web.example.test", "content-type": "application/json" };
+      const start = await auth.handler(
+        new Request("http://web.example.test/api/auth/sign-in/social", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ provider: "oidc", callbackURL: "http://web.example.test/app" }),
+        }),
+      );
+      expect(start.status).toBe(403);
+      for (const path of ["/callback/oidc", "/oauth2/callback/oidc"]) {
+        const callback = await auth.handler(
+          new Request(`http://web.example.test/api/auth${path}?state=forged&code=forged`, {
+            headers: { origin: "http://web.example.test" },
+          }),
+        );
+        expect(callback.status).toBeGreaterThanOrEqual(400);
+        expect(callback.headers.get("set-cookie") ?? "").not.toContain("session_token=");
+      }
+      expect(await db.prisma.session.count()).toBe(sessionsBefore);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      await db.prisma.$disconnect();
+      await db.pool.end();
+    }
+  });
+
   it("keeps Hub identities with the same short prefix in separate workspaces", async () => {
     const db = createDb(process.env.DATABASE_URL!);
     const ids = [`hub_00000000${randomUUID()}`, `hub_00000000${randomUUID()}`];

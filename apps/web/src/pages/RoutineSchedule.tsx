@@ -3,7 +3,9 @@ import {
   type CronFreq,
   type CronPreset,
   type CronUnit,
+  clampIntervalAmount,
   cronFromPreset,
+  cronIntervalAmounts,
 } from "@cortexai-agent-hub/core";
 import { Input, NativeSelect, NativeSelectOption } from "@cortexai-agent-hub/ui-web";
 import { t } from "@lingui/core/macro";
@@ -11,7 +13,6 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { Clock } from "lucide-react";
 
 const UNITS: CronUnit[] = ["minutes", "hours", "days"];
-const NUMBERS = [1, 2, 3, 5, 10, 15, 30, 45];
 const TIMES = [
   "6:00 AM",
   "7:00 AM",
@@ -174,7 +175,7 @@ export function RoutineSchedule({
   const { i18n, t } = useLingui();
   const { lead, detail } = describeCronPresetLocalized(value, i18n.locale);
   const times = TIMES.includes(value.time) ? TIMES : [...TIMES, value.time];
-  const numbers = NUMBERS.includes(value.n) ? NUMBERS : [...NUMBERS, value.n].sort((a, b) => a - b);
+  const numbers = cronIntervalAmounts(value.unit, value.n);
 
   function patch(partial: Partial<CronPreset>) {
     onChange({ ...value, ...partial });
@@ -200,7 +201,10 @@ export function RoutineSchedule({
       size="sm"
       value={value.unit}
       aria-label={t`Interval unit`}
-      onChange={(event) => patch({ unit: event.target.value as CronUnit })}
+      onChange={(event) => {
+        const unit = event.target.value as CronUnit;
+        patch({ unit, n: clampIntervalAmount(value.n, unit) });
+      }}
     >
       {UNITS.map((unit) => (
         <NativeSelectOption key={unit} value={unit}>

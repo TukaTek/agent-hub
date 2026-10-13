@@ -1,4 +1,5 @@
 import {
+  credentialIssue,
   HUB_SIGN_IN_REFUSAL_CODES,
   HUB_SSO_ACCESS_DENIED,
   type HubSignInRefusalCode,
@@ -14,8 +15,12 @@ import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth";
+import type { AuthCapabilities } from "../lib/auth-capabilities";
+import { fetchAuthCapabilities } from "../lib/auth-capabilities";
 import { desktopBridge } from "../lib/desktop";
 import { clearSpaceSelection } from "../lib/rpc";
+import { runSsoFlow } from "../lib/sso-flow";
+import { authErrorText, credentialIssueText } from "../lib/user-error";
 import { WelcomePage } from "./Welcome";
 
 type AuthMode = "in" | "up" | "forgot";
@@ -23,18 +28,12 @@ type SignInStep =
   | "email"
   | Exclude<SignInContinueResponse["next"], "redirect">
   | "desktop_sso_unavailable";
-type PasswordResetCapabilities = {
-  passwordReset: boolean;
-  resetUrl: string | null;
-  mode?: "local" | "hub";
-};
 
 const fieldClass =
   "mt-2 h-12 rounded-xl px-4 text-base focus-visible:border-brand focus-visible:ring-brand/30 md:text-base";
-const submitClass =
+export const submitClass =
   "mt-3 h-12 w-full rounded-xl bg-brand text-base font-semibold text-brand-foreground hover:bg-brand/90 focus-visible:border-brand focus-visible:ring-brand/40";
-const AUTH_CAPABILITIES_TIMEOUT_MS = 8_000;
-const MAX_AUTH_CAPABILITIES_RESPONSE_BYTES = 64 * 1024;
+const MAX_AUTH_RESPONSE_BYTES = 64 * 1024;
 
 export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) {
   const { t } = useLingui();
@@ -63,15 +62,23 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
       : undefined;
   const [error, setError] = useState<string | null>(() => {
     const code = searchParams.get("error");
-    return code && Object.hasOwn(ssoErrors, code) ? ssoErrors[code as SsoCallbackError] : null;
+    if (!code) return null;
+    // Unknown codes stay silent: the query string is attacker-controlled.
+    return Object.hasOwn(ssoErrors, code)
+      ? ssoErrors[code as SsoCallbackError]
+      : authErrorText({ code }, "") || null;
   });
   const [pending, setPending] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   // Signup triggers a session refresh that remounts the anonymous auth page.
   const sent = resetSent || searchParams.get("verify") === "email";
-  const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
-  const mode = reset?.mode === "hub" || requestedMode === "entry" ? "in" : requestedMode;
-  const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
+  const [reset, setReset] = useState<AuthCapabilities | null>(null);
+  const hubMode = reset?.mode === "hub";
+  const mode = hubMode || requestedMode === "entry" ? "in" : requestedMode;
+  // Hub mode always signs in with an email first, then Hub picks the method.
+  const passwordForm = Boolean(reset?.passwordAuth || hubMode);
+  const [capabilityError, setCapabilityError] = useState(false);
+  const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const [step, setStep] = useState<SignInStep>("email");
   const signInStep = mode === "in" ? step : null;
   const signInUnavailable =
@@ -92,33 +99,24 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   );
 
   useEffect(() => {
+    setReset(null);
+    setCapabilityError(false);
     let active = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), AUTH_CAPABILITIES_TIMEOUT_MS);
-    void fetch("/api/auth/capabilities", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load authentication capabilities");
-        return readBoundedJsonResponse<PasswordResetCapabilities>(
-          response,
-          MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
-          controller.signal,
-        );
-      })
+    void fetchAuthCapabilities()
       .then((capabilities) => {
         if (active) setReset(capabilities);
       })
       .catch(() => {
-        if (active) setCapabilitiesFailed(true);
-      })
-      .finally(() => clearTimeout(timer));
+        if (active) setCapabilityError(true);
+      });
     return () => {
       // Do not abort on unmount: a guard redirect that bounces through this
       // page only mounts it for a render or two, and the cancelled fetch then
-      // surfaces as a failed request. `active` drops the result and the timer
-      // keeps its bound — abort() on an already settled fetch is a no-op.
+      // surfaces as a failed request. `active` drops the result; the request
+      // keeps its own time bound.
       active = false;
     };
-  }, [mode]);
+  }, [mode, capabilityAttempt]);
 
   useEffect(() => {
     if (signInStep === "password") passwordRef.current?.focus();
@@ -134,7 +132,15 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (signInUnavailable) return;
+    if (signInUnavailable || !passwordForm) return;
+    const issue = credentialIssue({
+      email,
+      password: mode === "forgot" || signInStep === "email" ? undefined : password,
+    });
+    if (issue) {
+      setError(credentialIssueText(issue));
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -143,12 +149,12 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email }),
+          body: JSON.stringify({ email: email.trim() }),
         });
         if (response.status === 403 || response.status === 503) {
           const refusal = await readBoundedJsonResponse<{ code?: unknown }>(
             response,
-            MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+            MAX_AUTH_RESPONSE_BYTES,
           ).catch(() => undefined);
           setError(
             hubRefusal(refusal?.code) ??
@@ -159,10 +165,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           return;
         }
         const result = response.ok
-          ? await readBoundedJsonResponse<SignInContinueResponse>(
-              response,
-              MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
-            )
+          ? await readBoundedJsonResponse<SignInContinueResponse>(response, MAX_AUTH_RESPONSE_BYTES)
           : undefined;
         const next = result?.next;
         if (result?.next === "redirect") {
@@ -181,17 +184,17 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         else setError(t`Could not continue`);
         return;
       }
-      if (reset?.mode === "hub") {
+      if (hubMode) {
         const response = await fetch("/api/auth/hub/sign-in", {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ email: email.trim(), password }),
         });
         if (!response.ok) {
           const body = await readBoundedJsonResponse<{ code?: string }>(
             response,
-            MAX_AUTH_CAPABILITIES_RESPONSE_BYTES,
+            MAX_AUTH_RESPONSE_BYTES,
           );
           setError(
             hubRefusal(body.code) ??
@@ -215,22 +218,23 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           redirectTo: reset.resetUrl,
         });
         if (result.error) {
-          setError(result.error.message ?? t`Could not send reset email`);
+          setError(authErrorText(result.error, t`Could not send reset email`));
           return;
         }
         setResetSent(true);
         return;
       }
+      const trimmedEmail = email.trim();
       const result =
         mode === "up"
           ? await authClient.signUp.email({
-              email,
+              email: trimmedEmail,
               password,
-              name: name || email.split("@")[0] || "User",
+              name: name || trimmedEmail.split("@")[0] || "User",
             })
-          : await authClient.signIn.email({ email, password });
+          : await authClient.signIn.email({ email: trimmedEmail, password });
       if (result.error) {
-        setError(result.error.message ?? t`Could not continue`);
+        setError(authErrorText(result.error, t`Could not continue`));
         return;
       }
       if (mode === "up" && signupRequiresEmailVerification(result.data)) {
@@ -252,6 +256,28 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     }
   }
 
+  async function signInWithSso() {
+    setError(null);
+    try {
+      const result = await runSsoFlow(
+        (disableRedirect, callbackURL) =>
+          authClient.signIn.social({
+            disableRedirect,
+            provider: "oidc",
+            newUserCallbackURL: callbackURL("/onboarding"),
+            callbackURL: callbackURL(
+              searchParams.get("next") === "/integrations/setup" ? "/integrations/setup" : "/app",
+            ),
+            errorCallbackURL: callbackURL("/sign-in"),
+          }),
+        ["/app", "/onboarding", "/integrations/setup", "/sign-in"],
+      );
+      if (result.error) setError(authErrorText(result.error, t`Could not continue`));
+    } catch {
+      setError(t`Could not continue`);
+    }
+  }
+
   if (requestedMode === "entry" && reset) {
     return reset.mode === "hub" ? <Navigate to="/sign-in" replace /> : <WelcomePage />;
   }
@@ -259,10 +285,19 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   if (!reset) {
     return (
       <AuthFrame onSubmit={(event) => event.preventDefault()} title={title}>
-        {capabilitiesFailed ? (
-          <p role="alert" className="text-sm text-destructive">
-            <Trans>Could not reach the server</Trans>
-          </p>
+        {capabilityError ? (
+          <div role="alert" className="w-full text-center">
+            <p>
+              <Trans>Could not load sign-in options</Trans>
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCapabilityAttempt((attempt) => attempt + 1)}
+            >
+              <Trans>Retry</Trans>
+            </Button>
+          </div>
         ) : (
           <Button disabled className={submitClass}>
             <Trans>Loading…</Trans>
@@ -280,6 +315,24 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             <Trans>Back to sign in</Trans>
           </Link>
         </div>
+      ) : !passwordForm ? (
+        <>
+          {reset.sso && mode !== "forgot" ? (
+            <Button
+              type="button"
+              disabled={pending}
+              className={submitClass}
+              onClick={() => void signInWithSso()}
+            >
+              <Trans>Continue with {reset.sso.name}</Trans>
+            </Button>
+          ) : null}
+          {error ? (
+            <p role="alert" className="mt-3 text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+        </>
       ) : (
         <>
           {mode === "up" ? (
@@ -419,7 +472,19 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               )}
             </Button>
           )}
-          {reset.mode !== "hub" ? (
+          {reset.sso && mode !== "forgot" ? (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              disabled={pending}
+              className="mt-3 text-muted-foreground"
+              onClick={() => void signInWithSso()}
+            >
+              <Trans>Continue with {reset.sso.name}</Trans>
+            </Button>
+          ) : null}
+          {!hubMode ? (
             <p className="mt-8 text-muted-foreground">
               {mode === "in" ? (
                 <>
@@ -472,7 +537,7 @@ export function PasswordResetPage() {
     try {
       const result = await authClient.resetPassword({ newPassword: password, token });
       if (result.error) {
-        setError(result.error.message ?? t`Could not reset password`);
+        setError(authErrorText(result.error, t`Could not reset password`));
         return;
       }
       setComplete(true);
@@ -531,7 +596,7 @@ export function PasswordResetPage() {
   );
 }
 
-function AuthFrame({
+export function AuthFrame({
   title,
   onSubmit,
   children,

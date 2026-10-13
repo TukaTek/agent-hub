@@ -1,9 +1,8 @@
-export type ThreadScrollAction = "jump" | "smooth" | null;
+import type { ThreadScrollState } from "@cortexai-agent-hub/core";
 
-export type ThreadScrollState = {
-  detached: boolean;
-  unread: boolean;
-};
+export type { ThreadScrollState } from "@cortexai-agent-hub/core";
+
+export type ThreadScrollAction = "jump" | "smooth" | null;
 
 export class ThreadScrollBehavior {
   private threadKey: string | null = null;

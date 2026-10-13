@@ -9,8 +9,10 @@ import { Platform } from "react-native";
 import { promptAiConsent } from "./ai-consent";
 import type { ApiRequestContext } from "./api";
 import { aiConsentCoalesceKey, captureApiRequestContext, rpc } from "./api";
+import { voiceForBot } from "./bot-voices";
 import { loadDeviceVoiceEnabled } from "./device-voice";
 import { t } from "./i18n";
+import { errorText } from "./user-error";
 
 /** Who is speaking, for the dock: it is mounted outside any one thread's bot list. */
 export type PlaybackSpeaker = { name?: string; color?: string };
@@ -31,7 +33,7 @@ export type VoicePlaybackStatus = "idle" | "playing" | "paused";
 export type VoicePlaybackState = {
   status: VoicePlaybackStatus;
   botId?: string;
-  /** Set when this clip came from a specific message, so its own Play button can react. */
+  /** The thread message this clip was spoken from, when playback started from one. */
   messageId?: string;
   /** False when the active engine (Android on-device voice) can only stop, not pause. */
   canPause: boolean;
@@ -87,7 +89,7 @@ export function stopSpeaking(): void {
   stopVoicePlayback();
 }
 
-// --- Sequential playback across several messages: "Play" on a message plays
+// --- Sequential playback across several messages: speaking a message plays
 // it, then keeps going through the rest of the queue until Stop is pressed or
 // the last one finishes. Built on top of speakText, one call at a time, so a
 // single Stop (above) always reaches whatever is actually playing right now.
@@ -95,7 +97,7 @@ export function stopSpeaking(): void {
 export type SpeechQueueItem = SpeechOptions & { text: string };
 
 let speechQueue: SpeechQueueItem[] = [];
-/** Invalidates in-flight speak calls. Stop and a new Play/queue each bump it. */
+/** Invalidates in-flight speak calls. Stop and a new speak or queue each bump it. */
 let playbackEpoch = 0;
 
 function isCurrentSpeech(epoch: number): boolean {
@@ -272,6 +274,8 @@ async function speakOnDevice(
   // that await and then overlap this call's remaining chunks.
   const session = startDeviceSpeechSession();
   const Speech = await loadExpoSpeech();
+  // Each bot keeps its own offline voice; without one the engine's default speaks.
+  const voice = botId ? await voiceForBot(botId).catch(() => undefined) : undefined;
   if (!isCurrentDeviceSpeechSession(session) || !isCurrentSpeech(mine)) return true;
   await Speech.stop();
   if (!isCurrentDeviceSpeechSession(session) || !isCurrentSpeech(mine)) return true;
@@ -310,7 +314,7 @@ async function speakOnDevice(
   try {
     for (const utterance of utterances) {
       if (!isCurrentDeviceSpeechSession(session) || !isCurrentSpeech(mine)) return true;
-      await speakOneUtterance(Speech, utterance);
+      await speakOneUtterance(Speech, utterance, voice);
     }
     finished = isCurrentDeviceSpeechSession(session) && isCurrentSpeech(mine);
     return true;
@@ -332,12 +336,11 @@ async function loadExpoSpeech(): Promise<typeof ExpoSpeech> {
   return Speech as typeof ExpoSpeech;
 }
 
-function speakOneUtterance(Speech: typeof ExpoSpeech, text: string): Promise<void> {
+function speakOneUtterance(Speech: typeof ExpoSpeech, text: string, voice?: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    // No language or voice override: the platform default stays on device.
-    // Forcing the UI locale mispronounces replies written in another language,
-    // and Android's "network" voices upload the text.
+    // Only offline voices are assigned; without one, use the engine default.
     Speech.speak(text, {
+      ...(voice ? { voice } : {}),
       onDone: () => resolve(),
       // Speech.stop() reports onStopped, not onDone.
       onStopped: () => resolve(),
@@ -380,10 +383,14 @@ async function renderUtterance(
         signal: deadline.signal,
       }),
       deadline.signal,
-    );
+    ).catch((error: unknown) => {
+      throw deadline.signal.aborted
+        ? error
+        : new Error(errorText(error, t("Could not speak that.")));
+    });
     if (!res.ok) {
       const body = await readVoiceError(res, deadline.signal);
-      throw new Error(body.error ?? `Voice failed (${res.status})`);
+      throw new Error(errorText(body.error ?? "", t("Could not speak that.")));
     }
     return await readResponseBytes(res, MAX_VOICE_AUDIO_BYTES, deadline.signal);
   } finally {

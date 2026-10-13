@@ -4,8 +4,12 @@ import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   defaultCatalogModelId,
+  inboundRoutineModelPin,
   modelCredentialAuthKindsForSpace,
+  pinnedModelCredentialError,
   readStoredModelAuth,
+  routineRunModelPin,
+  runModelChoice,
   selectConfiguredModel,
   selectDefaultCredentialId,
   validateConnectedModelChoice,
@@ -38,7 +42,7 @@ const spaceCredential = credential("space-provider", "space-model");
 const overrideCredential = credential("bot-provider", "stored-model");
 const bot = { modelProvider: "bot-provider", modelId: "bot-model", thinkingLevel: "high" };
 const defaults: SelectionInput = {
-  bot: null,
+  override: null,
   overrideCredential: null,
   defaultCredential: spaceCredential,
   settings: { defaultModelProvider: "settings-provider", defaultModelId: "settings-model" },
@@ -53,7 +57,7 @@ describe("configured model selection", () => {
   }>([
     {
       name: "uses the bot's model with its own credential",
-      input: { bot, overrideCredential },
+      input: { override: bot, overrideCredential },
       expected: {
         provider: "bot-provider",
         id: "bot-model",
@@ -63,7 +67,7 @@ describe("configured model selection", () => {
     },
     {
       name: "drops override thinking when its provider has no credential",
-      input: { bot },
+      input: { override: bot },
       expected: {
         provider: "space-provider",
         id: "space-model",
@@ -73,7 +77,7 @@ describe("configured model selection", () => {
     },
     {
       name: "keeps bot thinking with the Space default",
-      input: { bot: { modelProvider: null, modelId: null, thinkingLevel: "high" } },
+      input: { override: { modelProvider: null, modelId: null, thinkingLevel: "high" } },
       expected: {
         provider: "space-provider",
         id: "space-model",
@@ -83,7 +87,7 @@ describe("configured model selection", () => {
     },
     {
       name: "does not select an incomplete bot override",
-      input: { bot: { ...bot, modelId: null }, overrideCredential },
+      input: { override: { ...bot, modelId: null }, overrideCredential },
       expected: {
         provider: "space-provider",
         id: "space-model",
@@ -148,7 +152,7 @@ describe("configured model selection", () => {
     {
       name: "bot override thinking beats the preference level",
       input: {
-        bot: { modelProvider: null, modelId: null, thinkingLevel: "high" },
+        override: { modelProvider: null, modelId: null, thinkingLevel: "high" },
         defaultCredential: credential("space-provider", "space-model", "low"),
       },
       expected: {
@@ -161,7 +165,7 @@ describe("configured model selection", () => {
     {
       name: "does not leak a preference level onto a different override model",
       input: {
-        bot: { modelProvider: "bot-provider", modelId: "other-model", thinkingLevel: null },
+        override: { modelProvider: "bot-provider", modelId: "other-model", thinkingLevel: null },
         overrideCredential: credential("bot-provider", "stored-model", "xhigh"),
       },
       expected: {
@@ -173,7 +177,7 @@ describe("configured model selection", () => {
     },
     {
       name: "does not treat a sentinel bot override as a selected model",
-      input: { bot: { ...bot, modelId: "null" }, overrideCredential },
+      input: { override: { ...bot, modelId: "null" }, overrideCredential },
       expected: {
         provider: "space-provider",
         id: "space-model",
@@ -184,7 +188,7 @@ describe("configured model selection", () => {
     {
       name: "inherits the preference level when the override names its model",
       input: {
-        bot: { modelProvider: "bot-provider", modelId: "stored-model", thinkingLevel: null },
+        override: { modelProvider: "bot-provider", modelId: "stored-model", thinkingLevel: null },
         overrideCredential: credential("bot-provider", "stored-model", "xhigh"),
       },
       expected: {
@@ -219,6 +223,100 @@ describe("Hub-managed deployment model (CAAH-36)", () => {
       provider: "hub-provider",
       id: "deployment-model",
     });
+  });
+});
+
+describe("routine model pin", () => {
+  const routine = {
+    modelProvider: "routine-provider",
+    modelId: "routine-model",
+    thinkingLevel: "low",
+  };
+
+  it("pins the routine's own model onto its run", () => {
+    expect(routineRunModelPin(routine)).toEqual({
+      modelProvider: "routine-provider",
+      modelId: "routine-model",
+      thinkingLevel: "low",
+      modelPinned: true,
+    });
+  });
+
+  it("pins nothing when the routine follows the bot", () => {
+    expect(routineRunModelPin({ modelProvider: null, modelId: null, thinkingLevel: null })).toEqual(
+      {},
+    );
+    expect(
+      routineRunModelPin({ modelProvider: "routine-provider", modelId: null, thinkingLevel: null }),
+    ).toEqual({});
+  });
+
+  it("runs a routine turn on the model pinned to its run", () => {
+    const choice = runModelChoice({ modelPinned: true, ...routine }, bot);
+    expect(choice).toEqual(routine);
+    expect(
+      selectConfiguredModel({
+        ...defaults,
+        override: choice,
+        overrideCredential: credential("routine-provider", "stored-model"),
+      }),
+    ).toMatchObject({ provider: "routine-provider", id: "routine-model", thinkingLevel: "low" });
+  });
+
+  it("keeps a pinned run on its model after the routine is edited or deleted", () => {
+    // The routine row is gone or changed; the run still carries what it fired with.
+    expect(runModelChoice({ modelPinned: true, ...routine }, bot)).toEqual(routine);
+  });
+
+  it("falls back to the bot for a routine run without a pinned model", () => {
+    expect(
+      runModelChoice(
+        { modelPinned: false, modelProvider: null, modelId: null, thinkingLevel: null },
+        bot,
+      ),
+    ).toEqual(bot);
+  });
+
+  it("follows the bot when a routine run only recorded the model an attempt used", () => {
+    expect(runModelChoice({ modelPinned: false, ...routine }, bot)).toEqual(bot);
+  });
+
+  it("ignores run model columns that belong to an ordinary run", () => {
+    // Ordinary runs record the model they used; that record is not an override.
+    expect(runModelChoice(routine, bot)).toEqual(bot);
+  });
+
+  it("pins an inbound delivery only when every routine chose the same model", () => {
+    expect(inboundRoutineModelPin([routine, routine])).toEqual({
+      ...routine,
+      modelPinned: true,
+    });
+    expect(
+      inboundRoutineModelPin([
+        routine,
+        { modelProvider: null, modelId: null, thinkingLevel: null },
+      ]),
+    ).toEqual({});
+    expect(
+      inboundRoutineModelPin([
+        routine,
+        { modelProvider: "other", modelId: "other-model", thinkingLevel: null },
+      ]),
+    ).toEqual({});
+  });
+
+  it("rejects a pinned model whose credential is missing or belongs to another free-form model", () => {
+    expect(pinnedModelCredentialError(routine, null)).toBe("Connect that model provider first");
+    expect(pinnedModelCredentialError(routine, { defaultModel: "other-model" })).toBe(
+      "Unknown model for that provider",
+    );
+    expect(pinnedModelCredentialError(routine, { defaultModel: routine.modelId })).toBeUndefined();
+    expect(
+      pinnedModelCredentialError(
+        { modelProvider: "xai", modelId: "grok-4.6", thinkingLevel: null },
+        { defaultModel: "other-model" },
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -318,7 +416,9 @@ describe("space catalog auth", () => {
       ],
       secrets: [{ id: "secret-oauth", ciphertext: "cipher-oauth" }],
     });
-    const load = vi.fn((ciphertext: string) => (ciphertext === "cipher-oauth" ? oauth : apiKey));
+    const load = vi.fn(async (ciphertext: string) =>
+      ciphertext === "cipher-oauth" ? oauth : apiKey,
+    );
 
     const auth = await modelCredentialAuthKindsForSpace(prisma, { load }, scope);
 
@@ -361,7 +461,7 @@ describe("space catalog auth", () => {
         { id: "secret-api", ciphertext: "cipher-api" },
       ],
     });
-    const load = vi.fn((_ciphertext: string, secretId: string) =>
+    const load = vi.fn(async (_ciphertext: string, secretId: unknown) =>
       secretId === "secret-oauth" ? oauth : apiKey,
     );
 
@@ -412,7 +512,7 @@ describe("space catalog auth", () => {
     const auth = await modelCredentialAuthKindsForSpace(
       prisma,
       {
-        load: (_ciphertext: string, secretId: string) =>
+        load: async (_ciphertext: string, secretId: unknown) =>
           secretId === "secret-oauth" ? oauth : apiKey,
       },
       scope,
@@ -436,7 +536,7 @@ describe("space catalog auth", () => {
         { id: "secret-api", ciphertext: "cipher-api" },
       ],
     });
-    const load = vi.fn((ciphertext: string) => {
+    const load = vi.fn(async (ciphertext: string) => {
       if (ciphertext === "cipher-broken") throw new Error("unreadable");
       return apiKey;
     });
@@ -483,7 +583,7 @@ describe("space catalog auth", () => {
         { id: "secret-oauth", ciphertext: "cipher-oauth" },
       ],
     });
-    const load = vi.fn((_ciphertext: string, secretId: string) => {
+    const load = vi.fn(async (_ciphertext: string, secretId: unknown) => {
       if (secretId === "secret-oauth") throw new Error("unreadable");
       return apiKey;
     });
@@ -505,7 +605,7 @@ describe("space catalog auth", () => {
       preferences: [],
       secrets: [{ id: "secret-or", ciphertext: "cipher-or" }],
     });
-    const load = vi.fn(() => apiKey);
+    const load = vi.fn(async () => apiKey);
 
     const auth = await modelCredentialAuthKindsForSpace(prisma, { load }, scope);
 
@@ -569,7 +669,7 @@ describe("stored model auth", () => {
       return null;
     });
     const prisma = { secret: { findFirst } } as unknown as PrismaClient;
-    const load = vi.fn((ciphertext: string) => {
+    const load = vi.fn(async (ciphertext: string) => {
       if (ciphertext === "cipher-broken") throw new Error("unreadable");
       return JSON.stringify({
         type: "oauth",
@@ -613,7 +713,7 @@ describe("stored model auth", () => {
       },
     } as unknown as PrismaClient;
     // Decrypts fine, but the stored JSON claims oauth without a credential.
-    const load = vi.fn(() => JSON.stringify({ kind: "oauth" }));
+    const load = vi.fn(async () => JSON.stringify({ kind: "oauth" }));
     const live = {
       read: vi.fn(async () => [
         {
@@ -655,7 +755,7 @@ describe("stored model auth", () => {
       expires: Date.now() + 60_000,
       accountId: "acct-live",
     });
-    const load = vi.fn(() => oauthWithAccount);
+    const load = vi.fn(async () => oauthWithAccount);
     const live = {
       read: vi.fn(async (_userId: string, account: { accountId: string }) =>
         account.accountId === "acct-live"
@@ -714,7 +814,7 @@ describe("stored model auth", () => {
         })),
       },
     } as unknown as PrismaClient;
-    const load = vi.fn(() =>
+    const load = vi.fn(async () =>
       JSON.stringify({
         type: "oauth",
         access: "access-token",
@@ -765,7 +865,7 @@ describe("stored model auth", () => {
       expires: Date.now() - 1_000,
       accountId: "acct-live",
     });
-    const load = vi.fn(() => plaintext);
+    const load = vi.fn(async () => plaintext);
     const read = vi.fn(
       async (
         _userId: string,
@@ -833,7 +933,7 @@ describe("stored model auth", () => {
         })),
       },
     } as unknown as PrismaClient;
-    const load = vi.fn(() =>
+    const load = vi.fn(async () =>
       JSON.stringify({
         type: "oauth",
         access: "access-token",

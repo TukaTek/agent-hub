@@ -33,6 +33,8 @@ A malformed value (a bad origin, an oversized id, an oversized secret, or SSO wi
 
 Fix the settings and restart the process.
 
+Hub owns sign-in and accounts in Hub mode, so direct OIDC (`OIDC_ISSUER`) and billing (`STRIPE_SECRET_KEY`) stop the API at startup when combined with `AUTH_MODE=hub`, and `AUTH_PASSWORD_ENABLED` is ignored.
+
 **Steps for a Compose deployment**
 
 1. In Hub, issue the deployment's service credential and grant it the Agent Hub service config for the tenant. Note the API id and secret.

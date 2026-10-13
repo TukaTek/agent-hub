@@ -1,5 +1,20 @@
-import type { ThinkingLevel } from "@cortexai-agent-hub/contracts";
+import type {
+  ModelCatalogEntry,
+  ModelCredential,
+  ThinkingLevel,
+} from "@cortexai-agent-hub/contracts";
+import type { ConnectedModelChoice } from "@cortexai-agent-hub/core";
+import { connectedModelChoices } from "@cortexai-agent-hub/core";
 import { i18n } from "@lingui/core";
+
+export { modelOptionKey, parseModelOptionKey } from "@cortexai-agent-hub/core";
+/** The models the connected credentials can run, as one list for a picker. */
+export function connectedModelOptions(
+  credentials: ModelCredential[],
+  catalog: ModelCatalogEntry[],
+): ConnectedModelChoice[] {
+  return connectedModelChoices(credentials, catalog);
+}
 
 export function thinkingLevelLabel(level: ThinkingLevel) {
   if (level === "xhigh") return i18n._({ id: "Extra high", message: "Extra high" });

@@ -9,6 +9,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const authClient = vi.hoisted(() => ({ signIn: { email: vi.fn() } }));
 vi.mock("../lib/auth", () => ({ authClient }));
 vi.mock("../lib/rpc", () => ({ clearSpaceSelection: vi.fn() }));
+vi.mock("../lib/auth-capabilities", async () => {
+  const { authCapabilitiesSchema, legacyAuthCapabilitiesSchema } = await import(
+    "@cortexai-agent-hub/contracts"
+  );
+  return {
+    fetchAuthCapabilities: async () =>
+      authCapabilitiesSchema
+        .or(legacyAuthCapabilitiesSchema)
+        .parse(await (await fetch("/api/auth/capabilities")).json()),
+  };
+});
 vi.mock("./Welcome", () => ({ WelcomePage: () => null }));
 vi.mock("@lingui/react/macro", () => {
   const t = (parts: TemplateStringsArray) => parts.join("");

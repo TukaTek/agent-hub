@@ -1,0 +1,29 @@
+appId: com.tukatek.cortexai.agenthub
+---
+- runFlow: launch-app.yaml
+- runFlow:
+    when:
+      visible: "Sign up for CortexAI Agent Hub"
+    commands:
+      - tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "Sign in to CortexAI Agent Hub"
+    timeout: 15000
+- tapOn: "Email"
+- inputText: ${CORTEXAI_AGENT_HUB_ACTIVE_EMAIL}
+- tapOn: "Password"
+- inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
+- hideKeyboard
+- tapOn: "Sign in"
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    text: "Don’t allow"
+    optional: true
+- tapOn:
+    text: "Don't allow"
+    optional: true
+- extendedWaitUntil:
+    visible: "Account"
+    timeout: 40000

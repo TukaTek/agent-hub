@@ -10,6 +10,7 @@ import {
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
 import { rpc } from "../../lib/rpc";
+import { errorText } from "../../lib/user-error";
 
 /**
  * Compact Teach a task control for the computer chrome bar above the screen
@@ -78,9 +79,7 @@ export function TeachComputerOverlayControl({
         } catch (refreshError) {
           if (cancelled || botIdRef.current !== probeBotId) return;
           setError(
-            refreshError instanceof Error
-              ? refreshError.message
-              : t`Recording may have started, but the view could not refresh`,
+            errorText(refreshError, t`Recording may have started, but the view could not refresh`),
           );
         }
       } catch {
@@ -129,9 +128,7 @@ export function TeachComputerOverlayControl({
       setNeedsRefresh(true);
       setRecoveryOpen(true);
       setError(
-        refreshError instanceof Error
-          ? refreshError.message
-          : t`Recording may have started, but the view could not refresh`,
+        errorText(refreshError, t`Recording may have started, but the view could not refresh`),
       );
     } finally {
       if (botIdRef.current === requestBotId) setLocalBusy(false);
@@ -162,15 +159,12 @@ export function TeachComputerOverlayControl({
         if (botIdRef.current !== requestBotId) return;
         setRecoveryOpen(true);
         setError(
-          refreshError instanceof Error
-            ? refreshError.message
-            : t`Recording may have started, but the view could not refresh`,
+          errorText(refreshError, t`Recording may have started, but the view could not refresh`),
         );
       }
     } catch (startError) {
       if (botIdRef.current !== requestBotId) return;
-      const message =
-        startError instanceof Error ? startError.message : t`Could not start teaching`;
+      const message = errorText(startError, t`Could not start teaching`);
       setError(message);
       // Server already has a session (e.g. remount before the probe finished).
       if (/already active/i.test(message)) {

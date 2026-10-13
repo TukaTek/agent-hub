@@ -3,6 +3,7 @@ import { historyCompactJob } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { blocksToAgentHistoryText, withHubModelDefaults } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { recordUsage } from "@cortexai-agent-hub/db";
 import { getLogger, unwrapJobPayload } from "@cortexai-agent-hub/logging";
 
 import { formatCurrentTimeInstruction } from "./current-time.js";
@@ -46,6 +47,7 @@ export const MAX_RECALLED_MEMORIES = 5;
 
 export type CompactedHistoryMessage = {
   id?: string;
+  createdAt?: string;
   seq: number;
   role: "user" | "assistant" | "system";
   content: string;
@@ -210,6 +212,7 @@ export interface CompactHistoryDeps {
   jobs: JobPublisher;
   memoryProviders: MemoryProviderResolver;
   deploymentModelKey?: string;
+  deploymentModelConfigured?: boolean;
   resolveModel?: (scope: {
     userId: string;
     spaceId: string;
@@ -334,7 +337,7 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
         spaceId: thread.spaceId,
         botId: thread.botId,
       })
-    : deps.deploymentModelKey
+    : deps.deploymentModelConfigured
       ? {
           // Provider must come from the same resolver as the key, not a hardcoded one.
           provider: deploymentFallback.provider,
@@ -363,6 +366,16 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
       botId: thread.botId,
       threadId,
       runId: `compact:${threadId}:${fromSeqExclusive}`,
+      usageOperationKind: "compaction",
+      onUsage: async (event) => {
+        await recordUsage(deps.prisma, event, {
+          spaceId: thread.spaceId,
+          userId: thread.userId,
+          botId: thread.botId!,
+          operationId: `compact:${threadId}:${fromSeqExclusive}`,
+          operationKind: "compaction",
+        });
+      },
       prompt,
       instructions: [
         formatCurrentTimeInstruction(),
@@ -383,6 +396,15 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
       signal: AbortSignal.timeout(summarizeTimeoutMs(prompt.length)),
     },
   )) {
+    if (event.type === "usage" && !event.accounted) {
+      await recordUsage(deps.prisma, event, {
+        spaceId: thread.spaceId,
+        userId: thread.userId,
+        botId: thread.botId,
+        operationId: `compact:${threadId}:${fromSeqExclusive}`,
+        operationKind: "compaction",
+      });
+    }
     if (event.type === "text" && /^(?:I hit a problem:|Unknown model )/i.test(event.text.trim())) {
       runtimeReportedFailure = true;
     }

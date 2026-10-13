@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import type { Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
 import {
@@ -181,7 +182,15 @@ export function mountGithubWebhookRoute(
       return c.json({ error: "Payload too large" }, 413);
     }
 
-    const target = await loadWebhookTarget(deps, secretCache, c.req.param("botId"));
+    let target: Awaited<ReturnType<typeof loadWebhookTarget>>;
+    try {
+      target = await loadWebhookTarget(deps, secretCache, c.req.param("botId"));
+    } catch (error) {
+      if (error instanceof SecretStoreUnavailableError) {
+        return c.json({ error: "Service unavailable" }, 503);
+      }
+      throw error;
+    }
     if (!target) return unauthorized();
     if (!hasValidGithubSignature(c.req.header("x-hub-signature-256"), target.expected, raw)) {
       return unauthorized();
@@ -194,7 +203,14 @@ export function mountGithubWebhookRoute(
         active: true,
         githubEnabled: true,
       },
-      select: { id: true, name: true, prompt: true },
+      select: {
+        id: true,
+        name: true,
+        prompt: true,
+        modelProvider: true,
+        modelId: true,
+        thinkingLevel: true,
+      },
       orderBy: { updatedAt: "desc" },
       take: 5,
     });
