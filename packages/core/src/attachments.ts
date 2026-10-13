@@ -1,11 +1,10 @@
+import type { AttachmentMimeType, MessageBlock } from "@cortexai-agent-hub/contracts";
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_MAX_BASE64_LENGTH,
   ATTACHMENT_MAX_BYTES,
-  type AttachmentMimeType,
   isAllowedAttachmentMimeType,
   isAttachmentImageMimeType,
-  type MessageBlock,
 } from "@cortexai-agent-hub/contracts";
 
 export class AttachmentValidationError extends Error {
@@ -198,6 +197,13 @@ export function inferAttachmentMimeType(
   name: string,
   reportedType?: string,
 ): AttachmentMimeType | null {
+  if (
+    reportedType === "application/x-zip-compressed" ||
+    reportedType === "application/x-zip" ||
+    reportedType === "multipart/x-zip"
+  ) {
+    return "application/zip";
+  }
   const dot = name.lastIndexOf(".");
   const extension = dot < 0 ? "" : name.slice(dot).toLowerCase();
   if (BLOCKED_EXTENSIONS.has(extension)) return null;

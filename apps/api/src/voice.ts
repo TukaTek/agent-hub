@@ -1,7 +1,6 @@
-import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
+import type { AdapterContext, SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import {
   createVoiceProvider,
-  type EncryptedSecretStore,
   isFishSpeechModelId,
   isVoiceProviderId,
   listVoiceCatalog,
@@ -31,7 +30,7 @@ import { withSerializableRetry } from "./serializable-retry.js";
 
 export interface VoiceDeps {
   prisma: PrismaClient;
-  secrets: EncryptedSecretStore;
+  secrets: SecretStore;
 }
 
 export { listVoiceCatalog };
@@ -108,7 +107,7 @@ export async function loadVoiceCredential(deps: VoiceDeps, actor: Actor, provide
     where: { id: cred.secretId, userId: actor.userId, spaceId: null },
   });
   if (!secret) return null;
-  return { cred, apiKey: deps.secrets.load(secret.ciphertext, secret.id) };
+  return { cred, apiKey: await deps.secrets.load(secret.ciphertext, secret.id) };
 }
 
 export async function resolveVoiceTarget(

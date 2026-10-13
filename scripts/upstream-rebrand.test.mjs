@@ -10,6 +10,7 @@ describe("rebrand", () => {
     [`import { a } from "@${old}/core";`, 'import { a } from "@cortexai-agent-hub/core";'],
     [`headers["x-${old}-space-id"]`, 'headers["x-cortexai-agent-hub-space-id"]'],
     [`labels["${old}.botId"]`, 'labels["cortexai-agent-hub.botId"]'],
+    [`labels["${old}.computerOwner"]`, 'labels["cortexai-agent-hub.computerOwner"]'],
     [`process.env.${OLD}_ALLOWED_HOSTS`, "process.env.CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"],
     [`window.${old}ComputerKeyboard`, "window.cortexAiAgentHubComputerKeyboard"],
     [`class ${Old}NetworkCache {}`, "class CortexAiAgentHubNetworkCache {}"],

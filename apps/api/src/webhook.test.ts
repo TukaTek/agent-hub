@@ -1,7 +1,14 @@
 import { createHash, createHmac } from "node:crypto";
-import { GithubWebhookEmulator } from "@cortexai-agent-hub/adapters";
+import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  ComposedSecretStore,
+  EncryptedSecretStore,
+  GithubWebhookEmulator,
+  InfisicalSecretStore,
+} from "@cortexai-agent-hub/adapters";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
+import { infisicalFake } from "../../../packages/adapters/src/secret-store-fake.js";
 import { readBoundedBody } from "./http-body.js";
 import {
   formatGithubEventPrompt,
@@ -13,6 +20,7 @@ import {
   WEBHOOK_SECRET_KIND,
   type WebhookDeps,
 } from "./webhook.js";
+import { loadWebhookTarget } from "./webhook-inbound.js";
 
 const SECRET = "webhook-test-secret-value-32chars!!";
 
@@ -33,7 +41,14 @@ function createDeps(
       spaceId: string;
     } | null;
     load?: (ciphertext: string) => string | Promise<string>;
-    routines?: Array<{ id: string; name: string; prompt: string }>;
+    routines?: Array<{
+      id: string;
+      name: string;
+      prompt: string;
+      modelProvider?: string | null;
+      modelId?: string | null;
+      thinkingLevel?: string | null;
+    }>;
   } = {},
 ): WebhookDeps & {
   sendUserMessage: ReturnType<typeof vi.fn>;
@@ -82,7 +97,7 @@ function createDeps(
       },
     } as unknown as WebhookDeps["prisma"],
     secrets: {
-      loadAsync: async (ciphertext: string) => (overrides.load ?? (() => SECRET))(ciphertext),
+      load: async (ciphertext: string) => (overrides.load ?? (() => SECRET))(ciphertext),
     } as unknown as WebhookDeps["secrets"],
     events: { sendUserMessage },
     jobs: { enqueue } as unknown as WebhookDeps["jobs"],
@@ -292,6 +307,74 @@ describe("inbound webhook HTTP route", () => {
       }),
     );
     expect(deps.enqueue).toHaveBeenCalled();
+  });
+
+  it("pins a routine model when every matching routine chose it", async () => {
+    const deps = createDeps({
+      routines: [
+        {
+          id: "routine-1",
+          name: "Review",
+          prompt: "Inspect",
+          modelProvider: "openai-compatible",
+          modelId: "private-model",
+          thinkingLevel: "low",
+        },
+      ],
+    });
+    const app = mount(deps);
+    const res = await app.request("/api/v1/bots/bot-1/webhook", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SECRET}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ event: "ping" }),
+    });
+    expect(res.status).toBe(200);
+    expect(deps.sendUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelPin: {
+          modelProvider: "openai-compatible",
+          modelId: "private-model",
+          thinkingLevel: "low",
+        },
+      }),
+    );
+  });
+
+  it("keeps the bot model when matching routines chose different models", async () => {
+    const deps = createDeps({
+      routines: [
+        {
+          id: "routine-1",
+          name: "Review",
+          prompt: "Inspect",
+          modelProvider: "openai",
+          modelId: "gpt",
+          thinkingLevel: null,
+        },
+        {
+          id: "routine-2",
+          name: "Triage",
+          prompt: "Sort",
+          modelProvider: "anthropic",
+          modelId: "claude",
+          thinkingLevel: null,
+        },
+      ],
+    });
+    const app = mount(deps);
+    const res = await app.request("/api/v1/bots/bot-1/webhook", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SECRET}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ event: "ping" }),
+    });
+    expect(res.status).toBe(200);
+    expect(deps.sendUserMessage.mock.calls[0]?.[0]).not.toHaveProperty("modelPin");
   });
 
   it("accepts a plain text payload as untrusted delivery data", async () => {
@@ -626,6 +709,36 @@ describe("GitHub event HTTP route", () => {
 });
 
 describe("webhook secret decryption", () => {
+  it.each(["webhook", "github"])(
+    "returns 503 during a store outage and retries %s",
+    async (route) => {
+      const load = vi
+        .fn()
+        .mockRejectedValueOnce(new SecretStoreUnavailableError())
+        .mockResolvedValue(SECRET);
+      const deps = createDeps({ load });
+      const app = mount(deps);
+      const raw = JSON.stringify({ event: "ping" });
+      const request = () =>
+        app.request(`/api/v1/bots/bot-1/${route}`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${SECRET}`,
+            "x-hub-signature-256": `sha256=${createHmac("sha256", SECRET).update(raw).digest("hex")}`,
+          },
+          body: raw,
+        });
+      const outage = await request();
+      expect(outage.status).toBe(503);
+      await expect(outage.json()).resolves.toEqual({ error: "Service unavailable" });
+      expect(deps.sendUserMessage).not.toHaveBeenCalled();
+      expect((await request()).status).toBe(200);
+      expect(load).toHaveBeenCalledTimes(2);
+      expect((await request()).status).toBe(200);
+      expect(load).toHaveBeenCalledTimes(2);
+    },
+  );
+
   function signedGithubDelivery(raw: string, secret: string) {
     return {
       method: "POST" as const,
@@ -825,5 +938,122 @@ describe("webhook secret decryption", () => {
       );
     }
     expect(load).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("webhook external rotation", () => {
+  it("observes external rotation on reuse after the webhook cache TTL", async () => {
+    vi.useFakeTimers();
+    const fake = infisicalFake();
+    const store = new ComposedSecretStore(
+      new EncryptedSecretStore("fake-key"),
+      new InfisicalSecretStore({ ...fake.options, cacheTtlMs: 100 }),
+    );
+    await store.start();
+    const record = await store.put("initial", {
+      operationId: "test",
+      traceId: "test",
+      spaceId: "ws-1",
+      userId: "user-1",
+      signal: new AbortController().signal,
+    });
+    const deps = createDeps({
+      secret: {
+        id: record.id,
+        ciphertext: record.ref,
+        kind: WEBHOOK_SECRET_KIND,
+        userId: "user-1",
+        spaceId: "ws-1",
+      },
+      bot: {
+        id: "bot-1",
+        spaceId: "ws-1",
+        userId: "user-1",
+        webhookSecretId: record.id,
+        thread: { id: "thread-1" },
+      },
+    });
+    deps.secrets = store;
+    const cache = new Map();
+    try {
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("initial");
+      const changed = vi.fn();
+      store.onChange(changed);
+      fake.values.set(record.ref.split(":").at(-1)!, "rotated");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cache.size).toBe(1);
+      expect(changed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("rotated");
+      expect(changed).toHaveBeenCalledExactlyOnceWith(record.ref);
+      changed.mockClear();
+      fake.values.set(record.ref.split(":").at(-1)!, "rotated-again");
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("rotated-again");
+      expect(changed).toHaveBeenCalledExactlyOnceWith(record.ref);
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("rotated-again");
+    } finally {
+      await store.close();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("encrypted webhook cache expiry", () => {
+  it("only re-decrypts after 30 seconds and picks up a replaced ref", async () => {
+    vi.useFakeTimers();
+    const store = new EncryptedSecretStore("fake-key");
+    const context = {
+      operationId: "test",
+      traceId: "test",
+      spaceId: "ws-1",
+      userId: "user-1",
+      signal: new AbortController().signal,
+    };
+    const record = await store.put("initial", context);
+    const deps = createDeps({
+      secret: {
+        id: record.id,
+        ciphertext: record.ref,
+        kind: WEBHOOK_SECRET_KIND,
+        userId: "user-1",
+        spaceId: "ws-1",
+      },
+      bot: {
+        id: "bot-1",
+        spaceId: "ws-1",
+        userId: "user-1",
+        webhookSecretId: record.id,
+        thread: { id: "thread-1" },
+      },
+    });
+    deps.secrets = store;
+    const cache = new Map();
+    const load = vi.spyOn(store, "load");
+    const changed = vi.fn();
+    store.onChange(changed);
+    try {
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("initial");
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("initial");
+      expect(load).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("initial");
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(changed).not.toHaveBeenCalled();
+      const replacement = await store.put("replacement", context, { recordId: record.id });
+      vi.mocked(deps.prisma.secret.findUnique).mockResolvedValue({
+        id: record.id,
+        ciphertext: replacement.ref,
+        kind: WEBHOOK_SECRET_KIND,
+        userId: "user-1",
+        spaceId: "ws-1",
+      } as never);
+      expect((await loadWebhookTarget(deps, cache, "bot-1"))?.expected).toBe("replacement");
+      expect(load).toHaveBeenCalledTimes(3);
+    } finally {
+      await store.close();
+      vi.useRealTimers();
+    }
   });
 });

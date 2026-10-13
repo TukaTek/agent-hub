@@ -47,6 +47,7 @@ describe("appearance preference", () => {
     expect(tokensForAppearance("light")).toBe(lightTokens);
     const themeInvariantTokens = new Set<keyof ColorTokens>([
       "destructiveForeground",
+      "faviconPlate",
       "brand",
       "brandForeground",
       "brandSurface",
@@ -58,6 +59,15 @@ describe("appearance preference", () => {
     }
     expect(lightTokens.brand).toBe("#F7933B");
     expect(darkTokens.brandSurface).toBe("#231F20");
+  });
+
+  it("keeps working-state blue in its own semantic token across themes", () => {
+    expect(darkTokens.statusWorking).toBeTruthy();
+    expect(lightTokens.statusWorking).toBeTruthy();
+    expect(darkTokens.statusWorking).toBe(darkTokens.link);
+    expect(lightTokens.statusWorking).toBe(lightTokens.link);
+    expect(darkTokens.statusWorking).not.toBe(darkTokens.primary);
+    expect(lightTokens.statusWorking).not.toBe(lightTokens.primary);
   });
 
   it("keeps user message surfaces muted, not cream invert", () => {

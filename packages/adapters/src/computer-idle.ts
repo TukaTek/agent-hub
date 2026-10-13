@@ -1,11 +1,11 @@
-import {
-  type AdapterContext,
-  type AgentHomeStore,
-  type ComputerRef,
-  computerSleepJob,
-  type JobPublisher,
-  type SandboxProvider,
+import type {
+  AdapterContext,
+  AgentHomeStore,
+  ComputerRef,
+  JobPublisher,
+  SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
+import { computerSleepJob } from "@cortexai-agent-hub/adapter-kit";
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { expireComputerControl, hasActiveComputerControl } from "./computer-control.js";
@@ -180,8 +180,12 @@ export function sandboxIdleMs(): number {
   return Number.isFinite(raw) && raw >= 30_000 ? raw : DEFAULT_SANDBOX_IDLE_MS;
 }
 
+export function computerIdleSleepEnabled(): boolean {
+  return process.env.SANDBOX_IDLE_MS?.trim() !== "0";
+}
+
 export function scheduleComputerSleep(jobs: JobPublisher, computerId: string): void {
-  if (!computerId) return;
+  if (!computerId || !computerIdleSleepEnabled()) return;
   void jobs.enqueue(computerSleepJob(computerId, new Date(Date.now() + sandboxIdleMs())));
 }
 
@@ -203,6 +207,7 @@ export async function sleepComputerIfIdle(
   },
   computerId: string,
 ): Promise<void> {
+  if (!computerIdleSleepEnabled()) return;
   let computer = await loadComputer(deps.prisma, computerId);
   if (!computer?.providerRef || computer.state !== "running") return;
 

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { JobPublisher } from "@cortexai-agent-hub/adapter-kit";
-import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
-import type { EncryptedSecretStore } from "@cortexai-agent-hub/adapters";
+import type { JobPublisher, SecretStore } from "@cortexai-agent-hub/adapter-kit";
+import { runContinueJob, SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
+import { inboundRoutineModelPin } from "@cortexai-agent-hub/adapters";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
@@ -19,12 +19,17 @@ export type WebhookEvents = {
     trigger: "webhook";
     clientNonce?: string;
     allowParallelRun?: boolean;
+    modelPin?: {
+      modelProvider: string;
+      modelId: string;
+      thinkingLevel: string | null;
+    };
   }): Promise<{ messageId: string; runId: string | null; seq: number }>;
 };
 
 export type WebhookDeps = {
   prisma: PrismaClient;
-  secrets: EncryptedSecretStore;
+  secrets: SecretStore;
   events: WebhookEvents;
   jobs: Pick<JobPublisher, "enqueue">;
 };
@@ -97,10 +102,25 @@ type WebhookSecretCacheEntry = {
   secretId: string;
   ciphertext: string;
   plaintext: Promise<string | null>;
+  expires: number;
 };
 
 /** Webhook secrets by bot id; the decrypt promise is shared so concurrent misses decrypt once. */
 export type WebhookSecretCache = Map<string, WebhookSecretCacheEntry>;
+
+const subscribedWebhookCaches = new WeakMap<SecretStore, WeakSet<WebhookSecretCache>>();
+function subscribeWebhookCache(secrets: SecretStore, cache: WebhookSecretCache): void {
+  let caches = subscribedWebhookCaches.get(secrets);
+  if (!caches) {
+    caches = new WeakSet();
+    subscribedWebhookCaches.set(secrets, caches);
+  }
+  if (caches.has(cache)) return;
+  caches.add(cache);
+  secrets.onChange?.((ref) => {
+    for (const [botId, entry] of cache) if (entry.ciphertext === ref) cache.delete(botId);
+  });
+}
 
 function isPermanentDecryptFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : "";
@@ -132,10 +152,16 @@ function decryptWebhookSecret(
     secretId: secret.id,
     ciphertext: secret.ciphertext,
     plaintext: Promise.resolve(null),
+    expires: Date.now() + 30_000,
   };
-  entry.plaintext = secrets.loadAsync(secret.ciphertext, secret.id).catch((error: unknown) => {
+  entry.plaintext = secrets.load(secret.ciphertext, secret.id).catch((error: unknown) => {
     // Auth and malformed ciphertext stay unusable. Anything else can clear, so retry it.
-    if (!isPermanentDecryptFailure(error) && cache.get(botId) === entry) cache.delete(botId);
+    if (
+      (error instanceof SecretStoreUnavailableError || !isPermanentDecryptFailure(error)) &&
+      cache.get(botId) === entry
+    )
+      cache.delete(botId);
+    if (error instanceof SecretStoreUnavailableError) throw error;
     return null;
   });
   return entry;
@@ -148,9 +174,12 @@ function loadWebhookSecret(
   botId: string,
   secret: { id: string; ciphertext: string },
 ): Promise<string | null> {
+  subscribeWebhookCache(secrets, cache);
   const cached = cache.get(botId);
   const entry =
-    cached?.secretId === secret.id && cached.ciphertext === secret.ciphertext
+    cached?.secretId === secret.id &&
+    cached.ciphertext === secret.ciphertext &&
+    cached.expires > Date.now()
       ? cached
       : decryptWebhookSecret(secrets, cache, botId, secret);
   touchWebhookSecret(cache, botId, entry);
@@ -238,7 +267,13 @@ export async function deliverWebhookEvent(
   target: InboundTarget,
   input: {
     prompt: string;
-    routines: Array<{ name: string; prompt: string }>;
+    routines: Array<{
+      name: string;
+      prompt: string;
+      modelProvider: string | null;
+      modelId: string | null;
+      thinkingLevel: string | null;
+    }>;
     source: "webhook" | "github" | "messaging";
     idempotencyKey?: string;
     /** Messaging wakes share the live chat thread; keep a separate webhook run. */
@@ -264,6 +299,7 @@ export async function deliverWebhookEvent(
   const clientNonce = input.idempotencyKey
     ? inboundDeliveryClientNonce(input.source, target.bot.id, input.idempotencyKey)
     : undefined;
+  const pin = inboundRoutineModelPin(input.routines);
 
   const sent = await deps.events.sendUserMessage({
     spaceId: target.bot.spaceId,
@@ -275,6 +311,15 @@ export async function deliverWebhookEvent(
     trigger: "webhook",
     clientNonce,
     ...(input.allowParallelRun ? { allowParallelRun: true } : {}),
+    ...(pin.modelProvider && pin.modelId
+      ? {
+          modelPin: {
+            modelProvider: pin.modelProvider,
+            modelId: pin.modelId,
+            thinkingLevel: pin.thinkingLevel ?? null,
+          },
+        }
+      : {}),
   });
 
   if (sent.runId) {

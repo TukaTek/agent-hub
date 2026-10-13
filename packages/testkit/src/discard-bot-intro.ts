@@ -3,7 +3,7 @@ import type { RunStatus } from "@cortexai-agent-hub/contracts";
 import { isActive } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 
-type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
+type App = { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 
 export type BotIntroHarness = {
   app: App;

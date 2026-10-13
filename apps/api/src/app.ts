@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+
 import type {
+  AgentContextStrategy,
   AgentRuntime,
+  BillingProvider,
   JobPublisher,
   ManagedConnectorProvider,
   MessagingSurface,
@@ -29,11 +31,14 @@ import {
   createRunExecutor,
   createRunSandbox,
   createRunSecretWriter,
+  createSecretStore,
+  createTicketChangeNotifier,
   createWebProvider,
+  deletePushToken,
   destroyBot,
   EmailEmulator,
-  EncryptedSecretStore,
   ExpoPushProvider,
+  endSessionPushToken,
   GraphileJobPublisher,
   InMemoryJobQueue,
   InMemoryRealtimeFanout,
@@ -53,31 +58,32 @@ import {
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
   piSessionsRoot,
-  pushTokenPath,
   reconcileCloudAgents,
   reconcileComputerUpdates,
   removePiUserSessions,
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
+  StripeBillingProvider,
   sandboxProviderOptionsFromEnv,
+  stripeBillingConfigFromEnv,
   toTeamChatInbound,
+  withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
-import {
-  createAuth,
-  createUserWorkAuthorizer,
-  type HubPolicy,
-  isBlockedAuthPath,
-  loopbackTwinOrigins,
-} from "@cortexai-agent-hub/auth";
+import type { HubPolicy } from "@cortexai-agent-hub/auth";
+import { createAuth, isBlockedAuthPath, loopbackTwinOrigins, createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
+import type { Actor } from "@cortexai-agent-hub/contracts";
 import { signupAllowlistBootUpdate, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
 import {
+  createBoardEvents,
   createDb,
   createPool,
   createThreadEvents,
+  IsolationError,
   parsePositiveInteger,
   provisionMessagingIdentity,
+  pushSessionExpiresAt,
   requireMembership,
 } from "@cortexai-agent-hub/db";
 import type { Logger } from "@cortexai-agent-hub/logging";
@@ -94,6 +100,9 @@ import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { authCapabilities } from "./auth-capabilities.js";
+import { createBillingService } from "./billing.js";
+import { mountBillingRoutes } from "./billing-webhook.js";
 import type { AppEnv } from "./env.js";
 import { loadEnv } from "./env.js";
 import { healthRoutes, hubPolicyHealth } from "./health.js";
@@ -144,6 +153,8 @@ export interface AppHandles {
   email?: TransactionalEmailProvider;
   executor: ReturnType<typeof createRunExecutor>;
   runtime: AgentRuntime;
+  awaitIdle?: () => Promise<void>;
+  backgroundFailures?: () => Array<{ name: string; count: number }>;
   stop: () => Promise<void>;
 }
 
@@ -156,10 +167,13 @@ export async function createApp(
     pipedream?: ManagedConnectorProvider;
     messaging?: MessagingSurface;
     email?: TransactionalEmailProvider;
+    billing?: BillingProvider;
     remoteConnectors?: RemoteConnectorDependencies;
     logger?: Logger;
     /** Required in Hub mode: the started Hub policy (see startApiHubPolicy). */
     hubPolicy?: HubPolicy;
+    runtime?: AgentRuntime;
+    contextStrategy?: AgentContextStrategy;
   } = {},
 ): Promise<AppHandles> {
   const {
@@ -170,9 +184,12 @@ export async function createApp(
     pipedream: pipedreamOverride,
     messaging: messagingOverride,
     email: emailOverride,
+    billing: billingOverride,
     remoteConnectors,
     logger: loggerOverride,
     hubPolicy,
+    runtime: runtimeOverride,
+    contextStrategy,
     ...envOverrides
   } = overrides;
   const env = { ...loadEnv(process.env), ...envOverrides };
@@ -184,7 +201,7 @@ export async function createApp(
         poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 4),
         applicationName: "cortexai-agent-hub-api",
       });
-  const { prisma } = created;
+  let { prisma } = created;
   const realtime =
     realtimeOverride ??
     (created.pool
@@ -193,10 +210,16 @@ export async function createApp(
           publisher: created.pool,
         })
       : new InMemoryRealtimeFanout());
-  const secrets = new EncryptedSecretStore(env.encryptionKey);
+  const secrets = createSecretStore(env.encryptionKey, process.env, realtime);
+  await secrets.start();
+  if (secrets.describe().capabilities.degraded)
+    logger.warn("Secret storage degraded; encrypted credentials remain available");
+  prisma = withSecretPersistence(prisma, secrets);
   const events = createThreadEvents(prisma, realtime, {
     runSecretWriter: createRunSecretWriter(secrets),
   });
+  const ticketBoardEnabled = env.ticketBoardEnabled;
+  const boardEvents = createBoardEvents(realtime);
   const environmentSignupPolicy = signupPolicyFromEnv(env);
   const deploymentSettings = await prisma.deploymentSettings.upsert({
     where: { id: "default" },
@@ -257,6 +280,12 @@ export async function createApp(
             throw new Error("Graphile job publisher requires a PostgreSQL pool");
           })(),
       );
+  const ticketChanges = createTicketChangeNotifier({
+    boardEvents,
+    jobs,
+    prisma,
+    ticketBoardEnabled,
+  });
   const sandbox: SandboxProvider =
     sandboxOverride ??
     createRunSandbox(env.sandboxProvider, {
@@ -307,7 +336,7 @@ export async function createApp(
   const messaging =
     messagingOverride ??
     (isMessagingSurfaceEnabled(messagingPlatforms, {
-      deploymentModelKey: env.deploymentModelKey,
+      deploymentModelConfigured: env.deploymentModelConfigured,
       openSignup: env.messagingOpenSignup,
     })
       ? new ChatSdkMessagingSurface(messagingPlatforms)
@@ -328,6 +357,12 @@ export async function createApp(
     (env.smtpUrl
       ? new SmtpEmailProvider({ url: env.smtpUrl, from: env.emailFrom ?? "" })
       : localEmailEmulator);
+  const stripeBilling = stripeBillingConfigFromEnv(env);
+  const billingProvider: BillingProvider | undefined =
+    billingOverride ?? (stripeBilling ? new StripeBillingProvider(stripeBilling) : undefined);
+  const billing = billingProvider
+    ? createBillingService({ prisma, provider: billingProvider, webOrigin: env.webOrigin })
+    : undefined;
   const installed = new InstalledConnectorProvider(
     prisma,
     secrets,
@@ -351,16 +386,21 @@ export async function createApp(
   await connector.start();
   integrationSettings.warmDirectories();
   const runtime =
-    env.agentRuntime === "scripted"
+    runtimeOverride ??
+    (env.agentRuntime === "scripted"
       ? new ScriptedAgentRuntime()
       : new PiAgentRuntime({
           sessionRoot: env.piSessionRecording ? piSessionsRoot(env.dataDir) : undefined,
-        });
-  const notifications = new ExpoPushProvider(env.dataDir);
+        }));
+  const notifications = new ExpoPushProvider(env.dataDir, (sessionId) =>
+    pushSessionExpiresAt(prisma, sessionId),
+  );
   const auth = createAuth(prisma, {
     hub: env.hubAuth,
     hubPolicy,
     tokenEncryptionKey: env.encryptionKey,
+    passwordAuth: env.passwordAuth,
+    oidc: env.oidc,
     secret: env.authSecret,
     baseURL: env.authUrl,
     webOrigin: env.webOrigin,
@@ -371,6 +411,8 @@ export async function createApp(
     onHubSsoError: (reason) => getLogger().warn("hub.sso.failed", { "hub.sso.reason": reason }),
     extraOrigins: MOBILE_AUTH_ORIGINS,
     beforeDeleteUser: async (userId) => {
+      // First, so a provider failure aborts deletion before anything is destroyed.
+      await billing?.cancelForDeletedUser(userId);
       const bots = await prisma.bot.findMany({
         where: { userId },
         select: { id: true, userId: true, spaceId: true, name: true, archivedAt: true },
@@ -393,7 +435,20 @@ export async function createApp(
         ),
       );
       await removePiUserSessions(env.dataDir, userId);
-      await rm(pushTokenPath(env.dataDir, userId), { force: true }).catch(() => undefined);
+      await deletePushToken(env.dataDir, userId).catch((error) =>
+        getLogger().error("push token removal failed", error),
+      );
+    },
+    // The session change already happened, so a token file failure must not fail sign-out.
+    afterDeleteSession: async (session) => {
+      await endSessionPushToken(env.dataDir, session.userId, session.id).catch((error) =>
+        getLogger().error("push token removal failed", error),
+      );
+    },
+    afterReplaceSession: async (previous, session) => {
+      await endSessionPushToken(env.dataDir, session.userId, previous.id, session.id).catch(
+        (error) => getLogger().error("push token session update failed", error),
+      );
     },
   });
   // One provider instance so emulator launches and polls share the same Map.
@@ -419,6 +474,7 @@ export async function createApp(
           }
         : {},
     ),
+    contextStrategy,
     prisma,
     runtime,
     codexCatalog,
@@ -450,10 +506,13 @@ export async function createApp(
     secretHttp: remoteConnectors,
     mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
     deploymentModelKey: env.deploymentModelKey,
+    deploymentModelConfigured: env.deploymentModelConfigured,
     dataDir: env.dataDir,
     notifications,
     jobs,
     events,
+    onTicketChange: ticketChanges,
+    ticketBoardEnabled,
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
@@ -472,6 +531,7 @@ export async function createApp(
     secretStore: secrets,
     memoryProviders,
     deploymentModelKey: env.deploymentModelKey,
+    deploymentModelConfigured: env.deploymentModelConfigured,
     messaging,
     cloudAgent,
   });
@@ -495,6 +555,8 @@ export async function createApp(
     codexCatalog,
     prisma,
     events,
+    ticketChanges,
+    boardEvents,
     auth,
     jobs,
     sandbox,
@@ -510,18 +572,21 @@ export async function createApp(
     remoteConnectors,
     artifacts,
     dataDir: env.dataDir,
+    billing,
     messaging: {
       enabled: Boolean(messaging),
       providers: messaging?.platforms().map((platform) => platform.provider) ?? [],
       openSignup: env.messagingOpenSignup,
     },
     env: {
+      ticketBoardEnabled,
       agentRuntime: env.agentRuntime,
       defaultProvider: env.defaultProvider,
       defaultModel: env.defaultModel,
       teamChatJudgeProvider: env.teamChatJudgeProvider,
       teamChatJudgeModel: env.teamChatJudgeModel,
-      deploymentModelKey: env.deploymentModelKey,
+      deploymentModelConfigured: env.deploymentModelConfigured,
+      deploymentModelHostCredentials: env.deploymentModelHostCredentials,
       webOrigin: env.webOrigin,
       privacyPolicyUrl: env.privacyPolicyUrl,
       screenProxySecret: env.screenProxySecret,
@@ -550,13 +615,21 @@ export async function createApp(
       credentials: true,
     }),
   );
+  // Session and account replies must never be stored by a client or an HTTP cache.
+  for (const path of ["/api/auth/*", "/rpc/*"]) {
+    app.use(path, async (c, next) => {
+      await next();
+      c.header("cache-control", "no-store");
+    });
+  }
   app.get("/api/auth/capabilities", (c) =>
-    c.json({
-      mode: env.hubAuth ? "hub" : "local",
-      sso: Boolean(env.hubAuth?.sso),
-      passwordReset: !env.hubAuth && Boolean(email),
-      resetUrl: !env.hubAuth && email ? new URL("/reset-password", env.webOrigin).href : null,
-    }),
+    c.json(
+      authCapabilities(env, {
+        email: Boolean(email),
+        billing: Boolean(billing),
+        ssoAvailability: auth.ssoAvailability(),
+      }),
+    ),
   );
   if (localEmailEmulator && env.nodeEnv === "development") {
     app.get(
@@ -574,31 +647,28 @@ export async function createApp(
     if (isBlockedAuthPath(path)) {
       return c.json({ error: "Not available in version 1" }, 404);
     }
-    return auth.handler(c.req.raw);
+    return auth.handler(emptyAuthBodyAsJson(c.req.raw));
   });
   mountLocalSettings(app, { token: env.desktopStackToken, prisma, rpc });
-  const sessionActor = async (request: Request) => {
+  const requestSession = async (request: Request) => {
     const session = await auth.api.getSession({ headers: sessionHeaders(request) });
     if (!session?.user) return null;
-    return requireMembership(
-      prisma,
-      session.user.id,
-      request.headers.get("x-cortexai-agent-hub-space-id"),
-    ).catch(() => null);
+    const actor = await actorFromMembership(
+      requireMembership(prisma, session.user.id, request.headers.get("x-cortexai-agent-hub-space-id")),
+    );
+    return actor && { actor, sessionId: session.session.id };
   };
+  const sessionActor = async (request: Request) => (await requestSession(request))?.actor ?? null;
   app.use("/rpc/*", async (c, next) => {
-    const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
-    const requestedSpaceId = c.req.header("x-cortexai-agent-hub-space-id");
-    const actor = session?.user
-      ? await requireMembership(prisma, session.user.id, requestedSpaceId).catch(() => null)
-      : null;
+    const session = await requestSession(c.req.raw);
+    const actor = session?.actor ?? null;
     if (actor) {
       enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     }
     let requestSignal = c.req.raw.signal;
     if (env.hubAuth && session) {
       const grant = await prisma.hubSession.findUnique({
-        where: { sessionId: session.session.id },
+        where: { sessionId: session.sessionId },
       });
       requestSignal = AbortSignal.any([
         requestSignal,
@@ -609,8 +679,10 @@ export async function createApp(
       prefix: "/rpc",
       context: {
         actor,
+        sessionId: session?.sessionId,
         signal: requestSignal,
         // Ending a session or leaving its space also ends an active stream.
+        // A database failure rejects this check; only a missing membership is unauthorized.
         stillAuthorized: async () => {
           const current = await sessionActor(c.req.raw);
           return Boolean(
@@ -628,6 +700,14 @@ export async function createApp(
     return actor;
   });
   mountWebhookHttpRoutes(app, { prisma, secrets, events, jobs });
+  if (billing && billingProvider) {
+    mountBillingRoutes(app, {
+      billing,
+      provider: billingProvider,
+      webOrigin: env.webOrigin,
+      authenticate: sessionActor,
+    });
+  }
   // Shared with stop so a shutdown during retry delays does not restart polling.
   let messagingStopped = false;
   let clearMessagingRetryDelay: (() => void) | undefined;
@@ -905,8 +985,11 @@ export async function createApp(
       pipedream: Boolean(pipedream),
       messaging: Boolean(messaging),
       email: email?.describe().id ?? null,
+      billing: billingProvider?.describe().id ?? null,
       jobs: jobKind,
       realtime: realtime.describe().id,
+      secrets: secrets.describe(),
+      degraded: secrets.describe().capabilities.degraded ?? false,
       revision: env.gitSha ?? null,
       // Revision, freshness, source and state only; never a setting value.
       ...hubPolicyHealth(hubPolicy ? await hubPolicy.status() : null),
@@ -925,9 +1008,12 @@ export async function createApp(
     email,
     executor,
     runtime,
+    awaitIdle: inMemoryJobs ? () => inMemoryJobs.awaitIdle() : undefined,
+    backgroundFailures: inMemoryJobs ? () => inMemoryJobs.failureCounts() : undefined,
     stop: async () => {
       // Abort in-flight continueRun boot waits before draining jobs so stop() cannot sit
       // on waitForComputerReady for the full boot-wait window during shared Postgres journeys.
+      auth.disposeOidcDiscovery();
       shutdown.abort();
       oauthLogins.abortAll();
       messagingStopped = true;
@@ -947,6 +1033,7 @@ export async function createApp(
       await email?.drain?.();
       await reconciler?.stop();
       await jobs.close();
+      await secrets.close();
       await realtime.close();
       await connector.stop();
       await mcp.close();
@@ -991,6 +1078,38 @@ function originVariants(origin: string): string[] {
     return variants;
   }
   return variants;
+}
+
+/**
+ * No membership is no actor, which the RPC layer answers as 401. A database
+ * failure, including the deployment-settings lookup, must stay a server error
+ * so a blip does not look like a rejected session.
+ */
+export async function actorFromMembership(membership: Promise<Actor>): Promise<Actor | null> {
+  try {
+    return await membership;
+  } catch (error) {
+    if (error instanceof IsolationError) return null;
+    throw error;
+  }
+}
+
+/**
+ * Some clients POST auth actions with an empty body (older phone sign-out, the web deletion code);
+ * Better Auth rejects that before the endpoint runs.
+ */
+function emptyAuthBodyAsJson(request: Request) {
+  if (
+    request.method !== "POST" ||
+    request.headers.get("content-length") !== "0" ||
+    request.headers.has("transfer-encoding")
+  ) {
+    return request;
+  }
+  const headers = new Headers(request.headers);
+  headers.set("content-type", "application/json");
+  headers.delete("content-length");
+  return new Request(request, { headers, body: "{}" });
 }
 
 function sessionHeaders(request: Request) {

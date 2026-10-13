@@ -12,9 +12,9 @@ const RULES = [
   [new RegExp(`\\b${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
   [new RegExp(`\\b${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
-  [new RegExp(`${old}(?!\\.com)`, "g"), "cortexai-agent-hub"],
+  [new RegExp(`${old}(?!\\.com\\b)`, "g"), "cortexai-agent-hub"],
 ];
-const UNRESOLVED = new RegExp(`[\\w.+-]*@?${old}\\.com[\\w./-]*`, "g");
+const UNRESOLVED = new RegExp(`[\\w.+-]*@?${old}\\.com\\b[\\w./-]*`, "g");
 const KEEP = new Set(["LICENSE", "NOTICE"]);
 
 export function rebrand(input) {
