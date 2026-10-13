@@ -130,7 +130,8 @@ test("capability network failure blocks authentication", async ({ page }) => {
   await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
   await page.route("**/api/auth/capabilities", (route) => route.abort("failed"));
   await page.goto("/sign-in");
-  await expect(page.getByRole("alert")).toHaveText("Could not reach the server");
+  await expect(page.getByRole("alert")).toContainText("Could not load sign-in options");
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
 });
 
@@ -149,7 +150,8 @@ test("tenant entry does not offer signup when capabilities are unavailable", asy
   await page.route("**/api/auth/get-session*", (route) => route.fulfill({ json: null }));
   await page.route("**/api/auth/capabilities", (route) => route.abort("failed"));
   await page.goto("/");
-  await expect(page.getByRole("alert")).toHaveText("Could not reach the server");
+  await expect(page.getByRole("alert")).toContainText("Could not load sign-in options");
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Sign up/ })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Sign up", exact: true })).toHaveCount(0);
 });
