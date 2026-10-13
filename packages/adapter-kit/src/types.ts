@@ -233,7 +233,7 @@ export interface ConnectorTool {
   readOnly?: boolean;
   /** Optional bounded model-delivery budget; runtime enforces its own ceiling. */
   maxResultChars?: number;
-  /** Catalog wrapper budgets keyed by discovered tool ID, never model-supplied limits. */
+  /** Catalog wrapper budgets keyed by each ID or name execution resolves, never model-supplied limits. */
   resultCharsByToolId?: Record<string, number>;
   /** In-process routing metadata. It is never exposed to the model. */
   route?: ConnectorRoute;

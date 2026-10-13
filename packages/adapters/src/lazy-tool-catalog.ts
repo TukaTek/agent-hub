@@ -96,12 +96,7 @@ export function lazyCatalogTools(
     },
     {
       name: `${prefix}_execute_tool`,
-      resultCharsByToolId: Object.fromEntries(
-        entries.flatMap(({ id, tool }) => {
-          const budget = boundedResultChars(tool.maxResultChars);
-          return budget === undefined ? [] : [[id, budget]];
-        }),
-      ),
+      resultCharsByToolId: catalogResultBudgets(entries),
       description: `Run an ${label} tool by id.`,
       inputSchema: {
         type: "object",
@@ -223,23 +218,34 @@ export function loadCatalogEntry(
   entries: CatalogEntry[],
   args: Record<string, unknown>,
 ): CatalogEntry {
-  const id = String(args.id ?? "");
+  const entry = findCatalogEntry(entries, String(args.id ?? ""));
+  if (!entry) throw new Error("Tool is unknown or not authorized for this bot");
+  assertSchemaSize(entry);
+  return entry;
+}
+
+/** Exact ID first, then a unique full name, then a unique short name. */
+function findCatalogEntry(entries: CatalogEntry[], id: string): CatalogEntry | undefined {
   const byId = entries.find((candidate) => candidate.id === id);
-  if (byId) {
-    assertSchemaSize(byId);
-    return byId;
-  }
+  if (byId) return byId;
   const byName = entries.filter((candidate) => candidate.tool.name === id);
-  if (byName.length === 1) {
-    assertSchemaSize(byName[0]!);
-    return byName[0]!;
-  }
+  if (byName.length === 1) return byName[0];
   const byShort = entries.filter((candidate) => catalogShortName(candidate) === id);
-  if (byShort.length === 1) {
-    assertSchemaSize(byShort[0]!);
-    return byShort[0]!;
+  return byShort.length === 1 ? byShort[0] : undefined;
+}
+
+/** Budgets for every key execution accepts, bound to the entry that key executes. */
+function catalogResultBudgets(entries: CatalogEntry[]): Record<string, number> {
+  const budgets: Record<string, number> = Object.create(null);
+  for (const entry of entries) {
+    if (boundedResultChars(entry.tool.maxResultChars) === undefined) continue;
+    for (const key of [entry.id, entry.tool.name, catalogShortName(entry)]) {
+      if (Object.hasOwn(budgets, key)) continue;
+      const budget = boundedResultChars(findCatalogEntry(entries, key)?.tool.maxResultChars);
+      if (budget !== undefined) budgets[key] = budget;
+    }
   }
-  throw new Error("Tool is unknown or not authorized for this bot");
+  return budgets;
 }
 
 function assertSchemaSize(entry: CatalogEntry): void {
