@@ -50,8 +50,8 @@ describe("ChatMarkdown", () => {
       </ChatMarkdown>,
     );
 
-    expect(html).toContain(
-      '<a href="https://example.com/docs" target="_blank" rel="noreferrer noopener">docs</a>',
+    expect(html).toMatch(
+      /<a class="[^"]*" href="https:\/\/example\.com\/docs" target="_blank" rel="noreferrer noopener">.*docs<\/bdi><\/a>/,
     );
     expect(html).toContain('<a href="#usage">jump</a>');
     expect(html).toMatch(/<a href="#user-content-fn-1"[^>]*>1<\/a>/);

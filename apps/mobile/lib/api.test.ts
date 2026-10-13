@@ -187,6 +187,8 @@ describe("mobile API authentication", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(passwordResetCapabilities()).resolves.toEqual({
+      mode: "local",
+      hubSso: false,
       passwordAuth: true,
       sso: null,
       passwordReset: true,
@@ -222,6 +224,8 @@ describe("mobile API authentication", () => {
       ),
     );
     await expect(passwordResetCapabilities()).resolves.toEqual({
+      mode: "local",
+      hubSso: false,
       passwordAuth: true,
       sso: null,
       passwordReset: true,

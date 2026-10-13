@@ -63,9 +63,10 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [error, setError] = useState<string | null>(() => {
     const code = searchParams.get("error");
     if (!code) return null;
+    // Unknown codes stay silent: the query string is attacker-controlled.
     return Object.hasOwn(ssoErrors, code)
       ? ssoErrors[code as SsoCallbackError]
-      : authErrorText({ code }, t`Could not continue`);
+      : authErrorText({ code }, "") || null;
   });
   const [pending, setPending] = useState(false);
   const [resetSent, setResetSent] = useState(false);

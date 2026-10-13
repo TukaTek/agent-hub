@@ -426,8 +426,9 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       hub ? hub.plugin : localSignInPlugin,
       bearer(),
       expo(),
+      // Hub owns the account in Hub mode, so no local deletion or password method is offered.
       accountSecurity(
-        env.email,
+        hub ? undefined : env.email,
         env.oidc?.name,
         env.oidc?.issuer,
         !hub && env.passwordAuth !== false,

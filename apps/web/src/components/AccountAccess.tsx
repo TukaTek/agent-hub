@@ -40,6 +40,9 @@ export function AccountAccess({
       active = false;
     };
   }, [attempt, onSecurity]);
+  // Until security loads, the panel offers a retry; after that it needs a way to confirm.
+  const canDelete =
+    !security || security.hasPassword || security.emailDeletion || Boolean(security.sso);
   async function action(run: () => Promise<unknown>, sso = false) {
     if (!sso) setPending(true);
     setError(null);
@@ -76,10 +79,12 @@ export function AccountAccess({
           <Trans>Link SSO</Trans>
         </Button>
       ) : null}
-      <Button variant="ghost" onClick={() => setOpen((value) => !value)}>
-        <Trans>Delete account</Trans>
-      </Button>
-      {open ? (
+      {canDelete ? (
+        <Button variant="ghost" onClick={() => setOpen((value) => !value)}>
+          <Trans>Delete account</Trans>
+        </Button>
+      ) : null}
+      {open && canDelete ? (
         <div className="space-y-3">
           <p className="text-sm">
             <Trans>This permanently deletes your account and data.</Trans>

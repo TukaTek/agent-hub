@@ -539,7 +539,7 @@ describe("web external link confirmation", () => {
     await view.cleanup();
   });
 
-  it("opens in-app routes, mailto, and tel without asking", async () => {
+  it("opens mailto and tel without asking and keeps in-app routes as text", async () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     const view = await render(
       <ChatMarkdown>
@@ -548,10 +548,10 @@ describe("web external link confirmation", () => {
     );
     const links = [...view.container.querySelectorAll("a")];
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/threads/1",
       "mailto:user@example.test",
       "tel:+15551212",
     ]);
+    expect(view.container.textContent).toContain("home");
     for (const link of links) {
       link.addEventListener("click", (event) => event.preventDefault());
       await act(async () => {

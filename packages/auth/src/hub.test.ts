@@ -901,6 +901,36 @@ describe("Hub tenant Entra SSO", () => {
     expect(f.data.session).toHaveLength(1);
   });
 
+  it("reports no local account methods and refuses local deletion", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { headers } = await f.login();
+    const security = await f.auth.handler(
+      new Request("https://web.example.test/api/auth/account-security", { headers }),
+    );
+    expect(security.status).toBe(200);
+    expect(await security.json()).toMatchObject({
+      hasPassword: false,
+      passwordChangeEnabled: false,
+      emailDeletion: false,
+      sso: null,
+    });
+    for (const path of ["/request-account-deletion", "/delete-user", "/change-password"]) {
+      const response = await f.auth.handler(
+        new Request(`https://web.example.test/api/auth${path}`, {
+          method: "POST",
+          headers: {
+            authorization: headers.get("authorization")!,
+            origin: "https://web.example.test",
+            "content-type": "application/json",
+          },
+          body: "{}",
+        }),
+      );
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain("Sign in through CortexAI Hub");
+    }
+  });
+
   it("never logs the code, state, verifier, tokens, email or service secret", async () => {
     const reasons: string[] = [];
     const logged: unknown[] = [];

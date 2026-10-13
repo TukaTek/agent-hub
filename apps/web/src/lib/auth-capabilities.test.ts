@@ -12,6 +12,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 const capability = {
+  mode: "local",
+  hubSso: false,
   passwordAuth: false,
   sso: { name: "Example", availability: "unavailable" },
   passwordReset: false,
@@ -55,6 +57,8 @@ it("accepts old capabilities for the bundled desktop client", async () => {
     vi.fn(async () => Response.json({ passwordReset: false, resetUrl: null, billing: false })),
   );
   await expect(fetchAuthCapabilities()).resolves.toEqual({
+    mode: "local",
+    hubSso: false,
     passwordAuth: true,
     sso: null,
     passwordReset: false,

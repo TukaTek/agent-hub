@@ -70,7 +70,7 @@ describe("authenticated secret requests", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     let credentialSignal: AbortSignal | undefined;
     const load = vi.spyOn(secretStore, "load").mockImplementationOnce(async (_ref, context) => {
-      expect(timeout).toHaveBeenCalledWith(30_000);
+      expect(timeout).toHaveBeenCalledWith(120_000);
       expect(typeof context).toBe("object");
       if (typeof context === "string") throw new Error("Missing signal");
       expect(context.signal).not.toBe(input.signal);

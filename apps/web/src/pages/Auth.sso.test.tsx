@@ -101,16 +101,16 @@ it.each(["in", "up"] as const)("puts quiet SSO below the primary action on %s", 
   vi.mocked(fetchAuthCapabilities).mockResolvedValue({ ...capabilities, passwordAuth: true });
   await render(mode);
   const email = host.querySelector('input[name="email"]')!;
-  const password = host.querySelector('input[type="password"]')!;
+  // Sign-in asks for the email first; the password field follows on the next step.
+  const password = host.querySelector('input[type="password"]');
   const submit = host.querySelector('button[type="submit"]')!;
   const sso = [...host.querySelectorAll("button")].find(
     (button) => button.textContent === "Continue with Example",
   )!;
-  for (const [first, second] of [
-    [email, password],
-    [password, submit],
-    [submit, sso],
-  ] as const) {
+  expect(Boolean(password)).toBe(mode === "up");
+  const order = [email, password, submit, sso].filter((node): node is Element => Boolean(node));
+  for (const [index, first] of order.slice(0, -1).entries()) {
+    const second = order[index + 1]!;
     expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }
   expect(submit.getAttribute("data-variant")).toBe("default");

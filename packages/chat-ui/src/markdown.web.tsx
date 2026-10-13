@@ -391,6 +391,8 @@ function MarkdownAnchor({
       <WebsiteLink {...props} href={href}>
         {text === undefined ? props.children : linkLabel(text, href)}
       </WebsiteLink>
+    ) : href.startsWith("#") ? (
+      <a {...props} />
     ) : opens ? (
       <ConfirmableAnchor {...props} />
     ) : (
