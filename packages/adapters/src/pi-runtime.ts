@@ -62,6 +62,7 @@ import {
   modelStreamMaxRetries,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
+  TOOL_RESULT_TEXT_LIMIT,
 } from "./pi-runtime-limits.js";
 import type { PiSessionHandle, PiSessionRecorder } from "./pi-session.js";
 import { PiJsonlSessionRecorder } from "./pi-session.js";
@@ -846,7 +847,11 @@ function toAgentTools(toolDefs: readonly ConnectorTool[], host: ToolHost): Agent
     )
     .map(({ tool }) => tool);
   const names = normalizeAgentToolNames(ordered);
-  return ordered.map((tool, index) => toAgentTool(tool, host, names[index]!));
+  const nameCounts = new Map<string, number>();
+  for (const tool of ordered) nameCounts.set(tool.name, (nameCounts.get(tool.name) ?? 0) + 1);
+  return ordered.map((tool, index) =>
+    toAgentTool(tool, host, names[index]!, nameCounts.get(tool.name)! > 1),
+  );
 }
 
 /**
@@ -1051,7 +1056,16 @@ export function prepareRequestSecretArguments(raw: Record<string, unknown>) {
   };
 }
 
-function toAgentTool(tool: ConnectorTool, host: ToolHost, exposedName: string): AgentTool {
+/**
+ * The executor dispatches by original name, so a colliding name may execute a different
+ * route than this definition; such calls keep the default result limit.
+ */
+function toAgentTool(
+  tool: ConnectorTool,
+  host: ToolHost,
+  exposedName: string,
+  nameCollides: boolean,
+): AgentTool {
   return {
     name: exposedName,
     label: tool.name,
@@ -1163,7 +1177,7 @@ function toAgentTool(tool: ConnectorTool, host: ToolHost, exposedName: string): 
     execute: async (toolCallId, params): Promise<AgentToolResult<unknown>> => {
       host.signal.throwIfAborted();
       const args = (params ?? {}) as Record<string, unknown>;
-      const resultLimit = toolResultChars(tool, args);
+      const resultLimit = nameCollides ? undefined : toolResultChars(tool, args);
       const rawCallId =
         toolCallId || `${host.request.runId}:${tool.name}:${host.toolCallSeq.value++}`;
       // Backend idempotency includes the agent namespace; Pi wire IDs remain untouched.
@@ -1589,7 +1603,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       budgetMessage && streamed.trim()
         ? `${streamed.trim()}\n\n${budgetMessage}`
         : budgetMessage || streamed || assistantText(nested.state.messages.at(-1)) || "done.";
-    const clipped = clipToolResultText(result, 12_000);
+    const clipped = clipToolResultText(result, TOOL_RESULT_TEXT_LIMIT);
     host.queue.push({
       type: "subagent",
       agentId,
@@ -2029,7 +2043,7 @@ export function serializeToolResult(
   strategy: AgentRunRequest["contextStrategy"],
   name: string,
   args: Record<string, unknown>,
-  limit = 12_000,
+  limit = TOOL_RESULT_TEXT_LIMIT,
 ) {
   try {
     const text = JSON.stringify(result);
