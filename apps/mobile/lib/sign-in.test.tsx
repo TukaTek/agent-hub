@@ -74,6 +74,8 @@ vi.mock("./sso", () => ({ continueWithSso: vi.fn() }));
 vi.mock("./user-error", () => ({ credentialIssueText: vi.fn(), errorText: vi.fn() }));
 
 const capabilities = {
+  mode: "local" as const,
+  hubSso: false,
   passwordAuth: true,
   passwordReset: true,
   resetUrl: "https://example.invalid/reset-password",

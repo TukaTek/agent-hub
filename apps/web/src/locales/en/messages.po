@@ -495,106 +495,6 @@ msgstr "Answer"
 msgid "Answered"
 msgstr "Answered"
 
-#: src/pages/shell/bot-credentials.tsx
-msgid "Add credential"
-msgstr "Add credential"
-
-#: src/pages/Auth.tsx
-msgid "Ask your admin for access"
-msgstr "Ask your admin for access"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Basic auth"
-msgstr "Basic auth"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Basic auth ({username})"
-msgstr "Basic auth ({username})"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not load credentials."
-msgstr "Could not load credentials."
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not remove the credential"
-msgstr "Could not remove the credential"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Could not save the credential"
-msgstr "Could not save the credential"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Credentials"
-msgstr "Credentials"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Custom header"
-msgstr "Custom header"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Enter a username and password"
-msgstr "Enter a username and password"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Header \"{header}\""
-msgstr "Header \"{header}\""
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Keys and passwords this bot can use, each for one site only. Values are encrypted and never shown again."
-msgstr "Keys and passwords this bot can use, each for one site only. Values are encrypted and never shown again."
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Lowercase letters, numbers, hyphens and underscores, starting with a letter."
-msgstr "Lowercase letters, numbers, hyphens and underscores, starting with a letter."
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "No credentials saved for this bot."
-msgstr "No credentials saved for this bot."
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Remove {secretName}? This bot will no longer be able to use it."
-msgstr "Remove {secretName}? This bot will no longer be able to use it."
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Replace value"
-msgstr "Replace value"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Save credential"
-msgstr "Save credential"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Save new value"
-msgstr "Save new value"
-
-#: src/pages/Auth.tsx
-msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
-msgstr "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Site"
-msgstr "Site"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "These saved settings can't be read. Remove it and add it again."
-msgstr "These saved settings can't be read. Remove it and add it again."
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Type"
-msgstr "Type"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Updated {updated}"
-msgstr "Updated {updated}"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Value"
-msgstr "Value"
-
-#: src/pages/shell/bot-credentials.tsx
-msgid "Website login"
-msgstr "Website login"
-
 #. placeholder {0}: selectedAskActionLabel(answer, actions)
 #: src/components/AskCard.tsx
 msgid "Answered: {0}"
@@ -701,6 +601,10 @@ msgstr "Ask before sending external email"
 #: src/components/integrations/IntegrationSetup.tsx
 msgid "Ask the server owner to configure this provider."
 msgstr "Ask the server owner to configure this provider."
+
+#: src/pages/Auth.tsx
+msgid "Ask your admin for access"
+msgstr "Ask your admin for access"
 
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
@@ -858,23 +762,6 @@ msgstr "bot"
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Bot"
 msgstr "Bot"
-
-#. js-lingui-explicit-id
-#: src/lib/browser-notifications.ts
-msgid "Bot"
-msgstr "Bot"
-
-#: src/pages/Shell.tsx
-msgid "Bot screen"
-msgstr "Bot screen"
-
-#: src/pages/Shell.tsx
-msgid "Bot screen preview"
-msgstr "Bot screen preview"
-
-#: src/pages/MessagingSettingsOverlay.tsx
-msgid "Bot to link"
-msgstr "Bot to link"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Bot's model"
@@ -1366,12 +1253,7 @@ msgstr "Continue in Background"
 msgid "Continue with {0}"
 msgstr "Continue with {0}"
 
-#: src/pages/Auth.tsx
-msgid "Continue with email"
-msgstr "Continue with email"
-
 #: src/components/ComputersUnavailableHint.tsx
-
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 msgid "Copied"
@@ -2513,13 +2395,9 @@ msgstr "Hide password"
 msgid "Hide transcript"
 msgstr "Hide transcript"
 
-#: src/pages/ModelSettingsOverlay.tsx
-#: src/pages/Onboarding.tsx
-
 #: src/lib/ticket-priority.ts
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
-
 msgid "High"
 msgstr "High"
 
@@ -2782,13 +2660,9 @@ msgstr "Local Server Settings"
 msgid "Log out"
 msgstr "Log out"
 
-#: src/pages/ModelSettingsOverlay.tsx
-#: src/pages/Onboarding.tsx
-
 #: src/lib/ticket-priority.ts
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
-
 msgid "Low"
 msgstr "Low"
 
@@ -2969,11 +2843,6 @@ msgstr "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub
 
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
-msgid "Minimal"
-msgstr "Minimal"
-
-#. js-lingui-explicit-id
-#: src/lib/model-catalog.ts
 msgid "Minimal"
 msgstr "Minimal"
 
@@ -4265,6 +4134,10 @@ msgstr "Sign in with the subscription, or test the API key instead."
 #: src/pages/Welcome.tsx
 msgid "Sign up"
 msgstr "Sign up"
+
+#: src/pages/Auth.tsx
+msgid "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
+msgstr "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"
 
 #: src/pages/Auth.tsx
 msgid "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account."
