@@ -4,13 +4,15 @@
 
 **Status:** Plan only. No conflicts are resolved until the PM approves this plan and the decisions in "Decisions for the PM".
 
-**Goal:** Bring 166 upstream commits (`elie222/rakazo` `main` at `afa31774`) into `TukaTek/agent-hub` `main` in one real merge commit. Our CortexAI Agent Hub branding, Hub auth and policy, Microsoft SSO through Hub, Office attachments, modern computer desktop, Composio fix and bot-file download fix must all survive.
+**Goal:** Bring 166 upstream commits (`elie222/<old>` `main` at `afa31774`) into `TukaTek/agent-hub` `main` in one real merge commit. Our CortexAI Agent Hub branding, Hub auth and policy, Microsoft SSO through Hub, Office attachments, modern computer desktop, Composio fix and bot-file download fix must all survive.
 
 **Architecture:** Run `git merge --no-ff upstream/main` on this branch. Then resolve conflicts one area at a time, and apply a scripted rebrand to upstream code that merged without conflicts but still carries upstream names. Make the deliberate behavior reconciliations (auth capabilities, secret store, attachment links) as separate follow-up commits on top of the merge commit, each with its own tests, so a reviewer can approve them one at a time. The merge commit keeps both parents, so the next sync starts from this one.
 
 **Tech Stack:** git (`merge-tree`, `merge --no-ff`), pnpm workspaces, Turbo, Biome, TypeScript, Vitest, Prisma migrations on Postgres, Playwright (web), Lingui, Expo, Docker images (computer, supervisor, app, updater).
 
 ## Global Constraints
+
+- Notation: `<old>`, `<Old>` and `<OLD>` stand for upstream's retired product name in lower, title and upper case. `packages/testkit/src/product-identity.test.ts` fails on any tracked file that spells it out (except `LICENSE` and `NOTICE`), so this plan, the rebrand script and its test never do.
 
 - Ours wins on branding: `@cortexai-agent-hub/*` package names, `CortexAI Agent Hub` product name, `cortexai-agent-hub` user, paths, headers, labels, scheme and image names (`ghcr.io/tukatek/agent-hub/{app,computer,updater}`), mobile id `com.tukatek.cortexai.agenthub`. `LICENSE` and `NOTICE` keep their upstream attribution unchanged.
 - Hub mode stays fail closed (CAAH-36). `HUB_POLICY_ENFORCEMENT=on|off` (CAAH-83) and its health output keep working exactly as today.
@@ -30,13 +32,13 @@
 - `origin/main` = `c67a7e37` (CAAH-87). `upstream/main` = `afa31774` (#1355). Merge base = `c7736142`.
 - `main` is **166 commits behind** upstream and **61 ahead** (162 non-merge upstream commits; 955 files changed upstream).
 - Trial merge: `git merge-tree --write-tree --name-only origin/main upstream/main` reports **193 conflicting files**: 186 content, 6 modify/delete, 1 add/add. These contain **362 conflict hunks**, and **228** of those hunks involve branding on at least one side.
-- **A further 269 files merge cleanly but still contain upstream names**, mostly `@rakazo/*` imports in new upstream code, plus `Rakazo` copy, `RAKAZO_*` env names, `x-rakazo-*` headers, `rakazo.*` Docker labels and `com.rakazo.app`. Without a rebrand sweep they would break the build (the `@rakazo/*` packages don't exist in our workspace) and leak upstream branding.
+- **A further 269 files merge cleanly but still contain upstream names**, mostly `@<old>/*` imports in new upstream code, plus `<Old>` copy, `<OLD>_*` env names, `x-<old>-*` headers, `<old>.*` Docker labels and `com.<old>.app`. Without a rebrand sweep they would break the build (the `@<old>/*` packages don't exist in our workspace) and leak upstream branding.
 - Upstream also has two large features the ticket didn't list: **Stripe seat billing with a web paywall (#1227)** and an **optional Infisical secret store behind an async `SecretStore` contract (#1259)**. The second one rewrites code under PR #27 and PR #28.
 
 Reproduce the inventory:
 
 ```bash
-git remote add upstream https://github.com/elie222/rakazo.git
+git remote add upstream "$(grep -oE 'https://github.com/[^)]+' NOTICE).git"
 git fetch upstream main
 git rev-list --count origin/main..upstream/main   # 166
 git rev-list --count upstream/main..origin/main   # 61
@@ -119,7 +121,7 @@ Every new flag defaults to "off" or to today's behavior. A deployment that chang
 | `SECRET_STORE` | `encrypted` | `infisical` switches to Infisical. Switching back needs upstream's reverse migration. |
 | `INFISICAL_URL`, `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT`, `INFISICAL_FOLDER`, `INFISICAL_ALLOW_INSECURE_HTTP` | unset / `false` | Used only with `SECRET_STORE=infisical`. |
 | `SANDBOX_IDLE_MS` | `600000` | Existing flag. `0` now means "never put the computer to sleep" (#1115). |
-| `CORTEXAI_AGENT_HUB_ALLOWED_HOSTS` | unset | Web dev server only (upstream `RAKAZO_ALLOWED_HOSTS`, #1365). Not used in production. |
+| `CORTEXAI_AGENT_HUB_ALLOWED_HOSTS` | unset | Web dev server only (upstream `<OLD>_ALLOWED_HOSTS`, #1365). Not used in production. |
 
 Existing flags that must not change: `HUB_*` (including `HUB_POLICY_ENFORCEMENT` and `HUB_SSO_ENABLED`), `ENCRYPTION_KEY`, and the PR #27 file-download limit and timeout variables in `packages/adapters/src/bot-secrets.ts`.
 
@@ -149,7 +151,7 @@ These are the defaults this plan uses. Approving the plan approves them, unless 
 - **D1. OIDC in Hub mode is a startup error**, not silently ignored. This fails closed and is consistent with CAAH-36.
 - **D2. Auth capabilities contract.** Upstream's `AuthCapabilities.sso` is an object (`{ name, availability } | null`) for OIDC, while ours is a boolean meaning Hub Microsoft SSO. Keep upstream's `sso` meaning (fewer conflicts on every future sync), and add `mode: "hub" | "local"` and `hubSso: boolean` to the shared `AuthCapabilities` contract. Web and mobile read `hubSso`. Risk: a mobile build released before this merge reads `sso` as a boolean and would hide the Microsoft button in Hub mode. Email-first Hub sign-in still works on those builds. If that's not acceptable, the alternative is to keep `sso: boolean` and move OIDC to `oidc`, at the cost of editing upstream code on every sync.
 - **D3. Billing stays off.** Hub owns tenant licensing, so setting `STRIPE_SECRET_KEY` in Hub mode is a startup error, and the paywall can never block a Hub user.
-- **D4. Upstream marketing content is not carried over.** Upstream added a blog, competitor comparison and "alternatives" pages, Discord testimonials, App Store and APK links, and a Terms of Service with upstream's billing and refund terms (#1221, #1224–#1252, #1305, #1308, #1310). These describe upstream's product and company, and a mechanical rebrand would misrepresent us. The merge removes those added pages and assets from `apps/www`, while keeping upstream's site fixes (404 indexing, hreflang, legal page styles). Reviving any of it is a separate ticket.
+- **D4. Upstream marketing content is not carried over.** Upstream added a blog, competitor comparison and "alternatives" pages, Discord testimonials, App Store and APK links, and a Terms of Service with upstream's billing and refund terms (#1221, #1224–#1252, #1305, #1308, #1310). These describe upstream's product and company, and a mechanical rebrand would misrepresent us. The merge removes those added pages and assets from `apps/www`, while keeping upstream's site fixes (404 indexing, hreflang, legal page styles). Reviving any of it is a separate ticket. Keeping the comparison pages would also fail `product-identity.test.ts`, whose second case bans the old competitor positioning phrase they use.
 - **D5. Android APK workflow.** Keep `.github/workflows/release-android-apk.yml`, rebranded to our package id and APK name. It only runs on manual dispatch, so it stays inert until the signing secrets it reads are added.
 - **D6. Mobile version.** Keep our `apps/mobile/app.json` `version: 1.0.4` release line, our name, slug and scheme, and our notification color. Upstream's Expo `owner` is dropped.
 - **D7. Product copy.** Our rebrand renamed some user-facing "bot" text to "Assistant". Where upstream changed a string we had already renamed, use our wording. New upstream strings keep upstream wording. A separate copy ticket can decide on a global rename.
@@ -178,21 +180,22 @@ These are the defaults this plan uses. Approving the plan approves them, unless 
 - Modify: `vitest.config.ts` (add `"scripts/**/*.test.mjs"` to `test.include`, so `pnpm test` runs it in CI)
 
 **Interfaces:**
-- Produces: `rebrand(text: string): { text: string; unresolved: string[] }` and a CLI `node scripts/upstream-rebrand.mjs [--check] <files…>`. `--check` exits 1 and lists files that still contain `rakazo` (any case) outside `LICENSE` and `NOTICE`.
+- Produces: `rebrand(text: string): { text: string; unresolved: string[] }` and a CLI, `node scripts/upstream-rebrand.mjs <files…>`, that rewrites files in place and exits 1 when something needs a manual fix.
+- Gate: the existing `packages/testkit/src/product-identity.test.ts` (part of `pnpm test`). It already fails when any tracked path or file other than `LICENSE` and `NOTICE` contains the retired name, and its second case bans the old competitor positioning phrase. The script doesn't duplicate that check. Like the test, the script and its test assemble the name at runtime (`["ra", "kazo"].join("")`), so they pass the gate themselves.
 
 The mapping is ordered, so the longer forms win. Every rule comes from what our tree already uses:
 
 | Upstream | Ours |
 |---|---|
-| `com.rakazo.app` | `com.tukatek.cortexai.agenthub` |
-| `github.com/elie222/rakazo` | `github.com/TukaTek/agent-hub` |
-| `RAKAZO_` / `RAKAZO` | `CORTEXAI_AGENT_HUB_` / `CORTEXAI_AGENT_HUB` |
-| `rakazo` + capital letter (`rakazoBotId`) | `cortexAiAgentHub` + the same letter |
-| `Rakazo` + capital letter (`RakazoNetworkCache`) | `CortexAiAgentHub` + the same letter |
-| `Rakazo` (prose) | `CortexAI Agent Hub` |
-| `rakazo` (`@rakazo/core`, `x-rakazo-space-id`, `rakazo.botId`, `rakazo://`, `@rakazo.test`) | `cortexai-agent-hub` |
+| `com.<old>.app` | `com.tukatek.cortexai.agenthub` |
+| `github.com/elie222/<old>` | `github.com/TukaTek/agent-hub` |
+| `<OLD>_` / `<OLD>` | `CORTEXAI_AGENT_HUB_` / `CORTEXAI_AGENT_HUB` |
+| `<old>` + capital letter (`<old>BotId`) | `cortexAiAgentHub` + the same letter |
+| `<Old>` + capital letter (`<Old>NetworkCache`) | `CortexAiAgentHub` + the same letter |
+| `<Old>` (prose) | `CortexAI Agent Hub` |
+| `<old>` (`@<old>/core`, `x-<old>-space-id`, `<old>.botId`, `<old>://`, `@<old>.test`) | `cortexai-agent-hub` |
 
-`rakazo.com` addresses and URLs (`hello@`, `security@`, `support@`, a personal address, sitemap and privacy URLs) are **not** rewritten mechanically. Our tree replaced them with the CortexAI contact URL or `example.com`. The script reports them as `unresolved` so each one is fixed by hand.
+`<old>.com` addresses and URLs (`hello@`, `security@`, `support@`, a personal address, sitemap and privacy URLs) are **not** rewritten mechanically. Our tree replaced them with the CortexAI contact URL or `example.com`. The script reports them as `unresolved` so each one is fixed by hand.
 
 - [ ] **Step 1: Write the failing test** (add `"scripts/**/*.test.mjs"` to `test.include` in `vitest.config.ts` first, or Vitest won't find the file)
 
@@ -200,25 +203,29 @@ The mapping is ordered, so the longer forms win. Every rule comes from what our 
 import { describe, expect, it } from "vitest";
 import { rebrand } from "./upstream-rebrand.mjs";
 
+const old = ["ra", "kazo"].join("");
+const Old = old[0].toUpperCase() + old.slice(1);
+const OLD = old.toUpperCase();
+
 describe("rebrand", () => {
   it.each([
-    ['import { a } from "@rakazo/core";', 'import { a } from "@cortexai-agent-hub/core";'],
-    ['headers["x-rakazo-space-id"]', 'headers["x-cortexai-agent-hub-space-id"]'],
-    ['labels["rakazo.botId"]', 'labels["cortexai-agent-hub.botId"]'],
-    ["process.env.RAKAZO_ALLOWED_HOSTS", "process.env.CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"],
-    ["window.rakazoComputerKeyboard", "window.cortexAiAgentHubComputerKeyboard"],
-    ["class RakazoNetworkCache {}", "class CortexAiAgentHubNetworkCache {}"],
-    ['appName: "Rakazo"', 'appName: "CortexAI Agent Hub"'],
-    ['"rakazo://"', '"cortexai-agent-hub://"'],
-    ["com.rakazo.app", "com.tukatek.cortexai.agenthub"],
-    ["user@rakazo.test", "user@cortexai-agent-hub.test"],
-    ["https://github.com/elie222/rakazo/releases", "https://github.com/TukaTek/agent-hub/releases"],
+    [`import { a } from "@${old}/core";`, 'import { a } from "@cortexai-agent-hub/core";'],
+    [`headers["x-${old}-space-id"]`, 'headers["x-cortexai-agent-hub-space-id"]'],
+    [`labels["${old}.botId"]`, 'labels["cortexai-agent-hub.botId"]'],
+    [`process.env.${OLD}_ALLOWED_HOSTS`, "process.env.CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"],
+    [`window.${old}ComputerKeyboard`, "window.cortexAiAgentHubComputerKeyboard"],
+    [`class ${Old}NetworkCache {}`, "class CortexAiAgentHubNetworkCache {}"],
+    [`appName: "${Old}"`, 'appName: "CortexAI Agent Hub"'],
+    [`"${old}://"`, '"cortexai-agent-hub://"'],
+    [`com.${old}.app`, "com.tukatek.cortexai.agenthub"],
+    [`user@${old}.test`, "user@cortexai-agent-hub.test"],
+    [`https://github.com/elie222/${old}/releases`, "https://github.com/TukaTek/agent-hub/releases"],
   ])("maps %s", (input, output) => {
     expect(rebrand(input)).toEqual({ text: output, unresolved: [] });
   });
 
-  it("leaves rakazo.com addresses for a person to resolve", () => {
-    expect(rebrand("mailto:security@rakazo.com").unresolved).toEqual(["security@rakazo.com"]);
+  it("leaves the old domain for a person to resolve", () => {
+    expect(rebrand(`mailto:security@${old}.com`).unresolved).toEqual([`security@${old}.com`]);
   });
 });
 ```
@@ -234,16 +241,20 @@ Expected: FAIL, because the module `./upstream-rebrand.mjs` does not exist yet.
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
 
+const old = ["ra", "kazo"].join("");
+const Old = old[0].toUpperCase() + old.slice(1);
+const OLD = old.toUpperCase();
+
 const RULES = [
-  [/com\.rakazo\.app/g, "com.tukatek.cortexai.agenthub"],
-  [/github\.com\/elie222\/rakazo/g, "github.com/TukaTek/agent-hub"],
-  [/RAKAZO/g, "CORTEXAI_AGENT_HUB"],
-  [/\brakazo(?=[A-Z])/g, "cortexAiAgentHub"],
-  [/\bRakazo(?=[A-Z])/g, "CortexAiAgentHub"],
-  [/Rakazo/g, "CortexAI Agent Hub"],
-  [/rakazo(?!\.com)/g, "cortexai-agent-hub"],
+  [new RegExp(`com\\.${old}\\.app`, "g"), "com.tukatek.cortexai.agenthub"],
+  [new RegExp(`github\\.com/elie222/${old}`, "g"), "github.com/TukaTek/agent-hub"],
+  [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
+  [new RegExp(`\\b${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
+  [new RegExp(`\\b${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
+  [new RegExp(Old, "g"), "CortexAI Agent Hub"],
+  [new RegExp(`${old}(?!\\.com)`, "g"), "cortexai-agent-hub"],
 ];
-const UNRESOLVED = /[\w.+-]*@?rakazo\.com[\w./-]*/g;
+const UNRESOLVED = new RegExp(`[\\w.+-]*@?${old}\\.com[\\w./-]*`, "g");
 const KEEP = new Set(["LICENSE", "NOTICE"]);
 
 export function rebrand(input) {
@@ -253,18 +264,9 @@ export function rebrand(input) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const check = process.argv[2] === "--check";
-  const files = process.argv.slice(check ? 3 : 2).filter((file) => !KEEP.has(file));
   let failed = false;
-  for (const file of files) {
+  for (const file of process.argv.slice(2).filter((path) => !KEEP.has(path))) {
     const source = readFileSync(file, "utf8");
-    if (check) {
-      if (/rakazo/i.test(source)) {
-        console.log(file);
-        failed = true;
-      }
-      continue;
-    }
     const { text, unresolved } = rebrand(source);
     if (text !== source) writeFileSync(file, text);
     for (const value of unresolved) {
@@ -308,11 +310,11 @@ Expected: `Automatic merge failed`, with 193 unmerged paths (`git diff --name-on
 ```bash
 git checkout --ours -- apps/desktop/assets apps/mobile/assets apps/web/public apps/www/public/{apple-touch-icon.png,favicon-16x16.png,favicon-32x32.png,favicon.ico,icon-192.png,icon-512.png,og-image.png} docs/readme-hero.png packages/ui-tokens/assets/README.md
 git add apps/web/public/favicon.svg apps/www/public/favicon.svg apps/www/public/avatars/bot-avatar-coordinator.svg
-git rm -q --cached apps/www/public/brand/rakazo-mark.png apps/www/public/favicon.png 2>/dev/null; rm -f apps/www/public/brand/rakazo-mark.png apps/www/public/favicon.png
+git rm -q -f $(git diff --cached --name-only --diff-filter=A -- apps/www/public/brand) apps/www/public/favicon.png
 pnpm brand:generate && git diff --exit-code -- apps/*/public apps/*/assets
 ```
 
-For the modify/delete favicons and the coordinator avatar, keep ours, then confirm every `index.html` and layout still points at them: `rg -n 'favicon|bot-avatar-coordinator' apps/web/index.html apps/www/src`. Risk: upstream code that now references the new orange `favicon.png` or `rakazo-mark.png`. Point those references at our assets.
+For the modify/delete favicons and the coordinator avatar, keep ours, then confirm every `index.html` and layout still points at them: `rg -n 'favicon|bot-avatar-coordinator' apps/web/index.html apps/www/src`. Risk: upstream code that now references the new orange `favicon.png` or the new brand mark under `apps/www/public/brand/`. Point those references at our assets.
 
 - [ ] **Step 3: Manifests and lockfile (7 files)**
 
@@ -354,10 +356,10 @@ node scripts/upstream-rebrand.mjs $(git diff --cached --name-only --diff-filter=
 - [ ] **Step 6: No upstream names left**
 
 ```bash
-node scripts/upstream-rebrand.mjs --check $(git ls-files | grep -vE '^(LICENSE|NOTICE|pnpm-lock.yaml)$' | grep -vE '\.(png|ico|webp|jpg)$')
+pnpm exec vitest run packages/testkit/src/product-identity.test.ts
 ```
 
-Expected: exit 0, no files listed. `rg -n '<<<<<<<|>>>>>>>' $(git ls-files)` must also print nothing.
+Expected: both cases PASS (no retired name in tracked paths or content, and no old competitor positioning phrase). Upstream path names that contain the old name (for example the www brand mark) must be deleted or renamed, not just edited. `git diff --cached --check` and `rg -n '^(<<<<<<<|>>>>>>>)' $(git ls-files)` must also print nothing.
 
 - [ ] **Step 7: Compile**
 
@@ -365,12 +367,12 @@ Expected: exit 0, no files listed. `rg -n '<<<<<<<|>>>>>>>' $(git ls-files)` mus
 pnpm db:generate && pnpm lint && pnpm check
 ```
 
-Expected: all three pass. Fix only what the merge broke.
+Expected: all three pass. Fix only what the merge broke. `pnpm check` includes the mobile `expo install --check`, which fails on `main` as of Oct 13 because Expo published newer SDK 57 patch releases (`expo` ~57.0.28, `expo-router` ~57.0.26 and others). Take upstream's alignment (#1364), then run `pnpm --filter @cortexai-agent-hub/mobile exec expo install --fix` if the check still reports drift.
 
 - [ ] **Step 8: Commit the merge**
 
 ```bash
-git commit --no-edit -m "Merge upstream elie222/rakazo main (afa31774) into CortexAI Agent Hub (CAAH-88)"
+git commit --no-edit -m "Merge upstream main (afa31774) into CortexAI Agent Hub (CAAH-88)"
 git log -1 --format=%P | wc -w   # must be 2
 ```
 
@@ -732,7 +734,7 @@ Run every step on the final branch head, and record the result in words in the P
   - PR #27: `bot_secret_file` download of a 101 MB fixture is rejected with the 104857600-byte message.
   - PR #28: the Composio health test passes.
   - Voice: call endpoints answer for an authorized user, refuse an unauthorized one, and ignore a hang-up without an utterance (#1323).
-- [ ] `node scripts/upstream-rebrand.mjs --check …` (Task 2 Step 6) still exits 0.
+- [ ] `packages/testkit/src/product-identity.test.ts` (Task 2 Step 6) still passes on the final head.
 
 ### Task 9: Push and update the draft PR
 
@@ -747,7 +749,7 @@ Run every step on the final branch head, and record the result in words in the P
 
 | Risk | Where | Mitigation |
 |---|---|---|
-| Upstream branding leaks through files that merged cleanly | 269 files | Task 1 sweep plus the `--check` gate in Task 2 and Task 8 |
+| Upstream branding leaks through files that merged cleanly | 269 files | Task 1 sweep, gated by the existing `product-identity.test.ts` in Task 2 and Task 8 |
 | OIDC or billing opens a path around Hub | `packages/auth`, `apps/api` | Allowlist (already there), Task 3 startup errors, Task 4 capabilities |
 | Better Auth 1.7.7 breaks Hub plugin internals | `packages/auth/src/hub.ts` | Typecheck plus Hub unit tests and journeys. Fix Hub code, never downgrade. |
 | PR #27 or PR #28 silently reverted by the async store refactor | `bot-secrets.ts`, `integration-provider-settings.ts` | Our existing tests are the gate (Task 5) |
