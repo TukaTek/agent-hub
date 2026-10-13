@@ -1,6 +1,6 @@
+import type { Routine, ThreadMessage } from "@cortexai-agent-hub/contracts";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import type { Routine, ThreadMessage } from "@cortexai-agent-hub/contracts";
 import {
   activeBotId,
   captureScreenshot,
@@ -11,7 +11,12 @@ import {
 } from "./helpers";
 
 async function openComposer(page: Page, prefix: string) {
-  await signup(page, `${prefix}-${Date.now()}@cortexai-agent-hub.test`, "password12", "Draft Keeper");
+  await signup(
+    page,
+    `${prefix}-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Draft Keeper",
+  );
   await completeOnboarding(page);
   const composer = page.getByRole("combobox", { name: /Message/ });
   await expect(composer).toBeVisible();

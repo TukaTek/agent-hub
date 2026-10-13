@@ -1,4 +1,9 @@
-import { createLogger, createTestSink, getLogger, installLogger } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  getLogger,
+  installLogger,
+} from "@cortexai-agent-hub/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InfisicalSecretStore } from "./infisical-secret-store.js";
 import { allowlistDrift, McpConnector } from "./mcp-connector.js";

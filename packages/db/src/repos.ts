@@ -1,6 +1,10 @@
 import type { Actor, Bot, BotSection, MessageBlock, SpaceBot } from "@cortexai-agent-hub/contracts";
 import { BOT_COLORS } from "@cortexai-agent-hub/contracts";
-import { BACKGROUND_RUN_TRIGGERS, isBackgroundRunTrigger, userVisibleMessages } from "@cortexai-agent-hub/core";
+import {
+  BACKGROUND_RUN_TRIGGERS,
+  isBackgroundRunTrigger,
+  userVisibleMessages,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "./client.js";
 import type { ComputerMode } from "./computers.js";
 import { ensureComputerRecord, parseComputerMode } from "./computers.js";

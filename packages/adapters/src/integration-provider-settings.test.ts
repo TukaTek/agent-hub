@@ -5,10 +5,13 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
-import { InfisicalSecretStore } from "./infisical-secret-store.js";
-import { IntegrationProviderSettings, createIntegrationConnectorStack } from "./integration-provider-settings.js";
-import { infisicalFake } from "./secret-store-fake.js";
 import { ComposioConnector } from "./composio-connector.js";
+import { InfisicalSecretStore } from "./infisical-secret-store.js";
+import {
+  createIntegrationConnectorStack,
+  IntegrationProviderSettings,
+} from "./integration-provider-settings.js";
+import { infisicalFake } from "./secret-store-fake.js";
 import { EncryptedSecretStore } from "./secrets.js";
 
 const context: AdapterContext = {

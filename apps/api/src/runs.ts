@@ -1,6 +1,10 @@
 import type { Actor, RunActivityRow } from "@cortexai-agent-hub/contracts";
 import { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { ACTIVE_RUN_STATUSES, BACKGROUND_RUN_TRIGGERS, botMessageContext } from "@cortexai-agent-hub/core";
+import {
+  ACTIVE_RUN_STATUSES,
+  BACKGROUND_RUN_TRIGGERS,
+  botMessageContext,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 
 const RECENT_LIMIT = 20;

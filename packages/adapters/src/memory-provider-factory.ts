@@ -1,4 +1,8 @@
-import type { DurableMemoryScope, SecretStore, SemanticMemoryProvider } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  DurableMemoryScope,
+  SecretStore,
+  SemanticMemoryProvider,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   classifySerenityConnectionSettings,

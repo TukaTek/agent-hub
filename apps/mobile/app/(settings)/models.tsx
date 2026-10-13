@@ -1,4 +1,8 @@
-import type { ModelBackupChoice, ModelOAuthBegin, ThinkingLevel } from "@cortexai-agent-hub/contracts";
+import type {
+  ModelBackupChoice,
+  ModelOAuthBegin,
+  ThinkingLevel,
+} from "@cortexai-agent-hub/contracts";
 import {
   backupChoiceKey,
   CLOUDFLARE_AI_GATEWAY_PROVIDER_ID,

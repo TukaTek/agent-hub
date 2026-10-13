@@ -1,6 +1,6 @@
-import { I18nProvider } from "@lingui/react";
 import type { Bot } from "@cortexai-agent-hub/contracts";
 import { defaultCronPreset } from "@cortexai-agent-hub/core";
+import { I18nProvider } from "@lingui/react";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AskCard } from "../../src/components/AskCard";

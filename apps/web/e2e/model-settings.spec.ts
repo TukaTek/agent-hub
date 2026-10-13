@@ -425,7 +425,12 @@ test("a deployment default on server credentials says so and keeps an own key op
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `server-credentials-${stamp}@cortexai-agent-hub.test`, "password12", `Server ${stamp}`);
+  await signup(
+    page,
+    `server-credentials-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    `Server ${stamp}`,
+  );
   await completeOnboarding(page);
   // The E2E deployment runs on a scripted model, so present the active default as one that
   // authenticates from the host, the way an Amazon Bedrock deployment on an AWS role does.
@@ -593,7 +598,12 @@ test("saves and reloads an ordered backup model list for connected models", asyn
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `backup-models-${stamp}@cortexai-agent-hub.test`, "password12", `Backups ${stamp}`);
+  await signup(
+    page,
+    `backup-models-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    `Backups ${stamp}`,
+  );
   await completeOnboarding(page);
 
   const catalog = await rpc<

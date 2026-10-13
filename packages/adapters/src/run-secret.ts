@@ -1,4 +1,8 @@
-import type { AdapterContext, ManagedConnectorProvider, SecretStore } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  ManagedConnectorProvider,
+  SecretStore,
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   encodeLoginSecret,
   LoginSecretValue,

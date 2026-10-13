@@ -1,7 +1,11 @@
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
 import { commandVariableName } from "@cortexai-agent-hub/contracts";
-import { isApprovalAskBlock, isSecretAskBlock, selectedAskActionLabel } from "@cortexai-agent-hub/core";
+import {
+  isApprovalAskBlock,
+  isSecretAskBlock,
+  selectedAskActionLabel,
+} from "@cortexai-agent-hub/core";
 import { Button, Input } from "@cortexai-agent-hub/ui-web";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";

@@ -1,13 +1,17 @@
-import type { MenuAction } from "@expo/ui/community/menu";
-import { MenuView } from "@expo/ui/community/menu";
 import type { AgentSkillCatalogEntry } from "@cortexai-agent-hub/contracts";
-import type { buildComposerMentionOptions, ComposerMention, SlashActionId } from "@cortexai-agent-hub/core";
+import type {
+  buildComposerMentionOptions,
+  ComposerMention,
+  SlashActionId,
+} from "@cortexai-agent-hub/core";
 import {
   mentionChipKey,
   SLASH_ACTIONS,
   serializeComposerPrompt,
   truncateSlashDescription,
 } from "@cortexai-agent-hub/core";
+import type { MenuAction } from "@expo/ui/community/menu";
+import { MenuView } from "@expo/ui/community/menu";
 import type { Ref } from "react";
 import { useImperativeHandle, useMemo, useState } from "react";
 import type { ViewStyle } from "react-native";

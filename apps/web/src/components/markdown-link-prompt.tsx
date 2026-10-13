@@ -1,5 +1,5 @@
-import { useLingui } from "@lingui/react/macro";
 import { MarkdownLinkPromptProvider } from "@cortexai-agent-hub/chat-ui/web";
+import { useLingui } from "@lingui/react/macro";
 import type { ReactNode } from "react";
 
 export function MarkdownLinkPrompt({ children }: { children: ReactNode }) {

@@ -189,7 +189,7 @@ function keyboardFixture(
   }
   const pasteText = overrides.pasteText;
   const windowTarget: {
-    __cortexai-agent-hubNativeKeys: boolean;
+    __cortexAiAgentHubNativeKeys: boolean;
     cortexAiAgentHubComputerKeyboard?: {
       run: (command: {
         type: string;
@@ -199,7 +199,7 @@ function keyboardFixture(
         count?: number;
       }) => void;
     };
-  } = { __cortexai-agent-hubNativeKeys: overrides.nativeKeys === true };
+  } = { __cortexAiAgentHubNativeKeys: overrides.nativeKeys === true };
   const detach = attachMobileKeyboard(rfb, {
     button,
     input,
@@ -302,11 +302,11 @@ describe("mobile computer keyboard", () => {
     expect(embed).toMatch(/mobile-keyboard-open #screen/);
     expect(embed).toMatch(/mobile-key-bar/);
     expect(embed).toMatch(/data-key="Escape"/);
-    expect(embed).toMatch(/__cortexai-agent-hubNativeKeys/);
+    expect(embed).toMatch(/__cortexAiAgentHubNativeKeys/);
     expect(embed).toMatch(/--mobile-visual-height/);
     const keyboard = readFileSync(path.join(root, "mobile-keyboard.js"), "utf8");
     expect(keyboard).toMatch(/cortexAiAgentHubComputerKeyboard/);
-    expect(keyboard).toMatch(/__cortexai-agent-hubNativeKeys/);
+    expect(keyboard).toMatch(/__cortexAiAgentHubNativeKeys/);
     expect(start).toMatch(/mobile-keyboard\.js/);
     expect(supervisor).toMatch(/"mobile-keyboard\.js"/);
   });

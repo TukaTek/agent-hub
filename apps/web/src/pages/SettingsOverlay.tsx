@@ -1,7 +1,23 @@
 import type { AvatarStyle, SpaceMemoryConfig } from "@cortexai-agent-hub/contracts";
-import { Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@cortexai-agent-hub/ui-web";
-import { Brain, CloudDownload, Cpu, CreditCard, Gauge, Monitor, Settings, Volume2, XIcon } from "lucide-react";
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
+import {
+  Brain,
+  CloudDownload,
+  Cpu,
+  CreditCard,
+  Gauge,
+  Monitor,
+  Settings,
+  Volume2,
+  XIcon,
+} from "lucide-react";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { computersAreUnavailable } from "../components/ComputersUnavailableHint";

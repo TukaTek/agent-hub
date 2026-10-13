@@ -648,7 +648,11 @@ export async function signOut() {
     await withAbort(
       fetch(`${currentApiBase()}/api/auth/sign-out`, {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "cortexai-agent-hub://", ...headers },
+        headers: {
+          "content-type": "application/json",
+          origin: "cortexai-agent-hub://",
+          ...headers,
+        },
         body: "{}",
         signal: controller.signal,
       }),

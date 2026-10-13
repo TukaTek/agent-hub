@@ -1,6 +1,6 @@
 export const COMPUTER_KEYBOARD_SEED = "_".repeat(99);
 
-export const NATIVE_COMPUTER_KEYBOARD_BOOT = "window.__cortexai-agent-hubNativeKeys=true;true;";
+export const NATIVE_COMPUTER_KEYBOARD_BOOT = "window.__cortexAiAgentHubNativeKeys=true;true;";
 
 export type ComputerKeyName =
   | "Escape"

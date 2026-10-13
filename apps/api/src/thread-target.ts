@@ -1,6 +1,10 @@
 import type { JobPublisher, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
 import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
-import { cancelComputerRunWork, screenLeaseIdForRun, toComputerRef } from "@cortexai-agent-hub/adapters";
+import {
+  cancelComputerRunWork,
+  screenLeaseIdForRun,
+  toComputerRef,
+} from "@cortexai-agent-hub/adapters";
 import type {
   Actor,
   GroupMember,
@@ -10,7 +14,10 @@ import type {
   RunStatus,
   ThreadSnapshot,
 } from "@cortexai-agent-hub/contracts";
-import { GROUP_MEMBER_MIN, MessageBlock as MessageBlockSchema } from "@cortexai-agent-hub/contracts";
+import {
+  GROUP_MEMBER_MIN,
+  MessageBlock as MessageBlockSchema,
+} from "@cortexai-agent-hub/contracts";
 import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_RUN_TRIGGERS,

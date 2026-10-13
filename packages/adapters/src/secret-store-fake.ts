@@ -32,7 +32,9 @@ export function infisicalFake() {
     }
     expect(headers.get("authorization")).toMatch(/^Bearer token-[1-9][0-9]*$/);
     expect(Number(headers.get("authorization")?.split("-").at(-1))).toBeLessThanOrEqual(logins);
-    expect(url.pathname).toMatch(/^\/api\/v3\/secrets\/raw\/cortexai-agent-hub_[a-f0-9]{24}_[a-f0-9-]{36}$/);
+    expect(url.pathname).toMatch(
+      /^\/api\/v3\/secrets\/raw\/cortexai-agent-hub_[a-f0-9]{24}_[a-f0-9-]{36}$/,
+    );
     const key = url.pathname.split("/").at(-1)!;
     const scope = {
       workspaceId: "fake-project",

@@ -1,8 +1,8 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
+import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenAiCompatibleFetch } from "./pi-openai-compatible-provider.js";
 import { PiAgentRuntime } from "./pi-runtime.js";

@@ -49,14 +49,16 @@ it("keeps SSO popups sandboxed in the parent session without a privileged preloa
     sandbox: true,
   });
   expect(oauthPopupSessionPreferences(null)).not.toHaveProperty("partition");
-  expect(shouldOpenInAppPopup(appOrigin, "http://provider.example.com", "cortexai-agent-hub-sso-oauth")).toBe(
-    false,
-  );
+  expect(
+    shouldOpenInAppPopup(appOrigin, "http://provider.example.com", "cortexai-agent-hub-sso-oauth"),
+  ).toBe(false);
 });
 
 it("allows only the named SSO blank popup before provider navigation", () => {
   expect(shouldOpenInAppPopup(appOrigin, "about:blank", "cortexai-agent-hub-sso-oauth")).toBe(true);
   for (const name of ["_blank", "cortexai-agent-hub-mcp-oauth", ""])
     expect(shouldOpenInAppPopup(appOrigin, "about:blank", name)).toBe(false);
-  expect(shouldOpenInAppPopup(appOrigin, "about:blank#unsafe", "cortexai-agent-hub-sso-oauth")).toBe(false);
+  expect(
+    shouldOpenInAppPopup(appOrigin, "about:blank#unsafe", "cortexai-agent-hub-sso-oauth"),
+  ).toBe(false);
 });

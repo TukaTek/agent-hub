@@ -1,5 +1,8 @@
 import type { RemoteImagesPreference } from "@cortexai-agent-hub/core";
-import { normalizeRemoteImagesPreference, REMOTE_IMAGES_STORAGE_KEY } from "@cortexai-agent-hub/core";
+import {
+  normalizeRemoteImagesPreference,
+  REMOTE_IMAGES_STORAGE_KEY,
+} from "@cortexai-agent-hub/core";
 import * as SecureStore from "expo-secure-store";
 
 export type { RemoteImagesPreference };

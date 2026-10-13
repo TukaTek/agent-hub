@@ -60,7 +60,12 @@ test("computer rail resizes its preview and remembers width", async ({ page }, t
 
 test("phone composer menu and settings panel stay tappable", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await signup(page, `phone-settings-${Date.now()}@cortexai-agent-hub.test`, "password12", "Phone Settings");
+  await signup(
+    page,
+    `phone-settings-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Phone Settings",
+  );
   await completeOnboarding(page);
   await page.getByRole("combobox", { name: /^Message/ }).fill("/");
   // Tap at the start edge, where the sidebar swipe strip runs beside the chat.

@@ -25,12 +25,27 @@ import {
   PopoverTrigger,
   Textarea,
 } from "@cortexai-agent-hub/ui-web";
-import { ChevronLeft, Clock, GitBranch, Globe, MessageSquare, Pause, Plus, SlidersHorizontal, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
-import { connectedModelOptions, modelOptionKey, parseModelOptionKey, thinkingLevelLabel } from "../lib/model-catalog";
-import { rpc } from "../lib/rpc";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
+import {
+  ChevronLeft,
+  Clock,
+  GitBranch,
+  Globe,
+  MessageSquare,
+  Pause,
+  Plus,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import {
+  connectedModelOptions,
+  modelOptionKey,
+  parseModelOptionKey,
+  thinkingLevelLabel,
+} from "../lib/model-catalog";
+import { rpc } from "../lib/rpc";
 import { RoutineRunHistory } from "./RoutineRunHistory";
 import { RoutineSchedule } from "./RoutineSchedule";
 

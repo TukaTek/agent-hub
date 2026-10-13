@@ -28,7 +28,11 @@
       "cache": false,
       "env": ["PUBLIC_POSTHOG_HOST", "PUBLIC_POSTHOG_KEY"],
       "persistent": true,
-      "passThroughEnv": ["CORTEXAI_AGENT_HUB_HOST", "CORTEXAI_AGENT_HUB_DEV_HOST", "CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"]
+      "passThroughEnv": [
+        "CORTEXAI_AGENT_HUB_HOST",
+        "CORTEXAI_AGENT_HUB_DEV_HOST",
+        "CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"
+      ]
     }
   }
 }

@@ -9,8 +9,8 @@ const RULES = [
   [new RegExp(`com\\.${old}\\.app`, "g"), "com.tukatek.cortexai.agenthub"],
   [new RegExp(`github\\.com/elie222/${old}`, "g"), "github.com/TukaTek/agent-hub"],
   [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
-  [new RegExp(`\\b${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
-  [new RegExp(`\\b${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
+  [new RegExp(`(?<![A-Za-z0-9])${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
+  [new RegExp(`(?<![A-Za-z0-9])${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
   [new RegExp(`${old}(?!\\.com\\b)`, "g"), "cortexai-agent-hub"],
 ];

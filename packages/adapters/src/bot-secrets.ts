@@ -1,8 +1,8 @@
-import { randomBytes, createHash } from "node:crypto";
-import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { link, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
 import {
   BotSecretAuth,
@@ -20,7 +20,11 @@ import { withTransactionRetry } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { combineSignals, redactConnectorPayload } from "./connector-safety.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
-import { createPrivateNetworkFetch, createSafeRemoteFetch, RemoteRedirectError } from "./remote-mcp.js";
+import {
+  createPrivateNetworkFetch,
+  createSafeRemoteFetch,
+  RemoteRedirectError,
+} from "./remote-mcp.js";
 import { persistPreparedSecret } from "./secret-persistence.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 

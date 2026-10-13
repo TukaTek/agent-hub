@@ -260,7 +260,9 @@ describe("web markdown website links", () => {
       second?.dispatchEvent(new Event("load"));
     });
     expect(view.container.querySelectorAll("a img")).toHaveLength(0);
-    expect(view.container.querySelectorAll("a .cortexai-agent-hub-chat-link-tile svg")).toHaveLength(2);
+    expect(
+      view.container.querySelectorAll("a .cortexai-agent-hub-chat-link-tile svg"),
+    ).toHaveLength(2);
     await view.cleanup();
   });
 
@@ -270,10 +272,14 @@ describe("web markdown website links", () => {
     });
     const markdown = "[A](https://icon-j.example.test/) [B](https://icon-j.example.test/b)";
     const first = await renderLinks(markdown, { load });
-    expect(first.container.querySelectorAll(".cortexai-agent-hub-chat-link-tile svg")).toHaveLength(2);
+    expect(first.container.querySelectorAll(".cortexai-agent-hub-chat-link-tile svg")).toHaveLength(
+      2,
+    );
     await first.cleanup();
     const second = await renderLinks(markdown, { load });
-    expect(second.container.querySelectorAll(".cortexai-agent-hub-chat-link-tile svg")).toHaveLength(2);
+    expect(
+      second.container.querySelectorAll(".cortexai-agent-hub-chat-link-tile svg"),
+    ).toHaveLength(2);
     expect(load).toHaveBeenCalledTimes(1);
     await second.cleanup();
 
@@ -283,7 +289,9 @@ describe("web markdown website links", () => {
     load.mockResolvedValue({ icon: ICON });
     const third = await renderLinks(markdown, { load });
     expect(load).toHaveBeenCalledTimes(2);
-    expect(third.container.querySelectorAll(".cortexai-agent-hub-chat-link-tile img")).toHaveLength(2);
+    expect(third.container.querySelectorAll(".cortexai-agent-hub-chat-link-tile img")).toHaveLength(
+      2,
+    );
     await third.cleanup();
     clock.mockRestore();
   });
@@ -303,9 +311,9 @@ describe("web markdown website links", () => {
         await vi.advanceTimersByTimeAsync(10_000);
       });
       expect(load).toHaveBeenCalledTimes(2);
-      expect(view.container.querySelector(".cortexai-agent-hub-chat-link-tile img")?.getAttribute("src")).toBe(
-        ICON,
-      );
+      expect(
+        view.container.querySelector(".cortexai-agent-hub-chat-link-tile img")?.getAttribute("src"),
+      ).toBe(ICON);
       await view.cleanup();
     } finally {
       vi.useRealTimers();
@@ -331,7 +339,9 @@ describe("web markdown website links", () => {
       load.mockResolvedValue({ icon: ICON });
       const again = await renderLinks("[A](https://icon-n.example.test/)", { load });
       expect(load).toHaveBeenCalledTimes(2);
-      expect(again.container.querySelector(".cortexai-agent-hub-chat-link-tile img")).not.toBeNull();
+      expect(
+        again.container.querySelector(".cortexai-agent-hub-chat-link-tile img"),
+      ).not.toBeNull();
       await again.cleanup();
     } finally {
       vi.useRealTimers();
@@ -350,7 +360,9 @@ describe("web markdown website links", () => {
       await view.cleanup();
       const again = await renderLinks("[Busy](https://icon-m.example.test/)", { load });
       expect(load).toHaveBeenCalledTimes(3);
-      expect(again.container.querySelector(".cortexai-agent-hub-chat-link-tile svg")).not.toBeNull();
+      expect(
+        again.container.querySelector(".cortexai-agent-hub-chat-link-tile svg"),
+      ).not.toBeNull();
       await again.cleanup();
     } finally {
       vi.useRealTimers();
@@ -409,7 +421,9 @@ describe("web markdown website links", () => {
     const view = await renderLinks("[**Bold** label](https://icon-h.example.test/)", {
       load: async () => ({ icon: null }),
     });
-    expect(view.container.querySelector("a .cortexai-agent-hub-chat-link-label strong")?.textContent).toBe("Bold");
+    expect(
+      view.container.querySelector("a .cortexai-agent-hub-chat-link-label strong")?.textContent,
+    ).toBe("Bold");
     await view.cleanup();
   });
 
@@ -428,7 +442,9 @@ describe("web markdown website links", () => {
       );
     });
     const links = container.querySelectorAll("a");
-    expect(links[0]?.querySelector(".cortexai-agent-hub-chat-link-tile img")?.getAttribute("src")).toBe(ICON);
+    expect(
+      links[0]?.querySelector(".cortexai-agent-hub-chat-link-tile img")?.getAttribute("src"),
+    ).toBe(ICON);
     expect(links[0]?.textContent).toBe("icon-i.example.test/a/b");
     expect(links[1]?.getAttribute("href")).toBe("mailto:me@example.com");
     expect(links[1]?.querySelector(".cortexai-agent-hub-chat-link-tile")).toBeNull();

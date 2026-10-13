@@ -1,4 +1,3 @@
-import { ORPCError } from "@orpc/server";
 import type { BillingPrice, BillingProvider } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor, BillingStatus } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
@@ -12,6 +11,7 @@ import {
   syncBillingSnapshot,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import { ORPCError } from "@orpc/server";
 
 export const TRIAL_DAYS = 7;
 const PRICE_CACHE_MS = 60 * 60 * 1000;

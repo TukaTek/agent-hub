@@ -71,7 +71,12 @@ import {
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
 import type { HubPolicy } from "@cortexai-agent-hub/auth";
-import { createAuth, isBlockedAuthPath, loopbackTwinOrigins, createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
+import {
+  createAuth,
+  createUserWorkAuthorizer,
+  isBlockedAuthPath,
+  loopbackTwinOrigins,
+} from "@cortexai-agent-hub/auth";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { signupAllowlistBootUpdate, signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
@@ -654,7 +659,11 @@ export async function createApp(
     const session = await auth.api.getSession({ headers: sessionHeaders(request) });
     if (!session?.user) return null;
     const actor = await actorFromMembership(
-      requireMembership(prisma, session.user.id, request.headers.get("x-cortexai-agent-hub-space-id")),
+      requireMembership(
+        prisma,
+        session.user.id,
+        request.headers.get("x-cortexai-agent-hub-space-id"),
+      ),
     );
     return actor && { actor, sessionId: session.session.id };
   };

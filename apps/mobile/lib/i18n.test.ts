@@ -97,7 +97,9 @@ describe("mobile i18n", () => {
     const { ZH_MESSAGES } = await import("./locales/zh");
     const { RU_MESSAGES } = await import("./locales/ru");
     const { DE_MESSAGES } = await import("./locales/de");
-    const { EMPTY_PLUGIN_CATALOG_MESSAGE, SLASH_ACTIONS } = await import("@cortexai-agent-hub/core");
+    const { EMPTY_PLUGIN_CATALOG_MESSAGE, SLASH_ACTIONS } = await import(
+      "@cortexai-agent-hub/core"
+    );
     const { AI_DATA_DISCLOSURES, OPENAI_COMPATIBLE_BASE_URL_HINT } = await import(
       "@cortexai-agent-hub/contracts"
     );

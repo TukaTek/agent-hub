@@ -1,4 +1,8 @@
-import type { AdapterContext, AgentRunRequest, AgentRuntime } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  AgentRunRequest,
+  AgentRuntime,
+} from "@cortexai-agent-hub/adapter-kit";
 import { redact } from "./report.js";
 
 export type DiagnosticToolObservation = {

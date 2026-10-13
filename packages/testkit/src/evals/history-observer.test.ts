@@ -1,4 +1,8 @@
-import type { AdapterContext, AgentRunRequest, AgentRuntime } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  AgentRunRequest,
+  AgentRuntime,
+} from "@cortexai-agent-hub/adapter-kit";
 import { expect, it, vi } from "vitest";
 import type { DiagnosticToolObservation, HistoryDiagnostic } from "./history-observer.js";
 import { observeSyntheticHistory } from "./history-observer.js";

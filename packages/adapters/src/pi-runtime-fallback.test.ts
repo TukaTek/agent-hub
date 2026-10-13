@@ -1,3 +1,8 @@
+import type {
+  AgentRunRequest,
+  AgentRuntimeEvent,
+  ModelCallObserver,
+} from "@cortexai-agent-hub/adapter-kit";
 import type * as AgentCore from "@earendil-works/pi-agent-core";
 import type { AgentOptions } from "@earendil-works/pi-agent-core";
 import type {
@@ -8,7 +13,6 @@ import type {
   TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import type { AgentRunRequest, AgentRuntimeEvent, ModelCallObserver } from "@cortexai-agent-hub/adapter-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const providerState = vi.hoisted(() => ({

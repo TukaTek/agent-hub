@@ -37,10 +37,10 @@ import type { Logger } from "@cortexai-agent-hub/logging";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { requestLogging } from "@cortexai-agent-hub/logging/hono";
+import { serve } from "@hono/node-server";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { UpdaterConfig } from "./updater-logic.js";
-import { serve } from "@hono/node-server";
 import {
   readTagState,
   resolveUpdaterConfig,

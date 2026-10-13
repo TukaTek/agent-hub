@@ -333,7 +333,11 @@ function LinkFavicon({ href }: { href: string }) {
   return (
     <span
       aria-hidden="true"
-      className={icon ? "cortexai-agent-hub-chat-link-tile cortexai-agent-hub-chat-link-tile-icon" : "cortexai-agent-hub-chat-link-tile"}
+      className={
+        icon
+          ? "cortexai-agent-hub-chat-link-tile cortexai-agent-hub-chat-link-tile-icon"
+          : "cortexai-agent-hub-chat-link-tile"
+      }
     >
       {icon ? (
         <img
@@ -391,10 +395,6 @@ function MarkdownAnchor({
       <ConfirmableAnchor {...props} />
     ) : (
       <span>{props.children}</span>
-    ) : props.href.startsWith("#") ? (
-      <a {...props} />
-    ) : (
-      <a {...props} target="_blank" rel="noreferrer noopener" />
     );
   return (
     <InsideLinkContext.Provider value={opens ? "open" : "rejected"}>
@@ -454,7 +454,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   return (
     <ConfirmLinkContext.Provider value={request}>
       <div
-        className={streaming ? "cortexai-agent-hub-chat-markdown cortexai-agent-hub-chat-markdown-streaming" : "cortexai-agent-hub-chat-markdown"}
+        className={
+          streaming
+            ? "cortexai-agent-hub-chat-markdown cortexai-agent-hub-chat-markdown-streaming"
+            : "cortexai-agent-hub-chat-markdown"
+        }
       >
         <LinkFaviconsPausedContext.Provider value={streaming}>
           <MarkdownTableSourceContext.Provider value={source}>
@@ -472,7 +476,9 @@ export const ChatMarkdown = memo(function ChatMarkdown({
             </ReactMarkdown>
           </MarkdownTableSourceContext.Provider>
         </LinkFaviconsPausedContext.Provider>
-        {streaming ? <span aria-hidden="true" className="cortexai-agent-hub-chat-markdown-cursor" /> : null}
+        {streaming ? (
+          <span aria-hidden="true" className="cortexai-agent-hub-chat-markdown-cursor" />
+        ) : null}
       </div>
       {dialog}
     </ConfirmLinkContext.Provider>

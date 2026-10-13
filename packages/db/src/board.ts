@@ -1,4 +1,10 @@
-import type { Board, Ticket, TicketComment, TicketPriority, TicketStatus } from "@cortexai-agent-hub/contracts";
+import type {
+  Board,
+  Ticket,
+  TicketComment,
+  TicketPriority,
+  TicketStatus,
+} from "@cortexai-agent-hub/contracts";
 import {
   parseTicketRef,
   TicketPrioritySchema,

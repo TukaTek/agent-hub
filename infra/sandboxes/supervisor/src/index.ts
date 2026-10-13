@@ -930,7 +930,11 @@ app.post("/computers/:id/stop", async (c) => {
   const id = c.req.param("id");
   const botId = c.req.header("x-cortexai-agent-hub-bot-id");
   try {
-    const { container } = await managedContainer(id, botId, c.req.header("x-cortexai-agent-hub-space-id"));
+    const { container } = await managedContainer(
+      id,
+      botId,
+      c.req.header("x-cortexai-agent-hub-space-id"),
+    );
     await withComputerScreenLock(id, async () => {
       const info = await container.inspect();
       if (info.State.Running) {

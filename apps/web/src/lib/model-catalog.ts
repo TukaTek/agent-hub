@@ -1,7 +1,12 @@
-import { i18n } from "@lingui/core";
-import type { ModelCatalogEntry, ModelCredential, ThinkingLevel } from "@cortexai-agent-hub/contracts";
+import type {
+  ModelCatalogEntry,
+  ModelCredential,
+  ThinkingLevel,
+} from "@cortexai-agent-hub/contracts";
 import type { ConnectedModelChoice } from "@cortexai-agent-hub/core";
 import { connectedModelChoices } from "@cortexai-agent-hub/core";
+import { i18n } from "@lingui/core";
+
 export { modelOptionKey, parseModelOptionKey } from "@cortexai-agent-hub/core";
 /** The models the connected credentials can run, as one list for a picker. */
 export function connectedModelOptions(

@@ -142,7 +142,7 @@
       rfb.clipViewport = false;
       attachRemoteClipboardCopy(rfb);
       if (!rfb.viewOnly) attachHostClipboardPaste(rfb);
-      if (!rfb.viewOnly && (isTouchBrowser() || window.__cortexai-agent-hubNativeKeys)) {
+      if (!rfb.viewOnly && (isTouchBrowser() || window.__cortexAiAgentHubNativeKeys)) {
         const keyboardInput = document.getElementById("mobile-keyboard-input");
         attachMobilePaste(rfb, {
           button: document.getElementById("mobile-paste"),

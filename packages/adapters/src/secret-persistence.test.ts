@@ -1,7 +1,7 @@
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { withTransactionRetry } from "@cortexai-agent-hub/db";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { describe, expect, it, vi } from "vitest";
 import { InfisicalSecretStore } from "./infisical-secret-store.js";
 import { McpConnector } from "./mcp-connector.js";

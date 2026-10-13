@@ -85,7 +85,9 @@ describe("mobile session storage", () => {
     registerSessionDiskCache(after);
     await expect(clearSessionToken()).resolves.toBe(true);
     expect(after).toHaveBeenCalledOnce();
-    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith("cortexai-agent-hub.integrations-scope");
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith(
+      "cortexai-agent-hub.integrations-scope",
+    );
   });
 
   it("stores and clears only the session token key", async () => {

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
 import type { AdapterContext, AgentRunRequest, AgentUsage } from "@cortexai-agent-hub/adapter-kit";
 import { DEFAULT_CONTEXT_STRATEGY } from "@cortexai-agent-hub/adapter-kit";
+import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
 import type { CacheRequest, ContextBudget } from "./context-selection.js";
 import {
   ContextCacheTracker,
@@ -102,7 +102,8 @@ export function createRuntimeContextPolicy(
   );
   function original(message: Message) {
     const metadata = message as Message & OriginalMetadata;
-    if (metadata.cortexAiAgentHubMessageId) return historyById.get(metadata.cortexAiAgentHubMessageId);
+    if (metadata.cortexAiAgentHubMessageId)
+      return historyById.get(metadata.cortexAiAgentHubMessageId);
     if (metadataPresent && !metadata.cortexAiAgentHubHistory) return undefined;
     const content = text(message);
     return request.history.find(
@@ -321,7 +322,9 @@ export function createRuntimeContextPolicy(
         (message) =>
           (message as Message & OriginalMetadata).cortexAiAgentHubHistory &&
           !(message as Message & OriginalMetadata).cortexAiAgentHubMessageId &&
-          (text(message).startsWith("CortexAI Agent Hub-owned compacted context through message sequence ") ||
+          (text(message).startsWith(
+            "CortexAI Agent Hub-owned compacted context through message sequence ",
+          ) ||
             text(message).startsWith(
               "Memory recalled from earlier conversations that fell outside the visible history.",
             )),

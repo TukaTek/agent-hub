@@ -13,7 +13,12 @@ test("command credentials add, replace and remove without leaking values", async
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `command-credentials-${stamp}@cortexai-agent-hub.test`, "password12", "Command Creds");
+  await signup(
+    page,
+    `command-credentials-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Command Creds",
+  );
   await completeOnboarding(page);
   const botName = `Command ${stamp}`;
   const botId = await createNamedBot(page, botName);
@@ -93,7 +98,12 @@ test("command credentials refuse a reserved variable name before saving", async 
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `command-reserved-${stamp}@cortexai-agent-hub.test`, "password12", "Reserved Name");
+  await signup(
+    page,
+    `command-reserved-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Reserved Name",
+  );
   await completeOnboarding(page);
   const botName = `Reserved ${stamp}`;
   await createNamedBot(page, botName);

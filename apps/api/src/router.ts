@@ -162,7 +162,12 @@ import {
   withHubModelDefaults,
   withHubSignupPolicy,
 } from "@cortexai-agent-hub/core";
-import type { BoardEvents, Board as BoardRow, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import type {
+  BoardEvents,
+  Board as BoardRow,
+  PrismaClient,
+  ThreadEvents,
+} from "@cortexai-agent-hub/db";
 import {
   appendEventInTransaction,
   BotSectionNameConflictError,

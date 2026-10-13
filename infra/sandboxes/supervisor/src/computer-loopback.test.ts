@@ -1307,7 +1307,11 @@ describe("computer network reclaim", () => {
       inspect: vi.fn(async () => ({
         Id: "computer-full-id",
         Config: {
-          Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "bot",
+            "cortexai-agent-hub.spaceId": "space",
+          },
         },
         State: { Running: running },
         // Docker keeps a stopped container's endpoint on its network.
@@ -1582,10 +1586,19 @@ describe("computer network reclaim", () => {
         [computerNetworkNameFor("renamed")]: botNetwork(),
       };
       mocks.docker.listNetworks.mockResolvedValue([
-        { Name: computerNetworkNameFor("orphan"), Labels: { "cortexai-agent-hub.botId": "orphan" } },
-        { Name: computerNetworkNameFor("stopped"), Labels: { "cortexai-agent-hub.botId": "stopped" } },
+        {
+          Name: computerNetworkNameFor("orphan"),
+          Labels: { "cortexai-agent-hub.botId": "orphan" },
+        },
+        {
+          Name: computerNetworkNameFor("stopped"),
+          Labels: { "cortexai-agent-hub.botId": "stopped" },
+        },
         // The bot label must name the network, since it picks the lock.
-        { Name: computerNetworkNameFor("renamed"), Labels: { "cortexai-agent-hub.botId": "other" } },
+        {
+          Name: computerNetworkNameFor("renamed"),
+          Labels: { "cortexai-agent-hub.botId": "other" },
+        },
       ]);
       mocks.docker.getNetwork.mockImplementation((name: string) => networks[name]);
       mocks.docker.listContainers.mockImplementation(
@@ -1650,7 +1663,11 @@ describe("computer network reclaim", () => {
         Image: "image",
         Config: {
           User: hostComputerUser(),
-          Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "bot",
+            "cortexai-agent-hub.spaceId": "space",
+          },
         },
         HostConfig: { NetworkMode: botNet, PortBindings: {} },
         State: { Running: false },
@@ -1712,7 +1729,10 @@ describe("computer network reclaim", () => {
           expect.objectContaining({
             Name: botNet,
             Labels: {
-              "cortexai-agent-hub.computerOwner": computerNetworkOwnerFor(process.env.DATA_DIR!, undefined),
+              "cortexai-agent-hub.computerOwner": computerNetworkOwnerFor(
+                process.env.DATA_DIR!,
+                undefined,
+              ),
               "cortexai-agent-hub.botId": "bot",
             },
             ...(egress === "restricted"
@@ -1756,7 +1776,10 @@ describe("computer network reclaim", () => {
     });
 
     it.each([
-      ["a leftover endpoint", new Error("endpoint with name cortexai-agent-hub-bot-bot already exists")],
+      [
+        "a leftover endpoint",
+        new Error("endpoint with name cortexai-agent-hub-bot-bot already exists"),
+      ],
       ["a missing container", Object.assign(new Error("no such container"), { statusCode: 404 })],
     ])(
       "replaces it, never starting it unattached, when Docker refuses to attach it: %s",

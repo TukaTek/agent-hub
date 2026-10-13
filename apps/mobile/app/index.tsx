@@ -1,8 +1,13 @@
-import { MenuView } from "@expo/ui/community/menu";
-import type { RunActivityRow, SearchHit, SpaceBot, SpaceGroup } from "@cortexai-agent-hub/contracts";
+import type {
+  RunActivityRow,
+  SearchHit,
+  SpaceBot,
+  SpaceGroup,
+} from "@cortexai-agent-hub/contracts";
 import { normalizeCreateBotProfile } from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import { botColors } from "@cortexai-agent-hub/ui-tokens";
+import { MenuView } from "@expo/ui/community/menu";
 import { Redirect, useFocusEffect, useNavigation, useRouter } from "expo-router";
 import type { ReactNode } from "react";
 import {

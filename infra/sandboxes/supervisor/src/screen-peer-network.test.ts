@@ -51,7 +51,11 @@ function fixture() {
     inspect: vi.fn().mockResolvedValue({
       Id: "computer",
       Config: {
-        Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+        Labels: {
+          "cortexai-agent-hub.managed": "true",
+          "cortexai-agent-hub.botId": "bot",
+          "cortexai-agent-hub.spaceId": "space",
+        },
       },
       HostConfig: { NetworkMode: "bot-network" },
       State: { Running: true },

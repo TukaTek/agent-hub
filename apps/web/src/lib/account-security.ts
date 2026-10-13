@@ -1,6 +1,6 @@
-import { t } from "@lingui/core/macro";
 import { accountSecuritySchema, legacyAccountSecurity } from "@cortexai-agent-hub/contracts";
 import { readBoundedJsonResponse } from "@cortexai-agent-hub/core";
+import { t } from "@lingui/core/macro";
 import { authErrorText } from "./user-error";
 
 export async function fetchAccountSecurity() {

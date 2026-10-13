@@ -1233,7 +1233,9 @@ describe("destroyBot", () => {
 
   it("removes the deleted bot's folder from a running remote Team Computer", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-folder-remote-"));
-    const remote = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-folder-remote-workspace-"));
+    const remote = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-team-folder-remote-workspace-"),
+    );
     try {
       const home = new LocalAgentHomeStore(root);
       const teamHome = home.pathFor("team-workspace-1");
@@ -1346,7 +1348,9 @@ describe("destroyBot", () => {
 
   it("unlinks a symlinked bot folder instead of following it into another bot's folder", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-folder-symlink-"));
-    const remote = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-folder-symlink-workspace-"));
+    const remote = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-team-folder-symlink-workspace-"),
+    );
     try {
       const home = new LocalAgentHomeStore(root);
       const teamHome = home.pathFor("team-workspace-1");
@@ -1404,7 +1408,9 @@ describe("destroyBot", () => {
   });
 
   it("leaves the Team Computer home alone when its bots folder is a symlink", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-folder-parent-symlink-"));
+    const root = await mkdtemp(
+      path.join(tmpdir(), "cortexai-agent-hub-team-folder-parent-symlink-"),
+    );
     try {
       const home = new LocalAgentHomeStore(root);
       const teamHome = home.pathFor("team-workspace-1");
@@ -1448,7 +1454,9 @@ describe("destroyBot", () => {
   it.each(["docker", "desktop"])(
     "leaves a stopped %s Team Computer's stored home to its next boot",
     async (kind) => {
-      const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-team-folder-docker-stopped-"));
+      const root = await mkdtemp(
+        path.join(tmpdir(), "cortexai-agent-hub-team-folder-docker-stopped-"),
+      );
       try {
         const home = new LocalAgentHomeStore(root);
         const teamHome = home.pathFor("team-workspace-1");

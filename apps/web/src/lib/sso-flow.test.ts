@@ -73,13 +73,19 @@ it.each(["/app", "/onboarding", "/app?settings=account", "/sign-in?error=SSO_UNA
       ["/app", "/onboarding", "/sign-in"],
     );
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(open).toHaveBeenCalledWith("about:blank", "cortexai-agent-hub-sso-oauth", expect.any(String));
+    expect(open).toHaveBeenCalledWith(
+      "about:blank",
+      "cortexai-agent-hub-sso-oauth",
+      expect.any(String),
+    );
     expect(popup.location.href).toBe(result.data.url);
     expect(location.assign).not.toHaveBeenCalled();
     if (callback.includes("?error=")) landing += "&error=SSO_UNAVAILABLE";
     expect(land(landing)).toBe(true);
     await expect(flow).resolves.toBe(result);
-    expect(location.assign).toHaveBeenCalledWith(`https://cortexai-agent-hub.example.test${callback}`);
+    expect(location.assign).toHaveBeenCalledWith(
+      `https://cortexai-agent-hub.example.test${callback}`,
+    );
     expect(close).toHaveBeenCalled();
     expect(popup.close).toHaveBeenCalled();
     expect(channels[0]?.close).toHaveBeenCalled();
@@ -97,7 +103,11 @@ it("ignores spoofed messages, mismatched nonces, foreign URLs and unrelated path
     null,
     {},
     { type: "mcp-oauth-complete", nonce },
-    { type: "sso-complete", nonce: "another-attempt", url: "https://cortexai-agent-hub.example.test/app" },
+    {
+      type: "sso-complete",
+      nonce: "another-attempt",
+      url: "https://cortexai-agent-hub.example.test/app",
+    },
     { type: "sso-complete", nonce, url: "https://other.example.test/app" },
     { type: "sso-complete", nonce, url: "https://cortexai-agent-hub.example.test/unrelated" },
     { type: "sso-complete", nonce, url: "invalid" },
@@ -173,7 +183,11 @@ it("opens synchronously before beginning authorization", async () => {
   const { open, popup } = desktopWindow();
   await expect(
     runSsoFlow(async () => {
-      expect(open).toHaveBeenCalledWith("about:blank", "cortexai-agent-hub-sso-oauth", expect.any(String));
+      expect(open).toHaveBeenCalledWith(
+        "about:blank",
+        "cortexai-agent-hub-sso-oauth",
+        expect.any(String),
+      );
       expect(popup.location.href).toBe("about:blank");
       return { data: null, error: { code: "SSO_UNAVAILABLE" } };
     }, ["/app"]),
@@ -204,7 +218,11 @@ it.each([false, true])(
     await vi.advanceTimersByTimeAsync(0);
     expect(popup.location.href).toBe(result.data.url);
     channels[0]?.onmessage?.({
-      data: { type: "sso-complete", nonce: "old", url: "https://cortexai-agent-hub.example.test/app" },
+      data: {
+        type: "sso-complete",
+        nonce: "old",
+        url: "https://cortexai-agent-hub.example.test/app",
+      },
     });
     expect(location.assign).not.toHaveBeenCalled();
     land();

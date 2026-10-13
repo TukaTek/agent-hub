@@ -211,7 +211,11 @@ describeAttachments("chat attachments", () => {
   });
   it("persists server-owned reply previews, isolates threads, and handles deletion", async () => {
     const cookie = await signup(app, `replies-${stamp}@cortexai-agent-hub.test`, "Reply User");
-    const otherCookie = await signup(app, `replies-other-${stamp}@cortexai-agent-hub.test`, "Other User");
+    const otherCookie = await signup(
+      app,
+      `replies-other-${stamp}@cortexai-agent-hub.test`,
+      "Other User",
+    );
     const bot = await rpc<{ id: string }>(app, cookie, "bots/create", {
       name: "Helper",
       title: "Helper",

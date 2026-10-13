@@ -1,5 +1,5 @@
-import { t } from "@lingui/core/macro";
 import type { BillingStatus } from "@cortexai-agent-hub/contracts";
+import { t } from "@lingui/core/macro";
 
 type Price = NonNullable<BillingStatus["price"]>;
 

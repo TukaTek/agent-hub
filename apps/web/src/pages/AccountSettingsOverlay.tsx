@@ -1,6 +1,15 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type { AccountSecurity, AvatarStyle } from "@cortexai-agent-hub/contracts";
-import { BotAvatar, Button, Field, FieldLabel, Input, Label, Switch, Toggle } from "@cortexai-agent-hub/ui-web";
+import {
+  BotAvatar,
+  Button,
+  Field,
+  FieldLabel,
+  Input,
+  Label,
+  Switch,
+  Toggle,
+} from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { ChevronDown } from "lucide-react";
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";

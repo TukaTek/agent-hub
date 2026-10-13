@@ -1,13 +1,17 @@
-import type { RunActivityRow } from "@cortexai-agent-hub/contracts";
+import type { RunActivityRow, RunStatus } from "@cortexai-agent-hub/contracts";
 import { isAgedStuckWork } from "@cortexai-agent-hub/core";
+import { Button, Input, Label, NativeSelect, NativeSelectOption } from "@cortexai-agent-hub/ui-web";
 import { i18n } from "@lingui/core";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { RunStatus } from "@cortexai-agent-hub/contracts";
-import { Button, Input, Label, NativeSelect, NativeSelectOption } from "@cortexai-agent-hub/ui-web";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ActivityListFilters } from "../lib/activity-list-filters";
-import { activityFiltersActive, clearActivityFilterField, emptyActivityFilters, filterActivityRuns } from "../lib/activity-list-filters";
+import {
+  activityFiltersActive,
+  clearActivityFilterField,
+  emptyActivityFilters,
+  filterActivityRuns,
+} from "../lib/activity-list-filters";
 import { rpc } from "../lib/rpc";
 
 export function statusTone(status: RunActivityRow["status"], updatedAt?: string): string {

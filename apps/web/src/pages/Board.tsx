@@ -1,6 +1,11 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
-import type { Bot, Ticket, TicketComment, TicketPriority, TicketStatus } from "@cortexai-agent-hub/contracts";
+import type {
+  Bot,
+  Ticket,
+  TicketComment,
+  TicketPriority,
+  TicketStatus,
+} from "@cortexai-agent-hub/contracts";
 import {
   TICKET_COMMENT_MAX_LENGTH,
   TICKET_DESCRIPTION_MAX_LENGTH,
@@ -19,6 +24,7 @@ import {
   NativeSelectOption,
   Textarea,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { ChevronLeft } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";

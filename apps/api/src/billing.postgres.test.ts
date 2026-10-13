@@ -22,7 +22,11 @@ describePostgres("billing service (PostgreSQL)", () => {
     email: `${ownerId}@cortexai-agent-hub.test`,
     isDeploymentOwner: false,
   };
-  const member: Actor = { ...owner, userId: memberId, email: `${memberId}@cortexai-agent-hub.test` };
+  const member: Actor = {
+    ...owner,
+    userId: memberId,
+    email: `${memberId}@cortexai-agent-hub.test`,
+  };
   const emulator = new BillingEmulator();
   let prisma: PrismaClient;
   let close: () => Promise<void>;

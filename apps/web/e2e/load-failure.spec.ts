@@ -54,7 +54,12 @@ for (const [failing, intact] of [
 ] as const) {
   test(`a failed ${failing} chunk keeps the rest of the bot settings panel`, async ({ page }) => {
     const stamp = Date.now();
-    await signup(page, `section-load-${stamp}@cortexai-agent-hub.test`, "password12", "Section Load");
+    await signup(
+      page,
+      `section-load-${stamp}@cortexai-agent-hub.test`,
+      "password12",
+      "Section Load",
+    );
     await completeOnboarding(page);
 
     const composer = page.getByRole("combobox", { name: "Message Chief" });

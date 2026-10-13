@@ -147,7 +147,9 @@ describe.skipIf(!enabled)("unfinished broad history search", () => {
           },
         ],
       });
-      const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-history-continuation-"));
+      const dataDir = await mkdtemp(
+        path.join(tmpdir(), "cortexai-agent-hub-history-continuation-"),
+      );
       try {
         const { createApp } = await import("../../../apps/api/src/app.ts");
         const result = await runTrial(

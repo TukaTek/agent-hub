@@ -2,9 +2,17 @@ import type { LinkFavicons } from "@cortexai-agent-hub/chat-ui/web";
 import { LinkFaviconsContext, RemoteImagesContext } from "@cortexai-agent-hub/chat-ui/web";
 import { LOCAL_SETTINGS_PAGE } from "@cortexai-agent-hub/contracts";
 import { Button, Skeleton } from "@cortexai-agent-hub/ui-web";
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Navigate, Outlet, Route, Routes, useSearchParams } from "react-router-dom";
 import { Trans, useLingui } from "@lingui/react/macro";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { Navigate, Outlet, Route, Routes, useSearchParams } from "react-router-dom";
 import { LoadingState } from "./components/ai/primitives";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SubscriptionGate } from "./components/SubscriptionGate";

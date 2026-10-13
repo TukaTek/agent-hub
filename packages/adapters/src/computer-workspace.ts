@@ -13,10 +13,14 @@ import { parseScreenLeaseId } from "@cortexai-agent-hub/core";
 import { browserProfilePathForScreen } from "@cortexai-agent-hub/core/node/desktop-runtime";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
-import { normalizeWorkspacePath, teamBotWorkspaceDirectory, resolveBotWorkspacePath } from "./computer-support.js";
-import { LocalAgentHomeStore, ensureContainedDirectory, resolveAgentHomePath } from "./home.js";
 import type { SecretDownloadTarget } from "./bot-secrets.js";
 import { downloadFilenameCandidates, getFileDownloadCap } from "./bot-secrets.js";
+import {
+  normalizeWorkspacePath,
+  resolveBotWorkspacePath,
+  teamBotWorkspaceDirectory,
+} from "./computer-support.js";
+import { ensureContainedDirectory, LocalAgentHomeStore, resolveAgentHomePath } from "./home.js";
 
 export const PORTABLE_TRANSFER_BATCH_BYTES = 8 * 1024 * 1024;
 

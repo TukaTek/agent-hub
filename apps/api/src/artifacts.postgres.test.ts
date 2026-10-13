@@ -54,7 +54,12 @@ describePostgres("artifact upload nonce (PostgreSQL)", () => {
       await db.pool.end();
     };
     await prisma.user.create({
-      data: { id: userId, name: userId, email: `${userId}@cortexai-agent-hub.test`, emailVerified: false },
+      data: {
+        id: userId,
+        name: userId,
+        email: `${userId}@cortexai-agent-hub.test`,
+        emailVerified: false,
+      },
     });
     await prisma.organization.create({
       data: { id: organizationId, name: "Nonce Org", slug: organizationId, createdAt: new Date() },

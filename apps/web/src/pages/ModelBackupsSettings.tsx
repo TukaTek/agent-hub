@@ -1,5 +1,9 @@
-import { Trans, useLingui } from "@lingui/react/macro";
-import type { Me, ModelBackupChoice, ModelCatalogEntry, ModelCredential } from "@cortexai-agent-hub/contracts";
+import type {
+  Me,
+  ModelBackupChoice,
+  ModelCatalogEntry,
+  ModelCredential,
+} from "@cortexai-agent-hub/contracts";
 import {
   backupChoiceKey,
   connectedBackupOptions,
@@ -8,6 +12,7 @@ import {
   sameBackupChoices,
 } from "@cortexai-agent-hub/contracts";
 import { Button, NativeSelect, NativeSelectOption } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rpc, selectedSpaceId } from "../lib/rpc";
 

@@ -1,5 +1,5 @@
-import { useLingui } from "@lingui/react/macro";
 import type { TicketPriority } from "@cortexai-agent-hub/contracts";
+import { useLingui } from "@lingui/react/macro";
 import { useMemo } from "react";
 
 export function useTicketPriorityLabels(): Record<TicketPriority, string> {

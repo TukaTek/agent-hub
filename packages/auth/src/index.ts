@@ -1,5 +1,8 @@
 import { expo } from "@better-auth/expo";
-import type { TransactionalEmail, TransactionalEmailProvider } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  TransactionalEmail,
+  TransactionalEmailProvider,
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   allowlistedSignupAdmission,
   emailAllowed,
@@ -20,21 +23,52 @@ import {
   getOAuthState,
 } from "better-auth/api";
 import { bearer, organization } from "better-auth/plugins";
-import { accountSecurity, OIDC_FRESH_AGE, oidcProofKey, sessionForAuthHook } from "./account-security.js";
+import {
+  accountSecurity,
+  OIDC_FRESH_AGE,
+  oidcProofKey,
+  sessionForAuthHook,
+} from "./account-security.js";
 import type { OidcConfig } from "./oidc.js";
 import { oidcDiscovery } from "./oidc.js";
+
 export type { OidcConfig } from "./oidc.js";
-import { createHubAuth, HUB_SESSION_PATHS, HUB_SIGN_IN_RATE_LIMITS, localSignInPlugin, rejectHubAccountMutation } from "./hub.js";
+
+import {
+  createHubAuth,
+  HUB_SESSION_PATHS,
+  HUB_SIGN_IN_RATE_LIMITS,
+  localSignInPlugin,
+  rejectHubAccountMutation,
+} from "./hub.js";
 import type { HubAuthConfig } from "./hub-client.js";
 import { createHubClient } from "./hub-client.js";
 import type { HubConfigFetch, HubPolicy } from "./hub-policy.js";
+
 export type { HubAuthConfig, HubConfigProblem } from "./hub-client.js";
 export { HUB_CONFIG_DOC, hubAuthFromEnv } from "./hub-client.js";
-export type { AppliedHubPolicy, HubConfigFetch, HubPolicy, HubPolicySignal, HubPolicyStatus } from "./hub-policy.js";
-export { applyHubPolicyAtStartup, createHubPolicy, disabledHubPolicy, notConfiguredHubPolicy } from "./hub-policy.js";
+export type {
+  AppliedHubPolicy,
+  HubConfigFetch,
+  HubPolicy,
+  HubPolicySignal,
+  HubPolicyStatus,
+} from "./hub-policy.js";
+export {
+  applyHubPolicyAtStartup,
+  createHubPolicy,
+  disabledHubPolicy,
+  notConfiguredHubPolicy,
+} from "./hub-policy.js";
 export { HUB_MANAGED_SETTINGS, HubPolicyError } from "./hub-policy-contract.js";
 export type { HubPolicyRestart, HubPolicyRuntime } from "./hub-policy-runtime.js";
-export { hubNotConfiguredLogEntry, hubPolicyAutoRestart, hubPolicyDisabledLogEntry, hubPolicyLogEntry, startHubPolicyRuntime } from "./hub-policy-runtime.js";
+export {
+  hubNotConfiguredLogEntry,
+  hubPolicyAutoRestart,
+  hubPolicyDisabledLogEntry,
+  hubPolicyLogEntry,
+  startHubPolicyRuntime,
+} from "./hub-policy-runtime.js";
 export type { HubPolicyStore } from "./hub-policy-store.js";
 export { memoryHubPolicyStore, prismaHubPolicyStore } from "./hub-policy-store.js";
 export type { HubSessionAuthorizerConfig, HubSessionPolicy } from "./hub-sessions.js";
@@ -392,7 +426,12 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       hub ? hub.plugin : localSignInPlugin,
       bearer(),
       expo(),
-      accountSecurity(env.email, env.oidc?.name, env.oidc?.issuer, !hub && env.passwordAuth !== false),
+      accountSecurity(
+        env.email,
+        env.oidc?.name,
+        env.oidc?.issuer,
+        !hub && env.passwordAuth !== false,
+      ),
       ...(discovery ? [discovery.plugin] : []),
       organization({
         allowUserToCreateOrganization: false,
@@ -516,11 +555,6 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     },
     databaseHooks: {
       session: {
-        delete: {
-          before: async (session) => {
-            if (hub) await hub.revokeSession(session.id);
-          },
-        },
         create: {
           before: async (session, ctx) => {
             // The auth adapter can still be inside the signup transaction.
@@ -580,6 +614,9 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
           },
         },
         delete: {
+          before: async (session) => {
+            if (hub) await hub.revokeSession(session.id);
+          },
           after: async (session, ctx) => {
             if (replacedSession(ctx)?.id !== session.id) await env.afterDeleteSession?.(session);
           },

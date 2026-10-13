@@ -11,7 +11,12 @@ for (const totalTokens of [201, null]) {
       }),
     );
     const stamp = Date.now();
-    await signup(page, `usage-total-${stamp}@cortexai-agent-hub.test`, "password12", "Usage totals");
+    await signup(
+      page,
+      `usage-total-${stamp}@cortexai-agent-hub.test`,
+      "password12",
+      "Usage totals",
+    );
     await completeOnboarding(page);
     await openUserSettings(page, "usage");
     await expect(page.getByTestId("usage-settings")).toContainText(

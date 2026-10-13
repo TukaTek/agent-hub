@@ -1,4 +1,3 @@
-
 import type { Bot, Routine } from "@cortexai-agent-hub/contracts";
 import { expect, type Page, test } from "@playwright/test";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
@@ -139,7 +138,12 @@ test("routine editing updates in place, preserves timezone, and deletion persist
 
 test("a routine runs on the bot's model until another is picked", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `routine-model-${stamp}@cortexai-agent-hub.test`, "password12", "Routine Model");
+  await signup(
+    page,
+    `routine-model-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Routine Model",
+  );
   await completeOnboarding(page);
   const botId = activeBotId(page);
 
@@ -402,7 +406,12 @@ function localSchedule(iso: string, timezone: string) {
 
 test("interval schedule only offers amounts the unit can run", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `routine-interval-${stamp}@cortexai-agent-hub.test`, "password12", "Interval Routine");
+  await signup(
+    page,
+    `routine-interval-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Interval Routine",
+  );
   await completeOnboarding(page);
 
   await page.getByTitle("Agent computer").click();

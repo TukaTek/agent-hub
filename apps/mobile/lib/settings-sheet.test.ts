@@ -102,15 +102,17 @@ describe("settings links", () => {
     const close = vi.fn();
     const unregister = registerSettingsSheet(close);
 
-    expect(redirectSystemPath({ path: "cortexai-agent-hub:///voice", initial: false })).toBe("cortexai-agent-hub:///voice");
-    expect(redirectSystemPath({ path: "cortexai-agent-hub:///account?focus=usage", initial: false })).toBe(
-      "cortexai-agent-hub:///account?focus=usage",
+    expect(redirectSystemPath({ path: "cortexai-agent-hub:///voice", initial: false })).toBe(
+      "cortexai-agent-hub:///voice",
     );
+    expect(
+      redirectSystemPath({ path: "cortexai-agent-hub:///account?focus=usage", initial: false }),
+    ).toBe("cortexai-agent-hub:///account?focus=usage");
     expect(close).not.toHaveBeenCalled();
 
-    expect(redirectSystemPath({ path: "cortexai-agent-hub:///thread?botId=bot-1", initial: false })).toBe(
-      "cortexai-agent-hub:///thread?botId=bot-1",
-    );
+    expect(
+      redirectSystemPath({ path: "cortexai-agent-hub:///thread?botId=bot-1", initial: false }),
+    ).toBe("cortexai-agent-hub:///thread?botId=bot-1");
     expect(close).toHaveBeenCalledTimes(1);
     unregister();
   });

@@ -300,7 +300,12 @@ test("changes and recovers an email password", async ({ page }, testInfo) => {
 test("password-off account settings hide password changes and retain password deletion", async ({
   page,
 }, testInfo) => {
-  await signup(page, `password-off-${Date.now()}@cortexai-agent-hub.test`, "password12", "Password Off");
+  await signup(
+    page,
+    `password-off-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Password Off",
+  );
   await completeOnboarding(page);
   await page.waitForURL(/\/app\/[^/]+$/);
   await page.route("**/api/auth/account-security", (route) =>

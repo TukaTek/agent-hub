@@ -1,5 +1,5 @@
-import { useLingui } from "@lingui/react/macro";
 import type { TicketStatus } from "@cortexai-agent-hub/contracts";
+import { useLingui } from "@lingui/react/macro";
 import { useMemo } from "react";
 
 export function useTicketStatusLabels(): Record<TicketStatus, string> {

@@ -1,5 +1,10 @@
 import type { AdapterContext, SecretStore } from "@cortexai-agent-hub/adapter-kit";
-import { createLogger, createTestSink, getLogger, installLogger } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  getLogger,
+  installLogger,
+} from "@cortexai-agent-hub/logging";
 import { describe, expect, it, vi } from "vitest";
 import { InfisicalSecretStore, SecretStoreUnavailableError } from "./infisical-secret-store.js";
 import { InMemoryRealtimeFanout } from "./realtime.js";

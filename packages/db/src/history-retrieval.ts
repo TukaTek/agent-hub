@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import type { HistoryReadInput, HistorySearchInput, MessageBlock } from "@cortexai-agent-hub/contracts";
+import type {
+  HistoryReadInput,
+  HistorySearchInput,
+  MessageBlock,
+} from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "./client.js";
 import { Prisma } from "./client.js";
 

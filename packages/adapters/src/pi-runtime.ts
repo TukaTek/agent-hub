@@ -1,9 +1,21 @@
 import { randomUUID } from "node:crypto";
-import type { AgentMessage, AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Agent } from "@earendil-works/pi-agent-core";
-import type { AdapterContext, AgentRunRequest, AgentRuntime, AgentRuntimeEvent, AgentSteeringMessage, AgentToolCompletion, AgentToolExecutionResult, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  AgentRunRequest,
+  AgentRuntime,
+  AgentRuntimeEvent,
+  AgentSteeringMessage,
+  AgentToolCompletion,
+  AgentToolExecutionResult,
+  AgentUsage,
+  ConnectorTool,
+  ModelCallObserver,
+} from "@cortexai-agent-hub/adapter-kit";
+import { DEFAULT_CONTEXT_STRATEGY } from "@cortexai-agent-hub/adapter-kit";
 import { usableModelId } from "@cortexai-agent-hub/contracts";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import type { AgentMessage, AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { Agent } from "@earendil-works/pi-agent-core";
 import type {
   Api,
   AssistantMessage,
@@ -19,8 +31,6 @@ import type {
 import { clampThinkingLevel, Type } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import type { AgentUsage, ModelCallObserver } from "@cortexai-agent-hub/adapter-kit";
-import { DEFAULT_CONTEXT_STRATEGY } from "@cortexai-agent-hub/adapter-kit";
 import { isToolPauseResult } from "./approval-effect.js";
 import { connectionIdArgument, credentialArgument } from "./bot-secrets.js";
 import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";

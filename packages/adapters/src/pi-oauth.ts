@@ -1,12 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  AuthInteraction,
-  Credential,
-  OAuthAuth,
-  OAuthCredential,
-} from "@earendil-works/pi-ai";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type {
   ModelCredentialFailedState,
   ModelCredentialRetireReason,
   SecretStore,

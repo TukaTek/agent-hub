@@ -41,7 +41,10 @@ test("photo working avatars show a visible ring while idle avatars stay plain", 
   const idle = page.locator(".avatar-idle");
   await expect(idle).toHaveAttribute("data-working", "false");
   await expect(idle.locator(".cortexai-agent-hub-bot-avatar-ring")).toHaveCount(0);
-  await expect(idle.locator(".cortexai-agent-hub-bot-avatar-picture")).toHaveCSS("animation-name", "none");
+  await expect(idle.locator(".cortexai-agent-hub-bot-avatar-picture")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
   await captureScreenshot(page, testInfo, "avatar-photo-working-and-idle");
 });
 

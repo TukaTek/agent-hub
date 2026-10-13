@@ -229,7 +229,7 @@ function keyNameFromEvent(event) {
 /**
  * Connect a text field to noVNC so touch keyboards can type into the remote
  * desktop, and expose Esc, Tab, Ctrl, and arrows.
- * The native app sets `window.__cortexai-agent-hubNativeKeys` and calls `cortexAiAgentHubComputerKeyboard.run`.
+ * The native app sets `window.__cortexAiAgentHubNativeKeys` and calls `cortexAiAgentHubComputerKeyboard.run`.
  */
 export function attachMobileKeyboard(
   rfb,
@@ -252,7 +252,7 @@ export function attachMobileKeyboard(
   let controlLatched = false;
   let keyboardTouchAt = 0;
   let keyTouchAt = 0;
-  const pageChrome = !windowTarget?.__cortexai-agent-hubNativeKeys;
+  const pageChrome = !windowTarget?.__cortexAiAgentHubNativeKeys;
   const visualViewport = windowTarget?.visualViewport;
   const viewportRoot = documentTarget.documentElement;
   const updateVisibleViewport = () => {

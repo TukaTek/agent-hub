@@ -1,4 +1,3 @@
-import { Trans } from "@lingui/react/macro";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -8,6 +7,7 @@ import {
   AlertDialogTitle,
   Button,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans } from "@lingui/react/macro";
 import type { ComponentType, ReactNode } from "react";
 import { Component, lazy } from "react";
 

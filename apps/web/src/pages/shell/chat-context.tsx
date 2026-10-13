@@ -1,6 +1,6 @@
-import { useLingui } from "@lingui/react/macro";
 import type { ReplyPreview, ThreadMessage } from "@cortexai-agent-hub/contracts";
 import { formatTimeSeparator, isPeerReceiptBlocks, replyLabel } from "@cortexai-agent-hub/core";
+import { useLingui } from "@lingui/react/macro";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ArtifactTarget } from "../../lib/artifact-open";

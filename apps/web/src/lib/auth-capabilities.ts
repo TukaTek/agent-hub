@@ -1,5 +1,8 @@
 import type { AuthCapabilities } from "@cortexai-agent-hub/contracts";
-import { authCapabilitiesSchema, legacyAuthCapabilitiesSchema } from "@cortexai-agent-hub/contracts";
+import {
+  authCapabilitiesSchema,
+  legacyAuthCapabilitiesSchema,
+} from "@cortexai-agent-hub/contracts";
 import { ResponseBodyTooLargeError, readBoundedJsonResponse } from "@cortexai-agent-hub/core";
 
 export type { AuthCapabilities } from "@cortexai-agent-hub/contracts";

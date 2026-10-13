@@ -1,4 +1,10 @@
-import type { AdapterContext, ConnectorCall, ManagedConnectorProvider, SecretStore, ConnectorProvider } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  ConnectorCall,
+  ConnectorProvider,
+  ManagedConnectorProvider,
+  SecretStore,
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   type IntegrationProviderConfig,
   IntegrationProviderConfigSchema,

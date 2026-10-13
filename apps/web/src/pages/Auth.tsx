@@ -164,10 +164,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           return;
         }
         const result = response.ok
-          ? await readBoundedJsonResponse<SignInContinueResponse>(
-              response,
-              MAX_AUTH_RESPONSE_BYTES,
-            )
+          ? await readBoundedJsonResponse<SignInContinueResponse>(response, MAX_AUTH_RESPONSE_BYTES)
           : undefined;
         const next = result?.next;
         if (result?.next === "redirect") {

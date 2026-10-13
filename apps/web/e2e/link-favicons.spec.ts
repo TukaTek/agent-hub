@@ -27,7 +27,12 @@ test("links in a bot reply show the site icon the API resolved", async ({ page }
     await route.abort();
   });
 
-  await signup(page, `link-favicons-${Date.now()}@cortexai-agent-hub.test`, "password12", "Link Icons");
+  await signup(
+    page,
+    `link-favicons-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Link Icons",
+  );
   await completeOnboarding(page);
   const composer = page.getByRole("combobox", { name: /^Message/ });
   await expect(composer).toBeVisible();

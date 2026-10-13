@@ -28,8 +28,7 @@ export function authCapabilities(
       : null,
     passwordAuth,
     passwordReset: passwordAuth && options.email,
-    resetUrl:
-      passwordAuth && options.email ? new URL("/reset-password", env.webOrigin).href : null,
+    resetUrl: passwordAuth && options.email ? new URL("/reset-password", env.webOrigin).href : null,
     billing: options.billing,
   };
 }

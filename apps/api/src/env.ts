@@ -5,7 +5,7 @@ import {
   resolveSandboxProvider,
   secretStoreOptionsFromEnv,
 } from "@cortexai-agent-hub/adapters";
-import type { OidcConfig, HubAuthConfig } from "@cortexai-agent-hub/auth";
+import type { HubAuthConfig, OidcConfig } from "@cortexai-agent-hub/auth";
 import { hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import {
   resolveAuthSecret,
