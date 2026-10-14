@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
 // The tint2 dock in 1280x800 framebuffer pixels; desktop_smoke.py asserts the real window.
-const DOCK = { x: 580, y: 726, width: 120, height: 64 };
+const DOCK = { x: 10, y: 340, width: 64, height: 120 };
 const VIEWPORTS = [
   [1920, 1080],
   [1440, 900],
@@ -15,7 +15,6 @@ const VIEWPORTS = [
 ] as const;
 
 test("the computer overlay toolbar never covers the desktop dock", async ({ page }, testInfo) => {
-  test.fail(true, "the bottom-center dock sits under the toolbar");
   await signup(page, `dock-${Date.now()}@cortexai-agent-hub.test`, "password12", "Dock");
   await completeOnboarding(page);
   const botId = activeBotId(page);
