@@ -174,6 +174,8 @@ panel_position = center left vertical
 
 tint2 swaps the axes of `panel_size`, `panel_margin` and `panel_padding` for vertical panels, so `panel_size = 0 64`, `panel_margin = 0 10` and `panel_padding = 10 8 10` should give a 64 px thick, shrink-to-fit dock 10 px from the left edge. The smoke assertion in Step 5 decides. If the real window isn't at x ≈ 10, swap the margin to `10 0` and re-run.
 
+Outcome: tint2 17 swaps the size and padding axes but not the margin, so the shipped config uses `panel_margin = 10 0`. The config test pins it, and the real window measures x 10, y 340, 64x120.
+
 - [ ] **Step 4: Run the config test and watch it pass**
 
 Same command. Expected: PASS.
@@ -199,6 +201,8 @@ Add `"dock_geometry": {key.lower(): int(value) for key, value in geometry.items(
     assert dock["x"] <= 16 and dock["width"] <= 80, dock
     assert abs(dock["y"] + dock["height"] / 2 - 400) <= 2, dock
 ```
+
+Outcome: the shipped smoke asserts the exact rectangle, `{"x": 10, "y": 340, "width": 64, "height": 120}`, so it stays in lockstep with the web test's `DOCK`.
 
 The image's "Desktop smoke and screenshots" step in `publish-server-image.yml` runs this on the PR. Its `computer-desktop` artifact gives the **after** `idle.png` and `terminal.png`, which show the dock next to an unmaximized xterm. The current `main` artifact gives the before pair.
 
