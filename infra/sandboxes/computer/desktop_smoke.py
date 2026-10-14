@@ -137,6 +137,12 @@ def window_list():
     return run("wmctrl", "-lx").stdout
 
 
+def dock_geometry():
+    out = run("xdotool", "search", "--name", "cortexai-agent-hub-dock", "getwindowgeometry", "--shell").stdout
+    fields = dict(line.split("=", 1) for line in out.split() if "=" in line)
+    return {key.lower(): int(fields[key]) for key in ("X", "Y", "WIDTH", "HEIGHT") if key in fields}
+
+
 def diagnose(out):
     """Print what a CI log needs to explain a failed wait; the runner can't be inspected later."""
     print("--- windows\n" + window_list(), file=sys.stderr)
@@ -204,6 +210,7 @@ def smoke(args):
         "wm": wm_name(),
         "compositor": compositor_owned(),
         "dock": "tint2" in found,
+        "dock_geometry": dock_geometry(),
         "ready_ms": ready_ms,
         "rss_kb": rss,
         "cpu_ticks_idle": idle_ticks,
@@ -217,6 +224,9 @@ def smoke(args):
 def modern_checks(metrics, home):
     assert metrics["wm"] == "Xfwm4", metrics["wm"]
     assert metrics["dock"], "tint2 is not running"
+    # The web app's toolbar floats over the bottom center of the scaled screen.
+    dock = metrics["dock_geometry"]
+    assert dock == {"x": 10, "y": 340, "width": 64, "height": 120}, f"dock geometry {dock}"
     assert metrics["compositor"], "no compositor owns _NET_WM_CM_S0"
     for family in ("Inter", "JetBrains Mono"):
         assert family in run("fc-match", family).stdout, f"{family} font missing"

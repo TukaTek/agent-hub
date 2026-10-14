@@ -54,11 +54,14 @@ describe("computer desktop config", () => {
     expect(conf).toMatch(/rounded-corners-exclude = \[[^\]]*_NET_WM_STATE_MAXIMIZED_VERT/s);
   });
 
-  it("draws an icon-only launcher dock under maximized windows without reserving space", () => {
+  it("draws an icon-only launcher dock on the left edge, under maximized windows, without reserving space", () => {
     const rc = read("tint2rc.in");
     for (const line of [
       "panel_items = L",
-      "panel_position = bottom center horizontal",
+      // The web app's toolbar floats over the bottom center of the screen.
+      "panel_position = center left vertical",
+      // tint2 swaps size and padding axes for vertical panels, but not margins.
+      "panel_margin = 10 0",
       "panel_layer = bottom",
       "strut_policy = none",
       "autohide = 0",
