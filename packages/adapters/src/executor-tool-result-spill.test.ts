@@ -1,9 +1,15 @@
 import type { AgentRunRequest, ComputerRef } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
+import { BoxSandboxProvider } from "./box-sandbox.js";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
+import { CreateOSSandboxProvider } from "./createos-sandbox.js";
+import { DaytonaSandboxProvider } from "./daytona-sandbox.js";
+import { DesktopSandboxProvider } from "./desktop-sandbox.js";
+import { DockerSandboxProvider } from "./docker-sandbox.js";
+import { E2BSandboxProvider } from "./e2b-sandbox.js";
 import { createRunExecutor } from "./executor.js";
 import { FakeSandboxProvider } from "./fake-sandbox.js";
-import { formatSpillReceipt, spillUserKey } from "./tool-result-spill.js";
+import { formatSpillReceipt, formatStructuredSpill, spillUserKey } from "./tool-result-spill.js";
 
 const lifecycle = vi.hoisted(() => ({ computer: undefined as ComputerRef | undefined }));
 
@@ -20,12 +26,16 @@ class SpillSandbox extends FakeSandboxProvider {
   readonly commands: string[][] = [];
   failWrites = false;
 
+  constructor(private readonly root: string | undefined = ROOT) {
+    super();
+  }
+
   override describe() {
     const described = super.describe();
     return {
       ...described,
-      capabilities: { ...described.capabilities, graphical: false, workspaceRoot: ROOT },
-    };
+      capabilities: { ...described.capabilities, graphical: false, workspaceRoot: this.root },
+    } as ReturnType<FakeSandboxProvider["describe"]>;
   }
 
   override async *execute(...args: Parameters<FakeSandboxProvider["execute"]>) {
@@ -64,16 +74,18 @@ async function runScenario(
     computerOwner?: string;
     runUser?: string;
     sandbox?: SpillSandbox;
+    kind?: ComputerRef["kind"];
   } = {},
 ) {
   const sandbox = options.sandbox ?? new SpillSandbox();
-  lifecycle.computer = await sandbox.provision({ botId: "bot-1", homePath: "home" }, {
+  const computer = await sandbox.provision({ botId: "bot-1", homePath: "home" }, {
     operationId: "provision",
     traceId: "provision",
     spaceId: "space-1",
     userId: "user-a",
     signal: new AbortController().signal,
   } as never);
+  lifecycle.computer = options.kind ? { ...computer, kind: options.kind } : computer;
   const run = {
     id: "run-1",
     botId: "bot-1",
@@ -283,6 +295,44 @@ describe("oversized tool results spill to the bot computer", () => {
       });
       expect(String(page.content)).toContain(middle);
     });
+  });
+
+  it.each([
+    ["docker", () => new DockerSandboxProvider("http://supervisor.invalid", "token")],
+    ["createos", () => new CreateOSSandboxProvider({ apiKey: "key" })],
+    ["e2b", () => new E2BSandboxProvider("key")],
+    ["box", () => new BoxSandboxProvider({ apiKey: "key" }, {} as never)],
+    ["daytona", () => new DaytonaSandboxProvider({ apiKey: "key" }, {} as never)],
+    ["fake", () => new FakeSandboxProvider()],
+    ["desktop", () => new DesktopSandboxProvider()],
+  ] as const)("opens the exact receipt path with read_file on %s computers", async (kind, make) => {
+    const { workspaceRoot } = make().describe().capabilities as { workspaceRoot?: string };
+    const { text } = fathomTranscript(240_000);
+    const middle = Math.floor(text.length / 2);
+    await runScenario(
+      async (request) => {
+        const saved = await spillOf(request)({ toolName: "fathom", executionId: "e", text });
+        if (!("path" in saved)) throw new Error("not saved");
+        const structured = formatStructuredSpill(saved, { transcript: text }, 12_000)!;
+        const paths = [
+          /at (\S+)\. Read it/.exec(formatSpillReceipt(saved, text, 12_000))![1]!,
+          JSON.parse(structured).fullResult.path as string,
+        ];
+        for (const path of paths) {
+          expect(path).toBe(saved.path);
+          for (const offset of [0, middle]) {
+            const page = await tool(request, "read_file", { path, offset });
+            expect(page, `${kind} ${path} @${offset}`).not.toHaveProperty("error");
+            expect(page.total_chars).toBe(text.length);
+            expect(text.startsWith(String(page.content), offset)).toBe(true);
+          }
+        }
+      },
+      {
+        sandbox: new SpillSandbox(workspaceRoot),
+        kind: kind === "desktop" ? "desktop" : undefined,
+      },
+    );
   });
 
   it("redacts run secrets before writing", async () => {
