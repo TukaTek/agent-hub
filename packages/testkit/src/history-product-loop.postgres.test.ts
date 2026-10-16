@@ -2,11 +2,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PiAgentRuntime } from "@cortexai-agent-hub/adapters";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HISTORY_EVAL_CASES } from "./evals/cases.js";
 import { runTrial } from "./evals/runner.js";
 import type { ModelEmulatorRequest } from "./model-emulator.js";
 import { startModelEmulator } from "./model-emulator.js";
+
+// The diagnostic segments fit the default inline limit; the old limit keeps them compressed.
+vi.hoisted(() => {
+  process.env.TOOL_RESULT_TEXT_LIMIT = "12000";
+});
 
 const enabled = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
 

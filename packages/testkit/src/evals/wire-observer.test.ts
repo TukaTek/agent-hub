@@ -7,6 +7,11 @@ import { EvalServices } from "./services.js";
 import type { DiagnosticWireObservation } from "./wire-observer.js";
 import { diagnosticWireFetch, installDiagnosticWireObserver } from "./wire-observer.js";
 
+// The diagnostic segments fit the default inline limit; the old limit keeps them compressed.
+vi.hoisted(() => {
+  process.env.TOOL_RESULT_TEXT_LIMIT = "12000";
+});
+
 function body(nextCursor: unknown = "segment-3572054") {
   return JSON.stringify({
     model: "fixture",

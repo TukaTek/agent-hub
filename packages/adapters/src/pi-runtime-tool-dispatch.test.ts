@@ -1,4 +1,8 @@
-import type { AgentToolCompletion, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AgentRunRequest,
+  AgentToolCompletion,
+  ConnectorTool,
+} from "@cortexai-agent-hub/adapter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fakeAgentState = vi.hoisted(() => ({
@@ -378,6 +382,7 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
+import { shortenToolResultText } from "./context-selection.js";
 import { toolCompletionAuditPayload } from "./executor.js";
 import { catalogEntries, lazyCatalogTools } from "./lazy-tool-catalog.js";
 import {
@@ -1986,7 +1991,7 @@ describe("Pi connector tool dispatch", () => {
       description: "Large skill",
       source: "user",
       readOnly: false,
-      content: `---\nname: large-skill\n---\n${"1. Step kept for skill_update.\n".repeat(600)}`,
+      content: `---\nname: large-skill\n---\n${"1. Step kept for skill_update.\n".repeat(4_000)}`,
     };
     fakeAgentState.invoke = { name: "skill_read", args: { name: skill.name } };
     const runtime = new PiAgentRuntime();
@@ -2089,7 +2094,8 @@ describe("Pi bounded tool-result budgets", () => {
     tools: ConnectorTool[],
     invoke: { name: string; args: Record<string, unknown> },
     result: unknown,
-    contextStrategy?: "current",
+    contextStrategy?: AgentRunRequest["contextStrategy"],
+    spillToolResult?: AgentRunRequest["spillToolResult"],
   ) {
     fakeAgentState.invoke = invoke;
     for await (const _event of new PiAgentRuntime().run(
@@ -2104,6 +2110,7 @@ describe("Pi bounded tool-result budgets", () => {
         model: { provider: "test", id: "dispatch-test-model" },
         executeTool: vi.fn(async () => result),
         ...(contextStrategy ? { contextStrategy } : {}),
+        ...(spillToolResult ? { spillToolResult } : {}),
       },
       {
         operationId: "budget",
@@ -2133,9 +2140,9 @@ describe("Pi bounded tool-result budgets", () => {
         "connectors",
         "mcp",
         "MCP",
-        catalogEntries([pageTool(64_000)]),
+        catalogEntries([pageTool(120_000)]),
       );
-      const page = "p".repeat(50_000);
+      const page = "p".repeat(110_000);
       const content = await deliver(
         tools,
         { name: "connectors_execute_tool", args: { id, arguments: {} } },
@@ -2150,9 +2157,9 @@ describe("Pi bounded tool-result budgets", () => {
       "connectors",
       "mcp",
       "MCP",
-      catalogEntries([pageTool(64_000, "docs"), pageTool(64_000, "wiki")]),
+      catalogEntries([pageTool(120_000, "docs"), pageTool(120_000, "wiki")]),
     );
-    const page = "p".repeat(50_000);
+    const page = "p".repeat(110_000);
     const content = await deliver(
       tools,
       { name: "connectors_execute_tool", args: { id: "read_page", arguments: {} } },
@@ -2172,52 +2179,374 @@ describe("Pi bounded tool-result budgets", () => {
   });
 
   it("still clips a native result larger than the raised limit", async () => {
-    const page = "y".repeat(30_000);
+    const page = "y".repeat(120_000);
     const content = await deliver(
-      [{ ...pageTool(20_000), name: "read_page" }],
+      [{ ...pageTool(110_000), name: "read_page" }],
       { name: "read_page", args: {} },
       nativeResult(text(page)),
     );
-    expect(content).toEqual([text(clipped(page, 20_000))]);
+    expect(content).toEqual([text(clipped(page, 110_000))]);
   });
 
   it("still clips a JSON result larger than the raised limit under the current strategy", async () => {
-    const result = { page: "y".repeat(30_000) };
+    const result = { page: "y".repeat(120_000) };
     const content = await deliver(
-      [{ ...pageTool(20_000), name: "read_page" }],
+      [{ ...pageTool(110_000), name: "read_page" }],
       { name: "read_page", args: {} },
       result,
       "current",
     );
-    expect(content).toEqual([text(clipped(JSON.stringify(result), 20_000))]);
+    expect(content).toEqual([text(clipped(JSON.stringify(result), 110_000))]);
   });
 
   it("shares one raised budget across text blocks", async () => {
     const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" as const };
-    const first = "a".repeat(15_000);
-    const second = "b".repeat(15_000);
+    const first = "a".repeat(60_000);
+    const second = "b".repeat(60_000);
     const content = await deliver(
-      [{ ...pageTool(20_000), name: "read_page" }],
+      [{ ...pageTool(110_000), name: "read_page" }],
       { name: "read_page", args: {} },
       nativeResult(text(first), image, text(second), text("c".repeat(5_000))),
     );
     expect(content).toEqual([
       text(first),
       image,
-      text(`${"b".repeat(5_000)}…\n${toolResultTruncationNotice(20_000)}`),
+      text(`${"b".repeat(50_000)}…\n${toolResultTruncationNotice(110_000)}`),
     ]);
   });
 
   it("applies the default limit when connector tool names collide", async () => {
-    const page = "z".repeat(30_000);
+    const page = "z".repeat(120_000);
     const content = await deliver(
       [
-        { ...pageTool(64_000, "docs"), name: "lookup" },
-        { ...pageTool(64_000, "wiki"), name: "lookup" },
+        { ...pageTool(120_000, "docs"), name: "lookup" },
+        { ...pageTool(120_000, "wiki"), name: "lookup" },
       ],
       { name: "lookup", args: {} },
       nativeResult(text(page)),
     );
     expect(content).toEqual([text(clipped(page, TOOL_RESULT_TEXT_LIMIT))]);
+  });
+
+  describe("oversized results spill to the bot computer", () => {
+    const spillPath =
+      "/home/cortexai-agent-hub/.cortexai/tool-results/0123456789abcdef/run-1/01-fathom.txt";
+    const fathomTool: ConnectorTool = {
+      name: "fathom_get_transcript",
+      description: "Get a meeting transcript",
+      inputSchema: { type: "object", properties: {} },
+    };
+    const transcript = (chars: number) => {
+      let value = "";
+      for (let index = 0; value.length < chars; index++) {
+        value += `[00:${String(index % 60).padStart(2, "0")}] Speaker ${index % 3}: marker-${index}\n`;
+      }
+      return value.slice(0, chars);
+    };
+    function spillTo(path = spillPath) {
+      const saved: Array<{ toolName: string; executionId: string; text: string }> = [];
+      const spill = vi.fn(async (input: (typeof saved)[number]) => {
+        saved.push(input);
+        return { path, totalChars: input.text.length, savedChars: input.text.length };
+      });
+      return { spill, saved };
+    }
+    const receiptOf = (content: unknown[]) => (content[0] as { text: string }).text;
+
+    it.each([undefined, "current"] as const)(
+      "saves a 200k JSON object byte for byte and keeps its shape and cursor (%s strategy)",
+      async (strategy) => {
+        const result = { nextCursor: "page-2", transcript: transcript(200_000) };
+        const { spill, saved } = spillTo();
+        const content = await deliver(
+          [fathomTool],
+          { name: fathomTool.name, args: {} },
+          result,
+          strategy,
+          spill,
+        );
+        const full = JSON.stringify(result);
+        expect(saved).toEqual([
+          { toolName: fathomTool.name, executionId: expect.any(String), text: full },
+        ]);
+        const receipt = receiptOf(content);
+        expect(content).toHaveLength(1);
+        expect(receipt.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+        expect(receipt.slice(0, 512)).toContain(spillPath);
+        const parsed = JSON.parse(receipt);
+        expect(parsed.fullResult).toMatchObject({
+          path: spillPath,
+          format: "json",
+          totalChars: full.length,
+          approxTokens: Math.ceil(full.length / 4),
+        });
+        expect(parsed.nextCursor).toBe("page-2");
+        expect(parsed.transcript.startsWith(result.transcript.slice(0, 1_000))).toBe(true);
+        expect(parsed.transcript).toContain("the full result is at fullResult.path");
+        expect(receipt).not.toContain("unavailable");
+        const later = JSON.parse(shortenToolResultText(receipt, 1_024));
+        expect(later.fullResult.path).toBe(spillPath);
+        expect(later.nextCursor).toBe("page-2");
+      },
+    );
+
+    it("returns a text receipt for an oversized JSON array", async () => {
+      const result = [transcript(240_000), transcript(240_000)];
+      const { spill } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        result,
+        undefined,
+        spill,
+      );
+      const receipt = receiptOf(content);
+      const full = JSON.stringify(result);
+      expect(receipt.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+      expect(
+        receipt.startsWith(
+          `[Full result saved: ${full.length.toLocaleString("en-US")} characters (~${Math.ceil(full.length / 4).toLocaleString("en-US")} tokens) of JSON at ${spillPath}.`,
+        ),
+      ).toBe(true);
+    });
+
+    it("saves the text of a native result and keeps its images", async () => {
+      const image = {
+        type: "image" as const,
+        data: "iVBORw0KGgo=",
+        mimeType: "image/png" as const,
+      };
+      const first = transcript(150_000);
+      const second = transcript(60_000);
+      const { spill, saved } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        nativeResult(text(first), image, text(second)),
+        undefined,
+        spill,
+      );
+      expect(saved[0]!.text).toBe(`${first}\n${second}`);
+      expect(saved[0]!.text).not.toContain(image.data);
+      expect(content).toHaveLength(2);
+      expect(receiptOf(content).slice(0, 512)).toContain(spillPath);
+      expect(receiptOf(content)).toContain(" of text at ");
+      expect(content[1]).toEqual(image);
+    });
+
+    it("never spills a result that is only images", async () => {
+      const image = { type: "image" as const, data: "A".repeat(300_000), mimeType: "image/png" };
+      const { spill } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        nativeResult(image),
+        undefined,
+        spill,
+      );
+      expect(content).toEqual([image]);
+      expect(spill).not.toHaveBeenCalled();
+    });
+
+    it("saves an oversized string as plain text, not a JSON string", async () => {
+      const result = transcript(240_000);
+      const { spill, saved } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        result,
+        undefined,
+        spill,
+      );
+      expect(saved[0]!.text).toBe(result);
+      expect(receiptOf(content)).toContain(
+        `[Full result saved: 240,000 characters (~60,000 tokens) of text at ${spillPath}.`,
+      );
+    });
+
+    it.each([
+      ["an MCP isError result", { isError: true, content: [{ type: "text", text: "" }] }],
+      ["an error field", { error: "" }],
+    ])("keeps %s inline with its head and tail instead of spilling", async (_label, shape) => {
+      const detail = `${"start-of-error ".repeat(4_000)}${"x".repeat(150_000)}${" end-of-error".repeat(4_000)}`;
+      const result =
+        "content" in shape
+          ? { ...shape, content: [{ type: "text", text: detail }] }
+          : { error: detail };
+      const { spill } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        result,
+        undefined,
+        spill,
+      );
+      expect(spill).not.toHaveBeenCalled();
+      const delivered = receiptOf(content);
+      expect(delivered.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+      expect(delivered).toContain("start-of-error");
+      expect(delivered).toContain("end-of-error");
+      expect(delivered).not.toContain("Full result saved");
+    });
+
+    it("keeps a native error result inline instead of spilling", async () => {
+      const { spill } = spillTo();
+      await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        { ...nativeResult(text(transcript(240_000))), details: { isError: true } },
+        undefined,
+        spill,
+      );
+      expect(spill).not.toHaveBeenCalled();
+    });
+
+    it("leaves results under the limit unchanged", async () => {
+      const { spill } = spillTo();
+      // JSON escapes each newline, so keep the serialized text under the limit.
+      const json = { transcript: transcript(TOOL_RESULT_TEXT_LIMIT - 5_000) };
+      expect(JSON.stringify(json).length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+      expect(
+        await deliver([fathomTool], { name: fathomTool.name, args: {} }, json, undefined, spill),
+      ).toEqual([text(JSON.stringify(json))]);
+      const page = transcript(TOOL_RESULT_TEXT_LIMIT);
+      expect(
+        await deliver(
+          [fathomTool],
+          { name: fathomTool.name, args: {} },
+          nativeResult(text(page)),
+          undefined,
+          spill,
+        ),
+      ).toEqual([text(page)]);
+      expect(spill).not.toHaveBeenCalled();
+    });
+
+    it("leaves a CAAH-89 page within its raised budget unchanged", async () => {
+      const { spill } = spillTo();
+      const tools = lazyCatalogTools(
+        "connectors",
+        "mcp",
+        "MCP",
+        catalogEntries([pageTool(120_000)]),
+      );
+      const page = "p".repeat(110_000);
+      expect(
+        await deliver(
+          tools,
+          { name: "connectors_execute_tool", args: { id: "docs:read_page", arguments: {} } },
+          nativeResult(text(page)),
+          undefined,
+          spill,
+        ),
+      ).toEqual([text(page)]);
+      expect(
+        await deliver(
+          [{ ...pageTool(120_000), name: "read_page" }],
+          { name: "read_page", args: {} },
+          nativeResult(text(page)),
+          undefined,
+          spill,
+        ),
+      ).toEqual([text(page)]);
+      expect(spill).not.toHaveBeenCalled();
+    });
+
+    it("spills a page over its raised budget with the same leading text", async () => {
+      const { spill, saved } = spillTo();
+      const tools = lazyCatalogTools(
+        "connectors",
+        "mcp",
+        "MCP",
+        catalogEntries([pageTool(120_000)]),
+      );
+      const page = transcript(240_000);
+      const content = await deliver(
+        tools,
+        { name: "connectors_execute_tool", args: { id: "docs:read_page", arguments: {} } },
+        nativeResult(text(page)),
+        undefined,
+        spill,
+      );
+      expect(saved[0]).toMatchObject({ toolName: "docs:read_page", text: page });
+      const receipt = receiptOf(content);
+      expect(receipt.length).toBeLessThanOrEqual(120_000);
+      const head = receipt.slice(receipt.indexOf("\n") + 1).split("\n…\n")[0]!;
+      expect(head.length).toBeGreaterThan(110_000);
+      expect(page.startsWith(head)).toBe(true);
+    });
+
+    it.each([
+      [
+        "reports no computer",
+        async () => ({ unavailable: "no-computer" as const }),
+        "no bot computer is available",
+      ],
+      [
+        "reports another user's computer",
+        async () => ({ unavailable: "shared-computer" as const }),
+        "belongs to another user",
+      ],
+      [
+        "throws",
+        async () => {
+          throw new Error("sandbox down");
+        },
+        "no bot computer is available",
+      ],
+    ])(
+      "falls back to truncation with a notice when the spill %s",
+      async (_label, spill, reason) => {
+        const page = transcript(240_000);
+        const content = await deliver(
+          [fathomTool],
+          { name: fathomTool.name, args: {} },
+          nativeResult(text(page)),
+          undefined,
+          spill as AgentRunRequest["spillToolResult"],
+        );
+        expect(content).toHaveLength(2);
+        expect(content[0]).toEqual(text(clipped(page, TOOL_RESULT_TEXT_LIMIT)));
+        expect((content[1] as { text: string }).text).toContain(reason);
+        const json = { page };
+        const jsonContent = await deliver(
+          [fathomTool],
+          { name: fathomTool.name, args: {} },
+          json,
+          "current",
+          spill as AgentRunRequest["spillToolResult"],
+        );
+        expect(receiptOf(jsonContent)).toBe(
+          `${clipped(JSON.stringify(json), TOOL_RESULT_TEXT_LIMIT)}\n${(content[1] as { text: string }).text}`,
+        );
+      },
+    );
+
+    it("keeps today's truncation when the runtime has no spill callback", async () => {
+      const page = transcript(240_000);
+      expect(
+        await deliver([fathomTool], { name: fathomTool.name, args: {} }, nativeResult(text(page))),
+      ).toEqual([text(clipped(page, TOOL_RESULT_TEXT_LIMIT))]);
+    });
+
+    it("never spills results that come from the computer itself", async () => {
+      const { spill } = spillTo();
+      const readFile: ConnectorTool = {
+        name: "read_file",
+        description: "Read a file",
+        inputSchema: { type: "object", properties: { path: { type: "string" } } },
+      };
+      const page = transcript(240_000);
+      expect(
+        await deliver(
+          [readFile],
+          { name: "read_file", args: { path: "notes.txt" } },
+          nativeResult(text(page)),
+          undefined,
+          spill,
+        ),
+      ).toEqual([text(clipped(page, TOOL_RESULT_TEXT_LIMIT))]);
+      expect(spill).not.toHaveBeenCalled();
+    });
   });
 });

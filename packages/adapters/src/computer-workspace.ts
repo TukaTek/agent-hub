@@ -21,6 +21,7 @@ import {
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
 import { ensureContainedDirectory, LocalAgentHomeStore, resolveAgentHomePath } from "./home.js";
+import { spillPathOwner } from "./tool-result-spill.js";
 
 export const PORTABLE_TRANSFER_BATCH_BYTES = 8 * 1024 * 1024;
 
@@ -44,8 +45,9 @@ const skippedBrowserProfileFiles = new Set([
   "lock",
 ]);
 
-/** Excludes transient browser state that is unsafe or wasteful to restore. */
+/** Excludes transient browser state and saved tool results that are unsafe or wasteful to restore. */
 export function shouldSkipPortableWorkspaceFile(relative: string) {
+  if (spillPathOwner(relative) !== undefined) return true;
   if (!relative.startsWith(".browser-profiles/")) return false;
   const segments = relative.split("/");
   const name = segments.at(-1) ?? "";

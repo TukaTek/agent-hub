@@ -50,6 +50,7 @@ export class FakeSandboxProvider implements SandboxProvider {
         takeover: true,
         persistentHome: true,
         multiScreen: true,
+        workspaceRoot: "/home/cortexai-agent-hub",
       },
     };
   }

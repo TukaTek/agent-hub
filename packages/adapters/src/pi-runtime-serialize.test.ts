@@ -20,7 +20,7 @@ describe("serializeToolResult", () => {
   );
 
   it("still bounds other large tool results", () => {
-    const text = serializeToolResult({ output: "x".repeat(20_000) }, "current", "shell", {});
-    expect(text.length).toBeLessThan(20_000);
+    const text = serializeToolResult({ output: "x".repeat(120_000) }, "current", "shell", {});
+    expect(text.length).toBeLessThan(120_000);
   });
 });

@@ -4,6 +4,7 @@ import {
   resolveBotUploadPath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
+  stripWorkspaceRoot,
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
 
@@ -62,5 +63,32 @@ describe("resolveBotUploadPath", () => {
     expect(() => resolveBotUploadPath("team", "bot-1", "bots/bot-2/secret.txt")).toThrow(
       /escapes the bot workspace/,
     );
+  });
+});
+
+describe("provider workspace roots", () => {
+  const root = "/home/cortexai-agent-hub";
+
+  it("turns a real absolute workspace path into the virtual-root path file tools use", () => {
+    expect(stripWorkspaceRoot(`${root}/.cortexai/tool-results/k/r/01-x.txt`, root)).toBe(
+      "/.cortexai/tool-results/k/r/01-x.txt",
+    );
+    expect(stripWorkspaceRoot(root, `${root}/`)).toBe("/");
+    expect(
+      resolveBotWorkspacePath(
+        "team",
+        "bot-1",
+        stripWorkspaceRoot(`${root}/bots/bot-1/.cortexai/tool-results/k/r/01-x.txt`, root),
+      ),
+    ).toBe("bots/bot-1/.cortexai/tool-results/k/r/01-x.txt");
+  });
+
+  it("leaves other paths alone", () => {
+    expect(stripWorkspaceRoot("notes/a.txt", root)).toBe("notes/a.txt");
+    expect(stripWorkspaceRoot(`${root}-other/a.txt`, root)).toBe(`${root}-other/a.txt`);
+    expect(stripWorkspaceRoot(`${root}/a.txt`, undefined)).toBe(`${root}/a.txt`);
+    expect(() =>
+      resolveBotWorkspacePath("team", "bot-1", stripWorkspaceRoot(`${root}/../etc/passwd`, root)),
+    ).toThrow("Path escapes the computer workspace");
   });
 });

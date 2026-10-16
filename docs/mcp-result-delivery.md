@@ -1,6 +1,8 @@
 # Bounded MCP result pages
 
-Agent Hub normally gives a tool result 12,000 characters of model-visible text.
+Agent Hub normally gives a tool result 100,000 characters (about 25k tokens) of
+model-visible text. Operators can change this with `TOOL_RESULT_TEXT_LIMIT`
+(12,000 to 1,000,000; invalid values use the default).
 An MCP server that already paginates its results can request a larger budget on an
 individual read-only tool at discovery time:
 
@@ -9,7 +11,7 @@ individual read-only tool at discovery time:
   "name": "read_cached_page",
   "inputSchema": { "type": "object", "properties": {} },
   "annotations": { "readOnlyHint": true },
-  "_meta": { "io.cortexai/max-result-chars": 64000 }
+  "_meta": { "io.cortexai/max-result-chars": 128000 }
 }
 ```
 
@@ -17,7 +19,8 @@ This is an optional Agent Hub extension, not a standard MCP pagination capabilit
 Clients that do not implement it may ignore the hint. Servers must keep their
 response size compatible with the clients actually deployed.
 
-The hint must be a safe integer at least 12,000; the host clamps it to 128,000.
+The hint must be a safe integer at least the default limit; the host clamps it to
+128,000, or to the default when that is higher.
 Invalid or absent hints and tools without an explicit read-only annotation retain
 the original limit. It does not grant authorization or change approval behavior.
 HTTP transport limits are unchanged. Result bodies and model arguments cannot ask
@@ -49,3 +52,17 @@ that cannot fit alongside required context may still be shortened by the context
 selector. Choose page sizes that fit the selected model, and consume pages
 incrementally; this hint does not disable context limits or guarantee that a whole
 audit fits in one model call.
+
+## Oversized results
+
+When a result is longer than its delivery limit, whether the default or a page budget above, Agent Hub saves the full text to a file on the bot's computer instead of dropping the remainder. Secrets registered for the run are redacted first, and a file holds at most 2,000,000 characters. A JSON object is delivered with its shape kept, so cursors and IDs stay usable, and with a `fullResult` field (`path`, `format`, `totalChars`, `approxTokens`, how to read it) added first. A plain string is saved as text rather than a JSON string. Any other result gets a bounded preview with a header first:
+
+```
+[Full result saved: 200,000 characters (~50,000 tokens) of text at <path>. Read it with read_file (offset, limit) or search it with shell grep -n.]
+```
+
+`read_file` with `offset` and `limit` returns a page of at most 64,000 characters from any position, plus `total_chars` and `next_offset`. Offsets count the same characters as the header's total.
+
+Files live under `.cortexai/tool-results/<user>/<run>/` in the bot's home (`bots/<bot-id>/` on a Team Computer). Each user's directory keeps files for 7 days and at most 50 files per computer, and workspace checkpoints skip it. File tools refuse other users' result paths. A Team Computer is space-trusted, so its `shell` can still reach them. A private computer only saves results for its owner. Results that already come from the computer (`read_file`, `list_files`, `shell`, screen and browser page tools), subagent replies, skills and history reads are never saved this way. Error results (`isError` or a non-null `error`) stay inline, shortened with the default head and tail cut, so the model sees the failure at once. Images are never saved; they stay inline.
+
+If no computer can take the file, the result is truncated as before, followed by a notice saying why a full copy was not saved.

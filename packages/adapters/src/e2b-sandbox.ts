@@ -104,6 +104,7 @@ export class E2BSandboxProvider implements SandboxProvider {
         takeover: true,
         persistentHome: true,
         multiScreen: true,
+        workspaceRoot: E2B_WORKSPACE,
       },
     };
   }

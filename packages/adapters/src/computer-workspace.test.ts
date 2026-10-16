@@ -24,6 +24,7 @@ import {
   removeComputerWorkspaceDirectories,
   removeDeletedBotWorkspaces,
   restoreComputerWorkspace,
+  shouldSkipPortableWorkspaceFile,
   teamBrowserProfileName,
 } from "./computer-workspace.js";
 import { FakeSandboxProvider } from "./fake-sandbox.js";
@@ -526,3 +527,18 @@ function localWorkspaceSandbox(workspace: string) {
     },
   } as unknown as SandboxProvider;
 }
+
+describe("portable workspace exclusions", () => {
+  it("skips saved tool results so checkpoints never carry them", () => {
+    expect(
+      shouldSkipPortableWorkspaceFile(".cortexai/tool-results/0123456789abcdef/r/01-x.txt"),
+    ).toBe(true);
+    expect(
+      shouldSkipPortableWorkspaceFile(
+        "bots/bot-1/.cortexai/tool-results/0123456789abcdef/r/01-x.txt",
+      ),
+    ).toBe(true);
+    expect(shouldSkipPortableWorkspaceFile("notes/tool-results/x.txt")).toBe(false);
+    expect(shouldSkipPortableWorkspaceFile(".cortexai/other.txt")).toBe(false);
+  });
+});
