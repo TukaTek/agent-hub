@@ -100,13 +100,13 @@ One structured line per attempt through `getLogger()`: `info` for `ok`, `warn` o
 | `runId`, `agentId` (`main` or the subagent ID) | state |
 | `provider`, `model` | active target |
 | `attempt` (1-3), `fallback` (boolean: running on a backup) | stall loop and state |
-| `estimatedRequestTokens` | `estimateModelContextTokens(context, estimatePiImageTokens)`, before context shortening |
-| `timeToFirstEventMs` | time to the first event other than `start` (pi emits `start` on headers), or `null` |
+| `requestSizeEstimate` (estimated tokens; the logger redacts any key containing "token") | `estimateModelContextTokens(context, estimatePiImageTokens)`, before context shortening |
+| `timeToFirstEventMs` | time to the first event other than `start` or `error` (pi emits `start` on headers), or `null` |
 | `durationMs` | from the attempt's start to its terminal event |
 | `lastEventType` | last pi event type seen, for example `start`, `text_delta`, `error` |
 | `outcome` | `ok`, `idle-timeout-retried` or `failed` (ticket wording), plus `switched` for today's non-stall provider-unavailable switch |
 | `stall` | `first-event` or `idle` when the attempt stalled |
-| `error` | only for `failed`, after `sanitizeError` |
+| `errorMessage` | for `failed` and `switched`, after `sanitizeError` (`error` is reserved by the logger) |
 
 No prompt text, keys or error bodies go in the log.
 
@@ -119,7 +119,7 @@ Change `READ_HINT` to `Search it with shell grep -n first, then read only the li
 - Modify: `packages/adapters/src/pi-runtime-limits.ts` (timeouts and constants), `pi-runtime-limits.test.ts`
 - Modify: `packages/adapters/src/pi-runtime.ts` (watchdog first-event timer and stall tag, 2xx body tap in `codexRequestFetch`, stall budget, passthrough mode and log in `fallbackAwareModelStream`, single main-agent stream path, subagent fallback state, `targetModelStream`)
 - Modify: `packages/adapters/src/tool-result-spill.ts` and its test
-- Tests: `pi-runtime-stream-idle.test.ts`, `pi-runtime-fallback.test.ts`, new `pi-runtime-stall-retry.test.ts`
+- Tests: `pi-runtime-stream-idle.test.ts`, `pi-runtime-fallback.test.ts` (the existing idle-switch case now switches on the 3rd attempt), new `pi-runtime-stall-retry.test.ts` (Tasks 3 and 4)
 - Docs: `.env.example`
 
 ## Tasks (test first)
@@ -157,9 +157,9 @@ Change `READ_HINT` to `Search it with shell grep -n first, then read only the li
 
 ### Task 4: Subagent fallback
 
-- [ ] `pi-runtime-fallback.test.ts`:
+- [ ] `pi-runtime-stall-retry.test.ts`:
   - **A subagent switches models after a Codex idle timeout before output.** The parent has a backup, and the subagent's Codex primary stalls on every attempt, so its final retry goes to the backup and returns a reply. `onModelChange` is **not** called, and the parent's next call still uses the primary.
-  - An explicitly selected subagent model still falls back to the parent's backups.
+  - With no backup, a stalled subagent retries on its own model.
 - [ ] Watch it fail, implement, watch it pass, commit.
 
 ### Task 5: Spill hint, then verification
