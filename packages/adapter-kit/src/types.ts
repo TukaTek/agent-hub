@@ -223,6 +223,8 @@ export interface SandboxCapabilities {
   persistentHome: boolean;
   /** Distinct graphical screens for concurrent Team bots on one computer. */
   multiScreen?: boolean;
+  /** Fixed absolute path of the computer workspace, when the provider has one. */
+  workspaceRoot?: string;
 }
 
 export interface ConnectorTool {
@@ -492,10 +494,29 @@ export interface AgentRunRequest {
     route?: ConnectorRoute,
     observer?: AgentToolExecutionObserver,
   ) => Promise<unknown>;
+  /** Save an oversized result off-context, returning where the model can read it in full. */
+  spillToolResult?: (input: {
+    toolName: string;
+    executionId: string;
+    text: string;
+  }) => Promise<ToolResultSpill | ToolResultSpillUnavailable>;
   /** Called after a tool returns; implementations must not persist raw result contents. */
   onToolCompleted?: (completion: AgentToolCompletion) => Promise<void> | void;
   /** Atomically claim durable user steering at the runtime's next safe turn boundary. */
   claimSteering?: (seenIds: string[]) => Promise<AgentSteeringMessage[]>;
+}
+
+export interface ToolResultSpill {
+  /** Absolute on the bot computer when its root is known; read_file also accepts it. */
+  path: string;
+  /** Characters of the redacted text. */
+  totalChars: number;
+  /** Characters written; below totalChars only when the size cap applied. */
+  savedChars: number;
+}
+
+export interface ToolResultSpillUnavailable {
+  unavailable: "no-computer" | "shared-computer";
 }
 
 export interface ScriptedTurn {

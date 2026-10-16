@@ -71,6 +71,7 @@ import type { RuntimeContextDecision } from "./runtime-context.js";
 import { createRuntimeContextPolicy, VERBATIM_TOOL_RESULTS } from "./runtime-context.js";
 import type { FinishedShellCommand } from "./shell-command-stream.js";
 import { deliverFinishedShells } from "./shell-command-stream.js";
+import { formatSpillReceipt, NO_SPILL_TOOLS, spillUnavailableNotice } from "./tool-result-spill.js";
 import { textContentArg } from "./tool-text.js";
 
 const running = new Map<string, { controller: AbortController; work: Promise<void> }>();
@@ -1192,6 +1193,8 @@ function toAgentTool(
       const startedAt = Date.now();
       let result: unknown;
       let failure: unknown;
+      // Executor results are bounded (or spilled) where they are delivered.
+      let delivered = false;
       try {
         result = await (async () => {
           if (tool.name === "request_takeover") {
@@ -1281,20 +1284,23 @@ function toAgentTool(
                 },
               },
             );
+            const spill = spillTarget(host, tool, args, executionId);
+            delivered = true;
             if (isAgentToolExecutionResult(result)) {
               if (isToolPauseResult(result)) host.pausePending = true;
-              return boundAgentToolResult(result, resultLimit);
+              return deliverAgentToolResult(result, resultLimit, spill);
             }
             return {
               content: [
                 {
                   type: "text",
-                  text: serializeToolResult(
+                  text: await deliverSerializedToolResult(
                     result,
                     host.request.contextStrategy,
                     tool.name,
                     args,
                     resultLimit,
+                    spill,
                   ),
                 },
               ],
@@ -1311,7 +1317,9 @@ function toAgentTool(
             details: { error: "no executor" },
           };
         })();
-        if (VERBATIM_TOOL_RESULTS.has(tool.name)) return result as AgentToolResult<unknown>;
+        if (delivered || VERBATIM_TOOL_RESULTS.has(tool.name)) {
+          return result as AgentToolResult<unknown>;
+        }
         return boundAgentToolResult(result as AgentToolResult<unknown>, resultLimit);
       } catch (error) {
         failure = error;
@@ -2056,6 +2064,97 @@ export function serializeToolResult(
   } catch {
     return "ok";
   }
+}
+
+type SpillTarget = (text: string) => ReturnType<NonNullable<AgentRunRequest["spillToolResult"]>>;
+
+function spillTarget(
+  host: ToolHost,
+  tool: ConnectorTool,
+  args: Record<string, unknown>,
+  executionId: string,
+): SpillTarget | undefined {
+  const spill = host.request.spillToolResult;
+  if (!spill || NO_SPILL_TOOLS.has(tool.name) || VERBATIM_TOOL_RESULTS.has(tool.name)) {
+    return undefined;
+  }
+  // A catalog wrapper call is named after the tool it ran.
+  const toolName =
+    tool.resultCharsByToolId && typeof args.id === "string" && args.id ? args.id : tool.name;
+  return (text) => spill({ toolName, executionId, text });
+}
+
+/** A receipt when the full text was saved, else the reason a copy is missing. */
+async function spillOversized(
+  spill: SpillTarget,
+  text: string,
+  limit: number,
+): Promise<{ receipt: string } | { notice: string }> {
+  try {
+    const saved = await spill(text);
+    if ("unavailable" in saved) return { notice: spillUnavailableNotice(saved.unavailable) };
+    return { receipt: formatSpillReceipt(saved, text, limit) };
+  } catch (error) {
+    getLogger().error("tool result spill", error);
+    return { notice: spillUnavailableNotice("no-computer") };
+  }
+}
+
+async function deliverSerializedToolResult(
+  result: unknown,
+  strategy: AgentRunRequest["contextStrategy"],
+  name: string,
+  args: Record<string, unknown>,
+  limit: number | undefined,
+  spill: SpillTarget | undefined,
+): Promise<string> {
+  const bounded = serializeToolResult(result, strategy, name, args, limit);
+  if (!spill) return bounded;
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(result);
+  } catch {
+    return bounded;
+  }
+  const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
+  if (!text || text.length <= effective) return bounded;
+  const outcome = await spillOversized(spill, text, effective);
+  return "receipt" in outcome ? outcome.receipt : `${bounded}\n${outcome.notice}`;
+}
+
+async function deliverAgentToolResult<T>(
+  result: AgentToolResult<T>,
+  limit: number | undefined,
+  spill: SpillTarget | undefined,
+): Promise<AgentToolResult<T>> {
+  if (!spill || !Array.isArray(result.content)) return boundAgentToolResult(result, limit);
+  const isText = (part: unknown): part is { type: "text"; text: unknown } =>
+    !!part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part;
+  const texts = result.content.filter(isText).map((part) => String(part.text));
+  const text = texts.join("\n");
+  const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
+  if (texts.reduce((sum, part) => sum + part.length, 0) <= effective) {
+    return boundAgentToolResult(result, limit);
+  }
+  const outcome = await spillOversized(spill, text, effective);
+  if ("notice" in outcome) {
+    const bounded = boundAgentToolResult(result, limit);
+    return {
+      ...bounded,
+      content: [...bounded.content, { type: "text", text: outcome.notice }],
+    };
+  }
+  const firstText = result.content.findIndex(isText);
+  return {
+    ...result,
+    content: result.content.flatMap((part, index) =>
+      index === firstText
+        ? [{ type: "text" as const, text: outcome.receipt }]
+        : isText(part)
+          ? []
+          : [part],
+    ),
+  };
 }
 
 function boundAgentToolResult<T>(result: AgentToolResult<T>, limit?: number): AgentToolResult<T> {
