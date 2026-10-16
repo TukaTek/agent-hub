@@ -106,7 +106,9 @@ Shell is optional (`disabledBuiltinTools`), and its output is clipped to 12,000 
 
 - When either is set, read with `maxBytes = 8 MB` instead of 250 KB. Return `{ path, offset, total_chars, next_offset?, content }`, with the keys in that order so `next_offset` survives a clip. `limit` defaults to 8,000 and is capped at 8,000, so JSON escaping stays under 12,000.
 - Without `offset` and `limit`, behavior is unchanged.
-- Content goes through `redactSecrets(…, runSecrets)` as today.
+- Content goes through `redactSecrets(…, runSecrets)` as today. The file is already redacted, so this doesn't change the content.
+- **Random access.** `offset` can be any position, not only a `next_offset` from an earlier page. `offset` and `total_chars` count UTF-16 code units, the same unit as the receipt's total, so `offset ≈ fraction × total_chars` jumps to that part of the transcript. A page never splits a surrogate pair: an offset inside one moves back one unit, and a page that would end on a high surrogate ends one unit earlier. Every quoted character is then intact at any position. An offset at or past the end returns empty `content` and no `next_offset`.
+- **Finding a passage.** The receipt points to `shell grep -n -C 3 '<phrase>' <path>`. Its output is line-based, so the byte-versus-character mismatch of `grep -b` doesn't apply. Without shell, the agent jumps by fraction with `read_file`.
 
 ### 5. Isolation
 
@@ -167,6 +169,20 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 
 - [ ] New `executor-tool-result-spill.test.ts`, following `executor-secret-pi.test.ts` (scripted Pi, fake sandbox, fake connector):
   1. **Byte-for-byte:** a 200k fake Composio result spills to `/workspace/.cortexai/tool-results/<key>/<run>/01-….txt`. Paging with `read_file` `offset`/`limit` until `next_offset` is absent and concatenating gives the redacted original exactly. The test uses non-ASCII, newlines and quotes.
+  1b. **Quote from any position.** The fixture is a deterministic fake Fathom transcript of about 240,000 characters, with no randomness. It has one numbered utterance per line, `[hh:mm:ss] Speaker N: … marker-<index> …`, mixing in accented text, emoji (surrogate pairs) and escaped quotes. A table-driven test reads `read_file({ path, offset, limit: 8_000 })` at sampled offsets:
+     - `0` (beginning)
+     - the first character after the receipt's head preview, the start of the part the model hasn't seen
+     - 10%, 25%, 33%, 50% (middle), 67%, 75% and 90% of `total_chars`
+     - the first character before the tail preview
+     - `total_chars − 100` (end), `total_chars` and `total_chars + 1` (both empty, no `next_offset`)
+     - an offset that lands inside an emoji (moves back one unit)
+
+     For every sample:
+     - `content` equals `redacted.slice(o', o' + content.length)`, where `o'` is the offset after any surrogate adjustment.
+     - `next_offset === o' + content.length`.
+     - `content` contains every `marker-<index>` whose line falls wholly in that window, matched against an index computed from the fixture.
+
+     A second case runs a scripted Pi turn: fetch the transcript, then `read_file` at the 50% offset, then reply with a quote. The tool result the model received contains the exact middle utterance, which the receipt preview leaves out. This shows the receipt plus random access gives the model text it couldn't see before, not just the head and tail.
   2. **Redaction:** a result that echoes a registered run secret and a bot secret has `[redacted]` in the file and never the raw value.
   3. **Cross-user denial:** user B runs a private computer owned by A, so nothing is written and the result carries the `shared-computer` notice. B's run calling `read_file` and `list_files` on A's spill path gets `not found`. A multi-member Team Computer falls back too. A single-member Team Computer writes under `bots/<bot-id>/`.
   4. **Retention:** the prune command runs once per run, before the first write, and never when nothing spills. A failing prune still writes.
@@ -184,7 +200,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 ### Task 5: Verification
 
 - [ ] `pnpm --filter @cortexai-agent-hub/adapters test`, `pnpm --filter @cortexai-agent-hub/testkit test` (the `pi-offline` CAAH-89 cases), `pnpm lint` and `pnpm typecheck`.
-- [ ] Acceptance on TukaTek after deploy: an agent fetches a 1-hour Fathom transcript, reads the spill file and quotes its last minutes. The PR records the outcome in words.
+- [ ] Acceptance on TukaTek after deploy: an agent fetches a full 1-hour Fathom transcript and quotes it accurately from the beginning (first 5 minutes), the middle (about 30:00) and the end (last 5 minutes). Each quote is checked word for word against the transcript in Fathom, with matching timestamps. The middle quote must come from text outside the receipt preview. The PR records the outcome in words.
 
 ## Risks
 
@@ -205,6 +221,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 - Ticket coverage:
   - Full save with preview, path and total: sections 2 and 3, Task 2 case 1.
   - Byte-for-byte retrieval at 200k: Task 3 case 1.
+  - Accurate quotes from any position in a result over 100k (beginning, middle, end): section 4 (random access), Task 3 case 1b, Task 5 acceptance.
   - Redaction: section 3 step 2, Task 3 case 2.
   - Private files and cross-user denial: section 5, Task 3 case 3.
   - Retention: section 3 step 5, Task 3 case 4.
