@@ -55,7 +55,7 @@ export function modelStreamFirstEventTimeoutMs(
 ### 2. Watchdog: first-event timer (`codexStreamIdleWatchdog`, `codexRequestFetch`)
 
 - `responded()` runs on a 2xx `onResponse`. It arms the idle timer (today's `ping()`) and a first-event timer.
-- `firstByte()` clears the first-event timer. `codexRequestFetch` passes 2xx bodies through a `TransformStream` whose first chunk calls it. Headers are copied without `content-encoding` and `content-length`, as `boundRetryableErrorBody` does.
+- `firstByte()` clears the first-event timer. `codexRequestFetch` passes 2xx bodies through a `TransformStream` whose first chunk calls it. Any delivered event other than `start` also calls it, since such events can only be parsed from body bytes. Headers are copied without `content-encoding` and `content-length`, as `boundRetryableErrorBody` does.
 - Either timer firing aborts with `CODEX_STREAM_IDLE_TIMEOUT_MESSAGE`, so the error users and logs see is unchanged. The relabeled terminal message is recorded in a module-private `WeakMap<AssistantMessage, "first-event" | "idle">`, which the wrapper reads to detect a stall and log its reason. No message fields change.
 - The idle bound comes from `modelStreamIdleTimeoutMs()` everywhere it's used today, including `boundRetryableErrorBody`.
 
