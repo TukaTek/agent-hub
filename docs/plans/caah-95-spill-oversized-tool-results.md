@@ -60,7 +60,7 @@ In `pi-runtime.ts`, replace both clip calls with an async `deliverToolText(text,
 
 1. If `text.length <= limit` or the tool is in `NO_SPILL_TOOLS`, do exactly what happens today.
 2. Otherwise call `spillToolResult`. On success, return `formatSpillReceipt(receipt, text, limit)`.
-3. When the callback is missing, returns `unavailable` or throws, return today's clip with the matching fallback notice.
+3. When the callback returns `unavailable` or throws, return today's clip followed by the matching fallback notice. With no callback at all (a scripted runtime, or a host that doesn't spill), the output is exactly today's.
 
 For content arrays, the text parts are joined with `"\n"` and spilled as one file. Non-text parts (images) stay as they are. The preview takes the place of the text parts.
 
@@ -95,7 +95,7 @@ Fallback notice, appended to today's `toolResultTruncationNotice(limit)`:
    - `userKey = sha256(spaceId + ":" + run.userId).slice(0, 16)`, so internal IDs aren't shown to the model.
    - `seq` is a per-run counter. `slug` is the resolved tool name (or the catalog `id`), lowercased to `[a-z0-9-]`, at most 40 characters.
    - The path goes through `resolveBotWorkspacePath(computerMode, bot.id, …)`, so on a Team Computer it lands under `bots/<bot-id>/`.
-5. **Prune** (once per run, before the first spill). The command is a constant built with `shellQuote`, run through `deps.sandbox.execute` from the bot home: delete files older than 7 days, then keep the newest 50 files in this user's directory and remove empty run directories. A failure is logged and doesn't block the write.
+5. **Prune** (before each spill, so the 50-file cap holds after the write). The command is a constant built with `shellQuote`, run through `deps.sandbox.execute` from the bot home: delete files older than 7 days, then keep the newest 50 files in this user's directory and remove empty run directories. A failure is logged and doesn't block the write.
 6. **Write:** `deps.sandbox.writeFile(computer, { path, content: utf8 }, context)`. It doesn't call `workspaceCheckpoint.markDirty()` and doesn't post a `computer.command` Activity row (no new UI).
 7. **Absolute path:** add an optional `workspaceRoot?: string` to `SandboxCapabilities`. Docker sets `/home/cortexai-agent-hub`, CreateOS `/home/desktop/cortexai-agent-hub-home`, E2B, Daytona and Box their equivalent homes, and the fake sandbox `/workspace`. The receipt path is `workspaceRoot + "/" + storedPath`. `resolveBotWorkspacePath` strips a leading `workspaceRoot` prefix, the way `docker-sandbox.ts:685` already handles `cwd`, so the same absolute path works in `read_file` and `shell`. The host desktop has no fixed root, so it returns the home-relative path. Shell's default cwd and `read_file` both resolve that from the bot home.
 8. A `writeFile` failure (for example a computer suspended mid-run) returns `{ unavailable: "no-computer" }` and logs.
@@ -184,7 +184,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
      A second case runs a scripted Pi turn: fetch the transcript, then `read_file` at the 50% offset, then reply with a quote. The tool result the model received contains the exact middle utterance, which the receipt preview leaves out. This shows the receipt plus random access gives the model text it couldn't see before, not just the head and tail.
   2. **Redaction:** a result that echoes a registered run secret and a bot secret has `[redacted]` in the file and never the raw value.
   3. **Cross-user denial:** user B runs a private computer owned by A, so nothing is written and the result carries the `shared-computer` notice. A multi-member Team Computer spills under `bots/<bot-id>/.cortexai/tool-results/<key>/`. On that Team Computer, B's run calling `read_file`, `list_files`, `open_path` or `attach_file` on A's spill path gets `not found`.
-  4. **Retention:** the prune command runs once per run, before the first write, and never when nothing spills. A failing prune still writes.
+  4. **Retention:** the prune command runs before every write and never when nothing spills. A failing prune still writes.
   5. **Sandbox failure:** `writeFile` throws, so the run gets the `no-computer` notice and continues.
 - [ ] Watch it fail, implement, watch it pass, then commit.
 

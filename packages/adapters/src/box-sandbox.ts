@@ -135,6 +135,7 @@ export class BoxSandboxProvider implements SandboxProvider {
         takeover: true,
         persistentHome: true,
         multiScreen: true,
+        workspaceRoot: BOX_WORKSPACE,
       },
     };
   }

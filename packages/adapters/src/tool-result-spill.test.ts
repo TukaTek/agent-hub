@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shortenToolResultText } from "./context-selection.js";
 import {
   formatSpillReceipt,
   MAX_SPILL_CHARS,
@@ -52,6 +53,18 @@ describe("formatSpillReceipt", () => {
     expect(tail!.length).toBeGreaterThan(0);
     expect(text.startsWith(head!)).toBe(true);
     expect(text.endsWith(tail!)).toBe(true);
+  });
+
+  it.each([1_024, 6_000])("keeps the path when context shortening cuts to %i characters", (size) => {
+    const text = transcript(200_000);
+    const receipt = formatSpillReceipt(
+      { path, totalChars: text.length, savedChars: text.length },
+      text,
+      12_000,
+    );
+    const shortened = shortenToolResultText(receipt, size, { name: "fathom" });
+    expect(shortened.length).toBeLessThan(receipt.length);
+    expect(shortened).toContain(path);
   });
 
   it("says when only the first part was saved", () => {
