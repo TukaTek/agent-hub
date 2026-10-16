@@ -13,8 +13,11 @@ const SPILL_PAGE_ESCAPED_CHARS = 10_500;
 const PREVIEW_SEPARATOR = "\n…\n";
 const MAX_PREVIEW_TAIL = 2_000;
 
-/** Results that already come from the computer, have their own budget, or are model-written. */
+/** Results that already come from the computer, are superseded every step, have their own budget, or are model-written. */
 export const NO_SPILL_TOOLS: ReadonlySet<string> = new Set([
+  "browser_navigate",
+  "browser_snapshot",
+  "browser_act",
   "read_file",
   "list_files",
   "shell",

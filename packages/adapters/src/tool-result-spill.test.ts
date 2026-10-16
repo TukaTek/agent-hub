@@ -172,8 +172,11 @@ describe("pageSpilledText", () => {
 });
 
 describe("spill policy constants", () => {
-  it("never spills computer-sourced, subagent or exact-evidence tools", () => {
+  it("never spills computer-sourced, page-snapshot, subagent or exact-evidence tools", () => {
     for (const name of [
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_act",
       "read_file",
       "list_files",
       "shell",
