@@ -37,11 +37,17 @@ import {
 type FakeModel = Model<"openai-codex-responses"> | Model<"openai-completions">;
 type StreamOptions = {
   signal: AbortSignal;
-  onResponse?: (response: { status: number; headers: Record<string, string> }, model: FakeModel) => void;
+  onResponse?: (
+    response: { status: number; headers: Record<string, string> },
+    model: FakeModel,
+  ) => void;
 };
 type FakeContext = { messages?: Array<{ role: string; content?: unknown }> };
-type Attempt = (target: FakeModel, context: FakeContext, options: StreamOptions) =>
-  AssistantMessageEventStream;
+type Attempt = (
+  target: FakeModel,
+  context: FakeContext,
+  options: StreamOptions,
+) => AssistantMessageEventStream;
 
 const codex: Model<"openai-codex-responses"> = {
   provider: "openai-codex",
@@ -217,8 +223,7 @@ function calledProviders() {
 }
 
 let sink: ReturnType<typeof createTestSink>;
-const modelCalls = () =>
-  sink.events.filter((event: LogEvent) => event.message === "model call");
+const modelCalls = () => sink.events.filter((event: LogEvent) => event.message === "model call");
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -406,7 +411,9 @@ describe("model stream stall retry", () => {
       }),
     );
     expect(calls[0]?.durationMs).toBeGreaterThanOrEqual(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS);
-    expect(calls[1]).toEqual(expect.objectContaining({ attempt: 2, outcome: "idle-timeout-retried" }));
+    expect(calls[1]).toEqual(
+      expect.objectContaining({ attempt: 2, outcome: "idle-timeout-retried" }),
+    );
     expect(calls[2]).toEqual(
       expect.objectContaining({
         level: "info",

@@ -2734,7 +2734,9 @@ function fallbackAwareModelStream(
     }
     return undefined;
   };
-  const switchTo = async (current: RuntimeModelTarget): Promise<"switched" | "none" | "aborted"> => {
+  const switchTo = async (
+    current: RuntimeModelTarget,
+  ): Promise<"switched" | "none" | "aborted"> => {
     const next = await resolveNext(current);
     if (failIfAborted(current)) return "aborted";
     if (!next) return "none";
