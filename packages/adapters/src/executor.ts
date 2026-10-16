@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { posix as posixPath } from "node:path";
 import type {
   AdapterContext,
   AgentContextStrategy,
@@ -224,8 +225,19 @@ import {
   displayBotWorkspacePath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
+  stripWorkspaceRoot,
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
+import {
+  MAX_PAGED_READ_BYTES,
+  MAX_SPILL_CHARS,
+  pageSpilledText,
+  SPILL_DIRECTORY,
+  spillPathOwner,
+  spillPruneCommand,
+  spillRelativePath,
+  spillUserKey,
+} from "./tool-result-spill.js";
 import type { UnchangedVisualStreak } from "./computer-tools.js";
 import {
   advanceUnchangedVisualGuard,
@@ -422,6 +434,7 @@ export function voiceCallInstruction(disabled?: ReadonlySet<string>): string {
     : VOICE_CALL_BASE_INSTRUCTION;
 }
 const MAX_MODEL_FILE_BYTES = 250_000;
+const SPILL_GUARDED_FILE_TOOLS = new Set(["read_file", "list_files", "open_path", "attach_file"]);
 const TURN_ATTACHMENT_UNAVAILABLE =
   "An attachment in this message could not be loaded. Tell the user the attachment was unavailable and do not guess its contents.";
 const STEERING_ATTACHMENT_UNAVAILABLE = TURN_ATTACHMENT_UNAVAILABLE;
@@ -4069,6 +4082,21 @@ export function createRunExecutor(deps: ExecutorDeps) {
           return occurrence;
         };
 
+        const spillUser = spillUserKey(run.spaceId, run.userId);
+        // A host desktop has no fixed root; the host-aware sandbox reports the isolated one.
+        const workspaceRoot =
+          computer.kind === "desktop" ? undefined : deps.sandbox.describe().capabilities.workspaceRoot;
+        /** Another user's saved tool results stay invisible to the file tools. */
+        const foreignSpillPath = (storedPath: string) => {
+          const owner = spillPathOwner(storedPath);
+          return owner !== undefined && owner !== spillUser;
+        };
+        const resolveFileToolPath = (requestedPath: string) =>
+          resolveBotWorkspacePath(
+            computerMode,
+            bot.id,
+            stripWorkspaceRoot(requestedPath, workspaceRoot),
+          );
         const applyTool = async (
           name: string,
           args: Record<string, unknown>,
@@ -4088,6 +4116,18 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (disabledBuiltinTools.has(name)) {
             return { error: "This tool is disabled for this bot." };
+          }
+          if (SPILL_GUARDED_FILE_TOOLS.has(name) && typeof args.path === "string") {
+            const requested = args.path;
+            let stored: string | undefined;
+            try {
+              stored = /^https?:\/\//i.test(requested) ? undefined : resolveFileToolPath(requested);
+            } catch {
+              // The tool itself reports an invalid path.
+            }
+            if (stored !== undefined && foreignSpillPath(stored)) {
+              return { error: "not found", path: requested };
+            }
           }
           if (PAGE_BROWSER_TOOL_NAMES.has(name) && !pageBrowserAllowed) {
             return { error: "Page browser is unavailable on this computer." };
@@ -4743,28 +4783,27 @@ export function createRunExecutor(deps: ExecutorDeps) {
             }, finish);
           }
           if (name === "list_files") {
-            const requestedPath = String(args.path ?? "");
-            const entries = await deps.sandbox.listFiles(
-              computer,
-              resolveBotWorkspacePath(computerMode, bot.id, requestedPath),
-              context,
-            );
+            const requestedPath = stripWorkspaceRoot(String(args.path ?? ""), workspaceRoot);
+            const storedPath = resolveBotWorkspacePath(computerMode, bot.id, requestedPath);
+            const entries = await deps.sandbox.listFiles(computer, storedPath, context);
             return {
               path: requestedPath,
-              entries: entries.map((entry) => ({
-                ...entry,
-                path: displayBotWorkspacePath(computerMode, bot.id, requestedPath, entry.path),
-              })),
+              entries: entries
+                .filter((entry) => !foreignSpillPath(entry.path))
+                .map((entry) => ({
+                  ...entry,
+                  path: displayBotWorkspacePath(computerMode, bot.id, requestedPath, entry.path),
+                })),
             };
           }
           if (name === "read_file") {
             const filePath = String(args.path ?? "");
-            const storedPath = resolveBotWorkspacePath(computerMode, bot.id, filePath);
+            const storedPath = resolveFileToolPath(filePath);
+            const paged = args.offset !== undefined || args.limit !== undefined;
+            const maxBytes = paged ? MAX_PAGED_READ_BYTES : MAX_MODEL_FILE_BYTES;
             let bytes: Uint8Array;
             try {
-              bytes = await deps.sandbox.readFile(computer, storedPath, context, {
-                maxBytes: MAX_MODEL_FILE_BYTES,
-              });
+              bytes = await deps.sandbox.readFile(computer, storedPath, context, { maxBytes });
             } catch (error) {
               if (error instanceof Error && /exceeds \d+ bytes/.test(error.message)) {
                 return {
@@ -4774,7 +4813,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               }
               throw error;
             }
-            if (bytes.byteLength > MAX_MODEL_FILE_BYTES) {
+            if (bytes.byteLength > maxBytes) {
               return {
                 error: "file is too large for model context",
                 path: filePath,
@@ -4782,13 +4821,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
               };
             }
             try {
-              return {
-                path: filePath,
-                content: redactSecrets(
-                  new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-                  runSecrets,
-                ),
-              };
+              const content = redactSecrets(
+                new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+                runSecrets,
+              );
+              return paged
+                ? { path: filePath, ...pageSpilledText(content, args.offset, args.limit) }
+                : { path: filePath, content };
             } catch {
               return {
                 error: "file is not UTF-8 text; use open_path to inspect it",
@@ -4921,7 +4960,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return finish({ error: modelError, path: filePath });
             };
             if (!deps.artifacts) return failAttach("artifact storage unavailable");
-            const storedPath = resolveBotWorkspacePath(computerMode, bot.id, filePath);
+            const storedPath = resolveFileToolPath(filePath);
             let bytes: Uint8Array;
             const tooLarge = "file exceeds the 10 MiB attachment limit";
             try {
@@ -6380,6 +6419,60 @@ export function createRunExecutor(deps: ExecutorDeps) {
           return finish({ error: `unknown tool ${name}` });
         };
 
+        let spillSeq = 0;
+        const spillToolResult: NonNullable<AgentRunRequest["spillToolResult"]> = async ({
+          toolName,
+          text,
+        }) => {
+          // Team Computers are space-trusted like attachments; a private one belongs to its owner.
+          if (storedComputer.scope === "dedicated" && storedComputer.userId !== run.userId) {
+            return { unavailable: "shared-computer" };
+          }
+          // Redact before capping so the cut cannot expose part of a secret.
+          const redacted = redactSecrets(text, runSecrets);
+          let saved = redacted.slice(0, MAX_SPILL_CHARS);
+          if (saved.length < redacted.length && /[\uD800-\uDBFF]$/.test(saved)) {
+            saved = saved.slice(0, -1);
+          }
+          spillSeq += 1;
+          const storedPath = resolveBotWorkspacePath(
+            computerMode,
+            bot.id,
+            spillRelativePath({ userKey: spillUser, runId, seq: spillSeq, toolName }),
+          );
+          const userDirectory = resolveBotWorkspacePath(
+            computerMode,
+            bot.id,
+            `${SPILL_DIRECTORY}/${spillUser}`,
+          );
+          try {
+            for await (const _event of deps.sandbox.execute(
+              computer,
+              { argv: ["sh", "-c", spillPruneCommand(userDirectory)], timeoutMs: 15_000 },
+              context,
+            )) {
+              // Pruning output is not shown; a failed prune must not block the write.
+            }
+          } catch (error) {
+            getLogger().error("tool result spill prune", error);
+          }
+          try {
+            await deps.sandbox.writeFile(
+              computer,
+              { path: storedPath, content: new TextEncoder().encode(saved) },
+              context,
+            );
+          } catch (error) {
+            getLogger().error("tool result spill", error);
+            return { unavailable: "no-computer" };
+          }
+          return {
+            path: workspaceRoot ? posixPath.join(workspaceRoot, storedPath) : storedPath,
+            totalChars: redacted.length,
+            savedChars: saved.length,
+          };
+        };
+
         const pluginLine =
           connectedPlugins.length > 0
             ? `Connected plugins: ${connectedPlugins.map((row) => `${row.displayName} (${row.connectorId}:${row.provider})`).join(", ")}. Prefer those plugin tools over the computer browser or web search when reading app data (repos, releases, mail, calendar, and similar).`
@@ -6659,6 +6752,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               allowSilentEmpty: allowSilentEmptyRun,
               emptyResponseText,
               executeTool: scripted ? undefined : applyTool,
+              spillToolResult: scripted ? undefined : spillToolResult,
               resolveModel: scripted
                 ? undefined
                 : (provider, modelId) =>

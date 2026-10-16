@@ -96,6 +96,15 @@ export function resolveBotWorkspacePath(
   return path.posix.join(teamBotWorkspaceDirectory(botId), normalized);
 }
 
+/** A real absolute path under the provider's workspace root, as a virtual-root path. */
+export function stripWorkspaceRoot(requestedPath: string, workspaceRoot: string | undefined): string {
+  if (!workspaceRoot) return requestedPath;
+  const root = workspaceRoot.replace(/\/+$/, "");
+  const portable = requestedPath.replace(/\\/g, "/");
+  if (portable === root) return "/";
+  return portable.startsWith(`${root}/`) ? portable.slice(root.length) : requestedPath;
+}
+
 export function resolveBotWorkspaceCwd(
   scope: ComputerMode,
   botId: string,

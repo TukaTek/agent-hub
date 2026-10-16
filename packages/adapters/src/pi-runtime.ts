@@ -1116,9 +1116,14 @@ function toAgentTool(
         };
       }
       if (tool.name === "list_files") return { path: String(raw.path ?? "") };
-      if (tool.name === "read_file" || tool.name === "open_path") {
-        return { path: String(raw.path ?? "") };
+      if (tool.name === "read_file") {
+        return {
+          path: String(raw.path ?? ""),
+          ...(raw.offset !== undefined ? { offset: Number(raw.offset) } : {}),
+          ...(raw.limit !== undefined ? { limit: Number(raw.limit) } : {}),
+        };
       }
+      if (tool.name === "open_path") return { path: String(raw.path ?? "") };
       if (tool.name === "launch_app") {
         return {
           application: String(raw.application ?? ""),

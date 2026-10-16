@@ -265,7 +265,20 @@ export const builtinAgentTools: ConnectorTool[] = [
       "Read a UTF-8 text file from this bot's home. On a Team Computer, relative paths use the bot folder and shared/... accesses shared work. Open visual or binary files with open_path instead.",
     inputSchema: {
       type: "object",
-      properties: { path: { type: "string" } },
+      properties: {
+        path: { type: "string" },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description: "Character to start at, for reading part of a large file",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 8000,
+          description: "Characters to return from offset",
+        },
+      },
       required: ["path"],
     },
   },
