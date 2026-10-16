@@ -1,6 +1,6 @@
 # CAAH-95: Spill Oversized Tool Results to the Bot Computer — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Plan only: no implementation until Agent Hub PM approves.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Approved by Agent Hub PM with the decisions recorded under "Decisions".**
 
 **Goal:** When a tool result is longer than its delivery limit, save the full secret-redacted text to a private file on that bot's computer. The model gets a head/tail preview, the absolute path, the total character count and a hint for reading the file. If no computer is available, today's truncation still applies, with a notice that says so.
 
@@ -82,7 +82,7 @@ The output is plain text, not JSON, so `shortenStructuredResult` can't shorten t
 Fallback notice, appended to today's `toolResultTruncationNotice(limit)`:
 
 - `A full copy was not saved because no bot computer is available.`
-- `A full copy was not saved because this bot's computer is shared with other users.`
+- `A full copy was not saved because this bot's computer belongs to another user.`
 
 ### 3. Executor writer (`executor.ts`, next to `applyTool`)
 
@@ -95,7 +95,7 @@ Fallback notice, appended to today's `toolResultTruncationNotice(limit)`:
    - `userKey = sha256(spaceId + ":" + run.userId).slice(0, 16)`, so internal IDs aren't shown to the model.
    - `seq` is a per-run counter. `slug` is the resolved tool name (or the catalog `id`), lowercased to `[a-z0-9-]`, at most 40 characters.
    - The path goes through `resolveBotWorkspacePath(computerMode, bot.id, …)`, so on a Team Computer it lands under `bots/<bot-id>/`.
-5. **Prune** (once per run, before the first spill). The command is a constant built with `shellQuote`, run through `deps.sandbox.execute` from the bot home: delete files older than 24 hours, then keep the newest 50 files in this user's directory and remove empty run directories. A failure is logged and doesn't block the write.
+5. **Prune** (once per run, before the first spill). The command is a constant built with `shellQuote`, run through `deps.sandbox.execute` from the bot home: delete files older than 7 days, then keep the newest 50 files in this user's directory and remove empty run directories. A failure is logged and doesn't block the write.
 6. **Write:** `deps.sandbox.writeFile(computer, { path, content: utf8 }, context)`. It doesn't call `workspaceCheckpoint.markDirty()` and doesn't post a `computer.command` Activity row (no new UI).
 7. **Absolute path:** add an optional `workspaceRoot?: string` to `SandboxCapabilities`. Docker sets `/home/cortexai-agent-hub`, CreateOS `/home/desktop/cortexai-agent-hub-home`, E2B, Daytona and Box their equivalent homes, and the fake sandbox `/workspace`. The receipt path is `workspaceRoot + "/" + storedPath`. `resolveBotWorkspacePath` strips a leading `workspaceRoot` prefix, the way `docker-sandbox.ts:685` already handles `cwd`, so the same absolute path works in `read_file` and `shell`. The host desktop has no fixed root, so it returns the home-relative path. Shell's default cwd and `read_file` both resolve that from the bot home.
 8. A `writeFile` failure (for example a computer suspended mid-run) returns `{ unavailable: "no-computer" }` and logs.
@@ -116,8 +116,7 @@ Shell is optional (`disabledBuiltinTools`), and its output is clipped to 12,000 
 | --- | --- | --- |
 | Private (`scope = "dedicated"`) and `computer.userId === run.userId` | Yes | Only this user's bot uses it |
 | Private, but `run.userId` isn't the owner | No → `shared-computer` | Another user's machine |
-| Team (`scope = "team"`) and the space has exactly one `SpaceMember` | Yes, under `bots/<bot-id>/.cortexai/…` | Nobody else can run bots there |
-| Team, multi-member space | **No → `shared-computer`** (recommended default, see open question 1) | `docs/computer-runtime.md` says Team folders aren't a security boundary. Any Team bot's `shell` can read them |
+| Team (`scope = "team"`), any number of members | Yes, under `bots/<bot-id>/.cortexai/…` | Space-trusted, like attachments (decision 1). The per-user path guard still applies in the file tools |
 | Host desktop (Electron, `kind = "desktop"`) | Yes | A single local user |
 | No computer, scripted runtime, intro (`created`) run | No → `no-computer` | — |
 
@@ -184,7 +183,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 
      A second case runs a scripted Pi turn: fetch the transcript, then `read_file` at the 50% offset, then reply with a quote. The tool result the model received contains the exact middle utterance, which the receipt preview leaves out. This shows the receipt plus random access gives the model text it couldn't see before, not just the head and tail.
   2. **Redaction:** a result that echoes a registered run secret and a bot secret has `[redacted]` in the file and never the raw value.
-  3. **Cross-user denial:** user B runs a private computer owned by A, so nothing is written and the result carries the `shared-computer` notice. B's run calling `read_file` and `list_files` on A's spill path gets `not found`. A multi-member Team Computer falls back too. A single-member Team Computer writes under `bots/<bot-id>/`.
+  3. **Cross-user denial:** user B runs a private computer owned by A, so nothing is written and the result carries the `shared-computer` notice. A multi-member Team Computer spills under `bots/<bot-id>/.cortexai/tool-results/<key>/`. On that Team Computer, B's run calling `read_file`, `list_files`, `open_path` or `attach_file` on A's spill path gets `not found`.
   4. **Retention:** the prune command runs once per run, before the first write, and never when nothing spills. A failing prune still writes.
   5. **Sandbox failure:** `writeFile` throws, so the run gets the `no-computer` notice and continues.
 - [ ] Watch it fail, implement, watch it pass, then commit.
@@ -204,17 +203,17 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 
 ## Risks
 
-1. **Disk growth.** Each spill is capped at 2,000,000 characters, so at most a few MB on disk. Pruning keeps 24 hours and at most 50 files per user per computer. Checkpoints skip the directory. Worst case per user is about 50 × 8 MB, but realistic transcripts are 100–500 KB.
+1. **Disk growth.** Each spill is capped at 2,000,000 characters, so at most a few MB on disk. Pruning keeps 7 days and at most 50 files per user per computer. Checkpoints skip the directory. Worst case per user is about 50 × 8 MB, but realistic transcripts are 100–500 KB.
 2. **Sandbox not started or suspended.** The executor provisions the computer before the model runs, so it's normally up. If idle sleep or a provider error makes `writeFile` fail, the run falls back to today's truncation with the `no-computer` notice, and never fails the tool.
-3. **Leaking large untrusted content.** The file holds third-party data that may contain prompt injection. It is redacted and capped, never in `shared/`, never attached or opened automatically, written as `.txt` and never executable. Reading it back returns a tool result with the same trust as today. Other users are blocked by policy and the path guard. On multi-member Team Computers we refuse to spill rather than rely on folder conventions.
+3. **Leaking large untrusted content.** The file holds third-party data that may contain prompt injection. It is redacted and capped, never in `shared/`, never attached or opened automatically, written as `.txt` and never executable. Reading it back returns a tool result with the same trust as today. Private computers refuse other users. On Team Computers the file is space-trusted, like attachments: the file tools refuse other users' spill paths, but `shell` on a Team Computer isn't a security boundary (`docs/computer-runtime.md`).
 4. **Behavior change for CAAH-89 overshoot.** A paged tool that exceeds its own budget now gets a slightly shorter head (minus the receipt) plus a file instead of a longer head. Results under budget are unchanged.
 5. **Redaction can lengthen text.** `totalChars` counts the redacted text, so the number the model sees always matches the file.
 
-## Open questions for PM
+## Decisions (Agent Hub PM, from Sanjay)
 
-1. **Multi-member Team Computers.** Recommended: no spill, with a notice. The alternative is to treat the Team Computer as space-trusted, as attachments already are today, and spill under `bots/<bot-id>/` with the path guard. That also covers the default setup, but other users' bots could read the file with `shell`. If TukaTek's acceptance bot is on a shared Team Computer, the recommended default would need a Private Computer for that bot.
-2. **Retention.** Is 24 hours and 50 files right, or should files last as long as the thread so follow-up turns days later can still quote them?
-3. Should `run_subagent` and `shell` output also spill? Not in this ticket's scope as written.
+1. **Multi-member Team Computers spill.** They're space-trusted, like attachments. Files go under `bots/<bot-id>/`, and the per-user path guard stays in `read_file`, `list_files`, `open_path` and `attach_file`. The `shared-computer` fallback is only for a private computer used by someone other than its owner.
+2. **Retention is 7 days**, with the 50-file cap per user per computer.
+3. **Out of scope:** spilling `run_subagent` and `shell` output.
 
 ## Self-review
 
@@ -223,7 +222,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
   - Byte-for-byte retrieval at 200k: Task 3 case 1.
   - Accurate quotes from any position in a result over 100k (beginning, middle, end): section 4 (random access), Task 3 case 1b, Task 5 acceptance.
   - Redaction: section 3 step 2, Task 3 case 2.
-  - Private files and cross-user denial: section 5, Task 3 case 3.
+  - Private files and cross-user denial: section 5, Task 3 case 3 (private computers refuse; file tools return not found on Team Computers).
   - Retention: section 3 step 5, Task 3 case 4.
   - Fallback notice: section 2, Task 2 case 4.
   - Under-limit and CAAH-89 unchanged: Task 2 cases 2–3.
