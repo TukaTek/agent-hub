@@ -100,8 +100,29 @@ export interface SpillReceipt {
   savedChars: number;
 }
 
+export type SpillFormat = "json" | "text";
+
 const READ_HINT = "Read it with read_file (offset, limit) or search it with shell grep -n.";
 const STRUCTURED_MARKER = "[Shortened here; the full result is at fullResult.path.]";
+
+/** The usual four characters per token; a size hint for the model, not a tokenizer. */
+export function approxTokens(chars: number): number {
+  return Math.ceil(chars / 4);
+}
+
+/** Failures stay inline so the model sees the error at once instead of a file to open. */
+export function isErrorToolResult(result: unknown): boolean {
+  const payload =
+    result &&
+    typeof result === "object" &&
+    (result as { kind?: unknown }).kind === "agent_tool_result"
+      ? (result as { details?: unknown }).details
+      : result;
+  if (!payload || typeof payload !== "object") return false;
+  if ((payload as { isError?: unknown }).isError === true) return true;
+  const error = (payload as { error?: unknown }).error;
+  return error !== undefined && error !== null;
+}
 
 /**
  * Objects keep their shape so cursors and IDs stay usable; the path survives later
@@ -115,7 +136,9 @@ export function formatStructuredSpill(
   if (!value || typeof value !== "object" || Array.isArray(value) || "fullResult" in value) return;
   const fullResult = {
     path: spill.path,
+    format: "json",
     totalChars: spill.totalChars,
+    approxTokens: approxTokens(spill.totalChars),
     ...(spill.savedChars < spill.totalChars ? { savedChars: spill.savedChars } : {}),
     read: READ_HINT,
   };
@@ -128,12 +151,18 @@ export function formatStructuredSpill(
 }
 
 /** The header comes first so later context shortening, which keeps the head, keeps the path. */
-export function formatSpillReceipt(spill: SpillReceipt, text: string, limit: number): string {
+export function formatSpillReceipt(
+  spill: SpillReceipt,
+  text: string,
+  limit: number,
+  format: SpillFormat = "text",
+): string {
   const count = (value: number) => value.toLocaleString("en-US");
+  const size = `characters (~${count(approxTokens(spill.totalChars))} tokens) of ${format === "json" ? "JSON" : "text"}`;
   const saved =
     spill.savedChars < spill.totalChars
-      ? `Result saved: first ${count(spill.savedChars)} of ${count(spill.totalChars)} characters`
-      : `Full result saved: ${count(spill.totalChars)} characters`;
+      ? `Result saved: first ${count(spill.savedChars)} of ${count(spill.totalChars)} ${size}`
+      : `Full result saved: ${count(spill.totalChars)} ${size}`;
   const header = `[${saved} at ${spill.path}. ${READ_HINT}]`;
   const available = limit - header.length - 1 - PREVIEW_SEPARATOR.length;
   if (available <= 0) return header;

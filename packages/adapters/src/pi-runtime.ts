@@ -74,7 +74,9 @@ import { deliverFinishedShells } from "./shell-command-stream.js";
 import {
   formatSpillReceipt,
   formatStructuredSpill,
+  isErrorToolResult,
   NO_SPILL_TOOLS,
+  type SpillFormat,
   spillUnavailableNotice,
 } from "./tool-result-spill.js";
 import { textContentArg } from "./tool-text.js";
@@ -1294,7 +1296,9 @@ function toAgentTool(
                 },
               },
             );
-            const spill = spillTarget(host, tool, args, executionId);
+            const spill = isErrorToolResult(result)
+              ? undefined
+              : spillTarget(host, tool, args, executionId);
             delivered = true;
             if (isAgentToolExecutionResult(result)) {
               if (isToolPauseResult(result)) host.pausePending = true;
@@ -2099,13 +2103,16 @@ async function spillOversized(
   spill: SpillTarget,
   text: string,
   limit: number,
+  format: SpillFormat,
   value?: unknown,
 ): Promise<{ receipt: string } | { notice: string }> {
   try {
     const saved = await spill(text);
     if ("unavailable" in saved) return { notice: spillUnavailableNotice(saved.unavailable) };
     return {
-      receipt: formatStructuredSpill(saved, value, limit) ?? formatSpillReceipt(saved, text, limit),
+      receipt:
+        (format === "json" ? formatStructuredSpill(saved, value, limit) : undefined) ??
+        formatSpillReceipt(saved, text, limit, format),
     };
   } catch (error) {
     getLogger().error("tool result spill", error);
@@ -2131,7 +2138,11 @@ async function deliverSerializedToolResult(
   }
   const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
   if (!text || text.length <= effective) return bounded;
-  const outcome = await spillOversized(spill, text, effective, JSON.parse(text));
+  // A plain string is saved as-is so grep and line reads see real lines, not JSON escapes.
+  const outcome =
+    typeof result === "string"
+      ? await spillOversized(spill, result, effective, "text")
+      : await spillOversized(spill, text, effective, "json", JSON.parse(text));
   return "receipt" in outcome ? outcome.receipt : `${bounded}\n${outcome.notice}`;
 }
 
@@ -2147,7 +2158,7 @@ async function deliverAgentToolResult<T>(
     return boundAgentToolResult(result, limit);
   }
   const text = texts.join("\n");
-  const outcome = await spillOversized(spill, text, effective);
+  const outcome = await spillOversized(spill, text, effective, "text");
   if ("notice" in outcome) {
     const bounded = boundAgentToolResult(result, limit);
     return {

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { shortenToolResultText } from "./context-selection.js";
 import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 import {
+  approxTokens,
   formatSpillReceipt,
   formatStructuredSpill,
+  isErrorToolResult,
   MAX_SPILL_CHARS,
   NO_SPILL_TOOLS,
   pageSpilledText,
@@ -86,6 +88,34 @@ describe("formatSpillReceipt", () => {
     expect(receipt.slice(0, receipt.indexOf("\n"))).toContain(
       "first 2,000,000 of 2,500,000 characters",
     );
+  });
+});
+
+describe("receipt size and format", () => {
+  const spill = { path: "/w/r.txt", totalChars: 200_000, savedChars: 200_000 };
+
+  it("names the approximate tokens and the format", () => {
+    expect(approxTokens(200_001)).toBe(50_001);
+    expect(formatSpillReceipt(spill, transcript(200_000), 12_000, "json")).toMatch(
+      /^\[Full result saved: 200,000 characters \(~50,000 tokens\) of JSON at \/w\/r\.txt\. /,
+    );
+    expect(
+      formatSpillReceipt({ ...spill, savedChars: 150_000 }, transcript(200_000), 12_000),
+    ).toMatch(
+      /^\[Result saved: first 150,000 of 200,000 characters \(~50,000 tokens\) of text at /,
+    );
+  });
+
+  it("recognizes error results in every shape", () => {
+    expect(isErrorToolResult({ isError: true, content: [] })).toBe(true);
+    expect(isErrorToolResult({ error: "boom" })).toBe(true);
+    expect(
+      isErrorToolResult({ kind: "agent_tool_result", content: [], details: { isError: true } }),
+    ).toBe(true);
+    expect(isErrorToolResult({ isError: false, content: [] })).toBe(false);
+    expect(isErrorToolResult({ error: null, data: 1 })).toBe(false);
+    expect(isErrorToolResult({ kind: "agent_tool_result", content: [], details: {} })).toBe(false);
+    expect(isErrorToolResult("error")).toBe(false);
   });
 });
 

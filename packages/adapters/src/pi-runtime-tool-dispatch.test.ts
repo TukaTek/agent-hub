@@ -2274,7 +2274,12 @@ describe("Pi bounded tool-result budgets", () => {
         expect(receipt.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
         expect(receipt.slice(0, 512)).toContain(spillPath);
         const parsed = JSON.parse(receipt);
-        expect(parsed.fullResult).toMatchObject({ path: spillPath, totalChars: full.length });
+        expect(parsed.fullResult).toMatchObject({
+          path: spillPath,
+          format: "json",
+          totalChars: full.length,
+          approxTokens: Math.ceil(full.length / 4),
+        });
         expect(parsed.nextCursor).toBe("page-2");
         expect(parsed.transcript.startsWith(result.transcript.slice(0, 1_000))).toBe(true);
         expect(parsed.transcript).toContain("the full result is at fullResult.path");
@@ -2300,7 +2305,7 @@ describe("Pi bounded tool-result budgets", () => {
       expect(receipt.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
       expect(
         receipt.startsWith(
-          `[Full result saved: ${full.length.toLocaleString("en-US")} characters at ${spillPath}.`,
+          `[Full result saved: ${full.length.toLocaleString("en-US")} characters (~${Math.ceil(full.length / 4).toLocaleString("en-US")} tokens) of JSON at ${spillPath}.`,
         ),
       ).toBe(true);
     });
@@ -2322,9 +2327,78 @@ describe("Pi bounded tool-result budgets", () => {
         spill,
       );
       expect(saved[0]!.text).toBe(`${first}\n${second}`);
+      expect(saved[0]!.text).not.toContain(image.data);
       expect(content).toHaveLength(2);
       expect(receiptOf(content).slice(0, 512)).toContain(spillPath);
+      expect(receiptOf(content)).toContain(" of text at ");
       expect(content[1]).toEqual(image);
+    });
+
+    it("never spills a result that is only images", async () => {
+      const image = { type: "image" as const, data: "A".repeat(300_000), mimeType: "image/png" };
+      const { spill } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        nativeResult(image),
+        undefined,
+        spill,
+      );
+      expect(content).toEqual([image]);
+      expect(spill).not.toHaveBeenCalled();
+    });
+
+    it("saves an oversized string as plain text, not a JSON string", async () => {
+      const result = transcript(240_000);
+      const { spill, saved } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        result,
+        undefined,
+        spill,
+      );
+      expect(saved[0]!.text).toBe(result);
+      expect(receiptOf(content)).toContain(
+        `[Full result saved: 240,000 characters (~60,000 tokens) of text at ${spillPath}.`,
+      );
+    });
+
+    it.each([
+      ["an MCP isError result", { isError: true, content: [{ type: "text", text: "" }] }],
+      ["an error field", { error: "" }],
+    ])("keeps %s inline with its head and tail instead of spilling", async (_label, shape) => {
+      const detail = `${"start-of-error ".repeat(4_000)}${"x".repeat(150_000)}${" end-of-error".repeat(4_000)}`;
+      const result =
+        "content" in shape
+          ? { ...shape, content: [{ type: "text", text: detail }] }
+          : { error: detail };
+      const { spill } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        result,
+        undefined,
+        spill,
+      );
+      expect(spill).not.toHaveBeenCalled();
+      const delivered = receiptOf(content);
+      expect(delivered.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+      expect(delivered).toContain("start-of-error");
+      expect(delivered).toContain("end-of-error");
+      expect(delivered).not.toContain("Full result saved");
+    });
+
+    it("keeps a native error result inline instead of spilling", async () => {
+      const { spill } = spillTo();
+      await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        { ...nativeResult(text(transcript(240_000))), details: { isError: true } },
+        undefined,
+        spill,
+      );
+      expect(spill).not.toHaveBeenCalled();
     });
 
     it("leaves results under the limit unchanged", async () => {
