@@ -57,8 +57,10 @@ import {
 import {
   clipToolResultContent,
   clipToolResultText,
-  MODEL_STREAM_IDLE_TIMEOUT_MS,
+  MODEL_STREAM_STALL_RETRIES,
   MODEL_STREAM_TIMEOUT_MS,
+  modelStreamFirstEventTimeoutMs,
+  modelStreamIdleTimeoutMs,
   modelStreamMaxRetries,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
@@ -2820,11 +2822,23 @@ export function isCodexModel(model: Pick<Model<Api>, "api" | "provider">): boole
 /** Abort reason recorded when a Codex stream goes silent past the idle bound. */
 export const CODEX_STREAM_IDLE_TIMEOUT_MESSAGE = "Codex stream idle timeout";
 
+export type StreamStallReason = "first-event" | "idle";
+const stallReasons = new WeakMap<AssistantMessage, StreamStallReason>();
+
+/** Which watchdog bound ended this terminal message, if one did. */
+export function streamStallReason(message: AssistantMessage): StreamStallReason | undefined {
+  return stallReasons.get(message);
+}
+
 export interface StreamIdleWatchdog {
   /** Composed abort signal to hand to the provider request. */
   signal: AbortSignal;
-  /** Re-arms the idle bound; invoke on response headers and each delivered event. */
+  /** Re-arms the idle bound; invoke on each delivered event. */
   ping(): void;
+  /** A 2xx response landed: arms the idle bound and the first-event bound. */
+  responded(): void;
+  /** The 2xx body delivered its first chunk: drops the first-event bound. */
+  firstByte(): void;
   /** Wraps the provider stream so every delivered event re-arms the idle bound. */
   wrap(stream: AssistantMessageEventStream): AssistantMessageEventStream;
   /** Stops the timer and drops the caller-signal listener. */
@@ -2848,35 +2862,50 @@ export interface StreamIdleWatchdog {
  * the backoff. pi reports any signal abort as a generic "Request was aborted",
  * so when the watchdog fired the wrapper relabels the terminal error as an
  * idle timeout rather than a caller abort.
+ *
+ * pi emits `start` as soon as headers land, before reading the body, so the
+ * first-event bound clears on the body's first chunk instead (`firstByte`).
  */
 export function codexStreamIdleWatchdog(
   upstream: AbortSignal | undefined,
-  idleTimeoutMs: number = MODEL_STREAM_IDLE_TIMEOUT_MS,
+  idleTimeoutMs: number = modelStreamIdleTimeoutMs(),
+  firstEventTimeoutMs: number = modelStreamFirstEventTimeoutMs(undefined, idleTimeoutMs),
 ): StreamIdleWatchdog {
   const controller = new AbortController();
-  let timedOut = false;
+  let stall: StreamStallReason | undefined;
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let firstEventTimer: ReturnType<typeof setTimeout> | undefined;
 
   const onUpstreamAbort = () => controller.abort(upstream?.reason);
   if (upstream?.aborted) controller.abort(upstream.reason);
   else upstream?.addEventListener("abort", onUpstreamAbort, { once: true });
 
+  const fire = (reason: StreamStallReason) => {
+    if (controller.signal.aborted) return;
+    stall = reason;
+    controller.abort(new Error(CODEX_STREAM_IDLE_TIMEOUT_MESSAGE));
+  };
+
   const arm = () => {
     if (disposed || controller.signal.aborted) return;
     timer = setTimeout(() => {
       timer = undefined;
-      if (controller.signal.aborted) return;
-      timedOut = true;
-      controller.abort(new Error(CODEX_STREAM_IDLE_TIMEOUT_MESSAGE));
+      fire("idle");
     }, idleTimeoutMs);
     timer.unref?.();
+  };
+
+  const firstByte = () => {
+    if (firstEventTimer !== undefined) clearTimeout(firstEventTimer);
+    firstEventTimer = undefined;
   };
 
   const dispose = () => {
     disposed = true;
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
+    firstByte();
     upstream?.removeEventListener("abort", onUpstreamAbort);
   };
 
@@ -2890,14 +2919,28 @@ export function codexStreamIdleWatchdog(
     arm();
   };
 
-  const describeTimeout = (message: AssistantMessage): AssistantMessage =>
-    timedOut && message.stopReason === "aborted"
-      ? {
-          ...message,
-          stopReason: "error",
-          errorMessage: CODEX_STREAM_IDLE_TIMEOUT_MESSAGE,
-        }
-      : message;
+  const responded = () => {
+    firstByte();
+    if (!disposed && !controller.signal.aborted) {
+      firstEventTimer = setTimeout(() => {
+        firstEventTimer = undefined;
+        fire("first-event");
+      }, firstEventTimeoutMs);
+      firstEventTimer.unref?.();
+    }
+    ping();
+  };
+
+  const describeTimeout = (message: AssistantMessage): AssistantMessage => {
+    if (!stall || message.stopReason !== "aborted") return message;
+    const described: AssistantMessage = {
+      ...message,
+      stopReason: "error",
+      errorMessage: CODEX_STREAM_IDLE_TIMEOUT_MESSAGE,
+    };
+    stallReasons.set(described, stall);
+    return described;
+  };
 
   const rewrite = (event: AssistantMessageEvent): AssistantMessageEvent => {
     if (event.type !== "error") return event;
@@ -2908,6 +2951,8 @@ export function codexStreamIdleWatchdog(
   return {
     signal: controller.signal,
     ping,
+    responded,
+    firstByte,
     dispose,
     wrap(inner) {
       class Watched extends AssistantMessageEventStream {
@@ -2973,6 +3018,10 @@ function boundRetryableErrorBody(response: Response, idleTimeoutMs: number): Res
       return reader.cancel(reason);
     },
   });
+  return withBody(response, body);
+}
+
+function withBody(response: Response, body: ReadableStream<Uint8Array>): Response {
   const headers = new Headers(response.headers);
   headers.delete("content-encoding");
   headers.delete("content-length");
@@ -2983,13 +3032,33 @@ function boundRetryableErrorBody(response: Response, idleTimeoutMs: number): Res
   });
 }
 
+function tapFirstChunk(response: Response, onFirstChunk: () => void): Response {
+  if (!response.ok || response.body == null) return response;
+  let seen = false;
+  return withBody(
+    response,
+    response.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          if (!seen) {
+            seen = true;
+            onFirstChunk();
+          }
+          controller.enqueue(chunk);
+        },
+      }),
+    ),
+  );
+}
+
 function codexRequestFetch(
   fetchImpl: ModelsSimpleStreamOptions["fetch"],
   idleTimeoutMs: number,
+  onFirstChunk: () => void,
 ): NonNullable<ModelsSimpleStreamOptions["fetch"]> {
   return async (input, init) => {
     const response = fetchImpl ? await fetchImpl(input, init) : await globalThis.fetch(input, init);
-    return boundRetryableErrorBody(response, idleTimeoutMs);
+    return tapFirstChunk(boundRetryableErrorBody(response, idleTimeoutMs), onFirstChunk);
   };
 }
 
@@ -3003,7 +3072,10 @@ export function reliableModelStream(
   runStream?: (options: ModelsSimpleStreamOptions) => AssistantMessageEventStream,
   cacheRetention?: ModelsSimpleStreamOptions["cacheRetention"],
 ): AssistantMessageEventStream {
-  const watchdog = isCodexModel(model) ? codexStreamIdleWatchdog(options?.signal) : undefined;
+  const idleTimeoutMs = modelStreamIdleTimeoutMs();
+  const watchdog = isCodexModel(model)
+    ? codexStreamIdleWatchdog(options?.signal, idleTimeoutMs)
+    : undefined;
   try {
     const preparedOptions = reliableStreamOptions(
       model,
@@ -3011,11 +3083,11 @@ export function reliableModelStream(
         ? {
             ...options,
             signal: watchdog.signal,
-            fetch: codexRequestFetch(options?.fetch, MODEL_STREAM_IDLE_TIMEOUT_MS),
+            fetch: codexRequestFetch(options?.fetch, idleTimeoutMs, watchdog.firstByte),
             // Only a 2xx arms the shared watchdog. Error bodies are bounded by
             // the fetch wrapper, and a caller-supplied hook still sees every status.
             onResponse: (response, requestModel) => {
-              if (response.status >= 200 && response.status < 300) watchdog.ping();
+              if (response.status >= 200 && response.status < 300) watchdog.responded();
               return options?.onResponse?.(response, requestModel);
             },
           }
