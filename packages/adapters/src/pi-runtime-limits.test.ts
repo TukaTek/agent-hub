@@ -6,6 +6,10 @@ import {
   clipToolResultContent,
   clipToolResultText,
   DEFAULT_TOOL_RESULT_TEXT_LIMIT,
+  MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
+  MODEL_STREAM_IDLE_TIMEOUT_MS,
+  modelStreamFirstEventTimeoutMs,
+  modelStreamIdleTimeoutMs,
   modelStreamMaxRetries,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
@@ -34,6 +38,52 @@ describe("modelStreamMaxRetries", () => {
       expect(modelStreamMaxRetries()).toBe(1);
     },
   );
+});
+
+describe("model stream stall timeouts", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("defaults to 180s idle and 120s to the first event", () => {
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", undefined);
+    vi.stubEnv("MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS", undefined);
+    expect(MODEL_STREAM_IDLE_TIMEOUT_MS).toBe(180_000);
+    expect(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS).toBe(120_000);
+    expect(modelStreamIdleTimeoutMs()).toBe(180_000);
+    expect(modelStreamFirstEventTimeoutMs()).toBe(120_000);
+  });
+
+  it("reads overrides from the environment", () => {
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", " 300000 ");
+    vi.stubEnv("MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS", "45000");
+    expect(modelStreamIdleTimeoutMs()).toBe(300_000);
+    expect(modelStreamFirstEventTimeoutMs()).toBe(45_000);
+  });
+
+  it.each(["30000", "900000"])("accepts an idle bound of %j", (value) => {
+    expect(modelStreamIdleTimeoutMs(value)).toBe(Number(value));
+  });
+
+  it.each(["", " ", "29999", "900001", "-1", "1.5", "NaN", "Infinity", "slow"])(
+    "falls back to the idle default for %j",
+    (value) => {
+      expect(modelStreamIdleTimeoutMs(value)).toBe(180_000);
+    },
+  );
+
+  it.each(["", "9999", "900001", "1.5", "soon"])(
+    "falls back to the first-event default for %j",
+    (value) => {
+      expect(modelStreamFirstEventTimeoutMs(value, 180_000)).toBe(120_000);
+    },
+  );
+
+  it("never lets the first-event bound exceed the idle bound", () => {
+    expect(modelStreamFirstEventTimeoutMs("170000", 60_000)).toBe(60_000);
+    expect(modelStreamFirstEventTimeoutMs(undefined, 60_000)).toBe(60_000);
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "60000");
+    vi.stubEnv("MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS", undefined);
+    expect(modelStreamFirstEventTimeoutMs()).toBe(60_000);
+  });
 });
 
 describe("toolResultTextLimit", () => {
