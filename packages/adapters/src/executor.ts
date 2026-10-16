@@ -228,16 +228,6 @@ import {
   stripWorkspaceRoot,
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
-import {
-  MAX_PAGED_READ_BYTES,
-  MAX_SPILL_CHARS,
-  pageSpilledText,
-  SPILL_DIRECTORY,
-  spillPathOwner,
-  spillPruneCommand,
-  spillRelativePath,
-  spillUserKey,
-} from "./tool-result-spill.js";
 import type { UnchangedVisualStreak } from "./computer-tools.js";
 import {
   advanceUnchangedVisualGuard,
@@ -390,6 +380,16 @@ import {
   updateTicket,
 } from "./ticket-tools.js";
 import { advanceToolCallLoopGuard, loopGuardStopText } from "./tool-loop.js";
+import {
+  MAX_PAGED_READ_BYTES,
+  MAX_SPILL_CHARS,
+  pageSpilledText,
+  SPILL_DIRECTORY,
+  spillPathOwner,
+  spillPruneCommand,
+  spillRelativePath,
+  spillUserKey,
+} from "./tool-result-spill.js";
 import { textContentArg } from "./tool-text.js";
 import {
   botMessageOutcomeFromMidTurn,
@@ -4085,7 +4085,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const spillUser = spillUserKey(run.spaceId, run.userId);
         // A host desktop has no fixed root; the host-aware sandbox reports the isolated one.
         const workspaceRoot =
-          computer.kind === "desktop" ? undefined : deps.sandbox.describe().capabilities.workspaceRoot;
+          computer.kind === "desktop"
+            ? undefined
+            : deps.sandbox.describe().capabilities.workspaceRoot;
         /** Another user's saved tool results stay invisible to the file tools. */
         const foreignSpillPath = (storedPath: string) => {
           const owner = spillPathOwner(storedPath);

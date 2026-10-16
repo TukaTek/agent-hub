@@ -300,7 +300,11 @@ describe("oversized tool results spill to the bot computer", () => {
     const sandbox = await runScenario(
       async (request) => {
         expect(
-          await spillOf(request)({ toolName: "fathom", executionId: "e", text: "x".repeat(50_000) }),
+          await spillOf(request)({
+            toolName: "fathom",
+            executionId: "e",
+            text: "x".repeat(50_000),
+          }),
         ).toEqual({ unavailable: "shared-computer" });
       },
       { computerOwner: "user-a", runUser: "user-b" },
@@ -325,7 +329,11 @@ describe("oversized tool results spill to the bot computer", () => {
     await runScenario(
       async (request) => {
         const notFound = { error: "not found" };
-        for (const path of [`${ROOT}/${teamPath}`, teamPath, `.cortexai/tool-results/${keyA}/run-1`]) {
+        for (const path of [
+          `${ROOT}/${teamPath}`,
+          teamPath,
+          `.cortexai/tool-results/${keyA}/run-1`,
+        ]) {
           expect(await tool(request, "read_file", { path })).toMatchObject(notFound);
           expect(await tool(request, "read_file", { path, offset: 0 })).toMatchObject(notFound);
           expect(await tool(request, "list_files", { path })).toMatchObject(notFound);
@@ -334,7 +342,11 @@ describe("oversized tool results spill to the bot computer", () => {
         }
         const listing = await tool(request, "list_files", { path: ".cortexai/tool-results" });
         expect(JSON.stringify(listing)).not.toContain(keyA);
-        const own = await spillOf(request)({ toolName: "x", executionId: "e", text: "y".repeat(20_000) });
+        const own = await spillOf(request)({
+          toolName: "x",
+          executionId: "e",
+          text: "y".repeat(20_000),
+        });
         if (!("path" in own)) throw new Error("not saved");
         expect(own.path).toContain(keyB);
         expect(await tool(request, "read_file", { path: own.path, offset: 0 })).toMatchObject({
@@ -369,7 +381,11 @@ describe("oversized tool results spill to the bot computer", () => {
     await runScenario(
       async (request) => {
         expect(
-          await spillOf(request)({ toolName: "fathom", executionId: "e", text: "z".repeat(30_000) }),
+          await spillOf(request)({
+            toolName: "fathom",
+            executionId: "e",
+            text: "z".repeat(30_000),
+          }),
         ).toEqual({ unavailable: "no-computer" });
       },
       { sandbox },

@@ -23,7 +23,8 @@ const transcript = (chars: number) => {
 };
 
 describe("formatSpillReceipt", () => {
-  const path = "/home/cortexai-agent-hub/.cortexai/tool-results/0123456789abcdef/run-1/01-fathom.txt";
+  const path =
+    "/home/cortexai-agent-hub/.cortexai/tool-results/0123456789abcdef/run-1/01-fathom.txt";
 
   it.each([12_000, 64_000])("stays within a %i character limit with the header first", (limit) => {
     const text = transcript(200_000);
@@ -55,17 +56,20 @@ describe("formatSpillReceipt", () => {
     expect(text.endsWith(tail!)).toBe(true);
   });
 
-  it.each([1_024, 6_000])("keeps the path when context shortening cuts to %i characters", (size) => {
-    const text = transcript(200_000);
-    const receipt = formatSpillReceipt(
-      { path, totalChars: text.length, savedChars: text.length },
-      text,
-      12_000,
-    );
-    const shortened = shortenToolResultText(receipt, size, { name: "fathom" });
-    expect(shortened.length).toBeLessThan(receipt.length);
-    expect(shortened).toContain(path);
-  });
+  it.each([1_024, 6_000])(
+    "keeps the path when context shortening cuts to %i characters",
+    (size) => {
+      const text = transcript(200_000);
+      const receipt = formatSpillReceipt(
+        { path, totalChars: text.length, savedChars: text.length },
+        text,
+        12_000,
+      );
+      const shortened = shortenToolResultText(receipt, size, { name: "fathom" });
+      expect(shortened.length).toBeLessThan(receipt.length);
+      expect(shortened).toContain(path);
+    },
+  );
 
   it("says when only the first part was saved", () => {
     const receipt = formatSpillReceipt(

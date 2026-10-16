@@ -2278,7 +2278,11 @@ describe("Pi bounded tool-result budgets", () => {
     );
 
     it("saves the text of a native result and keeps its images", async () => {
-      const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" as const };
+      const image = {
+        type: "image" as const,
+        data: "iVBORw0KGgo=",
+        mimeType: "image/png" as const,
+      };
       const first = transcript(150_000);
       const second = transcript(60_000);
       const { spill, saved } = spillTo();
@@ -2371,35 +2375,50 @@ describe("Pi bounded tool-result budgets", () => {
     });
 
     it.each([
-      ["reports no computer", async () => ({ unavailable: "no-computer" as const }), "no bot computer is available"],
-      ["reports another user's computer", async () => ({ unavailable: "shared-computer" as const }), "belongs to another user"],
-      ["throws", async () => {
-        throw new Error("sandbox down");
-      }, "no bot computer is available"],
-    ])("falls back to truncation with a notice when the spill %s", async (_label, spill, reason) => {
-      const page = transcript(30_000);
-      const content = await deliver(
-        [fathomTool],
-        { name: fathomTool.name, args: {} },
-        nativeResult(text(page)),
-        undefined,
-        spill as AgentRunRequest["spillToolResult"],
-      );
-      expect(content).toHaveLength(2);
-      expect(content[0]).toEqual(text(clipped(page, TOOL_RESULT_TEXT_LIMIT)));
-      expect((content[1] as { text: string }).text).toContain(reason);
-      const json = { page };
-      const jsonContent = await deliver(
-        [fathomTool],
-        { name: fathomTool.name, args: {} },
-        json,
-        "current",
-        spill as AgentRunRequest["spillToolResult"],
-      );
-      expect(receiptOf(jsonContent)).toBe(
-        `${clipped(JSON.stringify(json), TOOL_RESULT_TEXT_LIMIT)}\n${(content[1] as { text: string }).text}`,
-      );
-    });
+      [
+        "reports no computer",
+        async () => ({ unavailable: "no-computer" as const }),
+        "no bot computer is available",
+      ],
+      [
+        "reports another user's computer",
+        async () => ({ unavailable: "shared-computer" as const }),
+        "belongs to another user",
+      ],
+      [
+        "throws",
+        async () => {
+          throw new Error("sandbox down");
+        },
+        "no bot computer is available",
+      ],
+    ])(
+      "falls back to truncation with a notice when the spill %s",
+      async (_label, spill, reason) => {
+        const page = transcript(30_000);
+        const content = await deliver(
+          [fathomTool],
+          { name: fathomTool.name, args: {} },
+          nativeResult(text(page)),
+          undefined,
+          spill as AgentRunRequest["spillToolResult"],
+        );
+        expect(content).toHaveLength(2);
+        expect(content[0]).toEqual(text(clipped(page, TOOL_RESULT_TEXT_LIMIT)));
+        expect((content[1] as { text: string }).text).toContain(reason);
+        const json = { page };
+        const jsonContent = await deliver(
+          [fathomTool],
+          { name: fathomTool.name, args: {} },
+          json,
+          "current",
+          spill as AgentRunRequest["spillToolResult"],
+        );
+        expect(receiptOf(jsonContent)).toBe(
+          `${clipped(JSON.stringify(json), TOOL_RESULT_TEXT_LIMIT)}\n${(content[1] as { text: string }).text}`,
+        );
+      },
+    );
 
     it("keeps today's truncation when the runtime has no spill callback", async () => {
       const page = transcript(30_000);

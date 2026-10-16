@@ -2133,14 +2133,12 @@ async function deliverAgentToolResult<T>(
   spill: SpillTarget | undefined,
 ): Promise<AgentToolResult<T>> {
   if (!spill || !Array.isArray(result.content)) return boundAgentToolResult(result, limit);
-  const isText = (part: unknown): part is { type: "text"; text: unknown } =>
-    !!part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part;
-  const texts = result.content.filter(isText).map((part) => String(part.text));
-  const text = texts.join("\n");
+  const texts = result.content.flatMap((part) => (part.type === "text" ? [part.text] : []));
   const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
   if (texts.reduce((sum, part) => sum + part.length, 0) <= effective) {
     return boundAgentToolResult(result, limit);
   }
+  const text = texts.join("\n");
   const outcome = await spillOversized(spill, text, effective);
   if ("notice" in outcome) {
     const bounded = boundAgentToolResult(result, limit);
@@ -2149,16 +2147,13 @@ async function deliverAgentToolResult<T>(
       content: [...bounded.content, { type: "text", text: outcome.notice }],
     };
   }
-  const firstText = result.content.findIndex(isText);
+  const firstText = result.content.findIndex((part) => part.type === "text");
   return {
     ...result,
-    content: result.content.flatMap((part, index) =>
-      index === firstText
-        ? [{ type: "text" as const, text: outcome.receipt }]
-        : isText(part)
-          ? []
-          : [part],
-    ),
+    content: result.content.flatMap<(typeof result.content)[number]>((part, index) => {
+      if (index === firstText) return [{ type: "text" as const, text: outcome.receipt }];
+      return part.type === "text" ? [] : [part];
+    }),
   };
 }
 

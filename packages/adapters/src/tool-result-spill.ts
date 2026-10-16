@@ -135,7 +135,10 @@ export function pageSpilledText(text: string, offset: unknown, limit: unknown): 
   }
   const wanted = Number.isFinite(Number(limit)) ? Math.trunc(Number(limit)) : SPILL_PAGE_CHARS;
   let end = Math.min(total, start + Math.min(Math.max(1, wanted), SPILL_PAGE_CHARS));
-  while (end - start > 1 && JSON.stringify(text.slice(start, end)).length > SPILL_PAGE_ESCAPED_CHARS) {
+  while (
+    end - start > 1 &&
+    JSON.stringify(text.slice(start, end)).length > SPILL_PAGE_ESCAPED_CHARS
+  ) {
     end = start + Math.floor((end - start) * 0.75);
   }
   if (end < total && end - start > 1 && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;
