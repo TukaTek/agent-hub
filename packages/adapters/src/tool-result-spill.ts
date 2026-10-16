@@ -102,7 +102,8 @@ export interface SpillReceipt {
 
 export type SpillFormat = "json" | "text";
 
-const READ_HINT = "Read it with read_file (offset, limit) or search it with shell grep -n.";
+const READ_HINT =
+  "Search it with shell grep -n first, then read only the lines you need with read_file (offset, limit).";
 const STRUCTURED_MARKER = "[Shortened here; the full result is at fullResult.path.]";
 
 /** The usual four characters per token; a size hint for the model, not a tokenizer. */

@@ -106,6 +106,14 @@ describe("receipt size and format", () => {
     );
   });
 
+  it("suggests searching with grep -n before paging with read_file", () => {
+    const hint = /Search it with shell grep -n first, then read only the lines you need with read_file \(offset, limit\)\./;
+    const text = formatSpillReceipt(spill, transcript(200_000), 12_000);
+    expect(text.slice(0, text.indexOf("\n"))).toMatch(hint);
+    const structured = formatStructuredSpill(spill, { id: "m-1", t: transcript(200_000) }, 12_000)!;
+    expect(JSON.parse(structured).fullResult.read).toMatch(hint);
+  });
+
   it("recognizes error results in every shape", () => {
     expect(isErrorToolResult({ isError: true, content: [] })).toBe(true);
     expect(isErrorToolResult({ error: "boom" })).toBe(true);
