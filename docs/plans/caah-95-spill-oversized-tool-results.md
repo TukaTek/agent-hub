@@ -12,7 +12,7 @@
 
 - Results under the limit are byte-identical to today on every path. CAAH-89 budgets (`maxResultChars`, `resultCharsByToolId`) still decide the limit; spilling only happens above that limit.
 - The file path is built only from constants, a user hash, the run ID and a sanitized tool slug. Model arguments and tool output never contribute to it.
-- No new environment variables, provider-specific code or UI. Only the model-facing receipt and notice text is new (quoted below for the PR).
+- No provider-specific code or UI. The one new environment variable is `TOOL_RESULT_TEXT_LIMIT` (decision 4). Only the model-facing receipt and notice text is new (quoted below for the PR).
 
 ---
 
@@ -22,16 +22,16 @@ Every connector and built-in result goes through one `AgentTool.execute` in `pi-
 
 | Path | Code | Limit |
 | --- | --- | --- |
-| Executor returns plain data (Composio, MCP, Pipedream, GraphQL, HTTP/secret requests, most built-ins) | `serializeToolResult` → `clipToolResultText` (`current` strategy) or `shortenToolResultText` middle cut (other strategies) | `resultLimit`, otherwise `TOOL_RESULT_TEXT_LIMIT` (12,000) |
+| Executor returns plain data (Composio, MCP, Pipedream, GraphQL, HTTP/secret requests, most built-ins) | `serializeToolResult` → `clipToolResultText` (`current` strategy) or `shortenToolResultText` middle cut (other strategies) | `resultLimit`, otherwise `TOOL_RESULT_TEXT_LIMIT` (12,000 when planned; 100,000 after decision 4) |
 | Executor returns `{ content: [...] }` (MCP native content, computer screenshots) | `boundAgentToolResult` → `clipToolResultContent` (one budget shared by all text parts) | same |
-| `request_secret` with an executor | `serializeToolResult`, default limit | 12,000 |
+| `request_secret` with an executor | `serializeToolResult`, default limit | default |
 | Catalog wrapper `__catalog_execute` | Same two paths. `toolResultChars(tool, args)` picks the budget of the resolved tool ID (`lazy-tool-catalog.ts` `catalogResultBudgets`) | per resolved tool |
-| `run_subagent` | `clipToolResultText` at line 1606 | 12,000 |
-| `shell` | `shell-command-stream.ts` clips each of stdout and stderr | 12,000 each |
+| `run_subagent` | `clipToolResultText` at line 1606 | default |
+| `shell` | `shell-command-stream.ts` clips each of stdout and stderr | default, each |
 | `skill_read` | `VERBATIM_TOOL_RESULTS`, never clipped | — |
 | `read_history` / `search_history` | The executor refuses results over 11,000 bytes | — |
 
-Composio (Fathom) tools don't declare `maxResultChars`, so they take the 12,000 default. The remainder is dropped.
+Composio (Fathom) tools don't declare `maxResultChars`, so they take the default (12,000 when planned). The remainder is dropped.
 
 **Spill scope.** Spilling applies to the `serializeToolResult` and `boundAgentToolResult` branches of the connector `execute` path, for every tool **except** a fixed `NO_SPILL_TOOLS` set: `read_file`, `list_files`, `shell`, `run_subagent`, `skill_read`, `read_history`, `search_history` and the `computer_*` screen tools. These either already come from the computer, already have their own budget, or are model-generated. Leaving out `read_file` also prevents a loop where reading a spill file spills it again.
 
@@ -110,9 +110,9 @@ Fallback notice, appended to today's `toolResultTruncationNotice(limit)`:
 
 ### 4. Reading it back: small `read_file` extension
 
-Shell is optional (`disabledBuiltinTools`), and its output is clipped to 12,000 characters per stream, so add optional `offset` and `limit` (characters) to `read_file`:
+Shell is optional (`disabledBuiltinTools`), and its output is clipped at the default limit per stream, so add optional `offset` and `limit` (characters) to `read_file`:
 
-- When either is set, read with `maxBytes = 8 MB` instead of 250 KB. Return `{ path, offset, total_chars, next_offset?, content }`, with the keys in that order so `next_offset` survives a clip. `limit` defaults to 8,000 and is capped at 8,000, so JSON escaping stays under 12,000.
+- When either is set, read with `maxBytes = 8 MB` instead of 250 KB. Return `{ path, offset, total_chars, next_offset?, content }`, with the keys in that order so `next_offset` survives a clip. `limit` defaults to 64,000 and is capped at 64,000 (8,000 when the default limit was 12,000). A page shrinks until its JSON-escaped form fits 1,500 characters under the delivery limit.
 - Without `offset` and `limit`, behavior is unchanged.
 - Content goes through `redactSecrets(…, runSecrets)` as today. The file is already redacted, so this doesn't change the content.
 - **Random access.** `offset` can be any position, not only a `next_offset` from an earlier page. `offset` and `total_chars` count UTF-16 code units, the same unit as the receipt's total, so `offset ≈ fraction × total_chars` jumps to that part of the transcript. A page never splits a surrogate pair: an offset inside one moves back one unit, and a page that would end on a high surrogate ends one unit earlier. Every quoted character is then intact at any position. An offset at or past the end returns empty `content` and no `next_offset`.
@@ -216,12 +216,17 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 3. **Leaking large untrusted content.** The file holds third-party data that may contain prompt injection. It is redacted and capped, never in `shared/`, never attached or opened automatically, written as `.txt` and never executable. Reading it back returns a tool result with the same trust as today. Private computers refuse other users. On Team Computers the file is space-trusted, like attachments: the file tools refuse other users' spill paths, but `shell` on a Team Computer isn't a security boundary (`docs/computer-runtime.md`).
 4. **Behavior change for CAAH-89 overshoot.** A paged tool that exceeds its own budget now gets a slightly shorter head (minus the receipt) plus a file instead of a longer head. Results under budget are unchanged.
 5. **Redaction can lengthen text.** `totalChars` counts the redacted text, so the number the model sees always matches the file.
+6. **Context window and cost at the 100,000-character default.** One full result is about 25k tokens, and the limit is per call, not per turn: four large results in one turn are about 100k tokens. The limit doesn't scale with the selected model's `contextWindow`.
+   - On 32k-token or smaller models (common for local ones), a single result can take most of the window. `selectContext` then shortens older results and drops history, so earlier evidence and conversation fall out sooner, and the reply has less room.
+   - On large-window models it's mostly cost and latency: every model call after the result resends it until `runtime-context` shortens it to 1,024 characters in later turns. Prompt caching softens this where the provider supports it.
+   - Mitigation: operators running small-window models lower `TOOL_RESULT_TEXT_LIMIT` (the floor is 12,000, the old default). A possible follow-up is to cap the inline limit at a fraction of the model's `contextWindow`. That isn't part of this change.
 
 ## Decisions (Agent Hub PM, from Sanjay)
 
 1. **Multi-member Team Computers spill.** They're space-trusted, like attachments. Files go under `bots/<bot-id>/`, and the per-user path guard stays in `read_file`, `list_files`, `open_path` and `attach_file`. The `shared-computer` fallback is only for a private computer used by someone other than its owner.
 2. **Retention is 7 days**, with the 50-file cap per user per computer.
 3. **Out of scope:** spilling `run_subagent` and `shell` output.
+4. **Default inline limit is 100,000 characters** (about 25k tokens), set by `TOOL_RESULT_TEXT_LIMIT` (integer 12,000–1,000,000; invalid or blank values use 100,000). Results spill only above it, and receipts are unchanged. Everything that used the old 12,000 default follows it: JSON and native delivery, `run_subagent` replies and finished `shell` output. The CAAH-89 ceiling `MAX_TOOL_RESULT_CHARS` is `max(128,000, default)`, so a declared budget can only widen delivery; a declared budget below the default is ignored and the tool gets the default. `read_file` pages grow to 64,000 characters. Shortening of older results (`runtime-context` at 1,024 characters, `selectContext` under pressure) is unchanged.
 
 ## Self-review
 
