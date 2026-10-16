@@ -52,7 +52,7 @@ audit fits in one model call.
 
 ## Oversized results
 
-When a result is longer than its delivery limit, whether the 12,000-character default or a page budget above, Agent Hub saves the full text to a file on the bot's computer instead of dropping the remainder. Secrets registered for the run are redacted first, and a file holds at most 2,000,000 characters. The model receives a bounded preview with a header first:
+When a result is longer than its delivery limit, whether the 12,000-character default or a page budget above, Agent Hub saves the full text to a file on the bot's computer instead of dropping the remainder. Secrets registered for the run are redacted first, and a file holds at most 2,000,000 characters. A JSON object is delivered with its shape kept, so cursors and IDs stay usable, and with a `fullResult` field (`path`, `totalChars`, how to read it) added first. Any other result gets a bounded preview with a header first:
 
 ```
 [Full result saved: 200,000 characters at <path>. Read it with read_file (offset, limit) or search it with shell grep -n.]
@@ -60,6 +60,6 @@ When a result is longer than its delivery limit, whether the 12,000-character de
 
 `read_file` with `offset` and `limit` returns a page of at most 8,000 characters from any position, plus `total_chars` and `next_offset`. Offsets count the same characters as the header's total.
 
-Files live under `.cortexai/tool-results/<user>/<run>/` in the bot's home (`bots/<bot-id>/` on a Team Computer). Each user's directory keeps files for 7 days and at most 50 files per computer, and workspace checkpoints skip it. File tools refuse other users' result paths. A Team Computer is space-trusted, so its `shell` can still reach them. A private computer only saves results for its owner. Results that already come from the computer (`read_file`, `list_files`, `shell`, screen tools), subagent replies, skills and history reads are never saved this way.
+Files live under `.cortexai/tool-results/<user>/<run>/` in the bot's home (`bots/<bot-id>/` on a Team Computer). Each user's directory keeps files for 7 days and at most 50 files per computer, and workspace checkpoints skip it. File tools refuse other users' result paths. A Team Computer is space-trusted, so its `shell` can still reach them. A private computer only saves results for its owner. Results that already come from the computer (`read_file`, `list_files`, `shell`, screen and browser page tools), subagent replies, skills and history reads are never saved this way.
 
 If no computer can take the file, the result is truncated as before, followed by a notice saying why a full copy was not saved.

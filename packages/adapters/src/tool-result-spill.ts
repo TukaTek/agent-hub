@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { shellQuote } from "@cortexai-agent-hub/core/node/desktop-runtime";
+import { shortenStructuredResult } from "./context-selection.js";
 
 export const SPILL_DIRECTORY = ".cortexai/tool-results";
 export const MAX_SPILL_CHARS = 2_000_000;
@@ -98,6 +99,33 @@ export interface SpillReceipt {
   savedChars: number;
 }
 
+const READ_HINT = "Read it with read_file (offset, limit) or search it with shell grep -n.";
+const STRUCTURED_MARKER = "[Shortened here; the full result is at fullResult.path.]";
+
+/**
+ * Objects keep their shape so cursors and IDs stay usable; the path survives later
+ * shortening because structured shortening keeps `path` keys and numbers.
+ */
+export function formatStructuredSpill(
+  spill: SpillReceipt,
+  value: unknown,
+  limit: number,
+): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value) || "fullResult" in value) return;
+  const fullResult = {
+    path: spill.path,
+    totalChars: spill.totalChars,
+    ...(spill.savedChars < spill.totalChars ? { savedChars: spill.savedChars } : {}),
+    read: READ_HINT,
+  };
+  const encoded = shortenStructuredResult(
+    JSON.stringify({ fullResult, ...value }),
+    limit,
+    STRUCTURED_MARKER,
+  );
+  return encoded && encoded.length <= limit ? encoded : undefined;
+}
+
 /** The header comes first so later context shortening, which keeps the head, keeps the path. */
 export function formatSpillReceipt(spill: SpillReceipt, text: string, limit: number): string {
   const count = (value: number) => value.toLocaleString("en-US");
@@ -105,7 +133,7 @@ export function formatSpillReceipt(spill: SpillReceipt, text: string, limit: num
     spill.savedChars < spill.totalChars
       ? `Result saved: first ${count(spill.savedChars)} of ${count(spill.totalChars)} characters`
       : `Full result saved: ${count(spill.totalChars)} characters`;
-  const header = `[${saved} at ${spill.path}. Read it with read_file (offset, limit) or search it with shell grep -n.]`;
+  const header = `[${saved} at ${spill.path}. ${READ_HINT}]`;
   const available = limit - header.length - 1 - PREVIEW_SEPARATOR.length;
   if (available <= 0) return header;
   const tail = Math.min(MAX_PREVIEW_TAIL, Math.floor(available / 4));

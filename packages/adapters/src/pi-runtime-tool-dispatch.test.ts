@@ -382,6 +382,7 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
+import { shortenToolResultText } from "./context-selection.js";
 import { toolCompletionAuditPayload } from "./executor.js";
 import { catalogEntries, lazyCatalogTools } from "./lazy-tool-catalog.js";
 import {
@@ -2253,9 +2254,9 @@ describe("Pi bounded tool-result budgets", () => {
     const receiptOf = (content: unknown[]) => (content[0] as { text: string }).text;
 
     it.each([undefined, "current"] as const)(
-      "saves a 200k JSON result byte for byte and returns a bounded receipt (%s strategy)",
+      "saves a 200k JSON object byte for byte and keeps its shape and cursor (%s strategy)",
       async (strategy) => {
-        const result = { transcript: transcript(200_000) };
+        const result = { nextCursor: "page-2", transcript: transcript(200_000) };
         const { spill, saved } = spillTo();
         const content = await deliver(
           [fathomTool],
@@ -2272,10 +2273,37 @@ describe("Pi bounded tool-result budgets", () => {
         expect(content).toHaveLength(1);
         expect(receipt.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
         expect(receipt.slice(0, 512)).toContain(spillPath);
-        expect(receipt).toContain(`${full.length.toLocaleString("en-US")} characters`);
-        expect(receipt).not.toContain("truncated");
+        const parsed = JSON.parse(receipt);
+        expect(parsed.fullResult).toMatchObject({ path: spillPath, totalChars: full.length });
+        expect(parsed.nextCursor).toBe("page-2");
+        expect(parsed.transcript.startsWith(result.transcript.slice(0, 1_000))).toBe(true);
+        expect(parsed.transcript).toContain("the full result is at fullResult.path");
+        expect(receipt).not.toContain("unavailable");
+        const later = JSON.parse(shortenToolResultText(receipt, 1_024));
+        expect(later.fullResult.path).toBe(spillPath);
+        expect(later.nextCursor).toBe("page-2");
       },
     );
+
+    it("returns a text receipt for an oversized JSON array", async () => {
+      const result = [transcript(100_000), transcript(100_000)];
+      const { spill } = spillTo();
+      const content = await deliver(
+        [fathomTool],
+        { name: fathomTool.name, args: {} },
+        result,
+        undefined,
+        spill,
+      );
+      const receipt = receiptOf(content);
+      const full = JSON.stringify(result);
+      expect(receipt.length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+      expect(
+        receipt.startsWith(
+          `[Full result saved: ${full.length.toLocaleString("en-US")} characters at ${spillPath}.`,
+        ),
+      ).toBe(true);
+    });
 
     it("saves the text of a native result and keeps its images", async () => {
       const image = {

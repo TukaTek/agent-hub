@@ -71,7 +71,12 @@ import type { RuntimeContextDecision } from "./runtime-context.js";
 import { createRuntimeContextPolicy, VERBATIM_TOOL_RESULTS } from "./runtime-context.js";
 import type { FinishedShellCommand } from "./shell-command-stream.js";
 import { deliverFinishedShells } from "./shell-command-stream.js";
-import { formatSpillReceipt, NO_SPILL_TOOLS, spillUnavailableNotice } from "./tool-result-spill.js";
+import {
+  formatSpillReceipt,
+  formatStructuredSpill,
+  NO_SPILL_TOOLS,
+  spillUnavailableNotice,
+} from "./tool-result-spill.js";
 import { textContentArg } from "./tool-text.js";
 
 const running = new Map<string, { controller: AbortController; work: Promise<void> }>();
@@ -2094,11 +2099,14 @@ async function spillOversized(
   spill: SpillTarget,
   text: string,
   limit: number,
+  value?: unknown,
 ): Promise<{ receipt: string } | { notice: string }> {
   try {
     const saved = await spill(text);
     if ("unavailable" in saved) return { notice: spillUnavailableNotice(saved.unavailable) };
-    return { receipt: formatSpillReceipt(saved, text, limit) };
+    return {
+      receipt: formatStructuredSpill(saved, value, limit) ?? formatSpillReceipt(saved, text, limit),
+    };
   } catch (error) {
     getLogger().error("tool result spill", error);
     return { notice: spillUnavailableNotice("no-computer") };
@@ -2123,7 +2131,7 @@ async function deliverSerializedToolResult(
   }
   const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
   if (!text || text.length <= effective) return bounded;
-  const outcome = await spillOversized(spill, text, effective);
+  const outcome = await spillOversized(spill, text, effective, JSON.parse(text));
   return "receipt" in outcome ? outcome.receipt : `${bounded}\n${outcome.notice}`;
 }
 

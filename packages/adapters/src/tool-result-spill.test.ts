@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { shortenToolResultText } from "./context-selection.js";
 import {
   formatSpillReceipt,
+  formatStructuredSpill,
   MAX_SPILL_CHARS,
   NO_SPILL_TOOLS,
   pageSpilledText,
@@ -80,6 +81,40 @@ describe("formatSpillReceipt", () => {
     expect(receipt.slice(0, receipt.indexOf("\n"))).toContain(
       "first 2,000,000 of 2,500,000 characters",
     );
+  });
+});
+
+describe("formatStructuredSpill", () => {
+  const spill = {
+    path: "/w/.cortexai/tool-results/k/r/01-x.txt",
+    totalChars: 50_000,
+    savedChars: 50_000,
+  };
+
+  it("keeps the object's control fields and puts the saved path first", () => {
+    const value = { id: "m-1", nextCursor: "c-2", transcript: transcript(50_000) };
+    const out = formatStructuredSpill(spill, value, 12_000)!;
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out.startsWith(`{"fullResult":{"path":"${spill.path}"`)).toBe(true);
+    expect(JSON.parse(out)).toMatchObject({ id: "m-1", nextCursor: "c-2", contextTruncated: true });
+  });
+
+  it("reports a capped copy", () => {
+    const out = formatStructuredSpill(
+      { ...spill, savedChars: 40_000 },
+      { t: transcript(50_000) },
+      12_000,
+    )!;
+    expect(JSON.parse(out).fullResult).toMatchObject({ totalChars: 50_000, savedChars: 40_000 });
+  });
+
+  it("declines arrays, strings, a colliding key and metadata that cannot fit", () => {
+    expect(formatStructuredSpill(spill, [transcript(50_000)], 12_000)).toBeUndefined();
+    expect(formatStructuredSpill(spill, transcript(50_000), 12_000)).toBeUndefined();
+    expect(
+      formatStructuredSpill(spill, { fullResult: 1, t: transcript(50_000) }, 12_000),
+    ).toBeUndefined();
+    expect(formatStructuredSpill(spill, { id: "x".repeat(20_000) }, 12_000)).toBeUndefined();
   });
 });
 

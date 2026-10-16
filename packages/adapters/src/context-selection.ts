@@ -184,7 +184,11 @@ function shortenHistoryResult(
   return encoded;
 }
 /** Keep control fields and JSON shape while marking omitted long evidence strings. */
-function shortenStructuredResult(source: string, size: number): string | undefined {
+export function shortenStructuredResult(
+  source: string,
+  size: number,
+  marker = "[Tool result truncated to fit context; omitted evidence is unavailable.]",
+): string | undefined {
   let payload: unknown;
   try {
     payload = JSON.parse(source);
@@ -223,7 +227,7 @@ function shortenStructuredResult(source: string, size: number): string | undefin
     if (!largest) break; // Required metadata alone may still need explicit budget failure.
     const value = (largest.parent as Record<string, unknown>)[largest.key] as string;
     const keep = Math.max(8, Math.floor(value.length / 4));
-    const shortened = `${value.slice(0, keep)}\n[Tool result truncated to fit context; omitted evidence is unavailable.]\n${value.slice(-keep)}`;
+    const shortened = `${value.slice(0, keep)}\n${marker}\n${value.slice(-keep)}`;
     if (shortened.length >= value.length) break;
     (largest.parent as Record<string, unknown>)[largest.key] = shortened;
     encoded = JSON.stringify(holder.payload);

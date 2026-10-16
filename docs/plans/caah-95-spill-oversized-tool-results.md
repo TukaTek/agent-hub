@@ -66,7 +66,15 @@ For content arrays, the text parts are joined with `"\n"` and spilled as one fil
 
 ### 2. Receipt format (`packages/adapters/src/tool-result-spill.ts`, new, pure)
 
-The output is plain text, not JSON, so `shortenStructuredResult` can't shorten the path as a JSON leaf:
+**JSON objects keep their shape.** Paginated tools put cursors and IDs next to the large field, and a raw head and tail cut can lose them. So an oversized JSON object is delivered as today's structure-preserving shortening, with a `fullResult` field added first and a shortening marker that points to it:
+
+```
+{"fullResult":{"path":"/home/…/04-fathom-get-transcript.txt","totalChars":200000,"read":"Read it with read_file (offset, limit) or search it with shell grep -n."},"nextCursor":"…","transcript":"<head>\n[Shortened here; the full result is at fullResult.path.]\n<tail>","contextTruncated":true}
+```
+
+Later structured shortening keeps `path` keys and numbers, so the path survives. `savedChars` appears only when the size cap applied. If the object already has a `fullResult` key, or its required fields alone don't fit, the text receipt below is used.
+
+**Everything else** (arrays, strings, native text content) gets plain text, not JSON, so `shortenStructuredResult` can't shorten the path as a JSON leaf:
 
 ```
 [Full result saved: 200,000 characters at /home/cortexai-agent-hub/.cortexai/tool-results/3f9c…/run_abc/04-fathom-get-transcript.txt. Read it with read_file (offset, limit) or search it with shell grep.]
