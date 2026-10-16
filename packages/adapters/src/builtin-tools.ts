@@ -9,6 +9,7 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import { z } from "zod";
 import { allowPrivateHttpSecretOrigins } from "./bot-secrets.js";
+import { SPILL_PAGE_CHARS } from "./tool-result-spill.js";
 
 // The owner flag can land in process.env after static imports run (loadRootEnv
 // parses .env once the entry module is already executing), so the model-facing
@@ -275,7 +276,7 @@ export const builtinAgentTools: ConnectorTool[] = [
         limit: {
           type: "integer",
           minimum: 1,
-          maximum: 8000,
+          maximum: SPILL_PAGE_CHARS,
           description: "Characters to return from offset",
         },
       },

@@ -1991,7 +1991,7 @@ describe("Pi connector tool dispatch", () => {
       description: "Large skill",
       source: "user",
       readOnly: false,
-      content: `---\nname: large-skill\n---\n${"1. Step kept for skill_update.\n".repeat(600)}`,
+      content: `---\nname: large-skill\n---\n${"1. Step kept for skill_update.\n".repeat(4_000)}`,
     };
     fakeAgentState.invoke = { name: "skill_read", args: { name: skill.name } };
     const runtime = new PiAgentRuntime();
@@ -2140,9 +2140,9 @@ describe("Pi bounded tool-result budgets", () => {
         "connectors",
         "mcp",
         "MCP",
-        catalogEntries([pageTool(64_000)]),
+        catalogEntries([pageTool(120_000)]),
       );
-      const page = "p".repeat(50_000);
+      const page = "p".repeat(110_000);
       const content = await deliver(
         tools,
         { name: "connectors_execute_tool", args: { id, arguments: {} } },
@@ -2157,9 +2157,9 @@ describe("Pi bounded tool-result budgets", () => {
       "connectors",
       "mcp",
       "MCP",
-      catalogEntries([pageTool(64_000, "docs"), pageTool(64_000, "wiki")]),
+      catalogEntries([pageTool(120_000, "docs"), pageTool(120_000, "wiki")]),
     );
-    const page = "p".repeat(50_000);
+    const page = "p".repeat(110_000);
     const content = await deliver(
       tools,
       { name: "connectors_execute_tool", args: { id: "read_page", arguments: {} } },
@@ -2179,48 +2179,48 @@ describe("Pi bounded tool-result budgets", () => {
   });
 
   it("still clips a native result larger than the raised limit", async () => {
-    const page = "y".repeat(30_000);
+    const page = "y".repeat(120_000);
     const content = await deliver(
-      [{ ...pageTool(20_000), name: "read_page" }],
+      [{ ...pageTool(110_000), name: "read_page" }],
       { name: "read_page", args: {} },
       nativeResult(text(page)),
     );
-    expect(content).toEqual([text(clipped(page, 20_000))]);
+    expect(content).toEqual([text(clipped(page, 110_000))]);
   });
 
   it("still clips a JSON result larger than the raised limit under the current strategy", async () => {
-    const result = { page: "y".repeat(30_000) };
+    const result = { page: "y".repeat(120_000) };
     const content = await deliver(
-      [{ ...pageTool(20_000), name: "read_page" }],
+      [{ ...pageTool(110_000), name: "read_page" }],
       { name: "read_page", args: {} },
       result,
       "current",
     );
-    expect(content).toEqual([text(clipped(JSON.stringify(result), 20_000))]);
+    expect(content).toEqual([text(clipped(JSON.stringify(result), 110_000))]);
   });
 
   it("shares one raised budget across text blocks", async () => {
     const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" as const };
-    const first = "a".repeat(15_000);
-    const second = "b".repeat(15_000);
+    const first = "a".repeat(60_000);
+    const second = "b".repeat(60_000);
     const content = await deliver(
-      [{ ...pageTool(20_000), name: "read_page" }],
+      [{ ...pageTool(110_000), name: "read_page" }],
       { name: "read_page", args: {} },
       nativeResult(text(first), image, text(second), text("c".repeat(5_000))),
     );
     expect(content).toEqual([
       text(first),
       image,
-      text(`${"b".repeat(5_000)}…\n${toolResultTruncationNotice(20_000)}`),
+      text(`${"b".repeat(50_000)}…\n${toolResultTruncationNotice(110_000)}`),
     ]);
   });
 
   it("applies the default limit when connector tool names collide", async () => {
-    const page = "z".repeat(30_000);
+    const page = "z".repeat(120_000);
     const content = await deliver(
       [
-        { ...pageTool(64_000, "docs"), name: "lookup" },
-        { ...pageTool(64_000, "wiki"), name: "lookup" },
+        { ...pageTool(120_000, "docs"), name: "lookup" },
+        { ...pageTool(120_000, "wiki"), name: "lookup" },
       ],
       { name: "lookup", args: {} },
       nativeResult(text(page)),
@@ -2286,7 +2286,7 @@ describe("Pi bounded tool-result budgets", () => {
     );
 
     it("returns a text receipt for an oversized JSON array", async () => {
-      const result = [transcript(100_000), transcript(100_000)];
+      const result = [transcript(240_000), transcript(240_000)];
       const { spill } = spillTo();
       const content = await deliver(
         [fathomTool],
@@ -2330,7 +2330,7 @@ describe("Pi bounded tool-result budgets", () => {
     it("leaves results under the limit unchanged", async () => {
       const { spill } = spillTo();
       // JSON escapes each newline, so keep the serialized text under the limit.
-      const json = { transcript: transcript(TOOL_RESULT_TEXT_LIMIT - 1_000) };
+      const json = { transcript: transcript(TOOL_RESULT_TEXT_LIMIT - 5_000) };
       expect(JSON.stringify(json).length).toBeLessThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
       expect(
         await deliver([fathomTool], { name: fathomTool.name, args: {} }, json, undefined, spill),
@@ -2354,9 +2354,9 @@ describe("Pi bounded tool-result budgets", () => {
         "connectors",
         "mcp",
         "MCP",
-        catalogEntries([pageTool(64_000)]),
+        catalogEntries([pageTool(120_000)]),
       );
-      const page = "p".repeat(50_000);
+      const page = "p".repeat(110_000);
       expect(
         await deliver(
           tools,
@@ -2368,7 +2368,7 @@ describe("Pi bounded tool-result budgets", () => {
       ).toEqual([text(page)]);
       expect(
         await deliver(
-          [{ ...pageTool(64_000), name: "read_page" }],
+          [{ ...pageTool(120_000), name: "read_page" }],
           { name: "read_page", args: {} },
           nativeResult(text(page)),
           undefined,
@@ -2384,9 +2384,9 @@ describe("Pi bounded tool-result budgets", () => {
         "connectors",
         "mcp",
         "MCP",
-        catalogEntries([pageTool(64_000)]),
+        catalogEntries([pageTool(120_000)]),
       );
-      const page = transcript(100_000);
+      const page = transcript(240_000);
       const content = await deliver(
         tools,
         { name: "connectors_execute_tool", args: { id: "docs:read_page", arguments: {} } },
@@ -2396,9 +2396,9 @@ describe("Pi bounded tool-result budgets", () => {
       );
       expect(saved[0]).toMatchObject({ toolName: "docs:read_page", text: page });
       const receipt = receiptOf(content);
-      expect(receipt.length).toBeLessThanOrEqual(64_000);
+      expect(receipt.length).toBeLessThanOrEqual(120_000);
       const head = receipt.slice(receipt.indexOf("\n") + 1).split("\n…\n")[0]!;
-      expect(head.length).toBeGreaterThan(55_000);
+      expect(head.length).toBeGreaterThan(110_000);
       expect(page.startsWith(head)).toBe(true);
     });
 
@@ -2423,7 +2423,7 @@ describe("Pi bounded tool-result budgets", () => {
     ])(
       "falls back to truncation with a notice when the spill %s",
       async (_label, spill, reason) => {
-        const page = transcript(30_000);
+        const page = transcript(240_000);
         const content = await deliver(
           [fathomTool],
           { name: fathomTool.name, args: {} },
@@ -2449,7 +2449,7 @@ describe("Pi bounded tool-result budgets", () => {
     );
 
     it("keeps today's truncation when the runtime has no spill callback", async () => {
-      const page = transcript(30_000);
+      const page = transcript(240_000);
       expect(
         await deliver([fathomTool], { name: fathomTool.name, args: {} }, nativeResult(text(page))),
       ).toEqual([text(clipped(page, TOOL_RESULT_TEXT_LIMIT))]);
@@ -2462,7 +2462,7 @@ describe("Pi bounded tool-result budgets", () => {
         description: "Read a file",
         inputSchema: { type: "object", properties: { path: { type: "string" } } },
       };
-      const page = transcript(30_000);
+      const page = transcript(240_000);
       expect(
         await deliver(
           [readFile],

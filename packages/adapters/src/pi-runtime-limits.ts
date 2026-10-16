@@ -17,7 +17,21 @@ export function modelStreamMaxRetries(): number {
   return Number.isInteger(raw) && raw >= 0 && raw <= 5 ? raw : DEFAULT_MODEL_STREAM_MAX_RETRIES;
 }
 
-export const TOOL_RESULT_TEXT_LIMIT = 12_000;
+/** About 25k tokens; longer results are saved to the bot computer when one is available. */
+export const DEFAULT_TOOL_RESULT_TEXT_LIMIT = 100_000;
+const MIN_TOOL_RESULT_TEXT_LIMIT = 12_000;
+const MAX_TOOL_RESULT_TEXT_LIMIT = 1_000_000;
+
+export function toolResultTextLimit(value = process.env.TOOL_RESULT_TEXT_LIMIT): number {
+  const raw = Number(value?.trim() || DEFAULT_TOOL_RESULT_TEXT_LIMIT);
+  return Number.isInteger(raw) &&
+    raw >= MIN_TOOL_RESULT_TEXT_LIMIT &&
+    raw <= MAX_TOOL_RESULT_TEXT_LIMIT
+    ? raw
+    : DEFAULT_TOOL_RESULT_TEXT_LIMIT;
+}
+
+export const TOOL_RESULT_TEXT_LIMIT = toolResultTextLimit();
 
 export function toolResultTruncationNotice(limit: number): string {
   return `[Tool result truncated after ${limit} characters; the remainder was not delivered and this result is incomplete.]`;

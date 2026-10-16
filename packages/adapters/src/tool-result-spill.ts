@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { shellQuote } from "@cortexai-agent-hub/core/node/desktop-runtime";
 import { shortenStructuredResult } from "./context-selection.js";
+import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 
 export const SPILL_DIRECTORY = ".cortexai/tool-results";
 export const MAX_SPILL_CHARS = 2_000_000;
@@ -8,9 +9,9 @@ export const SPILL_RETENTION_DAYS = 7;
 export const SPILL_MAX_FILES = 50;
 /** Paged reads of a spilled result; 2M chars of UTF-8 fit with room to spare. */
 export const MAX_PAGED_READ_BYTES = 8_000_000;
-export const SPILL_PAGE_CHARS = 8_000;
-/** JSON escaping can double a page; keep the whole read_file result under the 12k delivery limit. */
-const SPILL_PAGE_ESCAPED_CHARS = 10_500;
+export const SPILL_PAGE_CHARS = 64_000;
+/** JSON escaping can double a page; keep the whole read_file result under the delivery limit. */
+const SPILL_PAGE_ESCAPED_CHARS = TOOL_RESULT_TEXT_LIMIT - 1_500;
 const PREVIEW_SEPARATOR = "\n…\n";
 const MAX_PREVIEW_TAIL = 2_000;
 

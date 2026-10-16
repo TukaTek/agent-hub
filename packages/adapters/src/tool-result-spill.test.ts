@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { shortenToolResultText } from "./context-selection.js";
+import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 import {
   formatSpillReceipt,
   formatStructuredSpill,
@@ -7,6 +8,7 @@ import {
   NO_SPILL_TOOLS,
   pageSpilledText,
   SPILL_MAX_FILES,
+  SPILL_PAGE_CHARS,
   spillPathOwner,
   spillPruneCommand,
   spillRelativePath,
@@ -27,20 +29,23 @@ describe("formatSpillReceipt", () => {
   const path =
     "/home/cortexai-agent-hub/.cortexai/tool-results/0123456789abcdef/run-1/01-fathom.txt";
 
-  it.each([12_000, 64_000])("stays within a %i character limit with the header first", (limit) => {
-    const text = transcript(200_000);
-    const receipt = formatSpillReceipt(
-      { path, totalChars: text.length, savedChars: text.length },
-      text,
-      limit,
-    );
-    expect(receipt.length).toBeLessThanOrEqual(limit);
-    const header = receipt.slice(0, receipt.indexOf("\n"));
-    expect(header.length).toBeLessThanOrEqual(400);
-    expect(receipt.slice(0, 512)).toContain(path);
-    expect(header).toContain("200,000 characters");
-    expect(header).toContain("read_file");
-  });
+  it.each([12_000, 64_000, 100_000])(
+    "stays within a %i character limit with the header first",
+    (limit) => {
+      const text = transcript(200_000);
+      const receipt = formatSpillReceipt(
+        { path, totalChars: text.length, savedChars: text.length },
+        text,
+        limit,
+      );
+      expect(receipt.length).toBeLessThanOrEqual(limit);
+      const header = receipt.slice(0, receipt.indexOf("\n"));
+      expect(header.length).toBeLessThanOrEqual(400);
+      expect(receipt.slice(0, 512)).toContain(path);
+      expect(header).toContain("200,000 characters");
+      expect(header).toContain("read_file");
+    },
+  );
 
   it("previews exact head and tail slices of the result", () => {
     const text = transcript(200_000);
@@ -188,10 +193,20 @@ describe("pageSpilledText", () => {
   });
 
   it("keeps each escaped page within the model result budget", () => {
-    const quotes = '"\\\n'.repeat(10_000);
-    const page = pageSpilledText(quotes, 0, 8_000);
-    expect(JSON.stringify(page).length).toBeLessThan(12_000);
+    const quotes = '"\\\n'.repeat(40_000);
+    const page = pageSpilledText(quotes, 0, SPILL_PAGE_CHARS);
+    expect(JSON.stringify(page).length).toBeLessThan(TOOL_RESULT_TEXT_LIMIT);
     expect(page.next_offset).toBe(page.content.length);
+  });
+
+  it("returns 64,000-character pages by default and at most", () => {
+    expect(SPILL_PAGE_CHARS).toBe(64_000);
+    for (const limit of [undefined, 500_000]) {
+      const { content } = pageSpilledText(text, 0, limit);
+      expect(content.length).toBeGreaterThanOrEqual(63_999);
+      expect(content.length).toBeLessThanOrEqual(64_000);
+      expect(text.startsWith(content)).toBe(true);
+    }
   });
 
   it("reassembles the whole text by following next_offset", () => {

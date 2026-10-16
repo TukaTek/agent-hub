@@ -1,13 +1,16 @@
 import { DEFAULT_MODEL_MAX_TOKENS } from "@cortexai-agent-hub/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAX_TOOL_RESULT_CHARS } from "./mcp-result-budget.js";
 import {
   billedPromptTokens,
   clipToolResultContent,
   clipToolResultText,
+  DEFAULT_TOOL_RESULT_TEXT_LIMIT,
   modelStreamMaxRetries,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
   TOOL_RESULT_TEXT_LIMIT,
+  toolResultTextLimit,
   toolResultTruncationNotice,
 } from "./pi-runtime-limits.js";
 
@@ -31,6 +34,29 @@ describe("modelStreamMaxRetries", () => {
       expect(modelStreamMaxRetries()).toBe(1);
     },
   );
+});
+
+describe("toolResultTextLimit", () => {
+  it("defaults to 100,000 characters", () => {
+    expect(DEFAULT_TOOL_RESULT_TEXT_LIMIT).toBe(100_000);
+    expect(toolResultTextLimit(undefined)).toBe(100_000);
+    expect(TOOL_RESULT_TEXT_LIMIT).toBe(100_000);
+  });
+
+  it.each(["12000", "64000", " 250000 ", "1000000"])("accepts %j", (value) => {
+    expect(toolResultTextLimit(value)).toBe(Number(value));
+  });
+
+  it.each(["", " ", "11999", "1000001", "-100000", "64000.5", "NaN", "Infinity", "lots"])(
+    "falls back to the default for %j",
+    (value) => {
+      expect(toolResultTextLimit(value)).toBe(100_000);
+    },
+  );
+
+  it("keeps the CAAH-89 ceiling at or above the default", () => {
+    expect(MAX_TOOL_RESULT_CHARS).toBeGreaterThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+  });
 });
 
 describe("billedPromptTokens", () => {

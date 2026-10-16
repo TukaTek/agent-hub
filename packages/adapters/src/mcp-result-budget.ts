@@ -2,7 +2,8 @@ import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 
 /** Optional discovery-time hint. Result bodies cannot enlarge their own budget. */
 export const MCP_RESULT_BUDGET_KEY = "io.cortexai/max-result-chars";
-export const MAX_TOOL_RESULT_CHARS = 128_000;
+/** Never below the default, so a declared budget can only widen delivery. */
+export const MAX_TOOL_RESULT_CHARS = Math.max(128_000, TOOL_RESULT_TEXT_LIMIT);
 
 export function boundedResultChars(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= TOOL_RESULT_TEXT_LIMIT
