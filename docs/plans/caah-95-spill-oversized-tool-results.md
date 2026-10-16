@@ -77,7 +77,7 @@ Later structured shortening keeps `path` keys and numbers, so the path survives.
 **Everything else** (arrays, strings, native text content) gets plain text, not JSON, so `shortenStructuredResult` can't shorten the path as a JSON leaf:
 
 ```
-[Full result saved: 200,000 characters at /home/cortexai-agent-hub/.cortexai/tool-results/3f9c…/run_abc/04-fathom-get-transcript.txt. Read it with read_file (offset, limit) or search it with shell grep.]
+[Full result saved: 200,000 characters (~50,000 tokens) of text at /home/cortexai-agent-hub/.cortexai/tool-results/3f9c…/run_abc/04-fathom-get-transcript.txt. Read it with read_file (offset, limit) or search it with shell grep -n.]
 <head>
 …
 <tail>
@@ -227,6 +227,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 2. **Retention is 7 days**, with the 50-file cap per user per computer.
 3. **Out of scope:** spilling `run_subagent` and `shell` output.
 4. **Default inline limit is 100,000 characters** (about 25k tokens), set by `TOOL_RESULT_TEXT_LIMIT` (integer 12,000–1,000,000; invalid or blank values use 100,000). Results spill only above it, and receipts are unchanged. Everything that used the old 12,000 default follows it: JSON and native delivery, `run_subagent` replies and finished `shell` output. The CAAH-89 ceiling `MAX_TOOL_RESULT_CHARS` is `max(128,000, default)`, so a declared budget can only widen delivery; a declared budget below the default is ignored and the tool gets the default. `read_file` pages grow to 64,000 characters. Shortening of older results (`runtime-context` at 1,024 characters, `selectContext` under pressure) is unchanged.
+5. **Refinements from prior art.** Error results (`isError: true`, a non-null `error`, or a native result whose details say so) never spill; they keep today's bounded output, which under the default `retrieval` strategy is a head and tail cut. Images stay inline and are never written. Receipts state approximate tokens (characters ÷ 4) and the format (`text` or `JSON`); the structured form adds `format` and `approxTokens` to `fullResult`. A plain string result is saved as text, not a JSON-escaped string. A test opens the exact receipt path with `read_file` using the workspace root each provider reports (Docker, CreateOS, E2B, Box, Daytona, fake and the host desktop).
 
 ## Self-review
 
