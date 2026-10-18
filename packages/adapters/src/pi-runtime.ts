@@ -11,7 +11,12 @@ import type {
   ConnectorTool,
   ModelCallObserver,
 } from "@cortexai-agent-hub/adapter-kit";
-import { DEFAULT_CONTEXT_STRATEGY } from "@cortexai-agent-hub/adapter-kit";
+import {
+  DEFAULT_CONTEXT_STRATEGY,
+  isRetryableProviderUnavailable,
+  isTransientModelError,
+  TransientModelError,
+} from "@cortexai-agent-hub/adapter-kit";
 import { usableModelId } from "@cortexai-agent-hub/contracts";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { AgentMessage, AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -586,7 +591,10 @@ export class PiAgentRuntime implements AgentRuntime {
           !budgetExceeded && terminalMessage ? providerFailureText(terminalMessage) : undefined;
         const error = agent.state.errorMessage || providerFailure;
         if (error && !budgetExceeded) {
-          throw new Error(sanitizeProviderError(activeStreamTarget.model.provider, error));
+          const message = sanitizeProviderError(activeStreamTarget.model.provider, error);
+          throw isTransientModelError(error)
+            ? new TransientModelError(message)
+            : new Error(message);
         }
         if (!budgetExceeded && terminalMessage && !messageHasToolCall(terminalMessage)) {
           const terminalText = assistantText(terminalMessage);
@@ -637,7 +645,11 @@ export class PiAgentRuntime implements AgentRuntime {
         queue.push(streamed.trim() ? { type: "done", text: streamed } : { type: "done" });
       } catch (error) {
         const message = sanitizeError(error instanceof Error ? error.message : String(error));
-        queue.fail(new Error(message));
+        queue.fail(
+          error instanceof TransientModelError
+            ? new TransientModelError(message)
+            : new Error(message),
+        );
       } finally {
         queue.close();
         if (trackedBudget) {
@@ -2452,89 +2464,6 @@ function logModelCall(call: {
   };
   if (call.outcome === "ok") getLogger().info("model call", bindings);
   else getLogger().warn("model call", bindings);
-}
-
-function errorFacts(value: unknown) {
-  const text: string[] = [];
-  const statuses = new Set<number>();
-  const seen = new Set<object>();
-  const visit = (item: unknown, depth: number) => {
-    if (depth > 4 || item == null) return;
-    if (typeof item === "string") {
-      text.push(item);
-      return;
-    }
-    if (typeof item !== "object" || seen.has(item)) return;
-    seen.add(item);
-    const record = item as Record<string, unknown>;
-    for (const key of ["message", "errorMessage", "name", "code", "type"]) {
-      if (typeof record[key] === "string") text.push(record[key] as string);
-    }
-    for (const key of ["status", "statusCode", "httpStatus"]) {
-      if (typeof record[key] === "number") statuses.add(record[key] as number);
-    }
-    for (const key of ["response", "cause", "details", "diagnostics", "data", "error"]) {
-      visit(record[key], depth + 1);
-    }
-    if (Array.isArray(item)) for (const child of item) visit(child, depth + 1);
-  };
-  visit(value, 0);
-  for (const detail of text) {
-    for (const match of detail.matchAll(
-      /(?:\b(?:http(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|error\s+code)\s*[:=]?\s*|^\s*)([45]\d{2})\b/gi,
-    )) {
-      statuses.add(Number(match[1]));
-    }
-  }
-  return { text: text.join(" ").toLowerCase(), statuses };
-}
-
-/** Only provider availability failures may advance the user's explicit chain. */
-export function isRetryableProviderUnavailable(error: unknown): boolean {
-  const { text, statuses } = errorFacts(error);
-  if (statuses.has(400) || statuses.has(401)) return false;
-  // Kimi For Coding reports an exhausted usage window as HTTP 403. errorFacts lowercases text.
-  if (
-    statuses.has(403) &&
-    /you['\u2019]ve reached your (?:5-hour usage limit|weekly \(7-day\) usage limit|monthly usage limit|usage limit for this billing cycle)/.test(
-      text,
-    )
-  ) {
-    return true;
-  }
-  if (
-    [400, 401, 403].some((status) => statuses.has(status)) ||
-    /\b(?:http(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|error\s+code)\s*[:=]?\s*(?:400|401|403)\b/.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  if (
-    /\b(abort(?:ed)?|cancel(?:lation|led|ed)?|unauthori[sz]ed|forbidden|permission(?: is)? (?:denied|refused|declined)|access denied|consent(?: is)? (?:required|denied|refused|declined|not granted)|user (?:refused|declined)|invalid api key|invalid credential|(?:expired|revoked|missing) (?:api )?(?:key|credential|token)|(?:api )?key (?:expired|revoked|missing)|authentication (?:failed|failure|denied|expired|invalid)|authorization (?:failed|failure|denied|expired|invalid)|bad request|invalid request|invalid input|invalid argument|context length|model not found|unsupported parameter)\b/.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  if (
-    /context[ _-](?:length|window)|too many tokens|maximum context|token limit|request too large|invalid_api_key|authentication_error|permission_error|bad_request|invalid_request/.test(
-      text,
-    )
-  )
-    return false;
-  if (statuses.has(402)) {
-    return /quota|billing|credit|payment limit|insufficient funds/.test(text);
-  }
-  if (
-    [408, 429].some((status) => statuses.has(status)) ||
-    [...statuses].some((status) => status >= 500 && status < 600)
-  )
-    return true;
-  if ([...statuses].some((status) => status >= 400 && status < 600)) return false;
-  return /rate.?limit|too many requests|quota|overload|capacity|temporarily unavailable|service unavailable|retry[- ](?:after|delay)|server error|upstream error|gateway timeout|timed? out|timeout|connection reset|connection refused|network error|max retries exceeded|\bterminated\b/.test(
-    text,
-  );
 }
 
 function assistantHasPartialOutput(message: AssistantMessage): boolean {
