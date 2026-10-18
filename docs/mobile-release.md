@@ -28,11 +28,23 @@ your own branded build, use your own Expo and store accounts.
 From `apps/mobile`:
 
 ```sh
-eas project:init
 eas env:create --environment production --name EXPO_PUBLIC_API_URL --value https://app.example.com --visibility plaintext
+eas env:create --environment preview --name EXPO_PUBLIC_API_URL --value https://app.example.com --visibility plaintext
+eas config --platform android --profile android-apk
 eas build --platform ios --profile production
 eas submit --platform ios --profile production --latest
 ```
+
+The first build on each platform must run interactively. EAS can't generate
+an Android keystore or iOS signing credentials with `--non-interactive`:
+
+1. `eas build --platform android --profile android-apk`: let EAS generate and
+   store the keystore, then back it up from `eas credentials -p android`.
+2. `eas build --platform ios --profile production`: sign in to the Apple
+   Developer account and let EAS create the distribution certificate,
+   provisioning profile and push key.
+3. `eas submit --platform ios --latest` with an App Store Connect API key, then
+   add the build to an internal TestFlight group in App Store Connect.
 
 EAS can prompt for store identity interactively. For automated submission, add
 the required identifiers through a private CI configuration or a short-lived

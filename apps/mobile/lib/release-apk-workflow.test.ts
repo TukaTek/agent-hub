@@ -59,6 +59,11 @@ describe("CI mobile EAS jobs", () => {
     return next === -1 ? ci.slice(start) : ci.slice(start, start + 1 + next);
   };
 
+  // eas-cli reads the project ID from app.config.ts before it loads the EAS environment, so
+  // the release guard can only run inside `eas env:exec`, never via EAS_BUILD_PROFILE on eas.
+  const releaseGuard = (environment: string, profile: string) =>
+    `eas env:exec ${environment} 'EAS_BUILD_PROFILE=${profile} pnpm exec expo config --type public > /dev/null' --non-interactive`;
+
   it("checks the android-apk EAS config only when the Expo token is present", () => {
     const check = job("mobile-eas-config");
     expect(check).toContain("name: Mobile EAS config");
@@ -67,11 +72,17 @@ describe("CI mobile EAS jobs", () => {
     expect(check).toContain(
       "eas config --platform android --profile android-apk --non-interactive",
     );
+    expect(check).toContain(releaseGuard("production", "android-apk"));
+    expect(check).not.toContain("EAS_BUILD_PROFILE:");
   });
 
   it("refuses to publish an OTA update without the production API URL", () => {
     const publish = job("publish-mobile-update");
-    expect(publish).toContain("EAS_BUILD_PROFILE: production");
+    expect(publish).toContain(releaseGuard("production", "production"));
+    expect(publish.indexOf(releaseGuard("production", "production"))).toBeLessThan(
+      publish.indexOf("eas update"),
+    );
     expect(publish).toContain("--channel production --environment production");
+    expect(publish).not.toContain("EAS_BUILD_PROFILE:");
   });
 });
