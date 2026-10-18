@@ -440,6 +440,32 @@ describe("storeInboundAttachment", () => {
     );
   });
 
+  it("refuses a macro-enabled Office file before downloading it, whatever its reported type", async () => {
+    const { put, store } = setup();
+    const fetch = vi.fn(async () => new Uint8Array(3));
+    await expect(
+      store({
+        name: "report.docm",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        fetch,
+      }),
+    ).rejects.toThrow("Unsupported");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("stores a zip under the download-only zip type when the platform mislabels it", async () => {
+    const { put, store } = setup();
+    const fetch = vi.fn(async () => new Uint8Array(3));
+    await expect(
+      store({ name: "bundle.zip", mimeType: "application/x-zip-compressed", fetch }),
+    ).rejects.toBe(reachedStorage);
+    expect(put).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "bundle.zip", mimeType: "application/zip" }),
+      expect.anything(),
+    );
+  });
+
   it("reuses the artifact an earlier delivery of the same file stored", async () => {
     const { put, store } = setup({
       id: "artifact-1",

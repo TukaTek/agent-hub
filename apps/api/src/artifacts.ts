@@ -69,8 +69,10 @@ export async function storeInboundAttachment(
   if (replayed) return createdArtifact(replayed);
   const { attachment } = input;
   const name = attachment.name.slice(0, ARTIFACT_NAME_MAX_LENGTH);
-  const mimeType = inferAttachmentMimeType(name, attachment.mimeType) ?? attachment.mimeType;
-  validateAttachmentMimeType(mimeType);
+  const mimeType = inferAttachmentMimeType(name, attachment.mimeType);
+  if (!mimeType) {
+    throw new AttachmentValidationError(`Unsupported attachment type: ${attachment.mimeType}`);
+  }
   const tooLarge = new AttachmentValidationError("Attachment exceeds the 10 MiB limit");
   if ((attachment.size ?? 0) > ATTACHMENT_MAX_BYTES) throw tooLarge;
   const timeoutMs = Math.min(2_000, (input.downloadDeadline ?? Infinity) - Date.now());
