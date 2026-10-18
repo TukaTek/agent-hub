@@ -269,7 +269,7 @@ import {
 } from "./mcp-server-tool.js";
 import { loadAgentMemoryContext } from "./memory-context.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
-import { selectMemoryTools } from "./memory-tools.js";
+import { memoryToolAuditSummary, runMemoryTool, selectMemoryTools } from "./memory-tools.js";
 import {
   isCatalogModelChoice,
   pinnedModelCredentialError,
@@ -2744,6 +2744,23 @@ function toolResultError(result: unknown): unknown {
   return text || "tool reported an error result";
 }
 
+/** Short memory text is not redacted: replacing every occurrence would garble the error. */
+const MIN_REDACTED_MEMORY_TEXT_CHARS = 8;
+
+function memoryToolOptions(
+  provider: SemanticMemoryProvider,
+  signal: AbortSignal,
+  secrets: string[],
+  memoryText: string,
+) {
+  const text = memoryText.trim();
+  return {
+    provider: provider.describe().id,
+    signal,
+    redact: text.length >= MIN_REDACTED_MEMORY_TEXT_CHARS ? [...secrets, text] : secrets,
+  };
+}
+
 export function toolCompletionFromResult(
   base: Pick<AgentToolCompletion, "name" | "executionId" | "durationMs">,
   result: unknown,
@@ -2771,6 +2788,9 @@ export function toolCompletionAuditPayload(
   if (error !== undefined) {
     payload.error = sanitizeConnectorError(error, secrets);
   }
+  const memoryResult =
+    error === undefined ? memoryToolAuditSummary(completion.name, completion.result) : undefined;
+  if (memoryResult) payload.result = memoryResult;
   if (!isAuditableToolResult(completion.result)) return payload;
 
   payload.contentTypes = completion.result.content.flatMap((part) => {
@@ -5660,17 +5680,23 @@ export function createRunExecutor(deps: ExecutorDeps) {
             });
           }
           if (name === "recall_memory") {
-            return semanticMemory!.recall(
-              {
-                query: String(args.query ?? ""),
-                scope: memoryScope!,
-                botId: bot.id,
-                ...(thread.historyCompactedUpToSeq == null
-                  ? {}
-                  : { historyGeneration: thread.historyCompactionGeneration }),
-                limit: MAX_RECALLED_MEMORIES,
-              },
-              context,
+            const query = String(args.query ?? "");
+            return runMemoryTool(
+              name,
+              () =>
+                semanticMemory!.recall(
+                  {
+                    query,
+                    scope: memoryScope!,
+                    botId: bot.id,
+                    ...(thread.historyCompactedUpToSeq == null
+                      ? {}
+                      : { historyGeneration: thread.historyCompactionGeneration }),
+                    limit: MAX_RECALLED_MEMORIES,
+                  },
+                  context,
+                ),
+              memoryToolOptions(semanticMemory!, context.signal, runSecrets, query),
             );
           }
           if (name === "search_history" || name === "read_history") {
@@ -5698,15 +5724,16 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return finish(redacted);
           }
           if (name === "save_memory") {
+            const content = String(args.content ?? "");
             return finish(
-              await semanticMemory!.save(
-                {
-                  content: String(args.content ?? ""),
-                  scope: memoryScope!,
-                  botId: bot.id,
-                  source: { kind: "durable" },
-                },
-                context,
+              await runMemoryTool(
+                name,
+                () =>
+                  semanticMemory!.save(
+                    { content, scope: memoryScope!, botId: bot.id, source: { kind: "durable" } },
+                    context,
+                  ),
+                memoryToolOptions(semanticMemory!, context.signal, runSecrets, content),
               ),
             );
           }
@@ -5716,18 +5743,23 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 error: "This memory provider does not support forgetting individual facts.",
               });
             }
+            const forget = semanticMemory.forget.bind(semanticMemory);
+            const reason = typeof args.reason === "string" ? args.reason.trim() : "";
             return finish(
-              await semanticMemory.forget(
-                {
-                  id: String(args.id ?? ""),
-                  ...(typeof args.entity === "string" && args.entity.trim()
-                    ? { entity: args.entity.trim() }
-                    : {}),
-                  ...(typeof args.reason === "string" && args.reason.trim()
-                    ? { reason: args.reason.trim() }
-                    : {}),
-                },
-                context,
+              await runMemoryTool(
+                name,
+                () =>
+                  forget(
+                    {
+                      id: String(args.id ?? ""),
+                      ...(typeof args.entity === "string" && args.entity.trim()
+                        ? { entity: args.entity.trim() }
+                        : {}),
+                      ...(reason ? { reason } : {}),
+                    },
+                    context,
+                  ),
+                memoryToolOptions(semanticMemory, context.signal, runSecrets, reason),
               ),
             );
           }

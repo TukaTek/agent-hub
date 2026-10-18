@@ -40,12 +40,13 @@ describe("selectMemoryTools", () => {
 const MEMORY_TEXT = "User's locker code is 4417";
 const API_KEY = "sk-test-PLACEHOLDER-key";
 
-const successes: Array<[MemoryToolName, "save" | "forget" | "recall", SemanticMemoryResponse<unknown>]> =
-  [
-    ["save_memory", "save", { ok: true, value: undefined }],
-    ["forget_memory", "forget", { ok: true, value: { id: "fact-1", expired: true, reason: null } }],
-    ["recall_memory", "recall", { ok: true, value: [{ memory: MEMORY_TEXT, score: 0.9 }] }],
-  ];
+const successes: Array<
+  [MemoryToolName, "save" | "forget" | "recall", SemanticMemoryResponse<unknown>]
+> = [
+  ["save_memory", "save", { ok: true, value: undefined }],
+  ["forget_memory", "forget", { ok: true, value: { id: "fact-1", expired: true, reason: null } }],
+  ["recall_memory", "recall", { ok: true, value: [{ memory: MEMORY_TEXT, score: 0.9 }] }],
+];
 
 function run(
   name: MemoryToolName,
@@ -139,7 +140,13 @@ describe("memoryToolAuditSummary", () => {
     expect(
       memoryToolAuditSummary(
         "recall_memory",
-        wrap({ ok: true, value: [{ memory: MEMORY_TEXT, score: 1 }, { memory: "x", score: 0 }] }),
+        wrap({
+          ok: true,
+          value: [
+            { memory: MEMORY_TEXT, score: 1 },
+            { memory: "x", score: 0 },
+          ],
+        }),
       ),
     ).toEqual({ ok: true, count: 2 });
     expect(
