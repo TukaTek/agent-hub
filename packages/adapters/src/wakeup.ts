@@ -6,7 +6,12 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import { dispatchBackgroundJob } from "@cortexai-agent-hub/adapter-kit";
 import { isTooManyDatabaseConnections } from "@cortexai-agent-hub/db";
-import { getLogger, runCorrelatedJob, unwrapJobPayload, wrapJobPayload } from "@cortexai-agent-hub/logging";
+import {
+  getLogger,
+  runCorrelatedJob,
+  unwrapJobPayload,
+  wrapJobPayload,
+} from "@cortexai-agent-hub/logging";
 import type { Runner, WorkerUtils } from "graphile-worker";
 import { makeWorkerUtils, run } from "graphile-worker";
 import type { Pool } from "pg";

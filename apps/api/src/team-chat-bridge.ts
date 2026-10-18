@@ -8,7 +8,11 @@ import type {
 import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { ATTACHMENT_MAX_COUNT, AutomatedSenderPoliciesSchema } from "@cortexai-agent-hub/contracts";
-import { botMessageMaxHops, messageBlockForArtifact, promptTextForAttachments } from "@cortexai-agent-hub/core";
+import {
+  botMessageMaxHops,
+  messageBlockForArtifact,
+  promptTextForAttachments,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { TeamChatEngagementJudge } from "./team-chat-judge.js";
@@ -653,7 +657,8 @@ export class TeamChatBridge {
     const pending = this.mirroring.get(message.id);
     if (pending) return pending;
     const mirroring = (async () => {
-      if (!conversation.thread) throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
+      if (!conversation.thread)
+        throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
       // Fetchers cannot survive a restart; reuse any completed per-file uploads.
       const stored = attachments
         ? await this.storeAttachments(

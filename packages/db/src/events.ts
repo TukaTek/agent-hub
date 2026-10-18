@@ -1,5 +1,9 @@
 import type { RealtimeFanout } from "@cortexai-agent-hub/adapter-kit";
-import type { BotSecretDestination, MessageBlock, ProductEvent } from "@cortexai-agent-hub/contracts";
+import type {
+  BotSecretDestination,
+  MessageBlock,
+  ProductEvent,
+} from "@cortexai-agent-hub/contracts";
 import {
   encodeLoginSecret,
   LoginSecretValue,

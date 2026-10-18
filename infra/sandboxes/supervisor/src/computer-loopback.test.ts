@@ -1235,7 +1235,11 @@ describe("screen registry across run boundaries", () => {
     const container = {
       inspect: vi.fn(async () => ({
         Config: {
-          Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+          Labels: {
+            "cortexai-agent-hub.managed": "true",
+            "cortexai-agent-hub.botId": "bot",
+            "cortexai-agent-hub.spaceId": "space",
+          },
         },
         State: { Running: running, StartedAt: boot },
         HostConfig: { NetworkMode: computerNetworkNameFor("bot") },
@@ -1283,11 +1287,15 @@ describe("screen registry across run boundaries", () => {
     expect(registry.get("failed-first-setup")?.get("writer")).toMatchObject({ index: 0 });
     expect(boots.get("failed-first-setup")).toBe("boot-2");
     expect(
-      commands.filter((command) => command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*")),
+      commands.filter((command) =>
+        command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*"),
+      ),
     ).toHaveLength(2);
     expect((await view()).status).toBe(200);
     expect(
-      commands.filter((command) => command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*")),
+      commands.filter((command) =>
+        command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*"),
+      ),
     ).toHaveLength(2);
   });
 
@@ -1309,7 +1317,11 @@ describe("screen registry across run boundaries", () => {
       const container = {
         inspect: vi.fn(async () => ({
           Config: {
-            Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+            Labels: {
+              "cortexai-agent-hub.managed": "true",
+              "cortexai-agent-hub.botId": "bot",
+              "cortexai-agent-hub.spaceId": "space",
+            },
           },
           HostConfig: { NetworkMode: computerNetworkNameFor("bot") },
           State: { Running: true, StartedAt: `boot-${boot}` },
@@ -1396,7 +1408,11 @@ describe("screen registry across run boundaries", () => {
       Image: "old-image",
       Config: {
         User: hostComputerUser(),
-        Labels: { "cortexai-agent-hub.managed": "true", "cortexai-agent-hub.botId": "bot", "cortexai-agent-hub.spaceId": "space" },
+        Labels: {
+          "cortexai-agent-hub.managed": "true",
+          "cortexai-agent-hub.botId": "bot",
+          "cortexai-agent-hub.spaceId": "space",
+        },
       },
       HostConfig: { NetworkMode: computerNetworkNameFor("bot") },
       State: { Running: true, StartedAt: "boot-1" },
@@ -1465,8 +1481,9 @@ describe("screen registry across run boundaries", () => {
     ).length;
     expect((await view()).status).toBe(200);
     expect(
-      commands.filter((command) => command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*"))
-        .length,
+      commands.filter((command) =>
+        command.includes("for marker in /tmp/cortexai-agent-hub/browser-profile-*"),
+      ).length,
     ).toBe(resets + 1);
   });
 
