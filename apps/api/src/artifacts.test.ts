@@ -395,6 +395,27 @@ describe("storeInboundAttachment", () => {
     return { put, store };
   }
 
+  it("bounds a stalled download and does not store its late result", async () => {
+    vi.useFakeTimers();
+    try {
+      const { put, store } = setup();
+      let finish!: (bytes: Uint8Array) => void;
+      const download = new Promise<Uint8Array>((resolve) => {
+        finish = resolve;
+      });
+      const result = store({ name: "a.png", mimeType: "image/png", fetch: () => download });
+      const rejected = expect(result).rejects.toThrow("Attachment download timed out");
+      await vi.advanceTimersByTimeAsync(2_000);
+      await rejected;
+      finish(new Uint8Array(3));
+      await Promise.resolve();
+      expect(put).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("skips the download when the platform reports an oversize file", async () => {
     const { put, store } = setup();
     const fetch = vi.fn(async () => new Uint8Array(4));

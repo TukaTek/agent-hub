@@ -83,7 +83,7 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
       concurrency: "concurrent",
     });
     const deliver = async (thread: Thread, message: Message) => {
-      const event = this.toInbound(thread, message);
+      const event = this.toInbound(thread.id, thread.isDM, message);
       if (!event) return;
       try {
         await this.sink?.(event);
@@ -163,6 +163,27 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     // The Chat SDK adapter API takes no abort signal, so the underlying
     // request cannot be cancelled — but the caller's wait is still bounded.
     await raceWithSignal(platform.adapter.startTyping(threadId), context.signal);
+  }
+
+  async fetchThreadHistory(
+    threadId: string,
+    options: { before: string; limit: number },
+    context: AdapterContext,
+  ): Promise<MessagingInboundMessage[]> {
+    const platform = this.byProvider.get(providerOfThreadId(threadId));
+    if (!platform) return [];
+    await this.ensureInitialized();
+    const fetched = await raceWithSignal(
+      platform.adapter.fetchMessages(threadId, { limit: options.limit + 1, direction: "backward" }),
+      context.signal,
+    );
+    const end = fetched.messages.findIndex((message) => message.id === options.before);
+    if (end < 0) return [];
+    const isDirect = platform.adapter.isDM?.(threadId) ?? false;
+    return fetched.messages
+      .slice(0, end)
+      .slice(-options.limit)
+      .flatMap((message) => this.toInbound(threadId, isDirect, message) ?? []);
   }
 
   /**
@@ -258,12 +279,15 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     return response;
   }
 
-  private toInbound(thread: Thread, message: Message): MessagingInboundMessage | null {
+  private toInbound(
+    threadId: string,
+    isDirect: boolean,
+    message: Message,
+  ): MessagingInboundMessage | null {
     if (message.author.isMe || message.author.isSystem) return null;
-    const provider = providerOfThreadId(thread.id);
+    const provider = providerOfThreadId(threadId);
     const platform = this.byProvider.get(provider);
     if (!platform) return null;
-    const isDirect = thread.isDM;
     if (!isDirect && !platform.capabilities.groups) return null;
     const fromLabel = message.author.fullName || message.author.userName || null;
     const transport = platform.transport?.(message.raw) ?? null;
@@ -273,7 +297,7 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
       provider,
       ...(transport ? { transport } : {}),
       handle: message.id,
-      threadId: thread.id,
+      threadId,
       isDirect,
       from: message.author.userId,
       fromLabel: fromLabel === message.author.userId ? null : fromLabel,

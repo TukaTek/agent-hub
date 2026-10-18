@@ -542,6 +542,43 @@ describe("ChatSdkMessagingSurface outbound", () => {
   });
 });
 
+describe("ChatSdkMessagingSurface thread history", () => {
+  it("returns the messages before the asking one, oldest first, without the bot's own", async () => {
+    const message = (id: string, isMe = false) =>
+      createTestMessage(id, `text ${id}`, {
+        threadId: "mock:C1:100",
+        author: { userId: "U1", userName: "ada", fullName: "Ada", isBot: false, isMe },
+      });
+    const fetchMessages = vi.fn(async () => ({
+      messages: [message("100"), message("101", true), message("102"), message("103")],
+    }));
+    const { surface } = createSurface({}, { fetchMessages });
+
+    const history = await surface.fetchThreadHistory(
+      "mock:C1:100",
+      { before: "103", limit: 50 },
+      context,
+    );
+
+    expect(fetchMessages).toHaveBeenCalledWith("mock:C1:100", { limit: 51, direction: "backward" });
+    expect(history.map((event) => [event.handle, event.content, event.isDirect])).toEqual([
+      ["100", "text 100", false],
+      ["102", "text 102", false],
+    ]);
+  });
+
+  it("returns nothing when the asking message is outside the fetched page", async () => {
+    const fetchMessages = vi.fn(async () => ({
+      messages: [createTestMessage("100", "text 100", { threadId: "mock:C1:100" })],
+    }));
+    const { surface } = createSurface({}, { fetchMessages });
+
+    await expect(
+      surface.fetchThreadHistory("mock:C1:100", { before: "103", limit: 50 }, context),
+    ).resolves.toEqual([]);
+  });
+});
+
 describe("ChatSdkMessagingSurface typing", () => {
   it("forwards typing to platforms that support it", async () => {
     const { surface, adapter } = createSurface();

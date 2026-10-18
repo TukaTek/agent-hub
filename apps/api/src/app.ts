@@ -27,6 +27,7 @@ import {
   createIntegrationConnectorStack,
   createJobReconciler,
   createMessagingContextLoader,
+  createMessagingTeamChatHistory,
   createMessagingTeamChatSender,
   createRunExecutor,
   createRunSandbox,
@@ -873,6 +874,7 @@ export async function createApp(
         events,
         jobs,
         send: createMessagingTeamChatSender(messaging),
+        fetchThreadHistory: createMessagingTeamChatHistory(messaging),
         storeAttachment: ({ spaceId, userId, ...input }) =>
           storeInboundAttachment({ prisma, artifacts }, { spaceId, userId }, input),
         providerId: "slack",

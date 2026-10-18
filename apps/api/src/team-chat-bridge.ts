@@ -53,12 +53,14 @@ interface TeamChatBridgeDeps {
   events: Pick<ThreadEvents, "sendUserMessage">;
   jobs: Pick<JobPublisher, "enqueue">;
   send: (request: TeamChatSendRequest) => Promise<TeamChatSendResult>;
+  fetchThreadHistory?: (message: TeamChatInboundMessage) => Promise<TeamChatInboundMessage[]>;
   storeAttachment?: (input: {
     spaceId: string;
     userId: string;
     botId: string;
     attachment: MessagingInboundAttachment;
     clientNonce: string;
+    downloadDeadline?: number;
   }) => Promise<{ id: string; name: string; mimeType: string; size: number }>;
   providerId: string;
   botId: string;
@@ -154,6 +156,7 @@ function readBatchContext(
 }
 
 export class TeamChatBridge {
+  private readonly threadBackfills = new Map<string, Promise<void>>();
   private target: TargetBot | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private reconciling: Promise<void> | undefined;
@@ -238,20 +241,196 @@ export class TeamChatBridge {
     message: TeamChatInboundMessage,
     options?: { queueAgent?: boolean },
   ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
-    this.receiving.set(message.eventId, (this.receiving.get(message.eventId) ?? 0) + 1);
+    const release = this.reserveInboundEvent(message.eventId);
     try {
       return await this.receiveMessage(message, options);
     } finally {
-      const remaining = (this.receiving.get(message.eventId) ?? 1) - 1;
-      if (remaining) this.receiving.set(message.eventId, remaining);
-      else this.receiving.delete(message.eventId);
+      release();
     }
+  }
+
+  private reserveInboundEvent(eventId: string): () => void {
+    this.receiving.set(eventId, (this.receiving.get(eventId) ?? 0) + 1);
+    return () => {
+      const remaining = (this.receiving.get(eventId) ?? 1) - 1;
+      if (remaining) this.receiving.set(eventId, remaining);
+      else this.receiving.delete(eventId);
+    };
   }
 
   private async receiveMessage(
     message: TeamChatInboundMessage,
     options?: { queueAgent?: boolean },
   ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
+    await this.backfillThreadHistory(message);
+    const conversation = await this.upsertConversation(message);
+    const now = new Date();
+    const deferredUntil = new Date(now.getTime() + DEFERRED_RESERVATION_MS);
+    const status =
+      options?.queueAgent === false
+        ? "deferred"
+        : message.kind === "ambient"
+          ? "observed"
+          : "received";
+    const nextAttemptAt = options?.queueAgent === false ? deferredUntil : null;
+    let externalMessage = await this.deps.prisma.externalMessage.upsert({
+      where: {
+        externalConversationId_providerEventId: {
+          externalConversationId: conversation.id,
+          providerEventId: message.eventId,
+        },
+      },
+      create: {
+        externalConversationId: conversation.id,
+        providerEventId: message.eventId,
+        kind: message.kind,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        senderIsBot: message.senderIsBot ?? false,
+        content: message.content,
+        replyThreadId: message.replyThreadId,
+        status,
+        nextAttemptAt,
+      },
+      update: {},
+    });
+    // A concurrent backfill can record this live message as history first.
+    if (externalMessage.engagementReason === "thread_history") {
+      externalMessage = await this.deps.prisma.externalMessage.update({
+        where: { id: externalMessage.id },
+        data: { kind: message.kind, status, nextAttemptAt, engagementReason: null, judgedAt: null },
+      });
+    }
+    await this.ensureTranscriptMessage(externalMessage, conversation, message.attachments ?? []);
+    if (options?.queueAgent === false) {
+      const deferred =
+        (externalMessage.status === "deferred" &&
+          externalMessage.nextAttemptAt?.getTime() === deferredUntil.getTime()) ||
+        (
+          await this.deps.prisma.externalMessage.updateMany({
+            where: {
+              id: externalMessage.id,
+              OR: [
+                { status: { in: ["received", "observed"] } },
+                { status: "deferred", nextAttemptAt: { lte: now } },
+              ],
+            },
+            data: { status: "deferred", nextAttemptAt: deferredUntil },
+          })
+        ).count === 1;
+      return {
+        spaceId: conversation.spaceId,
+        userId: conversation.userId,
+        botId: conversation.botId,
+        threadId: conversation.thread.id,
+        deferred,
+        externalMessageId: externalMessage.id,
+      };
+    }
+    await this.reconcileOnce();
+    return {
+      spaceId: conversation.spaceId,
+      userId: conversation.userId,
+      botId: conversation.botId,
+      threadId: conversation.thread.id,
+    };
+  }
+
+  private async backfillThreadHistory(message: TeamChatInboundMessage): Promise<void> {
+    if (!message.replyThreadId) return;
+    const key = JSON.stringify([
+      this.deps.providerId,
+      message.workspaceId,
+      message.conversationKey,
+      message.replyThreadId,
+    ]);
+    const pending = this.threadBackfills.get(key);
+    if (pending) return pending;
+    const fetchThreadHistory = this.deps.fetchThreadHistory;
+    if (!fetchThreadHistory || message.kind === "ambient") return;
+    const backfill = (async () => {
+      if (await this.knowsReplyThread(message)) return;
+      const downloadDeadline = Date.now() + 2_000;
+      try {
+        await this.receiveHistory(await fetchThreadHistory(message), downloadDeadline);
+      } catch (error) {
+        getLogger().warn("team chat thread history was not loaded", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+    this.threadBackfills.set(key, backfill);
+    try {
+      await backfill;
+    } finally {
+      this.threadBackfills.delete(key);
+    }
+  }
+
+  private async knowsReplyThread(message: TeamChatInboundMessage): Promise<boolean> {
+    const replyThreadId = message.replyThreadId;
+    if (!replyThreadId || replyThreadId === message.eventId) return true;
+    const known = await this.deps.prisma.externalMessage.findFirst({
+      where: {
+        OR: [{ providerEventId: replyThreadId }, { replyThreadId }],
+        externalConversation: {
+          provider: this.deps.providerId,
+          workspaceId: message.workspaceId,
+          externalKey: message.conversationKey,
+        },
+      },
+      select: { id: true },
+    });
+    return known !== null;
+  }
+
+  private async receiveHistory(
+    messages: TeamChatInboundMessage[],
+    downloadDeadline: number,
+  ): Promise<void> {
+    const first = messages[0];
+    if (!first) return;
+    const releases = messages.map((message) => this.reserveInboundEvent(message.eventId));
+    try {
+      const conversation = await this.upsertConversation(first);
+      const fileLimits = newestFirstFileLimits(messages, ATTACHMENT_MAX_COUNT);
+      for (const [index, message] of messages.entries()) {
+        const externalMessage = await this.deps.prisma.externalMessage.upsert({
+          where: {
+            externalConversationId_providerEventId: {
+              externalConversationId: conversation.id,
+              providerEventId: message.eventId,
+            },
+          },
+          create: {
+            externalConversationId: conversation.id,
+            providerEventId: message.eventId,
+            kind: message.kind,
+            senderId: message.senderId,
+            senderName: message.senderName,
+            senderIsBot: message.senderIsBot ?? false,
+            content: message.content,
+            replyThreadId: message.replyThreadId,
+            status: "ignored",
+            engagementReason: "thread_history",
+            judgedAt: new Date(),
+          },
+          update: {},
+        });
+        await this.ensureTranscriptMessage(
+          externalMessage,
+          conversation,
+          message.attachments ?? [],
+          fileLimits[index],
+          downloadDeadline,
+        );
+      }
+    } finally {
+      for (const release of releases) release();
+    }
+  }
+
+  private async upsertConversation(message: TeamChatInboundMessage) {
     const target = this.target;
     if (!target) throw new Error("Team chat bridge is not started");
     const conversation = await this.deps.prisma.externalConversation.upsert({
@@ -288,67 +467,7 @@ export class TeamChatBridge {
     ) {
       throw new Error("Team chat conversation belongs to a different CortexAI Agent Hub target");
     }
-    const now = new Date();
-    const deferredUntil = new Date(now.getTime() + DEFERRED_RESERVATION_MS);
-    const externalMessage = await this.deps.prisma.externalMessage.upsert({
-      where: {
-        externalConversationId_providerEventId: {
-          externalConversationId: conversation.id,
-          providerEventId: message.eventId,
-        },
-      },
-      create: {
-        externalConversationId: conversation.id,
-        providerEventId: message.eventId,
-        kind: message.kind,
-        senderId: message.senderId,
-        senderName: message.senderName,
-        senderIsBot: message.senderIsBot ?? false,
-        content: message.content,
-        replyThreadId: message.replyThreadId,
-        status:
-          options?.queueAgent === false
-            ? "deferred"
-            : message.kind === "ambient"
-              ? "observed"
-              : "received",
-        nextAttemptAt: options?.queueAgent === false ? deferredUntil : null,
-      },
-      update: {},
-    });
-    await this.ensureTranscriptMessage(externalMessage, conversation, message.attachments ?? []);
-    if (options?.queueAgent === false) {
-      const deferred =
-        (externalMessage.status === "deferred" &&
-          externalMessage.nextAttemptAt?.getTime() === deferredUntil.getTime()) ||
-        (
-          await this.deps.prisma.externalMessage.updateMany({
-            where: {
-              id: externalMessage.id,
-              OR: [
-                { status: { in: ["received", "observed"] } },
-                { status: "deferred", nextAttemptAt: { lte: now } },
-              ],
-            },
-            data: { status: "deferred", nextAttemptAt: deferredUntil },
-          })
-        ).count === 1;
-      return {
-        spaceId: conversation.spaceId,
-        userId: conversation.userId,
-        botId: conversation.botId,
-        threadId: conversation.thread.id,
-        deferred,
-        externalMessageId: externalMessage.id,
-      };
-    }
-    await this.reconcileOnce();
-    return {
-      spaceId: conversation.spaceId,
-      userId: conversation.userId,
-      botId: conversation.botId,
-      threadId: conversation.thread.id,
-    };
+    return { ...conversation, thread: conversation.thread };
   }
 
   /** Keep a deferred lease alive while routine routing is still in progress. */
@@ -527,6 +646,8 @@ export class TeamChatBridge {
       thread: { id: string } | null;
     },
     attachments?: MessagingInboundAttachment[],
+    fileLimit = ATTACHMENT_MAX_COUNT,
+    downloadDeadline?: number,
   ): Promise<void> {
     if (message.threadMessageId) return;
     const pending = this.mirroring.get(message.id);
@@ -535,7 +656,13 @@ export class TeamChatBridge {
       if (!conversation.thread) throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
       // Fetchers cannot survive a restart; reuse any completed per-file uploads.
       const stored = attachments
-        ? await this.storeAttachments(message.id, conversation, attachments)
+        ? await this.storeAttachments(
+            message.id,
+            conversation,
+            attachments,
+            fileLimit,
+            downloadDeadline,
+          )
         : {
             artifacts: await this.deps.prisma.artifact.findMany({
               where: {
@@ -585,12 +712,18 @@ export class TeamChatBridge {
     externalMessageId: string,
     conversation: { spaceId: string; botId: string; userId: string },
     attachments: MessagingInboundAttachment[],
+    fileLimit: number,
+    downloadDeadline?: number,
   ) {
     const artifacts: Array<{ id: string; name: string; mimeType: string; size: number }> = [];
     const unavailable: string[] = [];
     const storeAttachment = this.deps.storeAttachment;
     for (const [index, attachment] of attachments.entries()) {
-      if (!storeAttachment || index >= ATTACHMENT_MAX_COUNT) {
+      if (
+        !storeAttachment ||
+        index >= fileLimit ||
+        (downloadDeadline !== undefined && Date.now() >= downloadDeadline)
+      ) {
         unavailable.push(`[file: ${attachment.name} (unavailable)]`);
         continue;
       }
@@ -602,6 +735,7 @@ export class TeamChatBridge {
             botId: conversation.botId,
             attachment,
             clientNonce: `teamchat-attachment:${externalMessageId}:${index}`,
+            ...(downloadDeadline !== undefined ? { downloadDeadline } : {}),
           }),
         );
       } catch (error) {
@@ -1182,9 +1316,13 @@ export class TeamChatBridge {
       select: { blocks: true },
       orderBy: { seq: "asc" },
     });
-    const fileBlocks = transcripts.flatMap(({ blocks }) =>
-      (blocks as MessageBlock[]).filter((block) => block.kind === "file" || block.kind === "image"),
-    );
+    const fileBlocks = transcripts
+      .flatMap(({ blocks }) =>
+        (blocks as MessageBlock[]).filter(
+          (block) => block.kind === "file" || block.kind === "image",
+        ),
+      )
+      .slice(-ATTACHMENT_MAX_COUNT);
     const sent = await this.deps.events.sendUserMessage({
       spaceId: message.externalConversation.spaceId,
       threadId: thread.id,
@@ -1432,4 +1570,20 @@ export class TeamChatBridge {
       getLogger().error("team chat reconciliation error", error);
     });
   }
+}
+
+/** Splits a file budget across messages, giving the newest ones their files first. */
+function newestFirstFileLimits(
+  messages: ReadonlyArray<{ attachments?: readonly unknown[] }>,
+  budget: number,
+): number[] {
+  let remaining = budget;
+  return messages
+    .toReversed()
+    .map((message) => {
+      const limit = Math.min(message.attachments?.length ?? 0, remaining);
+      remaining -= limit;
+      return limit;
+    })
+    .toReversed();
 }

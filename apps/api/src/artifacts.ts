@@ -58,7 +58,12 @@ export async function createOwnedArtifact(
 export async function storeInboundAttachment(
   deps: { prisma: PrismaClient; artifacts: ArtifactStore },
   owner: ArtifactOwner,
-  input: { botId: string; attachment: MessagingInboundAttachment; clientNonce: string },
+  input: {
+    botId: string;
+    attachment: MessagingInboundAttachment;
+    clientNonce: string;
+    downloadDeadline?: number;
+  },
 ) {
   const replayed = await findReplayedArtifact(deps.prisma, owner, input);
   if (replayed) return createdArtifact(replayed);
@@ -68,7 +73,19 @@ export async function storeInboundAttachment(
   validateAttachmentMimeType(mimeType);
   const tooLarge = new AttachmentValidationError("Attachment exceeds the 10 MiB limit");
   if ((attachment.size ?? 0) > ATTACHMENT_MAX_BYTES) throw tooLarge;
-  const bytes = await attachment.fetch();
+  const timeoutMs = Math.min(2_000, (input.downloadDeadline ?? Infinity) - Date.now());
+  if (timeoutMs <= 0) throw new AttachmentValidationError("Attachment download timed out");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new AttachmentValidationError("Attachment download timed out")),
+      timeoutMs,
+    );
+  });
+  const bytes = await Promise.race([
+    Promise.resolve().then(() => attachment.fetch()),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
   if (bytes.byteLength === 0) throw new AttachmentValidationError("Attachment content is empty");
   if (bytes.byteLength > ATTACHMENT_MAX_BYTES) throw tooLarge;
   return storeOwnedArtifact(deps, owner, {

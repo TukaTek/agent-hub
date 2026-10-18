@@ -372,6 +372,304 @@ describe("team chat bridge", () => {
     );
   });
 
+  describe("thread history", () => {
+    function setup(input: { knownThread: boolean; history?: TeamChatInboundMessage[] | Error }) {
+      const rows = new Map<string, Record<string, unknown>>();
+      const upsert = vi.fn(async ({ create }: { create: Record<string, unknown> }) => {
+        const id = `external-${String(create.providerEventId)}`;
+        const row = rows.get(id) ?? { id, ...create, threadMessageId: null };
+        rows.set(id, row);
+        return row;
+      });
+      const update = vi.fn(
+        async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+          const row = { ...rows.get(where.id), ...data };
+          rows.set(where.id, row);
+          return row;
+        },
+      );
+      const findFirst = vi.fn(async (_query: unknown) =>
+        input.knownThread || rows.size > 0 ? { id: "root" } : null,
+      );
+      const conversation = {
+        id: "conversation-1",
+        provider: "slack",
+        spaceId: "space-1",
+        botId: "bot-1",
+        userId: "owner-1",
+        thread: { id: "thread-1" },
+      };
+      const prisma = {
+        artifact: { findMany: vi.fn(async () => []) },
+        externalConversation: { upsert: vi.fn(async () => conversation) },
+        externalMessage: {
+          findFirst,
+          findMany: vi.fn(
+            async ({
+              where,
+            }: {
+              where: { id: { notIn: string[] }; providerEventId: { notIn: string[] } };
+            }) =>
+              [...rows.values()]
+                .filter(
+                  (row) =>
+                    row.threadMessageId === null &&
+                    !where.id.notIn.includes(String(row.id)) &&
+                    !where.providerEventId.notIn.includes(String(row.providerEventId)),
+                )
+                .map((row) => ({ ...row, externalConversation: conversation })),
+          ),
+          upsert,
+          update,
+          updateMany: vi.fn(async () => ({ count: 1 })),
+        },
+      } as unknown as PrismaClient;
+      const sendUserMessage = vi.fn(async () => ({
+        messageId: "transcript",
+        runId: null,
+        seq: 1,
+        taskId: null,
+      }));
+      const fetchThreadHistory = vi.fn(async () => {
+        if (input.history instanceof Error) throw input.history;
+        return input.history ?? [];
+      });
+      const storeAttachment = vi.fn(async (request: { attachment: { name: string } }) => ({
+        id: `artifact-${request.attachment.name}`,
+        name: request.attachment.name,
+        mimeType: "image/png",
+        size: 3,
+      }));
+      const bridge = new TeamChatBridge({
+        prisma,
+        events: { sendUserMessage },
+        jobs: { enqueue: vi.fn() },
+        send: vi.fn(),
+        fetchThreadHistory,
+        storeAttachment,
+        providerId: "slack",
+        botId: "bot-1",
+      });
+      (
+        bridge as unknown as {
+          target: { id: string; spaceId: string; userId: string; name: string };
+        }
+      ).target = { id: "bot-1", spaceId: "space-1", userId: "owner-1", name: "Chief" };
+      return {
+        bridge,
+        upsert,
+        update,
+        findFirst,
+        sendUserMessage,
+        fetchThreadHistory,
+        storeAttachment,
+      };
+    }
+    const mention: TeamChatInboundMessage = {
+      eventId: "100.9",
+      workspaceId: "T-1",
+      kind: "mention",
+      conversationKey: "C-1",
+      conversationId: "slack:C-1:100.1",
+      replyThreadId: "100.1",
+      senderId: "U-2",
+      senderName: "Alex",
+      content: "@Chief is this a LOD issue?",
+    };
+    const earlier = (eventId: string, files: string[] = []): TeamChatInboundMessage => ({
+      ...mention,
+      eventId,
+      kind: "ambient",
+      senderName: "David",
+      content: `message ${eventId}`,
+      attachments: files.map((name) => ({
+        name,
+        mimeType: "image/png",
+        fetch: async () => new Uint8Array([1]),
+      })),
+    });
+
+    it("records the earlier thread as transcript-only history before the mention", async () => {
+      const { bridge, upsert, sendUserMessage, storeAttachment } = setup({
+        knownThread: false,
+        history: [
+          earlier("100.1", ["a.png", "b.png"]),
+          earlier("100.2", ["c.png", "d.png", "e.png"]),
+        ],
+      });
+
+      await bridge.receive(mention, { queueAgent: false });
+
+      expect(
+        upsert.mock.calls.map(([call]) => [call.create.providerEventId, call.create.status]),
+      ).toEqual([
+        ["100.1", "ignored"],
+        ["100.2", "ignored"],
+        ["100.9", "deferred"],
+      ]);
+      expect(storeAttachment.mock.calls.map(([call]) => call.attachment.name)).toEqual([
+        "a.png",
+        "c.png",
+        "d.png",
+        "e.png",
+      ]);
+      expect(sendUserMessage.mock.calls[0]?.[0]).toMatchObject({
+        blocks: [
+          { kind: "text", text: "message 100.1\n[file: b.png (unavailable)]" },
+          { kind: "image", artifactId: "artifact-a.png" },
+        ],
+      });
+      expect(sendUserMessage.mock.calls[2]?.[0]).toMatchObject({
+        blocks: [{ kind: "text", text: "@Chief is this a LOD issue?" }],
+      });
+    });
+
+    it("keeps recovery out of history writes before the upsert response arrives", async () => {
+      const { bridge, upsert, storeAttachment, sendUserMessage } = setup({
+        knownThread: false,
+        history: [earlier("100.1", ["a.png"])],
+      });
+      let release!: () => void;
+      let committed!: () => void;
+      const response = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const saved = new Promise<void>((resolve) => {
+        committed = resolve;
+      });
+      const write = upsert.getMockImplementation()!;
+      upsert.mockImplementationOnce(async (input) => {
+        const row = await write(input);
+        committed();
+        await response;
+        return row;
+      });
+      const receiving = bridge.receive(mention, { queueAgent: false });
+      try {
+        await saved;
+        await (
+          bridge as unknown as { mirrorMissingMessages(): Promise<void> }
+        ).mirrorMissingMessages();
+        expect(sendUserMessage).not.toHaveBeenCalled();
+        expect(storeAttachment).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await receiving;
+      }
+      expect(storeAttachment).toHaveBeenCalledOnce();
+      expect(sendUserMessage.mock.calls[0]?.[0]).toMatchObject({
+        blocks: expect.arrayContaining([
+          { kind: "image", artifactId: "artifact-a.png", name: "a.png", mimeType: "image/png" },
+        ]),
+      });
+    });
+
+    it("waits for an unfinished backfill before recording later mentions or ambient messages", async () => {
+      const { bridge, upsert, storeAttachment, sendUserMessage, fetchThreadHistory } = setup({
+        knownThread: false,
+        history: [earlier("100.1", ["a.png"]), earlier("100.2")],
+      });
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      storeAttachment.mockImplementationOnce(async () => {
+        await blocked;
+        return { id: "artifact-a.png", name: "a.png", mimeType: "image/png", size: 3 };
+      });
+      const first = bridge.receive(mention, { queueAgent: false });
+      await vi.waitFor(() => expect(storeAttachment).toHaveBeenCalledOnce());
+      const second = bridge.receive({ ...mention, eventId: "100.10" }, { queueAgent: false });
+      const ambient = bridge.receive(
+        { ...mention, kind: "ambient", eventId: "100.11" },
+        { queueAgent: false },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(upsert).toHaveBeenCalledOnce();
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      release();
+      await Promise.all([first, second, ambient]);
+      expect(upsert.mock.calls.slice(0, 2).map(([call]) => call.create.providerEventId)).toEqual([
+        "100.1",
+        "100.2",
+      ]);
+      expect(fetchThreadHistory).toHaveBeenCalledOnce();
+      // Retried deliveries reuse both the external row and its visible transcript.
+      await bridge.receive(mention, { queueAgent: false });
+      expect(sendUserMessage).toHaveBeenCalledTimes(5);
+      expect(fetchThreadHistory).toHaveBeenCalledOnce();
+      expect(
+        (bridge as unknown as { threadBackfills: Map<string, Promise<void>> }).threadBackfills.size,
+      ).toBe(0);
+    });
+
+    it("skips remaining history files after the shared download deadline", async () => {
+      vi.useFakeTimers();
+      try {
+        const { bridge, storeAttachment, sendUserMessage } = setup({
+          knownThread: false,
+          history: [earlier("100.1", ["a.png"]), earlier("100.2", ["b.png"])],
+        });
+        storeAttachment.mockImplementationOnce(async () => {
+          vi.setSystemTime(Date.now() + 2_000);
+          throw new Error("Attachment download timed out");
+        });
+        await bridge.receive(mention, { queueAgent: false });
+        expect(storeAttachment).toHaveBeenCalledOnce();
+        expect(storeAttachment.mock.calls[0]?.[0]).toMatchObject({
+          downloadDeadline: expect.any(Number),
+        });
+        expect(sendUserMessage.mock.calls[1]?.[0]).toMatchObject({
+          blocks: [{ kind: "text", text: "message 100.2\n[file: b.png (unavailable)]" }],
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("answers a mention that a concurrent backfill recorded as history", async () => {
+      const { bridge, update } = setup({
+        knownThread: false,
+        history: [earlier("100.1"), { ...mention, kind: "ambient" }],
+      });
+
+      await bridge.receive(mention, { queueAgent: false });
+
+      expect(update).toHaveBeenCalledWith({
+        where: { id: "external-100.9" },
+        data: expect.objectContaining({
+          kind: "mention",
+          status: "deferred",
+          engagementReason: null,
+        }),
+      });
+    });
+
+    it("skips reply threads the bot already has messages from", async () => {
+      const { bridge, fetchThreadHistory, findFirst } = setup({ knownThread: true });
+      await bridge.receive(mention, { queueAgent: false });
+      await bridge.receive(
+        { ...mention, kind: "ambient", eventId: "100.10" },
+        { queueAgent: false },
+      );
+      expect(fetchThreadHistory).not.toHaveBeenCalled();
+      expect(findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [{ providerEventId: "100.1" }, { replyThreadId: "100.1" }],
+          }),
+        }),
+      );
+    });
+
+    it("still records the mention when history cannot be read", async () => {
+      const { bridge, upsert } = setup({ knownThread: false, history: new Error("rate limited") });
+      await bridge.receive(mention, { queueAgent: false });
+      expect(upsert).toHaveBeenCalledOnce();
+    });
+  });
+
   it.each([false, true])(
     "recovers interrupted file-only mirroring (stored: %s)",
     async (stored) => {
@@ -480,7 +778,16 @@ describe("team chat bridge", () => {
       mimeType: "application/pdf",
       size: 3,
     };
-    const findMany = vi.fn(async () => [{ blocks: [file] }]);
+    const files = Array.from({ length: 6 }, (_, index) => ({
+      ...file,
+      artifactId: `document-${index + 1}`,
+      name: `report-${index + 1}.pdf`,
+    }));
+    const findMany = vi.fn(async () => [
+      { blocks: files.slice(0, 2) },
+      { blocks: files.slice(2, 4) },
+      { blocks: files.slice(4) },
+    ]);
     const sendUserMessage = vi.fn(async () => ({
       messageId: "prompt-1",
       runId: "run-1",
@@ -547,7 +854,10 @@ describe("team chat bridge", () => {
     });
     expect(sendUserMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        blocks: [{ kind: "text", text: JSON.parse(batchContext ?? "{}").prompt }, file],
+        blocks: [
+          { kind: "text", text: JSON.parse(batchContext ?? "{}").prompt },
+          ...files.slice(-4),
+        ],
         trigger: "messaging",
         linkMessageToRun: true,
       }),
