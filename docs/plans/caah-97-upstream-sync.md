@@ -329,18 +329,25 @@ Slack:
 - SSO sign-in through Hub.
 - A routine whose model fails transiently is retried once, 12 minutes later. Logs show `failed` for the first run, then a new run.
 - A Fathom read whose result spills to the computer (CAAH-95) still returns a receipt the bot can read with `read_file`.
-- A Slack thread with a shared file: the bot sees the file and earlier thread messages.
+
+Slack chat channels aren't enabled in any TukaTek deployment yet, so the Slack changes (#1456, #1457, #1458, #1460) rely on unit tests and are left out of this smoke test.
 
 ## Risks
 
 1. **The backoff extends failing runs.** Worst case is 30 s extra per call, only for fast transient failures, and never for timeouts or stalls. The `provider-retried` log line shows how often it fires.
 2. **Passthrough retries after forwarded events.** If a provider emits a non-output event (for example an empty `text_start`) before a 503, a retry could confuse the Agent's partial message. Step 3 refuses to retry in that case, and test 7 pins it.
 3. **Routine retry timing.** The 12-minute delay and 30-minute skip window are upstream constants. A Hub-revoked user's retry fails closed, which is correct. Routine failure notices now follow each routine's `notify` setting (upstream fixed a stored setting that was never read), so some owners will get fewer notices.
-4. **Concurrent index migration.** The `retry_of_run_id` unique index is created concurrently. A migration runner that wraps each migration in a transaction would fail. Check before deploying.
+4. **Concurrent index migration.** Checked: every deploy path (all compose files, self-update and the test harness) runs `prisma migrate deploy`, which sends each migration file as one query. Postgres runs a multi-statement query in an implicit transaction, where `CREATE INDEX CONCURRENTLY` fails, but a single statement runs on its own. Upstream already put the index alone in its migration, as about ten earlier migrations do. `packages/db/src/concurrent-migrations.test.ts` keeps every concurrent migration to a single statement.
 5. **Repeated conflicts at the next full catch-up.** Cherry-picks don't move the merge base. The reconciled files conflict once more, and the PR lists them.
 6. **#1458 port drift.** Porting against the fixed limit means a later #1440 pick touches the same function. That's acceptable, and noted in the PR.
-7. **Slack scopes.** Thread backfill needs history scopes on the Slack app. If they're missing, the backfill degrades to today's behavior, but the smoke test would not see history.
+7. **Slack scopes.** Thread backfill needs history scopes on the Slack app. If they're missing, the backfill degrades to today's behavior. No deployment has Slack chat channels enabled yet, so this matters only when one is turned on.
 8. **Upstream changes again before this lands.** Re-run the inventory before Task 1. Commits after `39bcee47` are out of scope unless the PM adds them.
+
+## Implementation notes
+
+- The PM accepted all six recommendations. The inventory was re-run before Task 1: no upstream commits after `39bcee47`.
+- Slack inbound attachments now refuse a file whose name is blocked (for example a `.docm` labelled as `.docx`). Upstream's #1458 fell back to the reported type, which bypassed the CAAH-72 blocklist. The web upload RPC (`createOwnedArtifact`) has the same gap on `main`: the browser blocks those names, but the server checks only the type. That is left for a follow-up.
+- The passthrough guard (`forwardedNonStart`) is tracked per call, not per attempt. Once anything other than `start` reached the agent, a later retry would repeat it, so per call is the safe bound.
 
 ## Decisions for the PM
 
