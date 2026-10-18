@@ -107,8 +107,11 @@ export function isComputerControlUnavailable(error: unknown) {
   if (error.name === "TimeoutError" || error.name === "AbortError") return false;
   const text = errorText(error);
   // Only pre-connect failures prove no actions ran. Mid-flight resets/hang-ups can
-  // happen after the service already applied steps.
+  // happen after the service already applied steps. undici's connect timeout
+  // ("Connect Timeout Error", UND_ERR_CONNECT_TIMEOUT) fires before the socket
+  // opens, e.g. when the supervisor is no longer on the computer's network.
   return (
+    text.includes("connect timeout") ||
     text.includes("econnrefused") ||
     text.includes("enotfound") ||
     text.includes("ehostunreach") ||
@@ -274,11 +277,32 @@ export interface ScreenAssignment {
   viewToken?: string;
 }
 
+/** Forget screen assignments and their boot marker together on every cleanup path. */
 export function clearComputerScreenRegistry(
   registry: Map<string, Map<string, ScreenAssignment>>,
+  boots: Map<string, string>,
   containerId: string,
 ) {
   registry.delete(containerId);
+  boots.delete(containerId);
+}
+
+/** Screen processes do not survive a container restart (crash, OOM kill, daemon restart).
+ * A registry recorded under an earlier boot describes processes that no longer exist, and
+ * a slot it left "releasing" would otherwise refuse every later screen and release request. */
+export function currentComputerScreens(
+  registry: Map<string, Map<string, ScreenAssignment>>,
+  boots: Map<string, string>,
+  containerId: string,
+  startedAt: string | undefined,
+): Map<string, ScreenAssignment> | undefined {
+  const assigned = registry.get(containerId);
+  const recordedBoot = boots.get(containerId);
+  if (assigned && startedAt && recordedBoot && recordedBoot !== startedAt) {
+    clearComputerScreenRegistry(registry, boots, containerId);
+    return undefined;
+  }
+  return assigned;
 }
 
 /** Choose the stop command for DELETE /screen cancel/release.

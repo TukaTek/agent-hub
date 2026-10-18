@@ -118,6 +118,12 @@ export function blocksToAgentHistoryText(blocks: MessageBlock[]): string {
       if (block.kind === "handoff") {
         return `[handoff ${block.fromBotId} -> ${block.toBotId}] ${block.text}`;
       }
+      // Without the answer a later turn sees the question as still open and asks it again.
+      if (block.kind === "ask") {
+        if (block.status !== "answered" || !block.answer) return block.text;
+        const choice = block.actions?.find((action) => action.id === block.answer);
+        return `${block.text}\nAnswer: ${choice?.label ?? block.answer}`;
+      }
       if ("text" in block && typeof block.text === "string") return block.text;
       return "";
     })
@@ -237,7 +243,7 @@ export function attachmentsForBot<T extends { botId: string }>(
 export function userTurnMessageForRun<
   T extends { id?: string; role: string; runId?: string | null; blocks: MessageBlock[] },
 >(trigger: string, runId: string, messages: T[], sourceMessageId?: string | null): T | undefined {
-  if (trigger !== "user") return undefined;
+  if (trigger !== "user" && trigger !== "messaging") return undefined;
   return messages.find(
     (message) =>
       message.role === "user" &&

@@ -11,8 +11,15 @@ import type {
   ConnectorTool,
   ModelCallObserver,
 } from "@cortexai-agent-hub/adapter-kit";
-import { DEFAULT_CONTEXT_STRATEGY } from "@cortexai-agent-hub/adapter-kit";
+import {
+  DEFAULT_CONTEXT_STRATEGY,
+  isProviderTimeout,
+  isRetryableProviderUnavailable,
+  isTransientModelError,
+  TransientModelError,
+} from "@cortexai-agent-hub/adapter-kit";
 import { usableModelId } from "@cortexai-agent-hub/contracts";
+import { abortableDelay } from "@cortexai-agent-hub/core";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { AgentMessage, AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
@@ -32,6 +39,7 @@ import { clampThinkingLevel, Type } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { isToolPauseResult } from "./approval-effect.js";
+import { automated, withAutomatedLabels } from "./automated-messages.js";
 import { connectionIdArgument, credentialArgument } from "./bot-secrets.js";
 import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { withCloudflareGatewayAuth } from "./cloudflare-ai-gateway.js";
@@ -57,6 +65,7 @@ import {
 import {
   clipToolResultContent,
   clipToolResultText,
+  MODEL_PROVIDER_RETRY_DELAYS_MS,
   MODEL_STREAM_STALL_RETRIES,
   MODEL_STREAM_TIMEOUT_MS,
   modelStreamFirstEventTimeoutMs,
@@ -71,6 +80,7 @@ import { PiJsonlSessionRecorder } from "./pi-session.js";
 import { observedPiStream } from "./pi-usage.js";
 import type { RuntimeContextDecision } from "./runtime-context.js";
 import { createRuntimeContextPolicy, VERBATIM_TOOL_RESULTS } from "./runtime-context.js";
+import { SCHEDULE_TOOL_NAMES } from "./schedule-tools.js";
 import type { FinishedShellCommand } from "./shell-command-stream.js";
 import { deliverFinishedShells } from "./shell-command-stream.js";
 import {
@@ -107,10 +117,15 @@ const MAX_PARALLEL_SUBAGENTS = 4;
 // instead of taking another assistant turn. A bounded internal follow-up keeps
 // that provider quirk from making a long task look complete after one step.
 const MAX_SILENT_TOOL_CONTINUATIONS = 3;
-const SILENT_TOOL_CONTINUATION_PROMPT =
-  "Continue the original task from the latest tool result. Do not stop after a tool call; use any remaining tools needed, then give the user the final answer.";
-const SILENT_ALLOWED_TOOL_CONTINUATION_PROMPT =
-  "Continue the original task from the latest tool result. If you were instructed to stay silent when there is nothing to report, follow that instruction for the entire final assistant reply. Otherwise use any remaining tools needed, then give the user the final answer.";
+// Sent in the user's role, so marked as automated: models took the old wording for the
+// user telling them never to stop, and kept going instead of asking.
+export const SILENT_TOOL_CONTINUATION_PROMPT = automated(
+  "Your last turn ended right after a tool result, without a reply. Continue the original task from the latest tool result. If you need information or a decision from the user, ask them instead of guessing; otherwise use any remaining tools needed, then give the user the final answer.",
+);
+export const SILENT_ALLOWED_TOOL_CONTINUATION_PROMPT = automated(
+  "Your last turn ended right after a tool result, without a reply. Continue the original task from the latest tool result. If you need information or a decision from the user, ask them instead of guessing, even if you were told to stay silent. Otherwise, if you were instructed to stay silent when there is nothing to report, follow that instruction for the entire final assistant reply; if not, use any remaining tools needed, then give the user the final answer.",
+);
+
 // Shown as a failed-run error, not an assistant message. Asking the user to
 // continue stores that sentence as the reply, and the next "continue" runs
 // tools and misses a final answer again.
@@ -391,7 +406,8 @@ export class PiAgentRuntime implements AgentRuntime {
         agent = new Agent({
           sessionId: conversationSessionId(request.threadId, request.botId),
           steeringMode: "all",
-          streamFn: (_m, ctx, options) => fallbackAwareModelStream(fallbackState, ctx, options),
+          streamFn: (_m, ctx, options) =>
+            fallbackAwareModelStream(fallbackState, ctx, withAutomatedLabels(options)),
           getApiKey: hasBackups
             ? async () => activeStreamTarget.credentials?.accessToken ?? activeStreamTarget.apiKey
             : async () => apiKey,
@@ -586,7 +602,10 @@ export class PiAgentRuntime implements AgentRuntime {
           !budgetExceeded && terminalMessage ? providerFailureText(terminalMessage) : undefined;
         const error = agent.state.errorMessage || providerFailure;
         if (error && !budgetExceeded) {
-          throw new Error(sanitizeProviderError(activeStreamTarget.model.provider, error));
+          const message = sanitizeProviderError(activeStreamTarget.model.provider, error);
+          throw isTransientModelError(error)
+            ? new TransientModelError(message)
+            : new Error(message);
         }
         if (!budgetExceeded && terminalMessage && !messageHasToolCall(terminalMessage)) {
           const terminalText = assistantText(terminalMessage);
@@ -637,7 +656,11 @@ export class PiAgentRuntime implements AgentRuntime {
         queue.push(streamed.trim() ? { type: "done", text: streamed } : { type: "done" });
       } catch (error) {
         const message = sanitizeError(error instanceof Error ? error.message : String(error));
-        queue.fail(new Error(message));
+        queue.fail(
+          error instanceof TransientModelError
+            ? new TransientModelError(message)
+            : new Error(message),
+        );
       } finally {
         queue.close();
         if (trackedBudget) {
@@ -1046,6 +1069,11 @@ function toAgentTool(
     name: exposedName,
     label: tool.name,
     description: tool.description,
+    // Pi runs a turn's tool calls concurrently by default, so a batch that
+    // creates a routine and lists routines can read the list before the row
+    // exists. Pi runs the whole batch in order when any call in it is
+    // sequential, which is what the schedule tools need.
+    ...(SCHEDULE_TOOL_NAMES.has(tool.name) ? { executionMode: "sequential" as const } : {}),
     parameters: parametersFor(tool),
     prepareArguments: (args: unknown) => {
       const raw = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -1505,7 +1533,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       );
     },
     sessionId: conversationSessionId(host.request.threadId, host.request.botId, agentId),
-    streamFn: (_m, ctx, options) => fallbackAwareModelStream(fallbackState, ctx, options),
+    streamFn: (_m, ctx, options) =>
+      fallbackAwareModelStream(fallbackState, ctx, withAutomatedLabels(options)),
     getApiKey: async () =>
       hasBackups
         ? (nestedHost.activeModel.credentials?.accessToken ?? nestedHost.activeModel.apiKey)
@@ -1520,6 +1549,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
         `You are a CortexAI Agent Hub subagent named "${name}".`,
         "You run inside the parent bot's turn — you are not a separate bot chat.",
         "Complete the task and return a concise result. Do not spawn bots or further subagents.",
+        "Your task comes from the parent bot, not from the human user, and you cannot talk to the user: report your result back to the parent bot.",
+        "Messages marked as automated come from CortexAI Agent Hub, not from the user.",
         extra,
       ]
         .filter(Boolean)
@@ -1586,7 +1617,9 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
     const onAbort = () => nested.abort();
     host.signal.addEventListener("abort", onAbort);
     try {
-      await nested.prompt(task || "Complete the delegated task.");
+      await nested.prompt(
+        `Task from the parent bot (not from the user):\n${task || "Complete the delegated task."}`,
+      );
     } finally {
       try {
         await nested.waitForIdle();
@@ -1629,7 +1662,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       status: "completed",
       result: clipped,
     });
-    return clipped;
+    // The parent bot reads this as a tool result; say plainly that it is the helper talking.
+    return `Result from your helper "${name}" (not a message from the user):\n${clipped}`;
   } catch (error) {
     const message = sanitizeError(error instanceof Error ? error.message : String(error));
     host.queue.push({
@@ -2423,7 +2457,7 @@ interface FallbackStreamState {
   ): AssistantMessageEventStream;
 }
 
-type ModelCallOutcome = "ok" | "idle-timeout-retried" | "switched" | "failed";
+type ModelCallOutcome = "ok" | "idle-timeout-retried" | "provider-retried" | "switched" | "failed";
 
 /** One line per model attempt. `requestSizeEstimate` is in estimated tokens; key names avoid log redaction. */
 function logModelCall(call: {
@@ -2439,6 +2473,7 @@ function logModelCall(call: {
   lastEventType: string | null;
   outcome: ModelCallOutcome;
   stall?: StreamStallReason;
+  retryDelayMs?: number;
   error?: unknown;
 }): void {
   const { error, ...fields } = call;
@@ -2452,79 +2487,6 @@ function logModelCall(call: {
   };
   if (call.outcome === "ok") getLogger().info("model call", bindings);
   else getLogger().warn("model call", bindings);
-}
-
-function errorFacts(value: unknown) {
-  const text: string[] = [];
-  const statuses = new Set<number>();
-  const seen = new Set<object>();
-  const visit = (item: unknown, depth: number) => {
-    if (depth > 4 || item == null) return;
-    if (typeof item === "string") {
-      text.push(item);
-      return;
-    }
-    if (typeof item !== "object" || seen.has(item)) return;
-    seen.add(item);
-    const record = item as Record<string, unknown>;
-    for (const key of ["message", "errorMessage", "name", "code", "type"]) {
-      if (typeof record[key] === "string") text.push(record[key] as string);
-    }
-    for (const key of ["status", "statusCode", "httpStatus"]) {
-      if (typeof record[key] === "number") statuses.add(record[key] as number);
-    }
-    for (const key of ["response", "cause", "details", "diagnostics", "data", "error"]) {
-      visit(record[key], depth + 1);
-    }
-    if (Array.isArray(item)) for (const child of item) visit(child, depth + 1);
-  };
-  visit(value, 0);
-  for (const detail of text) {
-    for (const match of detail.matchAll(
-      /(?:\b(?:http(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|error\s+code)\s*[:=]?\s*|^\s*)([45]\d{2})\b/gi,
-    )) {
-      statuses.add(Number(match[1]));
-    }
-  }
-  return { text: text.join(" ").toLowerCase(), statuses };
-}
-
-/** Only provider availability failures may advance the user's explicit chain. */
-export function isRetryableProviderUnavailable(error: unknown): boolean {
-  const { text, statuses } = errorFacts(error);
-  if (
-    [400, 401, 403].some((status) => statuses.has(status)) ||
-    /\b(?:http(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|error\s+code)\s*[:=]?\s*(?:400|401|403)\b/.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  if (
-    /\b(abort(?:ed)?|cancel(?:lation|led|ed)?|unauthori[sz]ed|forbidden|permission(?: is)? (?:denied|refused|declined)|access denied|consent(?: is)? (?:required|denied|refused|declined|not granted)|user (?:refused|declined)|invalid api key|invalid credential|(?:expired|revoked|missing) (?:api )?(?:key|credential|token)|(?:api )?key (?:expired|revoked|missing)|authentication (?:failed|failure|denied|expired|invalid)|authorization (?:failed|failure|denied|expired|invalid)|bad request|invalid request|invalid input|invalid argument|context length|model not found|unsupported parameter)\b/.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  if (
-    /context[ _-](?:length|window)|too many tokens|maximum context|token limit|request too large|invalid_api_key|authentication_error|permission_error|bad_request|invalid_request/.test(
-      text,
-    )
-  )
-    return false;
-  if (statuses.has(402)) {
-    return /quota|billing|credit|payment limit|insufficient funds/.test(text);
-  }
-  if (
-    [408, 429].some((status) => statuses.has(status)) ||
-    [...statuses].some((status) => status >= 500 && status < 600)
-  )
-    return true;
-  if ([...statuses].some((status) => status >= 400 && status < 600)) return false;
-  return /rate.?limit|too many requests|quota|overload|capacity|temporarily unavailable|service unavailable|retry[- ](?:after|delay)|server error|upstream error|gateway timeout|timed? out|timeout|connection reset|connection refused|network error|max retries exceeded/.test(
-    text,
-  );
 }
 
 function assistantHasPartialOutput(message: AssistantMessage): boolean {
@@ -2559,6 +2521,19 @@ function contextImageCount(context: Context): number {
   }, 0);
 }
 
+/**
+ * Same rule as the primary model (modelAcceptsImageInput): the catalog's input
+ * modalities decide for native providers, and the connection's acceptsImages flag
+ * only applies to OpenAI-compatible models, whose runtime model is built from it.
+ */
+function fallbackSeesImages(candidate: RuntimeModelTarget): boolean {
+  if (!candidate.model.input.includes("image")) return false;
+  return (
+    candidate.config.provider !== OPENAI_COMPATIBLE_PROVIDER_ID ||
+    candidate.config.acceptsImages !== false
+  );
+}
+
 function fallbackSupportsContext(
   candidate: RuntimeModelTarget,
   context: TranscriptContext,
@@ -2582,7 +2557,7 @@ function fallbackSupportsContext(
   const imageCount = contextImageCount(context);
   if (
     (imageCount > 0 || tools.some((tool) => IMAGE_RETURNING_COMPUTER_TOOLS.has(tool.name))) &&
-    (!candidate.model.input.includes("image") || candidate.config.acceptsImages === false)
+    !fallbackSeesImages(candidate)
   ) {
     return false;
   }
@@ -2649,6 +2624,10 @@ function fallbackAwareModelStream(
   const canSwitch = Boolean(state.request.fallbackModels?.length);
   const signalAborted = () =>
     (canSwitch && state.signal.aborted) || Boolean(options?.signal?.aborted);
+  const callerSignals = [canSwitch ? state.signal : undefined, options?.signal].filter(
+    (signal): signal is AbortSignal => signal !== undefined,
+  );
+  const retrySignal = callerSignals.length > 1 ? AbortSignal.any(callerSignals) : callerSignals[0];
   const finishWithThrownError = (target: RuntimeModelTarget, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     const aborted = signalAborted() || /abort|cancel/i.test(message);
@@ -2747,10 +2726,13 @@ function fallbackAwareModelStream(
   const run = async () => {
     let buffered: AssistantMessageEvent[] = [];
     let startForwarded = false;
+    let forwardedNonStart = false;
     const forward = (event: AssistantMessageEvent) => {
       if (event.type === "start") {
         if (startForwarded) return;
         startForwarded = true;
+      } else {
+        forwardedNonStart = true;
       }
       output.push(event);
     };
@@ -2759,6 +2741,8 @@ function fallbackAwareModelStream(
       buffered = [];
     };
     let stallRetries = MODEL_STREAM_STALL_RETRIES;
+    let providerRetries = 0;
+    let firstRetryableError: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
     let attempt = 0;
     const requestSizeEstimate = estimateModelContextTokens(context, estimatePiImageTokens);
     while (!signalAborted()) {
@@ -2769,7 +2753,7 @@ function fallbackAwareModelStream(
       let lastEventType: string | undefined;
       const log = (
         outcome: ModelCallOutcome,
-        detail: { stall?: StreamStallReason; error?: unknown } = {},
+        detail: { stall?: StreamStallReason; retryDelayMs?: number; error?: unknown } = {},
       ) =>
         logModelCall({
           runId: state.request.runId,
@@ -2826,6 +2810,7 @@ function fallbackAwareModelStream(
               retry = true;
               break;
             }
+            let terminalEvent = event;
             if (
               !stall &&
               beforeOutput &&
@@ -2841,12 +2826,27 @@ function fallbackAwareModelStream(
                 retry = true;
                 break;
               }
+              firstRetryableError ??= event;
+              const delay = isProviderTimeout(event.error)
+                ? undefined
+                : MODEL_PROVIDER_RETRY_DELAYS_MS[providerRetries];
+              // A passthrough retry may only repeat `start`, which forward() dedupes.
+              if (delay !== undefined && !forwardedNonStart) {
+                providerRetries += 1;
+                log("provider-retried", { retryDelayMs: delay, error: event.error.errorMessage });
+                await abortableDelay(delay, retrySignal);
+                if (failIfAborted(target)) return;
+                buffered = [];
+                retry = true;
+                break;
+              }
+              terminalEvent = firstRetryableError;
             }
             flush();
             const terminal =
               sawPartialOutput && event.error.content.length === 0 && lastPartial
                 ? { ...event, error: { ...event.error, content: lastPartial.content } }
-                : event;
+                : terminalEvent;
             log("failed", { stall, error: event.error.errorMessage });
             forward(terminal);
             output.end(terminal.error);

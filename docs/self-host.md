@@ -234,6 +234,18 @@ current provider, so **Link SSO** becomes available again. Link the new identity
 existing signed-in account; authenticated-session, verified-email and matching-email checks
 still apply. Restoring the old issuer makes its existing links usable again.
 
+Ordinary SSO sign-in and linking may reuse the identity provider's existing session. They
+do not grant fresh authentication proof for account deletion. The account settings' explicit
+reauthentication flow requests `prompt=login` and `max_age=0`, binds the callback to the
+same linked issuer and subject, and requires the initiating session to remain valid. Only
+that callback grants proof to the resulting session, expiring five minutes after provider
+authentication (callback delays do not extend it). Its verified
+ID token must contain an `auth_time` consistent with that request (allowing 60 seconds of
+clock skew) and less than five minutes old. Missing, stale or invalid claims fail closed.
+OAuth callbacks are single-use, including concurrent requests. Password verification and
+emailed deletion codes remain available. Submit deletion codes through the account settings
+or the CSRF-protected `POST /api/auth/delete-user` endpoint; the GET deletion callback is disabled.
+
 SSO signup follows closed registration and the deployment allowlist before creating an account.
 Allowlisted provider emails must be verified; the password signup's first-account exemption
 never upgrades an OIDC email. `OIDC_ALLOW_SIGNUP_BYPASS=true` explicitly admits IdP identities
@@ -251,7 +263,7 @@ on first use, refreshed in the background, and failures back off up to one minut
 reflects discovery, not a guarantee that the provider's token endpoint is currently reachable.
 
 Account deletion keeps the existing password confirmation for password users. Users without a
-password may delete after a provider sign-in within five minutes; **Sign in again** starts a fresh
+password may delete after explicit provider reauthentication within five minutes; **Sign in again** starts a fresh
 provider round-trip bound to the signed-in account. Choosing a different identity cannot confirm
 deletion or create another account in that flow. A stale or borrowed session alone cannot authorize deletion. With transactional
 email configured, **Send deletion code** sends a single-use code to the account email, valid for ten
@@ -321,6 +333,7 @@ SANDBOX_IDLE_MS=600000    # pause or stop after 10 minutes idle; 0 disables idle
 # E2B, CreateOS and Box still apply their own timeouts.
 SANDBOX_COMMAND_TIMEOUT_MS=300000 # stop a shell command after 5 minutes
 MAX_TOOL_CALLS_PER_TURN=  # optional Pi turn tool-call fuse; unset/0 = unlimited
+BOT_MESSAGE_MAX_HOPS=6    # bot-to-bot messages one chain may carry before the next is refused
 E2B_API_KEY=              # when SANDBOX_PROVIDER=e2b
 DAYTONA_API_KEY=          # when SANDBOX_PROVIDER=daytona
 CREATEOS_SANDBOX_API_KEY= # when SANDBOX_PROVIDER=createos

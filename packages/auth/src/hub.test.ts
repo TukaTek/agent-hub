@@ -931,6 +931,37 @@ describe("Hub tenant Entra SSO", () => {
     }
   });
 
+  it("refuses OIDC reauthentication and deletion callbacks before any OIDC check runs", async () => {
+    const f = fixture(undefined, { sso: true });
+    const { headers } = await f.login();
+    const context = await f.auth.$context;
+    const findAccounts = vi.spyOn(context.internalAdapter, "findAccounts");
+    const authorization = headers.get("authorization")!;
+    const reauth = await f.auth.handler(
+      new Request("https://web.example.test/api/auth/sign-in/social", {
+        method: "POST",
+        headers: {
+          authorization,
+          origin: "https://web.example.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ provider: "oidc", additionalData: { reauthenticate: true } }),
+      }),
+    );
+    const deletion = await f.auth.handler(
+      new Request("https://web.example.test/api/auth/delete-user/callback?token=fixture-token", {
+        headers: { authorization },
+      }),
+    );
+
+    for (const response of [reauth, deletion]) {
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain("Sign in through CortexAI Hub");
+    }
+    expect(findAccounts).not.toHaveBeenCalled();
+    expect(f.data.session).toHaveLength(1);
+  });
+
   it("never logs the code, state, verifier, tokens, email or service secret", async () => {
     const reasons: string[] = [];
     const logged: unknown[] = [];

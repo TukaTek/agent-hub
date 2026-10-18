@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import type { ArtifactStore } from "@cortexai-agent-hub/adapter-kit";
+import type { ArtifactStore, MessagingInboundAttachment } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor } from "@cortexai-agent-hub/contracts";
-import { ATTACHMENT_MAX_COUNT } from "@cortexai-agent-hub/contracts";
+import {
+  ARTIFACT_NAME_MAX_LENGTH,
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENT_MAX_COUNT,
+} from "@cortexai-agent-hub/contracts";
 import {
   AttachmentValidationError,
   decodeAttachmentBase64,
@@ -13,7 +17,7 @@ import {
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { IsolationError, Prisma, withResolvedArtifactVersion } from "@cortexai-agent-hub/db";
 
-function adapterContext(actor: Actor, botId: string, operationId: string) {
+function adapterContext(actor: ArtifactOwner, botId: string, operationId: string) {
   return {
     operationId,
     traceId: operationId,
@@ -48,6 +52,69 @@ export async function createOwnedArtifact(
       : input.mimeType;
   validateAttachmentMimeType(mimeType);
   const bytes = decodeAttachmentBase64(input.contentBase64);
+  return storeOwnedArtifact(deps, actor, { ...input, mimeType, bytes });
+}
+
+export async function storeInboundAttachment(
+  deps: { prisma: PrismaClient; artifacts: ArtifactStore },
+  owner: ArtifactOwner,
+  input: {
+    botId: string;
+    attachment: MessagingInboundAttachment;
+    clientNonce: string;
+    downloadDeadline?: number;
+  },
+) {
+  const replayed = await findReplayedArtifact(deps.prisma, owner, input);
+  if (replayed) return createdArtifact(replayed);
+  const { attachment } = input;
+  const name = attachment.name.slice(0, ARTIFACT_NAME_MAX_LENGTH);
+  const mimeType = inferAttachmentMimeType(name, attachment.mimeType);
+  if (!mimeType) {
+    throw new AttachmentValidationError(`Unsupported attachment type: ${attachment.mimeType}`);
+  }
+  const tooLarge = new AttachmentValidationError("Attachment exceeds the 10 MiB limit");
+  if ((attachment.size ?? 0) > ATTACHMENT_MAX_BYTES) throw tooLarge;
+  const timeoutMs = Math.min(2_000, (input.downloadDeadline ?? Infinity) - Date.now());
+  if (timeoutMs <= 0) throw new AttachmentValidationError("Attachment download timed out");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new AttachmentValidationError("Attachment download timed out")),
+      timeoutMs,
+    );
+  });
+  const bytes = await Promise.race([
+    Promise.resolve().then(() => attachment.fetch()),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
+  if (bytes.byteLength === 0) throw new AttachmentValidationError("Attachment content is empty");
+  if (bytes.byteLength > ATTACHMENT_MAX_BYTES) throw tooLarge;
+  return storeOwnedArtifact(deps, owner, {
+    botId: input.botId,
+    name,
+    mimeType,
+    bytes,
+    clientNonce: input.clientNonce,
+  });
+}
+
+type ArtifactOwner = Pick<Actor, "spaceId" | "userId">;
+
+async function storeOwnedArtifact(
+  deps: { prisma: PrismaClient; artifacts: ArtifactStore },
+  actor: ArtifactOwner,
+  input: {
+    botId: string;
+    groupId?: string;
+    name: string;
+    description?: string;
+    mimeType: string;
+    bytes: Uint8Array;
+    clientNonce?: string;
+  },
+) {
+  const { mimeType, bytes } = input;
   const context = adapterContext(actor, input.botId, `artifact-create:${input.botId}`);
   const stored = await deps.artifacts.put({ name: input.name, mimeType, bytes }, context);
   const hash = createHash("sha256").update(bytes).digest("hex");
@@ -94,7 +161,7 @@ export async function createOwnedArtifact(
 /** The artifact an earlier upload with this nonce created; a nonce reused for another chat is refused. */
 async function findReplayedArtifact(
   db: Pick<Prisma.TransactionClient, "artifact">,
-  actor: Actor,
+  actor: ArtifactOwner,
   input: { botId: string; groupId?: string; clientNonce?: string },
 ) {
   if (!input.clientNonce) return null;

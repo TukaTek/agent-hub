@@ -181,6 +181,7 @@ describe("attachment helpers", () => {
         blocks: [{ kind: "text" as const, text: "routine time" }],
       },
     ];
+    expect(userTurnMessageForRun("messaging", "run-new", messages)).toEqual(messages[1]);
     expect(userTurnMessageForRun("routine", "run-new", messages)).toBeUndefined();
     expect(userTurnMessageForRun("user", "run-old", messages)).toEqual(messages[0]);
     expect(userTurnMessageForRun("user", "run-new", messages)).toEqual(messages[1]);
@@ -211,5 +212,32 @@ describe("peer message history", () => {
         { kind: "bot_message_sent", toBotId: "b_2", toBotName: "Analyst", text: "chart it" },
       ]),
     ).toBe("[to Analyst] chart it");
+  });
+});
+
+describe("ask history", () => {
+  it("shows an answered ask with the chosen label so a later turn does not ask again", () => {
+    const actions = [
+      { id: "choice-1", label: "Berlin" },
+      { id: "choice-2", label: "Paris" },
+    ];
+    expect(blocksToAgentHistoryText([{ kind: "ask", text: "Which city?", actions }])).toBe(
+      "Which city?",
+    );
+    expect(
+      blocksToAgentHistoryText([
+        { kind: "ask", text: "Which city?", actions, status: "answered", answer: "choice-2" },
+      ]),
+    ).toBe("Which city?\nAnswer: Paris");
+    expect(
+      blocksToAgentHistoryText([
+        { kind: "ask", text: "Which city?", status: "answered", answer: "Lisbon" },
+      ]),
+    ).toBe("Which city?\nAnswer: Lisbon");
+    expect(
+      blocksToAgentHistoryText([
+        { kind: "ask", text: "API key", input: "secret", status: "answered", answer: "" },
+      ]),
+    ).toBe("API key");
   });
 });

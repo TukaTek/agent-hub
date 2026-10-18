@@ -27,6 +27,7 @@ import {
   createIntegrationConnectorStack,
   createJobReconciler,
   createMessagingContextLoader,
+  createMessagingTeamChatHistory,
   createMessagingTeamChatSender,
   createRunExecutor,
   createRunSandbox,
@@ -105,6 +106,7 @@ import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { storeInboundAttachment } from "./artifacts.js";
 import { authCapabilities } from "./auth-capabilities.js";
 import { createBillingService } from "./billing.js";
 import { mountBillingRoutes } from "./billing-webhook.js";
@@ -872,6 +874,9 @@ export async function createApp(
         events,
         jobs,
         send: createMessagingTeamChatSender(messaging),
+        fetchThreadHistory: createMessagingTeamChatHistory(messaging),
+        storeAttachment: ({ spaceId, userId, ...input }) =>
+          storeInboundAttachment({ prisma, artifacts }, { spaceId, userId }, input),
         providerId: "slack",
         botId: env.teamChatBotId,
         judge,
