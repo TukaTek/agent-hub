@@ -13,11 +13,13 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import {
   DEFAULT_CONTEXT_STRATEGY,
+  isProviderTimeout,
   isRetryableProviderUnavailable,
   isTransientModelError,
   TransientModelError,
 } from "@cortexai-agent-hub/adapter-kit";
 import { usableModelId } from "@cortexai-agent-hub/contracts";
+import { abortableDelay } from "@cortexai-agent-hub/core";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { AgentMessage, AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
@@ -63,6 +65,7 @@ import {
 import {
   clipToolResultContent,
   clipToolResultText,
+  MODEL_PROVIDER_RETRY_DELAYS_MS,
   MODEL_STREAM_STALL_RETRIES,
   MODEL_STREAM_TIMEOUT_MS,
   modelStreamFirstEventTimeoutMs,
@@ -2454,7 +2457,7 @@ interface FallbackStreamState {
   ): AssistantMessageEventStream;
 }
 
-type ModelCallOutcome = "ok" | "idle-timeout-retried" | "switched" | "failed";
+type ModelCallOutcome = "ok" | "idle-timeout-retried" | "provider-retried" | "switched" | "failed";
 
 /** One line per model attempt. `requestSizeEstimate` is in estimated tokens; key names avoid log redaction. */
 function logModelCall(call: {
@@ -2470,6 +2473,7 @@ function logModelCall(call: {
   lastEventType: string | null;
   outcome: ModelCallOutcome;
   stall?: StreamStallReason;
+  retryDelayMs?: number;
   error?: unknown;
 }): void {
   const { error, ...fields } = call;
@@ -2620,6 +2624,10 @@ function fallbackAwareModelStream(
   const canSwitch = Boolean(state.request.fallbackModels?.length);
   const signalAborted = () =>
     (canSwitch && state.signal.aborted) || Boolean(options?.signal?.aborted);
+  const callerSignals = [canSwitch ? state.signal : undefined, options?.signal].filter(
+    (signal): signal is AbortSignal => signal !== undefined,
+  );
+  const retrySignal = callerSignals.length > 1 ? AbortSignal.any(callerSignals) : callerSignals[0];
   const finishWithThrownError = (target: RuntimeModelTarget, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     const aborted = signalAborted() || /abort|cancel/i.test(message);
@@ -2718,10 +2726,13 @@ function fallbackAwareModelStream(
   const run = async () => {
     let buffered: AssistantMessageEvent[] = [];
     let startForwarded = false;
+    let forwardedNonStart = false;
     const forward = (event: AssistantMessageEvent) => {
       if (event.type === "start") {
         if (startForwarded) return;
         startForwarded = true;
+      } else {
+        forwardedNonStart = true;
       }
       output.push(event);
     };
@@ -2730,6 +2741,8 @@ function fallbackAwareModelStream(
       buffered = [];
     };
     let stallRetries = MODEL_STREAM_STALL_RETRIES;
+    let providerRetries = 0;
+    let firstRetryableError: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
     let attempt = 0;
     const requestSizeEstimate = estimateModelContextTokens(context, estimatePiImageTokens);
     while (!signalAborted()) {
@@ -2740,7 +2753,7 @@ function fallbackAwareModelStream(
       let lastEventType: string | undefined;
       const log = (
         outcome: ModelCallOutcome,
-        detail: { stall?: StreamStallReason; error?: unknown } = {},
+        detail: { stall?: StreamStallReason; retryDelayMs?: number; error?: unknown } = {},
       ) =>
         logModelCall({
           runId: state.request.runId,
@@ -2797,6 +2810,7 @@ function fallbackAwareModelStream(
               retry = true;
               break;
             }
+            let terminalEvent = event;
             if (
               !stall &&
               beforeOutput &&
@@ -2812,12 +2826,27 @@ function fallbackAwareModelStream(
                 retry = true;
                 break;
               }
+              firstRetryableError ??= event;
+              const delay = isProviderTimeout(event.error)
+                ? undefined
+                : MODEL_PROVIDER_RETRY_DELAYS_MS[providerRetries];
+              // A passthrough retry may only repeat `start`, which forward() dedupes.
+              if (delay !== undefined && !forwardedNonStart) {
+                providerRetries += 1;
+                log("provider-retried", { retryDelayMs: delay, error: event.error.errorMessage });
+                await abortableDelay(delay, retrySignal);
+                if (failIfAborted(target)) return;
+                buffered = [];
+                retry = true;
+                break;
+              }
+              terminalEvent = firstRetryableError;
             }
             flush();
             const terminal =
               sawPartialOutput && event.error.content.length === 0 && lastPartial
                 ? { ...event, error: { ...event.error, content: lastPartial.content } }
-                : event;
+                : terminalEvent;
             log("failed", { stall, error: event.error.errorMessage });
             forward(terminal);
             output.end(terminal.error);

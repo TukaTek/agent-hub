@@ -3,8 +3,9 @@ import type {
   AgentRuntimeEvent,
   ModelCallObserver,
 } from "@cortexai-agent-hub/adapter-kit";
+import type * as Core from "@cortexai-agent-hub/core";
 import type * as AgentCore from "@earendil-works/pi-agent-core";
-import type { AgentOptions } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentOptions } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
   Context,
@@ -13,13 +14,20 @@ import type {
   TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const providerState = vi.hoisted(() => ({
   models: new Map<string, Record<string, unknown>>(),
   credentialStores: [] as unknown[],
   stream: vi.fn(),
   agentOptions: undefined as AgentOptions | undefined,
+  agent: undefined as AgentCore.Agent | undefined,
+  delay: vi.fn<(delayMs: number, signal?: AbortSignal) => Promise<void>>(),
+}));
+
+vi.mock("@cortexai-agent-hub/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof Core>()),
+  abortableDelay: providerState.delay,
 }));
 
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
@@ -30,6 +38,7 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
       constructor(options: AgentOptions) {
         super(options);
         providerState.agentOptions = options;
+        providerState.agent = this;
       }
     },
   };
@@ -203,7 +212,225 @@ beforeEach(() => {
   }
   providerState.stream.mockReset();
   providerState.agentOptions = undefined;
+  providerState.agent = undefined;
   vi.restoreAllMocks();
+  providerState.delay.mockReset().mockResolvedValue(undefined);
+});
+
+afterEach(() => vi.useRealTimers());
+
+describe("Pi runtime transient model retries", () => {
+  it.each([
+    "terminated",
+    "Stream ended without finish_reason",
+    "Codex error: Our servers are currently overloaded. Please try again later.",
+  ])(
+    "recovers from two pre-output failures with %s and commits one assistant message",
+    async (error) => {
+      providerState.stream
+        .mockImplementationOnce(() => stream(primary, message(primary, [], "error", error)))
+        .mockImplementationOnce(() => stream(primary, message(primary, [], "error", error)))
+        .mockImplementation(() =>
+          stream(primary, message(primary, [{ type: "text", text: "Recovered." }], "stop")),
+        );
+      const appendMessage = vi.fn(async (_entry: AgentMessage) => undefined);
+      vi.spyOn(PiJsonlSessionRecorder.prototype, "start").mockResolvedValue({ appendMessage });
+      const events = await run(
+        request(),
+        [],
+        new PiAgentRuntime({ sessionRoot: "fixture-sessions" }),
+      );
+      expect(providerState.stream).toHaveBeenCalledTimes(3);
+      expect(providerState.stream.mock.calls.map(([target]) => target)).toEqual([
+        expect.objectContaining({ provider: primary.provider, id: primary.id }),
+        expect.objectContaining({ provider: primary.provider, id: primary.id }),
+        expect.objectContaining({ provider: primary.provider, id: primary.id }),
+      ]);
+      expect(events.filter((event) => event.type === "text")).toEqual([
+        { type: "text", text: "Recovered." },
+      ]);
+      expect(events.at(-1)).toEqual({ type: "done", text: "Recovered." });
+      expect(appendMessage.mock.calls.filter(([entry]) => entry.role === "assistant")).toEqual([
+        [
+          expect.objectContaining({
+            stopReason: "stop",
+            content: [{ type: "text", text: "Recovered." }],
+          }),
+        ],
+      ]);
+      expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000]);
+    },
+  );
+
+  it.each([
+    "HTTP 401; servers are overloaded",
+    "invalid api key; terminated",
+    "context_length_exceeded; 503 overloaded",
+    "bad request; terminated",
+  ])("does not retry or switch on %s", async (error) => {
+    providerState.stream.mockImplementation(() =>
+      stream(primary, message(primary, [], "error", error)),
+    );
+    await expect(
+      run(request([{ provider: backupA.provider, id: backupA.id, apiKey: "backup-key" }])),
+    ).rejects.toThrow(error);
+    expect(providerState.stream).toHaveBeenCalledTimes(1);
+    expect(providerState.delay).not.toHaveBeenCalled();
+  });
+
+  it("exhausts three retries without a backup and preserves the first provider error", async () => {
+    providerState.stream
+      .mockImplementationOnce(() => stream(primary, message(primary, [], "error", "terminated")))
+      .mockImplementation(() =>
+        stream(primary, message(primary, [], "error", "HTTP 503 unavailable")),
+      );
+    await expect(run(request())).rejects.toThrow("terminated");
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
+  });
+
+  it("does not back off after a provider timeout, which already spent its request budget", async () => {
+    providerState.stream.mockImplementation(() =>
+      stream(primary, message(primary, [], "error", "Request timed out.")),
+    );
+    await expect(run(request())).rejects.toThrow("Request timed out.");
+    expect(providerState.stream).toHaveBeenCalledTimes(1);
+    expect(providerState.delay).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a non-retryable error encountered after a transient failure", async () => {
+    providerState.stream
+      .mockImplementationOnce(() => stream(primary, message(primary, [], "error", "terminated")))
+      .mockImplementation(() => stream(primary, message(primary, [], "error", "invalid api key")));
+    await expect(run(request())).rejects.toThrow("invalid api key");
+    expect(providerState.stream).toHaveBeenCalledTimes(2);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
+  });
+
+  it.each(["terminated", "Stream ended without finish_reason"])(
+    "does not retry after a tool call starts even if %s omits it",
+    async (error) => {
+      const failure = message(primary, [], "error", error);
+      providerState.stream.mockImplementation(() => {
+        const result = new AssistantMessageEventStream();
+        result.push({ type: "start", partial: failure });
+        result.push({ type: "toolcall_start", contentIndex: 0, partial: failure });
+        result.push({ type: "error", reason: "error", error: failure });
+        result.end(failure);
+        return result;
+      });
+      const input = request([{ provider: backupA.provider, id: backupA.id, apiKey: "backup-key" }]);
+      await expect(run(input)).rejects.toThrow(error);
+      expect(providerState.stream).toHaveBeenCalledOnce();
+      expect(providerState.delay).not.toHaveBeenCalled();
+      expect(input.executeTool).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retries the same model for a helper agent without configured backups", async () => {
+    const input = request();
+    input.tools = [
+      {
+        name: "run_subagent",
+        description: "Run a helper agent.",
+        inputSchema: {
+          type: "object",
+          properties: { name: { type: "string" }, task: { type: "string" } },
+          required: ["name", "task"],
+        },
+        readOnly: true,
+      },
+    ];
+    providerState.stream
+      .mockImplementationOnce(() =>
+        stream(
+          primary,
+          message(
+            primary,
+            [
+              {
+                type: "toolCall",
+                id: "retry-helper",
+                name: "run_subagent",
+                arguments: { name: "helper", task: "Summarize the fixture." },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      )
+      .mockImplementationOnce(() => stream(primary, message(primary, [], "error", "terminated")))
+      .mockImplementationOnce(() =>
+        stream(primary, message(primary, [], "error", "503 overloaded")),
+      )
+      .mockImplementationOnce(() =>
+        stream(primary, message(primary, [{ type: "text", text: "Helper result." }], "stop")),
+      )
+      .mockImplementation(() =>
+        stream(primary, message(primary, [{ type: "text", text: "Complete." }], "stop")),
+      );
+    const events = await run(input);
+    expect(providerState.stream).toHaveBeenCalledTimes(5);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "subagent", status: "completed", result: "Helper result." }),
+    );
+    expect(events.at(-1)).toEqual({ type: "done", text: "Complete." });
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000]);
+  });
+
+  it("waits for each bounded backoff before retrying", async () => {
+    vi.useFakeTimers();
+    const { abortableDelay } = await vi.importActual<typeof Core>("@cortexai-agent-hub/core");
+    providerState.delay.mockImplementation(abortableDelay);
+    providerState.stream.mockImplementation(() =>
+      stream(primary, message(primary, [], "error", "429 rate limit")),
+    );
+    const outcome = run(request()).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(providerState.stream).toHaveBeenCalledTimes(1);
+    for (const [index, delay] of [2_000, 8_000, 20_000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(providerState.stream).toHaveBeenCalledTimes(index + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(providerState.stream).toHaveBeenCalledTimes(index + 2);
+    }
+    expect(await outcome).toEqual(expect.objectContaining({ message: "429 rate limit" }));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["run", "turn"])(
+    "stops promptly when the %s signal aborts during backoff",
+    async (source) => {
+      vi.useFakeTimers();
+      const { abortableDelay } = await vi.importActual<typeof Core>("@cortexai-agent-hub/core");
+      providerState.delay.mockImplementation(abortableDelay);
+      providerState.stream.mockImplementation(() =>
+        stream(primary, message(primary, [], "error", "429 rate limit")),
+      );
+      const controller = new AbortController();
+      const input = request();
+      const events: AgentRuntimeEvent[] = [];
+      const consume = async () => {
+        for await (const event of new PiAgentRuntime().run(input, { signal: controller.signal })) {
+          events.push(event);
+        }
+        return undefined;
+      };
+      const outcome = consume().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(providerState.delay).toHaveBeenCalled();
+      const attempts = providerState.stream.mock.calls.length;
+      if (source === "run") controller.abort();
+      else providerState.agent?.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await outcome).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/abort|stop/i) }),
+      );
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      expect(providerState.stream).toHaveBeenCalledTimes(attempts);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 });
 
 describe("Pi runtime ordered model fallback", () => {
@@ -1110,7 +1337,7 @@ describe("Pi runtime ordered model fallback", () => {
       providerState.stream.mock.calls.map(
         ([target]) => (target as Model<"openai-completions">).provider,
       ),
-    ).toEqual([primary.provider, backupA.provider, backupB.provider]);
+    ).toEqual([primary.provider, backupA.provider, ...Array<string>(4).fill(backupB.provider)]);
   });
 
   it("skips a backup that cannot fit the actual prompt and selects the next smaller-than-primary fit", async () => {

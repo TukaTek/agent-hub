@@ -450,6 +450,72 @@ describe("model stream stall retry", () => {
   });
 });
 
+describe("same-model provider backoff", () => {
+  it("waits 2 s, 8 s and 20 s on the same model, then fails with the first error", async () => {
+    script([
+      failsWith("503 service unavailable (first)"),
+      failsWith("503 service unavailable"),
+      failsWith("503 service unavailable"),
+      failsWith("503 service unavailable"),
+    ]);
+    const { done } = run(request());
+    for (const delay of [2_000, 8_000, 20_000]) await vi.advanceTimersByTimeAsync(delay);
+
+    await expect(done).rejects.toThrow("503 service unavailable (first)");
+    expect(calledProviders()).toEqual(Array<string>(4).fill(codex.provider));
+    expect(modelCalls().map((event) => [event.outcome, event.retryDelayMs])).toEqual([
+      ["provider-retried", 2_000],
+      ["provider-retried", 8_000],
+      ["provider-retried", 20_000],
+      ["failed", undefined],
+    ]);
+  });
+
+  it("keeps the stall and provider budgets separate", async () => {
+    script([
+      stalls(),
+      failsWith("503 service unavailable"),
+      stalls(),
+      failsWith("503 service unavailable"),
+      answers("recovered"),
+    ]);
+    const { done } = run(request());
+    await vi.advanceTimersByTimeAsync(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS + 1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS + 1);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const events = await done;
+
+    expect(events).toContainEqual({ type: "text", text: "recovered" });
+    expect(modelCalls().map((event) => event.outcome)).toEqual([
+      "idle-timeout-retried",
+      "provider-retried",
+      "idle-timeout-retried",
+      "provider-retried",
+      "ok",
+    ]);
+  });
+
+  it("does not retry a passthrough attempt that already forwarded more than start", async () => {
+    script([
+      (target) => {
+        const failure = message(target, [], "error", "503 service unavailable");
+        const result = new AssistantMessageEventStream();
+        result.push({ type: "start", partial: { ...failure, content: [] } });
+        result.push({ type: "text_start", contentIndex: 0, partial: { ...failure, content: [] } });
+        result.push({ type: "error", reason: "error", error: failure });
+        result.end(failure);
+        return result;
+      },
+    ]);
+    const { done } = run(request());
+
+    await expect(done).rejects.toThrow("503 service unavailable");
+    expect(providerState.stream).toHaveBeenCalledOnce();
+    expect(modelCalls().map((event) => event.outcome)).toEqual(["failed"]);
+  });
+});
+
 describe("subagent model fallback", () => {
   function withSubagentTool(input: AgentRunRequest) {
     input.tools = [
@@ -525,5 +591,30 @@ describe("subagent model fallback", () => {
         result: "helper recovered",
       }),
     );
+  });
+
+  it("backs a subagent off on its own model without touching the parent's model", async () => {
+    const input = withSubagentTool(request());
+    const onModelChange = vi.fn(async () => undefined);
+    input.onModelChange = onModelChange;
+    script(
+      [callsSubagent(), answers("parent done")],
+      [failsWith("503 service unavailable"), answers("helper recovered")],
+    );
+    const { events, done } = run(input);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await done;
+
+    expect(calledProviders()).toEqual(Array<string>(4).fill(codex.provider));
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "subagent",
+        status: "completed",
+        result: "helper recovered",
+      }),
+    );
+    const helperCalls = modelCalls().filter((event) => event.agentId !== "main");
+    expect(helperCalls.map((event) => event.outcome)).toEqual(["provider-retried", "ok"]);
   });
 });

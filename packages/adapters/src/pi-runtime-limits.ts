@@ -12,6 +12,12 @@ export const MODEL_STREAM_IDLE_TIMEOUT_MS = 180_000;
 export const MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS = 120_000;
 /** Retries of one model call that stalled before any output; the last one may use a backup. */
 export const MODEL_STREAM_STALL_RETRIES = 2;
+/**
+ * Same-model waits after a retryable provider failure when no backup is left.
+ * Separate from the stall budget; provider timeouts skip it because each one
+ * already spent a full request timeout.
+ */
+export const MODEL_PROVIDER_RETRY_DELAYS_MS = [2_000, 8_000, 20_000] as const;
 export const DEFAULT_MODEL_STREAM_MAX_RETRIES = 1;
 const MIN_FIRST_EVENT_TIMEOUT_MS = 10_000;
 const MIN_IDLE_TIMEOUT_MS = 30_000;
