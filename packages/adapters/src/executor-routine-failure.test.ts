@@ -22,6 +22,8 @@ interface Scenario {
   toolCalls?: number;
   botMessages?: number;
   retryEnqueueFails?: boolean;
+  authorizeUserWork?: (userId: string) => Promise<boolean>;
+  expectedError?: string;
 }
 
 async function failRun(scenario: Scenario) {
@@ -129,6 +131,7 @@ async function failRun(scenario: Scenario) {
   const send = vi.fn(async () => undefined);
   const executor = createRunExecutor({
     prisma,
+    ...(scenario.authorizeUserWork ? { authorizeUserWork: scenario.authorizeUserWork } : {}),
     deploymentModelKey: "fake-deployment-key",
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox: {
@@ -150,12 +153,15 @@ async function failRun(scenario: Scenario) {
 
   await executor.continueRun(run.id, "worker-1");
   expect(finalizeRun).toHaveBeenCalledWith(
-    expect.objectContaining({ outcome: "failed", error: scenario.error.message }),
+    expect.objectContaining({
+      outcome: "failed",
+      error: scenario.expectedError ?? scenario.error.message,
+    }),
   );
   const retries = enqueue.mock.calls
     .map(([job]) => job)
     .filter((job) => job.name === "routine.retry");
-  return { retries, send };
+  return { retries, send, runtimeRun };
 }
 
 const overloaded = () =>
@@ -357,6 +363,33 @@ function retryHarness(scenario: RetryScenario = {}) {
   } as unknown as Parameters<typeof createRunExecutor>[0]);
   return { executor, prisma, tx, enqueue, send };
 }
+
+describe("Hub authorization of a routine retry", () => {
+  it("finalizes a retry for a user Hub no longer authorizes without calling the model", async () => {
+    const authorizeUserWork = vi.fn(async () => false);
+    const { retries, runtimeRun } = await failRun({
+      error: overloaded(),
+      retryOfRunId: "run-0",
+      authorizeUserWork,
+      expectedError: "Sign in through CortexAI Hub to continue",
+    });
+
+    expect(authorizeUserWork).toHaveBeenCalledWith("user-1");
+    expect(runtimeRun).not.toHaveBeenCalled();
+    expect(retries).toEqual([]);
+  });
+
+  it("runs the retry when work is authorized, as with Hub policy enforcement off", async () => {
+    const { retries, runtimeRun } = await failRun({
+      error: overloaded(),
+      retryOfRunId: "run-0",
+      authorizeUserWork: async () => true,
+    });
+
+    expect(runtimeRun).toHaveBeenCalledOnce();
+    expect(retries).toEqual([]);
+  });
+});
 
 describe("running a routine retry", () => {
   it.each(["preference lookup", "delivery"])(
