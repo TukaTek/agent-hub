@@ -1,6 +1,6 @@
 # CAAH-103 + CAAH-67: Expo EAS Setup and Mobile Dependency Drift — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Awaiting Agent Hub PM approval. No implementation code before approval.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Approved by Agent Hub PM. Decision 1 confirmed: the variable already exists in both EAS environments. Notes on what changed during implementation are marked "Implementation note".**
 
 **Goal:** Link `apps/mobile` to the Expo project `@tukatek/agent-hub` so the first internal Android APK and iOS TestFlight builds can run on EAS, make the existing OTA and APK workflows runnable with the new `EXPO_TOKEN`, and turn the mobile Typecheck job green by aligning Expo patch versions with SDK 57.
 
@@ -30,14 +30,15 @@
 | Channels | `preview` uses `preview`. `production` and `android-apk` (extends production) use `production`. CI OTA publishes to `production`. | Consistent. No change. |
 | Old slug references | Only `app.json`. The `cortexai-agent-hub` scheme, the APK asset name `cortexai-agent-hub.apk` and the Maestro `appId`s are separate values. | Nothing else changes. (`.maestro/screenshots.yaml` still has a stale `appId: com.cortexai-agent-hub.app` from the rebrand. That's unrelated, so it's noted here and left alone.) |
 | `EXPO_PUBLIC_API_URL` | Required by `app.config.ts` for `production` and `android-apk`. `lib/endpoint.ts` falls back to the local API when it's unset. | If it's only in the eas.json build `env`, `eas update` bundles would ship pointing at localhost. |
-| CAAH-67 | `expo install --check` reports 7 packages behind: `@expo/metro-runtime` 57.0.16→57.0.17, `@expo/ui` 57.0.23→57.0.25, `expo` 57.0.28→57.0.30, `expo-linking` 57.0.12→57.0.13, `expo-modules-core` 57.0.22→57.0.23, `expo-notifications` 57.0.22→57.0.23, `expo-router` 57.0.26→57.0.28 | `pnpm --filter @cortexai-agent-hub/mobile check` fails, so Typecheck fails on every PR, including #50 and #51. `expo-constants` is deliberately excluded in `package.json` and stays pinned. |
+| CAAH-67 | `expo install --check` reports 7 packages behind: `@expo/metro-runtime` 57.0.16→57.0.17, `@expo/ui` 57.0.23→57.0.25, `expo` 57.0.28→57.0.30, `expo-linking` 57.0.12→57.0.13, `expo-modules-core` 57.0.22→57.0.23, `expo-notifications` 57.0.22→57.0.23, `expo-router` 57.0.26→57.0.28 | `pnpm --filter @cortexai-agent-hub/mobile check` fails, so Typecheck fails on every PR, including #50 and #51. `expo-constants` is excluded from the check in `package.json`. |
 | Android keystore | Never generated for this project | `eas build --non-interactive` can't create a keystore, so the first APK build must be interactive once (manual step below). |
 
 ## Decisions (please confirm)
 
 1. **API URL in EAS environment variables, not eas.json `env`.** One value serves builds (`environment: production|preview` in `eas.json`) and `eas update --environment production`, and CAAH-101 can change it without a commit. eas.json `env` would only reach builds, so OTA bundles would silently use the local API. Cost: someone with Expo access has to create the variable once. I'll create it with the CI robot token only if PM asks. Otherwise it's a manual step for Sanjay (commands below). If PM prefers zero manual steps, the fallback is eas.json `env` on `production` and `preview`, plus the same value in the OTA step's `env:`. That duplicates the value in two places.
 2. **The OTA step refuses to publish without the URL.** The `Publish production update` step sets `EAS_BUILD_PROFILE: production` in its `env:`, so the existing `app.config.ts` guard throws before publishing a bundle with no API URL. Nothing new to maintain.
-3. **The `eas config` check runs only when `EXPO_TOKEN` is set.** It's a new CI job, `Mobile EAS config`, on PRs and pushes that touch `apps/mobile` or the workflows. It skips cleanly without the token (forks, self-hosters), so the core CI still needs no hosted vendor. The same check runs as the first step of `release-android-apk.yml`, before the 90-minute build.
+   *Implementation note:* eas-cli evaluates `app.config.ts` to read the project ID before it loads the EAS environment, so setting `EAS_BUILD_PROFILE` on `eas update` or `eas config` fails every time. Both CI checks instead run the guard inside `eas env:exec production 'EAS_BUILD_PROFILE=<profile> pnpm exec expo config --type public > /dev/null'`, where the production variables are present.
+3. **The `eas config` check runs only when `EXPO_TOKEN` is set.** It's a new CI job, `Mobile EAS config`, on every PR and push to `main` (*implementation note:* not path-filtered, to keep the job simple; it takes about a minute). It skips cleanly without the token (forks, self-hosters), so the core CI still needs no hosted vendor. The same check runs as the first step of `release-android-apk.yml`, before the 90-minute build.
 4. **Exact pins.** `package.json` pins exact versions, so the bumped versions are written exactly (`57.0.30`, not `~57.0.30`).
 
 ## Files
@@ -57,7 +58,7 @@
 **Files:** `apps/mobile/package.json`, `pnpm-lock.yaml`
 
 - [ ] **Step 1: Confirm the failing check.** Run `pnpm --filter @cortexai-agent-hub/mobile check`. Expected: FAIL, "Found outdated dependencies" listing the 7 packages above.
-- [ ] **Step 2: Bump.** From `apps/mobile`, run `pnpm exec expo install --fix`, then change any `~x.y.z` it wrote back to exact `x.y.z` to match the file's style. Confirm `git diff apps/mobile/package.json` touches only the 7 packages and no `57.` major changes.
+- [ ] **Step 2: Bump.** From `apps/mobile`, run `pnpm exec expo install --fix`, then change any `~x.y.z` it wrote back to exact `x.y.z` to match the file's style. Confirm `git diff apps/mobile/package.json` touches only the 7 packages and no `57.` major changes. *Implementation note:* `expo@57.0.30` depends on `expo-constants ~57.0.22`, so the pin moves from 57.0.21 to 57.0.22 as well. Otherwise two copies of the native module would be installed. Upstream has always bumped it together with `expo`.
 - [ ] **Step 3: Verify.** Run `pnpm install --frozen-lockfile`, then `pnpm --filter @cortexai-agent-hub/mobile check` (PASS), `pnpm --filter @cortexai-agent-hub/mobile test`, `pnpm --filter @cortexai-agent-hub/adapters check`, `pnpm --filter @cortexai-agent-hub/adapters test`, `pnpm --filter @cortexai-agent-hub/web check` and `pnpm --filter @cortexai-agent-hub/web test`, then `pnpm check` (the full Typecheck job).
 - [ ] **Step 4: Commit.** `CAAH-67: align Expo SDK 57 patch versions`
 
@@ -132,11 +133,11 @@ describe("EAS project link", () => {
   });
 ```
 
-  And in a new `describe` in the same file, read `ci.yml` and assert that the `Publish production update` step's `env:` contains `EAS_BUILD_PROFILE: production`, and that a job named `Mobile EAS config` runs `eas config --platform android --profile android-apk --non-interactive`.
+  And in a new `describe` in the same file, read `ci.yml` and assert that the `Publish production update` step runs the `eas env:exec production` guard before `eas update` (see the implementation note under Decision 2), and that a job named `Mobile EAS config` runs `eas config --platform android --profile android-apk --non-interactive`.
 - [ ] **Step 2: Run it.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - `release-android-apk.yml`: before `Build APK on EAS`, add a step `Resolve EAS build config` (`working-directory: apps/mobile`) that runs `eas config --platform android --profile android-apk --non-interactive > /dev/null`.
-  - `ci.yml` OTA step: add `env: { EAS_BUILD_PROFILE: production }`.
+  - `ci.yml` OTA step: run the `eas env:exec production` guard right before `eas update`.
   - `ci.yml` new job `mobile-eas-config` (`name: Mobile EAS config`). It uses the same pinned actions as the OTA job. Its first step checks `EXPO_TOKEN` and, when the token is empty, writes "skipped: no EXPO_TOKEN" to the step summary and sets an output that skips the remaining steps. Then it runs `expo/expo-github-action` (token from the secret), `pnpm install --frozen-lockfile`, and `eas config --platform android --profile android-apk --non-interactive > /dev/null` in `apps/mobile`. No `needs:`, so it runs in parallel.
 - [ ] **Step 4: Run it.** `pnpm --filter @cortexai-agent-hub/mobile test`. Expected: PASS. Then push and confirm `Mobile EAS config` is green. This depends on the `EXPO_PUBLIC_API_URL` EAS variable existing (Decision 1). Until then it fails with the `app.config.ts` message, which is the intended signal.
 - [ ] **Step 5: Commit.** `CAAH-103: check the EAS build config in CI and guard OTA publishing`
