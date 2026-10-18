@@ -183,6 +183,14 @@ function authHeaders(config: SupermemoryConnectionConfig): Record<string, string
   return { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" };
 }
 
+/** A 2xx body that still reports failure must not read as an empty result. */
+function errorBodyMessage(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const { error, success } = data as { error?: unknown; success?: unknown };
+  if (typeof error === "string" && error.trim()) return error.trim();
+  return success === false ? "the response reported failure" : undefined;
+}
+
 function parseSearchResults(data: unknown): SupermemoryResult[] {
   if (!data || typeof data !== "object") return [];
   const results = (data as { results?: unknown }).results;
@@ -234,10 +242,12 @@ export async function searchSupermemory(
       await releaseUnreadBody(response);
       return { ok: false, error: `Supermemory search failed: ${response.status}` };
     }
-    return {
-      ok: true,
-      results: parseSearchResults(await readSupermemoryJson(response, requestAbort)),
-    };
+    const data = await readSupermemoryJson(response, requestAbort);
+    const bodyError = errorBodyMessage(data);
+    if (bodyError !== undefined) {
+      return { ok: false, error: `Supermemory search failed: ${bodyError}` };
+    }
+    return { ok: true, results: parseSearchResults(data) };
   } catch (error) {
     if (error instanceof Error && error.message === "Supermemory response is too large.") {
       return { ok: false, error: error.message };
