@@ -37,6 +37,7 @@ import { clampThinkingLevel, Type } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { isToolPauseResult } from "./approval-effect.js";
+import { automated, withAutomatedLabels } from "./automated-messages.js";
 import { connectionIdArgument, credentialArgument } from "./bot-secrets.js";
 import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { withCloudflareGatewayAuth } from "./cloudflare-ai-gateway.js";
@@ -113,10 +114,15 @@ const MAX_PARALLEL_SUBAGENTS = 4;
 // instead of taking another assistant turn. A bounded internal follow-up keeps
 // that provider quirk from making a long task look complete after one step.
 const MAX_SILENT_TOOL_CONTINUATIONS = 3;
-const SILENT_TOOL_CONTINUATION_PROMPT =
-  "Continue the original task from the latest tool result. Do not stop after a tool call; use any remaining tools needed, then give the user the final answer.";
-const SILENT_ALLOWED_TOOL_CONTINUATION_PROMPT =
-  "Continue the original task from the latest tool result. If you were instructed to stay silent when there is nothing to report, follow that instruction for the entire final assistant reply. Otherwise use any remaining tools needed, then give the user the final answer.";
+// Sent in the user's role, so marked as automated: models took the old wording for the
+// user telling them never to stop, and kept going instead of asking.
+export const SILENT_TOOL_CONTINUATION_PROMPT = automated(
+  "Your last turn ended right after a tool result, without a reply. Continue the original task from the latest tool result. If you need information or a decision from the user, ask them instead of guessing; otherwise use any remaining tools needed, then give the user the final answer.",
+);
+export const SILENT_ALLOWED_TOOL_CONTINUATION_PROMPT = automated(
+  "Your last turn ended right after a tool result, without a reply. Continue the original task from the latest tool result. If you need information or a decision from the user, ask them instead of guessing, even if you were told to stay silent. Otherwise, if you were instructed to stay silent when there is nothing to report, follow that instruction for the entire final assistant reply; if not, use any remaining tools needed, then give the user the final answer.",
+);
+
 // Shown as a failed-run error, not an assistant message. Asking the user to
 // continue stores that sentence as the reply, and the next "continue" runs
 // tools and misses a final answer again.
@@ -397,7 +403,8 @@ export class PiAgentRuntime implements AgentRuntime {
         agent = new Agent({
           sessionId: conversationSessionId(request.threadId, request.botId),
           steeringMode: "all",
-          streamFn: (_m, ctx, options) => fallbackAwareModelStream(fallbackState, ctx, options),
+          streamFn: (_m, ctx, options) =>
+            fallbackAwareModelStream(fallbackState, ctx, withAutomatedLabels(options)),
           getApiKey: hasBackups
             ? async () => activeStreamTarget.credentials?.accessToken ?? activeStreamTarget.apiKey
             : async () => apiKey,
@@ -1523,7 +1530,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       );
     },
     sessionId: conversationSessionId(host.request.threadId, host.request.botId, agentId),
-    streamFn: (_m, ctx, options) => fallbackAwareModelStream(fallbackState, ctx, options),
+    streamFn: (_m, ctx, options) =>
+      fallbackAwareModelStream(fallbackState, ctx, withAutomatedLabels(options)),
     getApiKey: async () =>
       hasBackups
         ? (nestedHost.activeModel.credentials?.accessToken ?? nestedHost.activeModel.apiKey)
@@ -1538,6 +1546,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
         `You are a CortexAI Agent Hub subagent named "${name}".`,
         "You run inside the parent bot's turn — you are not a separate bot chat.",
         "Complete the task and return a concise result. Do not spawn bots or further subagents.",
+        "Your task comes from the parent bot, not from the human user, and you cannot talk to the user: report your result back to the parent bot.",
+        "Messages marked as automated come from CortexAI Agent Hub, not from the user.",
         extra,
       ]
         .filter(Boolean)
@@ -1604,7 +1614,9 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
     const onAbort = () => nested.abort();
     host.signal.addEventListener("abort", onAbort);
     try {
-      await nested.prompt(task || "Complete the delegated task.");
+      await nested.prompt(
+        `Task from the parent bot (not from the user):\n${task || "Complete the delegated task."}`,
+      );
     } finally {
       try {
         await nested.waitForIdle();
@@ -1647,7 +1659,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       status: "completed",
       result: clipped,
     });
-    return clipped;
+    // The parent bot reads this as a tool result; say plainly that it is the helper talking.
+    return `Result from your helper "${name}" (not a message from the user):\n${clipped}`;
   } catch (error) {
     const message = sanitizeError(error instanceof Error ? error.message : String(error));
     host.queue.push({
