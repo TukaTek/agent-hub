@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "CortexAI Agent Hub",
-    "slug": "cortexai-agent-hub",
+    "slug": "agent-hub",
+    "owner": "tukatek",
     "scheme": "cortexai-agent-hub",
     "version": "1.0.4",
     "orientation": "default",
@@ -87,7 +88,13 @@
     },
     "extra": {
       "router": {},
-      "supportsRTL": true
+      "supportsRTL": true,
+      "eas": {
+        "projectId": "c5ac54e3-8365-495d-a638-51b4e0deb329"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c5ac54e3-8365-495d-a638-51b4e0deb329"
     },
     "runtimeVersion": {
       "policy": "appVersion"
