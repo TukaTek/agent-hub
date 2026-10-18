@@ -408,7 +408,7 @@ describe("Pi runtime ordered model fallback", () => {
     expect(providerState.stream).toHaveBeenCalledTimes(2);
   });
 
-  it("switches after a Codex idle timeout before output", async () => {
+  it("switches on the final retry after Codex idle timeouts before output", async () => {
     vi.useFakeTimers();
     try {
       const codex = {
@@ -442,8 +442,10 @@ describe("Pi runtime ordered model fallback", () => {
       input.model.provider = codex.provider;
       const pending = run(input);
       await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS + 1);
-      expect(await pending).toContainEqual({ type: "text", text: "recovered" });
       expect(providerState.stream).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS + 1);
+      expect(await pending).toContainEqual({ type: "text", text: "recovered" });
+      expect(providerState.stream).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

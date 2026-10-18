@@ -57,8 +57,10 @@ import {
 import {
   clipToolResultContent,
   clipToolResultText,
-  MODEL_STREAM_IDLE_TIMEOUT_MS,
+  MODEL_STREAM_STALL_RETRIES,
   MODEL_STREAM_TIMEOUT_MS,
+  modelStreamFirstEventTimeoutMs,
+  modelStreamIdleTimeoutMs,
   modelStreamMaxRetries,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
@@ -341,35 +343,26 @@ export class PiAgentRuntime implements AgentRuntime {
         let activeStreamTarget = host.activeModel;
         const fallbackState: FallbackStreamState = {
           request,
+          agentId: "main",
           getActive: () => activeStreamTarget,
           signal,
           isProviderFailure: (message) => providerFailures.has(message.content),
           attempted: new Set<string>(),
           nextIndex: 0,
+          onBackup: false,
           stream: (target, ctx, options) =>
-            reliableModelStream(
-              target.models,
-              target.model,
+            targetModelStream(
+              target,
               ctx,
-              withCloudflareGatewayAuth(target.config, options),
-              target.config.maxTokens,
-              () => target.credentials?.accessToken ?? target.apiKey,
-              (preparedOptions) =>
-                observedPiStream(
-                  target.models,
-                  target.model,
-                  ctx,
-                  preparedOptions,
-                  (event) => queue.push(event),
-                  this.modelCallObserver,
-                  { operationKind: request.usageOperationKind ?? "answer" },
-                  {
-                    ...usageHooks,
-                    prepareContext: (ctx, m) => contextPolicy.prepareContext(ctx, m),
-                    onProviderError: (message) => providerFailures.add(message.content),
-                  },
-                ),
-              target.config.cacheCapabilities?.retentionMode,
+              options,
+              (event) => queue.push(event),
+              this.modelCallObserver,
+              { operationKind: request.usageOperationKind ?? "answer" },
+              {
+                ...usageHooks,
+                prepareContext: (ctx, m) => contextPolicy.prepareContext(ctx, m),
+                onProviderError: (message) => providerFailures.add(message.content),
+              },
             ),
           onSwitch: async (target) => {
             await request.onModelChange?.(target.config.provider, target.config.id);
@@ -392,38 +385,13 @@ export class PiAgentRuntime implements AgentRuntime {
             host.models = target.models;
             host.model = target.model;
             host.apiKey = target.credentials?.accessToken ?? target.apiKey;
-            queue.push({
-              type: "progress",
-              text: `Provider unavailable. Switched to backup model ${target.config.id}.`,
-            });
+            queue.push({ type: "progress", text: backupSwitchText(target) });
           },
         };
         agent = new Agent({
           sessionId: conversationSessionId(request.threadId, request.botId),
           steeringMode: "all",
-          streamFn: (m, ctx, options) =>
-            hasBackups
-              ? fallbackAwareModelStream(fallbackState, ctx, options)
-              : reliableModelStream(
-                  models,
-                  m,
-                  ctx,
-                  withCloudflareGatewayAuth(request.model, options),
-                  request.model.maxTokens,
-                  () => selectedModel.credentials?.accessToken ?? apiKey,
-                  (preparedOptions) =>
-                    observedPiStream(
-                      models,
-                      m,
-                      ctx,
-                      preparedOptions,
-                      (event) => queue.push(event),
-                      this.modelCallObserver,
-                      { operationKind: request.usageOperationKind ?? "answer" },
-                      usageHooks,
-                    ),
-                  request.model.cacheCapabilities?.retentionMode,
-                ),
+          streamFn: (_m, ctx, options) => fallbackAwareModelStream(fallbackState, ctx, options),
           getApiKey: hasBackups
             ? async () => activeStreamTarget.credentials?.accessToken ?? activeStreamTarget.apiKey
             : async () => apiKey,
@@ -1447,18 +1415,80 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
     agentNamespace: agentId,
     pendingShells: [],
   };
-  const contextPolicy = createRuntimeContextPolicy(
-    {
-      ...host.request,
-      model: requestModel,
-      history: [],
-      prompt: task,
-      sourceMessageId: undefined,
-    },
-    host.context,
-    { credentialScope: selectedModel.apiKey, imageTokens: estimatePiImageTokens },
-  );
+  const subagentPolicy = (model: AgentRunRequest["model"], credentialScope: string | undefined) =>
+    createRuntimeContextPolicy(
+      {
+        ...host.request,
+        model,
+        history: [],
+        prompt: task,
+        sourceMessageId: undefined,
+      },
+      host.context,
+      { credentialScope, imageTokens: estimatePiImageTokens },
+    );
+  let contextPolicy = subagentPolicy(requestModel, selectedModel.apiKey);
+  const providerFailures = new WeakSet<AssistantMessage["content"]>();
   let nested!: Agent;
+  // Own fallback state over the parent's backups: a switch here sticks for this
+  // subagent only and never rewrites the parent run's model.
+  const fallbackState: FallbackStreamState = {
+    request: host.request,
+    agentId,
+    getActive: () => nestedHost.activeModel,
+    signal: host.signal,
+    isProviderFailure: (message) => providerFailures.has(message.content),
+    attempted: new Set<string>(),
+    nextIndex: 0,
+    onBackup: false,
+    stream: (target, ctx, options) =>
+      targetModelStream(
+        target,
+        ctx,
+        options,
+        (event) => host.queue.push(event),
+        host.modelCallObserver,
+        { operationKind: "subagent", agentId },
+        {
+          prepareContext: (ctx, m) => contextPolicy.prepareContext(ctx, m),
+          imageTokens: estimatePiImageTokens,
+          recordUsage: host.request.onUsage,
+          onUsage: (usage) => {
+            contextPolicy.onUsage(usage);
+            const decision = contextPolicy.getDecision();
+            if (decision)
+              host.onContextDecision?.({
+                ...decision,
+                runId: host.request.runId,
+                agentId,
+                usage,
+              });
+          },
+          onProviderError: (message) => providerFailures.add(message.content),
+        },
+      ),
+    onSwitch: async (target) => {
+      const targetKey = target.credentials?.accessToken ?? target.apiKey;
+      contextPolicy = subagentPolicy(target.config, targetKey);
+      nestedHost.activeModel = target;
+      nestedHost.models = target.models;
+      nestedHost.model = target.model;
+      nestedHost.apiKey = targetKey;
+      nested.state.model = target.model;
+      nested.state.thinkingLevel = thinkingLevelFor(
+        target.model,
+        target.config.thinkingLevel ?? requestModel.thinkingLevel,
+      );
+      host.queue.push({
+        type: "subagent",
+        agentId,
+        name,
+        task,
+        status: "running",
+        progress: backupSwitchText(target),
+      });
+    },
+  };
   nested = new Agent({
     finishTurn: async (turn, turnSignal) => {
       await deliverFinishedShells(
@@ -1475,50 +1505,15 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       );
     },
     sessionId: conversationSessionId(host.request.threadId, host.request.botId, agentId),
-    streamFn: (m, ctx, options) =>
-      reliableModelStream(
-        selectedModel.models,
-        m,
-        ctx,
-        withCloudflareGatewayAuth(requestModel, options),
-        requestModel.maxTokens,
-        () => selectedModel.credentials?.accessToken ?? selectedModel.apiKey,
-        (preparedOptions) =>
-          observedPiStream(
-            selectedModel.models,
-            m,
-            ctx,
-            preparedOptions,
-            (event) => host.queue.push(event),
-            host.modelCallObserver,
-            { operationKind: "subagent", agentId },
-            {
-              prepareContext: contextPolicy.prepareContext,
-              imageTokens: estimatePiImageTokens,
-              recordUsage: host.request.onUsage,
-              onUsage: (usage) => {
-                contextPolicy.onUsage(usage);
-                const decision = contextPolicy.getDecision();
-                if (decision)
-                  host.onContextDecision?.({
-                    ...decision,
-                    runId: host.request.runId,
-                    agentId,
-                    usage,
-                  });
-              },
-            },
-          ),
-        requestModel.cacheCapabilities?.retentionMode,
-      ),
+    streamFn: (_m, ctx, options) => fallbackAwareModelStream(fallbackState, ctx, options),
     getApiKey: async () =>
       hasBackups
-        ? (selectedModel.credentials?.accessToken ?? selectedModel.apiKey)
+        ? (nestedHost.activeModel.credentials?.accessToken ?? nestedHost.activeModel.apiKey)
         : selectedModel.apiKey,
     transformContext: async (messages) =>
       pruneComputerScreenshotContext(
         pruneStalePageStateContext(messages),
-        requestModel.maxImagesPerPrompt,
+        nestedHost.activeModel.config.maxImagesPerPrompt,
       ),
     initialState: {
       systemPrompt: [
@@ -1607,7 +1602,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
     const budgetExceeded = host.toolCallBudget.exceeded;
     const error = nested.state.errorMessage || providerFailureText(nested.state.messages.at(-1));
     if (error && !budgetExceeded) {
-      const message = sanitizeProviderError(subagentModel.provider, error);
+      const message = sanitizeProviderError(nestedHost.activeModel.model.provider, error);
       host.queue.push({
         type: "subagent",
         agentId,
@@ -2411,10 +2406,14 @@ interface RuntimeModelTarget {
 
 interface FallbackStreamState {
   request: AgentRunRequest;
+  /** `main`, or the subagent's ID, for per-call logs. */
+  agentId: string;
   getActive(): RuntimeModelTarget;
   signal: AbortSignal;
   attempted: Set<string>;
   nextIndex: number;
+  /** Set once a switch lands; later calls stay on the backup. */
+  onBackup: boolean;
   onSwitch(target: RuntimeModelTarget): Promise<void>;
   isProviderFailure(message: AssistantMessage): boolean;
   stream(
@@ -2422,6 +2421,37 @@ interface FallbackStreamState {
     context: TranscriptContext,
     options: ModelsSimpleStreamOptions | undefined,
   ): AssistantMessageEventStream;
+}
+
+type ModelCallOutcome = "ok" | "idle-timeout-retried" | "switched" | "failed";
+
+/** One line per model attempt. `requestSizeEstimate` is in estimated tokens; key names avoid log redaction. */
+function logModelCall(call: {
+  runId: string;
+  agentId: string;
+  provider: string;
+  model: string;
+  attempt: number;
+  fallback: boolean;
+  requestSizeEstimate: number;
+  timeToFirstEventMs: number | null;
+  durationMs: number;
+  lastEventType: string | null;
+  outcome: ModelCallOutcome;
+  stall?: StreamStallReason;
+  error?: unknown;
+}): void {
+  const { error, ...fields } = call;
+  const bindings = {
+    ...fields,
+    ...(error === undefined
+      ? {}
+      : {
+          errorMessage: sanitizeError(error instanceof Error ? error.message : String(error)),
+        }),
+  };
+  if (call.outcome === "ok") getLogger().info("model call", bindings);
+  else getLogger().warn("model call", bindings);
 }
 
 function errorFacts(value: unknown) {
@@ -2571,6 +2601,41 @@ function fallbackSupportsContext(
   return !requiresReasoning || candidate.model.reasoning;
 }
 
+function backupSwitchText(target: RuntimeModelTarget): string {
+  return `Provider unavailable. Switched to backup model ${target.config.id}.`;
+}
+
+function targetModelStream(
+  target: RuntimeModelTarget,
+  context: TranscriptContext,
+  options: ModelsSimpleStreamOptions | undefined,
+  push: (event: AgentRuntimeEvent) => void,
+  observer: ModelCallObserver | undefined,
+  attribution: Parameters<typeof observedPiStream>[6],
+  hooks: Parameters<typeof observedPiStream>[7],
+): AssistantMessageEventStream {
+  return reliableModelStream(
+    target.models,
+    target.model,
+    context,
+    withCloudflareGatewayAuth(target.config, options),
+    target.config.maxTokens,
+    () => target.credentials?.accessToken ?? target.apiKey,
+    (preparedOptions) =>
+      observedPiStream(
+        target.models,
+        target.model,
+        context,
+        preparedOptions,
+        push,
+        observer,
+        attribution,
+        hooks,
+      ),
+    target.config.cacheCapabilities?.retentionMode,
+  );
+}
+
 function fallbackAwareModelStream(
   state: FallbackStreamState,
   context: TranscriptContext,
@@ -2578,7 +2643,12 @@ function fallbackAwareModelStream(
 ): AssistantMessageEventStream {
   const output = new AssistantMessageEventStream();
   let lastPartial: AssistantMessage | undefined;
-  const signalAborted = () => state.signal.aborted || Boolean(options?.signal?.aborted);
+  // With no backups the call never changes model, so it keeps the caller's options
+  // and signal and streams pre-output events at once; a same-model retry then only
+  // repeats `start`. Run aborts reach the caller's signal through Agent.abort().
+  const canSwitch = Boolean(state.request.fallbackModels?.length);
+  const signalAborted = () =>
+    (canSwitch && state.signal.aborted) || Boolean(options?.signal?.aborted);
   const finishWithThrownError = (target: RuntimeModelTarget, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     const aborted = signalAborted() || /abort|cancel/i.test(message);
@@ -2664,66 +2734,128 @@ function fallbackAwareModelStream(
     }
     return undefined;
   };
+  const switchTo = async (
+    current: RuntimeModelTarget,
+  ): Promise<"switched" | "none" | "aborted"> => {
+    const next = await resolveNext(current);
+    if (failIfAborted(current)) return "aborted";
+    if (!next) return "none";
+    await state.onSwitch(next);
+    state.onBackup = true;
+    return failIfAborted(current) ? "aborted" : "switched";
+  };
   const run = async () => {
     let buffered: AssistantMessageEvent[] = [];
+    let startForwarded = false;
+    const forward = (event: AssistantMessageEvent) => {
+      if (event.type === "start") {
+        if (startForwarded) return;
+        startForwarded = true;
+      }
+      output.push(event);
+    };
+    const flush = () => {
+      for (const pending of buffered) forward(pending);
+      buffered = [];
+    };
+    let stallRetries = MODEL_STREAM_STALL_RETRIES;
+    let attempt = 0;
+    const requestSizeEstimate = estimateModelContextTokens(context, estimatePiImageTokens);
     while (!signalAborted()) {
       const target = state.getActive();
+      attempt += 1;
+      const startedAt = Date.now();
+      let firstEventAt: number | undefined;
+      let lastEventType: string | undefined;
+      const log = (
+        outcome: ModelCallOutcome,
+        detail: { stall?: StreamStallReason; error?: unknown } = {},
+      ) =>
+        logModelCall({
+          runId: state.request.runId,
+          agentId: state.agentId,
+          provider: target.model.provider,
+          model: target.model.id,
+          attempt,
+          fallback: state.onBackup,
+          requestSizeEstimate,
+          timeToFirstEventMs: firstEventAt === undefined ? null : firstEventAt - startedAt,
+          durationMs: Date.now() - startedAt,
+          lastEventType: lastEventType ?? null,
+          outcome,
+          ...detail,
+        });
       lastPartial = undefined;
       let sawPartialOutput = false;
-      let switched = false;
+      let retry = false;
       let stream: AssistantMessageEventStream;
       try {
-        const apiKey = target.credentials?.accessToken ?? target.apiKey;
-        const thinkingLevel = target.model.reasoning
-          ? thinkingLevelFor(
-              target.model,
-              target.config.thinkingLevel ??
-                options?.reasoning ??
-                state.request.model.thinkingLevel,
-            )
-          : "off";
-        const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
-        stream = state.stream(target, context, { ...options, apiKey, reasoning });
+        if (canSwitch) {
+          const apiKey = target.credentials?.accessToken ?? target.apiKey;
+          const thinkingLevel = target.model.reasoning
+            ? thinkingLevelFor(
+                target.model,
+                target.config.thinkingLevel ??
+                  options?.reasoning ??
+                  state.request.model.thinkingLevel,
+              )
+            : "off";
+          const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
+          stream = state.stream(target, context, { ...options, apiKey, reasoning });
+        } else {
+          stream = state.stream(target, context, options);
+        }
       } catch (error) {
+        log("failed", { error });
         finishWithThrownError(target, error);
         return;
       }
       try {
         for await (const event of stream) {
+          lastEventType = event.type;
+          if (event.type !== "start" && event.type !== "error") firstEventAt ??= Date.now();
           if (event.type === "error") {
-            const hasTerminalPartialOutput = assistantHasPartialOutput(event.error);
+            const beforeOutput =
+              !sawPartialOutput && !assistantHasPartialOutput(event.error) && !signalAborted();
+            const stall = streamStallReason(event.error);
+            if (stall && beforeOutput && stallRetries > 0) {
+              stallRetries -= 1;
+              log("idle-timeout-retried", { stall });
+              if (stallRetries === 0 && (await switchTo(target)) === "aborted") return;
+              buffered = [];
+              retry = true;
+              break;
+            }
             if (
-              !sawPartialOutput &&
-              !hasTerminalPartialOutput &&
+              !stall &&
+              beforeOutput &&
               event.reason === "error" &&
-              !signalAborted() &&
               state.isProviderFailure(event.error) &&
               isRetryableProviderUnavailable(event.error)
             ) {
-              const next = await resolveNext(target);
-              if (failIfAborted(target)) return;
-              if (next) {
-                await state.onSwitch(next);
-                if (failIfAborted(target)) return;
+              const switched = await switchTo(target);
+              if (switched === "aborted") return;
+              if (switched === "switched") {
+                log("switched", { error: event.error.errorMessage });
                 buffered = [];
-                switched = true;
+                retry = true;
                 break;
               }
             }
-            for (const pending of buffered) output.push(pending);
-            buffered = [];
+            flush();
             const terminal =
               sawPartialOutput && event.error.content.length === 0 && lastPartial
                 ? { ...event, error: { ...event.error, content: lastPartial.content } }
                 : event;
-            output.push(terminal);
+            log("failed", { stall, error: event.error.errorMessage });
+            forward(terminal);
             output.end(terminal.error);
             return;
           }
           if (event.type === "done") {
-            for (const pending of buffered) output.push(pending);
-            buffered = [];
-            output.push(event);
+            flush();
+            log("ok");
+            forward(event);
             output.end(event.message);
             return;
           }
@@ -2733,22 +2865,23 @@ function fallbackAwareModelStream(
           };
           if (eventHasPartialOutput(event)) {
             sawPartialOutput = true;
-            for (const pending of buffered) output.push(pending);
-            buffered = [];
-            output.push(event);
-          } else if (sawPartialOutput) {
-            output.push(event);
+            flush();
+            forward(event);
+          } else if (sawPartialOutput || !canSwitch) {
+            forward(event);
           } else {
             buffered.push(event);
           }
         }
       } catch (error) {
-        for (const pending of buffered) output.push(pending);
+        flush();
+        log("failed", { error });
         finishWithThrownError(target, error);
         return;
       }
-      if (switched) continue;
-      for (const pending of buffered) output.push(pending);
+      if (retry) continue;
+      flush();
+      log("failed", { error: "no terminal event" });
       finishWithThrownError(target, new Error("Model stream ended without a terminal event"));
       return;
     }
@@ -2820,11 +2953,23 @@ export function isCodexModel(model: Pick<Model<Api>, "api" | "provider">): boole
 /** Abort reason recorded when a Codex stream goes silent past the idle bound. */
 export const CODEX_STREAM_IDLE_TIMEOUT_MESSAGE = "Codex stream idle timeout";
 
+export type StreamStallReason = "first-event" | "idle";
+const stallReasons = new WeakMap<AssistantMessage, StreamStallReason>();
+
+/** Which watchdog bound ended this terminal message, if one did. */
+export function streamStallReason(message: AssistantMessage): StreamStallReason | undefined {
+  return stallReasons.get(message);
+}
+
 export interface StreamIdleWatchdog {
   /** Composed abort signal to hand to the provider request. */
   signal: AbortSignal;
-  /** Re-arms the idle bound; invoke on response headers and each delivered event. */
+  /** Re-arms the idle bound; invoke on each delivered event. */
   ping(): void;
+  /** A 2xx response landed: arms the idle bound and the first-event bound. */
+  responded(): void;
+  /** The 2xx body delivered its first chunk: drops the first-event bound. */
+  firstByte(): void;
   /** Wraps the provider stream so every delivered event re-arms the idle bound. */
   wrap(stream: AssistantMessageEventStream): AssistantMessageEventStream;
   /** Stops the timer and drops the caller-signal listener. */
@@ -2848,35 +2993,50 @@ export interface StreamIdleWatchdog {
  * the backoff. pi reports any signal abort as a generic "Request was aborted",
  * so when the watchdog fired the wrapper relabels the terminal error as an
  * idle timeout rather than a caller abort.
+ *
+ * pi emits `start` as soon as headers land, before reading the body, so the
+ * first-event bound clears on the body's first chunk instead (`firstByte`).
  */
 export function codexStreamIdleWatchdog(
   upstream: AbortSignal | undefined,
-  idleTimeoutMs: number = MODEL_STREAM_IDLE_TIMEOUT_MS,
+  idleTimeoutMs: number = modelStreamIdleTimeoutMs(),
+  firstEventTimeoutMs: number = modelStreamFirstEventTimeoutMs(undefined, idleTimeoutMs),
 ): StreamIdleWatchdog {
   const controller = new AbortController();
-  let timedOut = false;
+  let stall: StreamStallReason | undefined;
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let firstEventTimer: ReturnType<typeof setTimeout> | undefined;
 
   const onUpstreamAbort = () => controller.abort(upstream?.reason);
   if (upstream?.aborted) controller.abort(upstream.reason);
   else upstream?.addEventListener("abort", onUpstreamAbort, { once: true });
 
+  const fire = (reason: StreamStallReason) => {
+    if (controller.signal.aborted) return;
+    stall = reason;
+    controller.abort(new Error(CODEX_STREAM_IDLE_TIMEOUT_MESSAGE));
+  };
+
   const arm = () => {
     if (disposed || controller.signal.aborted) return;
     timer = setTimeout(() => {
       timer = undefined;
-      if (controller.signal.aborted) return;
-      timedOut = true;
-      controller.abort(new Error(CODEX_STREAM_IDLE_TIMEOUT_MESSAGE));
+      fire("idle");
     }, idleTimeoutMs);
     timer.unref?.();
+  };
+
+  const firstByte = () => {
+    if (firstEventTimer !== undefined) clearTimeout(firstEventTimer);
+    firstEventTimer = undefined;
   };
 
   const dispose = () => {
     disposed = true;
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
+    firstByte();
     upstream?.removeEventListener("abort", onUpstreamAbort);
   };
 
@@ -2890,14 +3050,28 @@ export function codexStreamIdleWatchdog(
     arm();
   };
 
-  const describeTimeout = (message: AssistantMessage): AssistantMessage =>
-    timedOut && message.stopReason === "aborted"
-      ? {
-          ...message,
-          stopReason: "error",
-          errorMessage: CODEX_STREAM_IDLE_TIMEOUT_MESSAGE,
-        }
-      : message;
+  const responded = () => {
+    firstByte();
+    if (!disposed && !controller.signal.aborted) {
+      firstEventTimer = setTimeout(() => {
+        firstEventTimer = undefined;
+        fire("first-event");
+      }, firstEventTimeoutMs);
+      firstEventTimer.unref?.();
+    }
+    ping();
+  };
+
+  const describeTimeout = (message: AssistantMessage): AssistantMessage => {
+    if (!stall || message.stopReason !== "aborted") return message;
+    const described: AssistantMessage = {
+      ...message,
+      stopReason: "error",
+      errorMessage: CODEX_STREAM_IDLE_TIMEOUT_MESSAGE,
+    };
+    stallReasons.set(described, stall);
+    return described;
+  };
 
   const rewrite = (event: AssistantMessageEvent): AssistantMessageEvent => {
     if (event.type !== "error") return event;
@@ -2908,12 +3082,16 @@ export function codexStreamIdleWatchdog(
   return {
     signal: controller.signal,
     ping,
+    responded,
+    firstByte,
     dispose,
     wrap(inner) {
       class Watched extends AssistantMessageEventStream {
         override async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
           try {
             for await (const event of inner) {
+              // Anything past `start` was parsed from body bytes.
+              if (event.type !== "start") firstByte();
               ping();
               yield rewrite(event);
             }
@@ -2973,6 +3151,10 @@ function boundRetryableErrorBody(response: Response, idleTimeoutMs: number): Res
       return reader.cancel(reason);
     },
   });
+  return withBody(response, body);
+}
+
+function withBody(response: Response, body: ReadableStream<Uint8Array>): Response {
   const headers = new Headers(response.headers);
   headers.delete("content-encoding");
   headers.delete("content-length");
@@ -2983,13 +3165,33 @@ function boundRetryableErrorBody(response: Response, idleTimeoutMs: number): Res
   });
 }
 
+function tapFirstChunk(response: Response, onFirstChunk: () => void): Response {
+  if (!response.ok || response.body == null) return response;
+  let seen = false;
+  return withBody(
+    response,
+    response.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          if (!seen) {
+            seen = true;
+            onFirstChunk();
+          }
+          controller.enqueue(chunk);
+        },
+      }),
+    ),
+  );
+}
+
 function codexRequestFetch(
   fetchImpl: ModelsSimpleStreamOptions["fetch"],
   idleTimeoutMs: number,
+  onFirstChunk: () => void,
 ): NonNullable<ModelsSimpleStreamOptions["fetch"]> {
   return async (input, init) => {
     const response = fetchImpl ? await fetchImpl(input, init) : await globalThis.fetch(input, init);
-    return boundRetryableErrorBody(response, idleTimeoutMs);
+    return tapFirstChunk(boundRetryableErrorBody(response, idleTimeoutMs), onFirstChunk);
   };
 }
 
@@ -3003,7 +3205,10 @@ export function reliableModelStream(
   runStream?: (options: ModelsSimpleStreamOptions) => AssistantMessageEventStream,
   cacheRetention?: ModelsSimpleStreamOptions["cacheRetention"],
 ): AssistantMessageEventStream {
-  const watchdog = isCodexModel(model) ? codexStreamIdleWatchdog(options?.signal) : undefined;
+  const idleTimeoutMs = modelStreamIdleTimeoutMs();
+  const watchdog = isCodexModel(model)
+    ? codexStreamIdleWatchdog(options?.signal, idleTimeoutMs)
+    : undefined;
   try {
     const preparedOptions = reliableStreamOptions(
       model,
@@ -3011,11 +3216,11 @@ export function reliableModelStream(
         ? {
             ...options,
             signal: watchdog.signal,
-            fetch: codexRequestFetch(options?.fetch, MODEL_STREAM_IDLE_TIMEOUT_MS),
+            fetch: codexRequestFetch(options?.fetch, idleTimeoutMs, watchdog.firstByte),
             // Only a 2xx arms the shared watchdog. Error bodies are bounded by
             // the fetch wrapper, and a caller-supplied hook still sees every status.
             onResponse: (response, requestModel) => {
-              if (response.status >= 200 && response.status < 300) watchdog.ping();
+              if (response.status >= 200 && response.status < 300) watchdog.responded();
               return options?.onResponse?.(response, requestModel);
             },
           }

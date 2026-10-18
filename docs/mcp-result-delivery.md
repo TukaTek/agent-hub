@@ -58,7 +58,7 @@ audit fits in one model call.
 When a result is longer than its delivery limit, whether the default or a page budget above, Agent Hub saves the full text to a file on the bot's computer instead of dropping the remainder. Secrets registered for the run are redacted first, and a file holds at most 2,000,000 characters. A JSON object is delivered with its shape kept, so cursors and IDs stay usable, and with a `fullResult` field (`path`, `format`, `totalChars`, `approxTokens`, how to read it) added first. A plain string is saved as text rather than a JSON string. Any other result gets a bounded preview with a header first:
 
 ```
-[Full result saved: 200,000 characters (~50,000 tokens) of text at <path>. Read it with read_file (offset, limit) or search it with shell grep -n.]
+[Full result saved: 200,000 characters (~50,000 tokens) of text at <path>. Search it with shell grep -n first, then read only the lines you need with read_file (offset, limit).]
 ```
 
 `read_file` with `offset` and `limit` returns a page of at most 64,000 characters from any position, plus `total_chars` and `next_offset`. Offsets count the same characters as the header's total.

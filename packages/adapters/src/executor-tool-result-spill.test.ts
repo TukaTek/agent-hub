@@ -288,7 +288,7 @@ describe("oversized tool results spill to the bot computer", () => {
       // The middle of the meeting is outside the preview yet one read away.
       const middle = lines[Math.floor(lines.length / 2)]!;
       expect(receipt).not.toContain(middle);
-      const path = /at (\S+)\. Read it/.exec(receipt)![1]!;
+      const path = /at (\S+)\. Search it/.exec(receipt)![1]!;
       const page = await tool(request, "read_file", {
         path,
         offset: text.indexOf(middle) - 50,
@@ -315,7 +315,7 @@ describe("oversized tool results spill to the bot computer", () => {
         if (!("path" in saved)) throw new Error("not saved");
         const structured = formatStructuredSpill(saved, { transcript: text }, 12_000)!;
         const paths = [
-          /at (\S+)\. Read it/.exec(formatSpillReceipt(saved, text, 12_000))![1]!,
+          /at (\S+)\. Search it/.exec(formatSpillReceipt(saved, text, 12_000))![1]!,
           JSON.parse(structured).fullResult.path as string,
         ];
         for (const path of paths) {

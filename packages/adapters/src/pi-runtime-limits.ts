@@ -8,7 +8,33 @@ export const MODEL_STREAM_TIMEOUT_MS = 120_000;
  * models emit thinking deltas continuously while generating.
  */
 export const MODEL_STREAM_IDLE_TIMEOUT_MS = 180_000;
+/** A 2xx Codex body sends `response.created` at once; a body silent this long never started. */
+export const MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS = 120_000;
+/** Retries of one model call that stalled before any output; the last one may use a backup. */
+export const MODEL_STREAM_STALL_RETRIES = 2;
 export const DEFAULT_MODEL_STREAM_MAX_RETRIES = 1;
+const MIN_FIRST_EVENT_TIMEOUT_MS = 10_000;
+const MIN_IDLE_TIMEOUT_MS = 30_000;
+const MAX_STREAM_TIMEOUT_MS = 900_000;
+
+function boundedMs(value: string | undefined, min: number, fallback: number): number {
+  const raw = Number(value?.trim() || fallback);
+  return Number.isInteger(raw) && raw >= min && raw <= MAX_STREAM_TIMEOUT_MS ? raw : fallback;
+}
+
+export function modelStreamIdleTimeoutMs(value = process.env.MODEL_STREAM_IDLE_TIMEOUT_MS): number {
+  return boundedMs(value, MIN_IDLE_TIMEOUT_MS, MODEL_STREAM_IDLE_TIMEOUT_MS);
+}
+
+export function modelStreamFirstEventTimeoutMs(
+  value = process.env.MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
+  idleTimeoutMs = modelStreamIdleTimeoutMs(),
+): number {
+  return Math.min(
+    boundedMs(value, MIN_FIRST_EVENT_TIMEOUT_MS, MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS),
+    idleTimeoutMs,
+  );
+}
 
 /** More retries extend the worst-case turn; the executor heartbeat renews its leases. */
 export function modelStreamMaxRetries(): number {
