@@ -4,6 +4,7 @@ import type {
   AdapterContext,
   AdapterDescriptor,
   MessagingCapabilities,
+  MessagingInboundAttachment,
   MessagingInboundEvent,
   MessagingInboundMessage,
   MessagingOutboundStatus,
@@ -266,6 +267,7 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     if (!isDirect && !platform.capabilities.groups) return null;
     const fromLabel = message.author.fullName || message.author.userName || null;
     const transport = platform.transport?.(message.raw) ?? null;
+    const attachments = inboundAttachments(message);
     const base: MessagingInboundMessage = {
       type: "message",
       provider,
@@ -277,13 +279,38 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
       fromLabel: fromLabel === message.author.userId ? null : fromLabel,
       channelName: isDirect ? null : (platform.channelName?.(message.raw) ?? null),
       participants: isDirect ? [] : (platform.participants?.(message.raw) ?? []),
-      content: plainTextWithLinks(message),
+      content: [
+        plainTextWithLinks(message),
+        ...(attachments.length
+          ? message.attachments
+              .filter((file) => !file.fetchData && file.url)
+              .map((file) => file.url)
+          : []),
+      ]
+        .filter(Boolean)
+        .join("\n"),
       mediaUrl: message.attachments.find((attachment) => attachment.url)?.url ?? null,
+      ...(attachments.length ? { attachments } : {}),
       ...(!isDirect && message.isMention ? { mentionsBot: true } : {}),
     };
     const enrichment = platform.enrichTeamRoom?.(message.raw, base) ?? {};
     return { ...base, ...enrichment };
   }
+}
+
+function inboundAttachments(message: Message): MessagingInboundAttachment[] {
+  return message.attachments.flatMap((attachment) => {
+    const fetchData = attachment.fetchData;
+    if (!fetchData) return [];
+    return [
+      {
+        name: attachment.name || attachment.type,
+        mimeType: attachment.mimeType ?? "",
+        ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+        fetch: async () => new Uint8Array(await fetchData()),
+      },
+    ];
+  });
 }
 
 /**

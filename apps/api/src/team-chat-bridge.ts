@@ -1,12 +1,14 @@
 import type {
   JobPublisher,
+  MessagingInboundAttachment,
   TeamChatInboundMessage,
   TeamChatSendRequest,
   TeamChatSendResult,
 } from "@cortexai-agent-hub/adapter-kit";
 import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
-import { AutomatedSenderPoliciesSchema, type MessageBlock } from "@cortexai-agent-hub/contracts";
-import { botMessageMaxHops } from "@cortexai-agent-hub/core";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { ATTACHMENT_MAX_COUNT, AutomatedSenderPoliciesSchema } from "@cortexai-agent-hub/contracts";
+import { botMessageMaxHops, messageBlockForArtifact, promptTextForAttachments } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { TeamChatEngagementJudge } from "./team-chat-judge.js";
@@ -51,6 +53,13 @@ interface TeamChatBridgeDeps {
   events: Pick<ThreadEvents, "sendUserMessage">;
   jobs: Pick<JobPublisher, "enqueue">;
   send: (request: TeamChatSendRequest) => Promise<TeamChatSendResult>;
+  storeAttachment?: (input: {
+    spaceId: string;
+    userId: string;
+    botId: string;
+    attachment: MessagingInboundAttachment;
+    clientNonce: string;
+  }) => Promise<{ id: string; name: string; mimeType: string; size: number }>;
   providerId: string;
   botId: string;
   judge?: TeamChatEngagementJudge;
@@ -122,6 +131,28 @@ export function teamChatAmbientPrompt(input: {
     .join("\n\n");
 }
 
+function readBatchContext(
+  value: string | null,
+): { prompt: string; messageIds: string[] } | undefined {
+  if (!value) return undefined;
+  try {
+    const batch: unknown = JSON.parse(value);
+    if (
+      batch !== null &&
+      typeof batch === "object" &&
+      "prompt" in batch &&
+      typeof batch.prompt === "string" &&
+      "messageIds" in batch &&
+      Array.isArray(batch.messageIds) &&
+      batch.messageIds.every((id): id is string => typeof id === "string")
+    )
+      return { prompt: batch.prompt, messageIds: batch.messageIds };
+  } catch {
+    // Previously persisted batches contain only the plain prompt.
+  }
+  return { prompt: value, messageIds: [] };
+}
+
 export class TeamChatBridge {
   private target: TargetBot | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -130,6 +161,8 @@ export class TeamChatBridge {
   private startGeneration = 0;
   /** Same-process wakes still delivering; do not treat their expired leases as orphans. */
   private readonly inFlightRoutineWakes = new Set<string>();
+  private readonly mirroring = new Map<string, Promise<void>>();
+  private readonly receiving = new Map<string, number>();
 
   constructor(private readonly deps: TeamChatBridgeDeps) {}
 
@@ -205,6 +238,20 @@ export class TeamChatBridge {
     message: TeamChatInboundMessage,
     options?: { queueAgent?: boolean },
   ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
+    this.receiving.set(message.eventId, (this.receiving.get(message.eventId) ?? 0) + 1);
+    try {
+      return await this.receiveMessage(message, options);
+    } finally {
+      const remaining = (this.receiving.get(message.eventId) ?? 1) - 1;
+      if (remaining) this.receiving.set(message.eventId, remaining);
+      else this.receiving.delete(message.eventId);
+    }
+  }
+
+  private async receiveMessage(
+    message: TeamChatInboundMessage,
+    options?: { queueAgent?: boolean },
+  ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
     const target = this.target;
     if (!target) throw new Error("Team chat bridge is not started");
     const conversation = await this.deps.prisma.externalConversation.upsert({
@@ -269,7 +316,7 @@ export class TeamChatBridge {
       },
       update: {},
     });
-    await this.ensureTranscriptMessage(externalMessage, conversation);
+    await this.ensureTranscriptMessage(externalMessage, conversation, message.attachments ?? []);
     if (options?.queueAgent === false) {
       const deferred =
         (externalMessage.status === "deferred" &&
@@ -417,6 +464,8 @@ export class TeamChatBridge {
       const messages = await this.deps.prisma.externalMessage.findMany({
         where: {
           threadMessageId: null,
+          id: { notIn: [...this.mirroring.keys()] },
+          providerEventId: { notIn: [...this.receiving.keys()] },
           externalConversation: {
             provider: this.deps.providerId,
             botId: target.id,
@@ -433,6 +482,7 @@ export class TeamChatBridge {
       });
       if (messages.length === 0) return;
       for (const message of messages) {
+        if (this.receiving.has(message.providerEventId)) continue;
         await this.ensureTranscriptMessage(message, message.externalConversation);
       }
     }
@@ -476,25 +526,92 @@ export class TeamChatBridge {
       userId: string;
       thread: { id: string } | null;
     },
+    attachments?: MessagingInboundAttachment[],
   ): Promise<void> {
     if (message.threadMessageId) return;
-    if (!conversation.thread)
-      throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
-    const visible = await this.deps.events.sendUserMessage({
-      spaceId: conversation.spaceId,
-      threadId: conversation.thread.id,
-      botId: conversation.botId,
-      userId: conversation.userId,
-      blocks: [{ kind: "text", text: message.content }],
-      prompt: message.content,
-      trigger: "messaging",
-      clientNonce: `teamchat-transcript:${this.deps.providerId}:${message.providerEventId}`,
-      createRun: false,
-    });
-    await this.deps.prisma.externalMessage.update({
-      where: { id: message.id },
-      data: { threadMessageId: visible.messageId },
-    });
+    const pending = this.mirroring.get(message.id);
+    if (pending) return pending;
+    const mirroring = (async () => {
+      if (!conversation.thread) throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
+      // Fetchers cannot survive a restart; reuse any completed per-file uploads.
+      const stored = attachments
+        ? await this.storeAttachments(message.id, conversation, attachments)
+        : {
+            artifacts: await this.deps.prisma.artifact.findMany({
+              where: {
+                spaceId: conversation.spaceId,
+                userId: conversation.userId,
+                botId: conversation.botId,
+                groupId: null,
+                clientNonce: {
+                  in: Array.from(
+                    { length: ATTACHMENT_MAX_COUNT },
+                    (_, index) => `teamchat-attachment:${message.id}:${index}`,
+                  ),
+                },
+              },
+              select: { id: true, name: true, mimeType: true, size: true },
+              orderBy: { clientNonce: "asc" },
+            }),
+            unavailable: [],
+          };
+      const text =
+        [message.content.trim(), ...stored.unavailable].filter(Boolean).join("\n") ||
+        (stored.artifacts.length ? "" : "[file (unavailable)]");
+      const visible = await this.deps.events.sendUserMessage({
+        spaceId: conversation.spaceId,
+        threadId: conversation.thread.id,
+        botId: conversation.botId,
+        userId: conversation.userId,
+        blocks: [
+          ...(text ? [{ kind: "text" as const, text }] : []),
+          ...stored.artifacts.map((artifact) => messageBlockForArtifact(artifact)),
+        ],
+        prompt: promptTextForAttachments(text, stored.artifacts),
+        trigger: "messaging",
+        clientNonce: `teamchat-transcript:${this.deps.providerId}:${message.providerEventId}`,
+        createRun: false,
+      });
+      await this.deps.prisma.externalMessage.update({
+        where: { id: message.id },
+        data: { threadMessageId: visible.messageId },
+      });
+    })().finally(() => this.mirroring.delete(message.id));
+    this.mirroring.set(message.id, mirroring);
+    return mirroring;
+  }
+
+  private async storeAttachments(
+    externalMessageId: string,
+    conversation: { spaceId: string; botId: string; userId: string },
+    attachments: MessagingInboundAttachment[],
+  ) {
+    const artifacts: Array<{ id: string; name: string; mimeType: string; size: number }> = [];
+    const unavailable: string[] = [];
+    const storeAttachment = this.deps.storeAttachment;
+    for (const [index, attachment] of attachments.entries()) {
+      if (!storeAttachment || index >= ATTACHMENT_MAX_COUNT) {
+        unavailable.push(`[file: ${attachment.name} (unavailable)]`);
+        continue;
+      }
+      try {
+        artifacts.push(
+          await storeAttachment({
+            spaceId: conversation.spaceId,
+            userId: conversation.userId,
+            botId: conversation.botId,
+            attachment,
+            clientNonce: `teamchat-attachment:${externalMessageId}:${index}`,
+          }),
+        );
+      } catch (error) {
+        getLogger().warn("team chat attachment was not stored", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        unavailable.push(`[file: ${attachment.name} (unavailable)]`);
+      }
+    }
+    return { artifacts, unavailable };
   }
 
   /**
@@ -617,6 +734,7 @@ export class TeamChatBridge {
     const target = this.target;
     if (!target) return;
     const now = new Date();
+    await this.mirrorMissingMessages();
     await this.recoverExpiredDeferredMessages(target, now);
     await this.deps.prisma.externalMessage.updateMany({
       where: {
@@ -633,6 +751,7 @@ export class TeamChatBridge {
     const received = await this.deps.prisma.externalMessage.findMany({
       where: {
         status: "received",
+        threadMessageId: { not: null },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
         externalConversation: {
           provider: this.deps.providerId,
@@ -766,6 +885,7 @@ export class TeamChatBridge {
     const observed = await this.deps.prisma.externalMessage.findMany({
       where: {
         status: "observed",
+        threadMessageId: { not: null },
         externalConversation: {
           provider: this.deps.providerId,
           botId: target.id,
@@ -866,17 +986,20 @@ export class TeamChatBridge {
       const promoted = await this.promoteAmbientTrigger(trigger.id, {
         judgedAt: now,
         engagementReason: decision.reason ?? null,
-        batchContext: teamChatAmbientPrompt({
-          provider: this.deps.providerId,
-          channelId: latest.externalConversation.conversationId,
-          channelName: latest.externalConversation.displayName,
-          rules,
-          reason: decision.reason,
-          messages: judgedMessages.map((message) => ({
-            senderId: message.senderId,
-            senderName: message.senderName,
-            content: message.content,
-          })),
+        batchContext: JSON.stringify({
+          messageIds: judgedMessages.map(({ id }) => id),
+          prompt: teamChatAmbientPrompt({
+            provider: this.deps.providerId,
+            channelId: latest.externalConversation.conversationId,
+            channelName: latest.externalConversation.displayName,
+            rules,
+            reason: decision.reason,
+            messages: judgedMessages.map((message) => ({
+              senderId: message.senderId,
+              senderName: message.senderName,
+              content: message.content,
+            })),
+          }),
         }),
       });
       if (promoted)
@@ -1046,15 +1169,28 @@ export class TeamChatBridge {
       await abandonForRoutine("queueing");
       return;
     }
+    const batch = readBatchContext(message.batchContext);
     const prompt =
-      message.batchContext ??
-      teamChatPrompt(this.deps.providerId, message.senderName, message.content);
+      batch?.prompt ?? teamChatPrompt(this.deps.providerId, message.senderName, message.content);
+    const transcripts = await this.deps.prisma.message.findMany({
+      where: {
+        threadId: thread.id,
+        externalTranscriptFor: {
+          id: { in: batch?.messageIds.length ? batch.messageIds : [message.id] },
+        },
+      },
+      select: { blocks: true },
+      orderBy: { seq: "asc" },
+    });
+    const fileBlocks = transcripts.flatMap(({ blocks }) =>
+      (blocks as MessageBlock[]).filter((block) => block.kind === "file" || block.kind === "image"),
+    );
     const sent = await this.deps.events.sendUserMessage({
       spaceId: message.externalConversation.spaceId,
       threadId: thread.id,
       botId: message.externalConversation.botId,
       userId: message.externalConversation.userId,
-      blocks: [{ kind: "text", text: prompt }],
+      blocks: [{ kind: "text", text: prompt }, ...fileBlocks],
       prompt,
       trigger: "messaging",
       clientNonce: `teamchat:${this.deps.providerId}:${message.providerEventId}`,
