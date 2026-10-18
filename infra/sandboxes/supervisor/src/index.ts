@@ -64,6 +64,7 @@ import {
   computerControlTimeoutMs,
   containerActionSteps,
   createDockerStreamDemuxer,
+  currentComputerScreens,
   demuxDockerStream,
   ensureScreenCommand,
   hasComputerIdentity,
@@ -110,6 +111,8 @@ const teamScreenLimit = resolveTeamScreenLimit();
 // IPs, so computer control must use a published loopback port instead.
 const controlViaLoopback = process.env.SANDBOX_CONTROL_VIA_LOOPBACK === "true";
 const computerScreens = new Map<string, Map<string, ScreenAssignment>>();
+// Container start time each screen registry was built under; see currentComputerScreens.
+const computerScreenBoots = new Map<string, string>();
 
 export const MAX_SUPERVISOR_REQUEST_BYTES = 1024 * 1024;
 export const MAX_SUPERVISOR_FILE_REQUEST_BYTES = 16 * 1024 * 1024 + 64 * 1024;
@@ -295,7 +298,10 @@ app.post("/computers", async (c) => {
         let container: Docker.Container | undefined;
         try {
           if (existing) {
-            await existing.remove({ force: true }).catch(() => undefined);
+            await withComputerScreenLock(existing.id, async () => {
+              await existing.remove({ force: true }).catch(() => undefined);
+              clearComputerScreenRegistry(computerScreens, computerScreenBoots, existing.id);
+            });
           }
           container = await docker.createContainer(
             containerCreateOptions({
@@ -757,7 +763,7 @@ app.post("/computers/:id/screen-mode", async (c) => {
     const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
     const { container, info } = await managedContainer(id, botId, spaceId);
     const { layout, viewToken } = await withComputerScreenLock(id, async () => {
-      const screen = await ensureManagedScreen(id, container, info, botId, screenId, screenLeaseId);
+      const screen = await ensureManagedScreen(id, container, botId, screenId, screenLeaseId);
       if (body.interactive || body.revokeControl !== false) {
         await setInteractiveScreen(container, body.interactive, body.controlToken, screen.layout);
       }
@@ -798,7 +804,6 @@ app.post("/computers/:id/terminal", async (c) => {
       const screen = await ensureManagedScreen(
         id,
         container,
-        info,
         botId,
         c.req.header("x-cortexai-agent-hub-screen-id"),
         c.req.header("x-cortexai-agent-hub-screen-lease-id"),
@@ -889,7 +894,13 @@ app.delete("/computers/:id/screen", async (c) => {
     const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
 
     await withComputerScreenLock(id, async () => {
-      const assigned = computerScreens.get(id);
+      const info = await container.inspect();
+      const assigned = currentComputerScreens(
+        computerScreens,
+        computerScreenBoots,
+        id,
+        info.State?.StartedAt,
+      );
       const index = assigned ? releaseAssignedScreen(assigned, screenId, screenLeaseId) : undefined;
       const stop = screenReleaseStopCommand(index, {
         hasRegistry: Boolean(assigned),
@@ -950,10 +961,10 @@ app.post("/computers/:id/stop", async (c) => {
         } finally {
           // Failed profiles remain on the durable home for recovery after restart.
           await container.stop();
-          clearComputerScreenRegistry(computerScreens, id);
+          clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
         }
       }
-      clearComputerScreenRegistry(computerScreens, id);
+      clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
     });
     if (botId && screenNetworkMode !== "internal") {
       await reclaimComputerNetwork(container, botId).catch((error) => {
@@ -983,7 +994,7 @@ app.delete("/computers/:id", async (c) => {
       );
       await withComputerScreenLock(id, async () => {
         await container.remove({ force: true }).catch(() => undefined);
-        clearComputerScreenRegistry(computerScreens, id);
+        clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
       });
       if (screenNetworkMode !== "internal") {
         await removeBotNetwork(botId);
@@ -1169,21 +1180,48 @@ async function managedScreen(
   screenId: string | undefined,
   screenLeaseId: string | undefined,
 ) {
-  const { container, info } = await managedContainer(id, botId, spaceId);
+  const { container } = await managedContainer(id, botId, spaceId);
   return withComputerScreenLock(id, () =>
-    ensureManagedScreen(id, container, info, botId, screenId, screenLeaseId),
+    ensureManagedScreen(id, container, botId, screenId, screenLeaseId),
   );
 }
 
 async function ensureManagedScreen(
   id: string,
   container: Docker.Container,
-  info: Docker.ContainerInspectInfo,
   botId: string | undefined,
   screenId: string | undefined,
   screenLeaseId: string | undefined,
 ) {
-  let assigned = computerScreens.get(id);
+  // Docker can restart independently of the supervisor's screen lock.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const screen = await ensureManagedScreenAttempt(id, container, botId, screenId, screenLeaseId);
+    const info = await container.inspect();
+    if (info.State?.StartedAt === screen.info.State?.StartedAt) {
+      // Confirm the pending boot marker only after setup completes against the same boot.
+      if (info.State?.StartedAt) computerScreenBoots.set(id, info.State.StartedAt);
+      return { ...screen, info };
+    }
+    clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
+  }
+  throw new Error("computer restarted during screen setup");
+}
+
+async function ensureManagedScreenAttempt(
+  id: string,
+  container: Docker.Container,
+  botId: string | undefined,
+  screenId: string | undefined,
+  screenLeaseId: string | undefined,
+) {
+  // Callers hold the screen lock: an inspection before waiting can describe an older boot.
+  const info = await container.inspect();
+  let assigned = currentComputerScreens(
+    computerScreens,
+    computerScreenBoots,
+    id,
+    info.State?.StartedAt,
+  );
   if (!assigned) {
     const reset = await runContainerCommand(container, [
       "bash",
@@ -1193,6 +1231,8 @@ async function ensureManagedScreen(
     if (reset.code !== 0) throw new Error(reset.stderr || "computer screens failed to reset");
     assigned = new Map();
     computerScreens.set(id, assigned);
+    // Remember the inspected boot even if setup or teardown fails before confirmation.
+    if (info.State?.StartedAt) computerScreenBoots.set(id, info.State.StartedAt);
   }
   const screenKey = screenId || botId || id;
   const index = nextScreenIndex(assigned, screenKey, screenLeaseId, teamScreenLimit);
@@ -1215,7 +1255,7 @@ async function ensureManagedScreen(
     await teardownReleasedScreen(assigned, screenKey, index, () =>
       runContainerCommand(container, ["bash", "-c", stopExtraScreenCommand(index, screenKey)]),
     );
-    if (assigned.size === 0) computerScreens.delete(id);
+    if (assigned.size === 0) clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
     const detail = [ensured.stderr, browserLog.stdout].filter(Boolean).join("\n").trim();
     throw new Error(detail || `computer screen ${layout.display} failed to start`);
   }
