@@ -10,10 +10,13 @@ your own branded build, use your own Expo and store accounts.
 
 ## Configure a build
 
-1. Link `apps/mobile` to an Expo project owned by your account.
+1. `apps/mobile` is linked to the TukaTek Expo project `@tukatek/agent-hub`.
+   To use your own account, run `eas init` and change `owner`, `slug`,
+   `extra.eas.projectId` and `updates.url` in `app.json` together.
 2. Choose unique iOS and Android application identifiers.
-3. Configure `EXPO_PUBLIC_API_URL` in the EAS build environment. Production
-   builds require a valid HTTPS URL.
+3. Configure `EXPO_PUBLIC_API_URL` in the EAS `production` and `preview`
+   environments. Every `eas.json` profile maps to one of them, and OTA updates
+   read the same value. Production builds require a valid HTTPS URL.
 4. Keep store application IDs, team IDs, signing credentials, API keys, and
    review-account credentials out of Git.
 5. Before a native iOS or Android build, run
