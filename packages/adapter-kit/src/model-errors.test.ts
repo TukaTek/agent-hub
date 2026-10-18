@@ -22,6 +22,7 @@ describe("transient model errors", () => {
     ],
     ["service unavailable", { status: 503, message: "service unavailable" }],
     ["bad gateway", new Error("502 Bad Gateway")],
+    ["empty truncated stream", new Error("Stream ended without finish_reason")],
     ["dropped fetch body", new TypeError("terminated")],
     ["fetch failure", new TypeError("fetch failed")],
     ["connection reset", new Error("read ECONNRESET")],
