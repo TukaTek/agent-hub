@@ -1,6 +1,6 @@
 # CAAH-98: Memory Tools Surface Provider Failures — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development with superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **Status: awaiting Agent Hub PM approval. No implementation code until then.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development with superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **Approved by Agent Hub PM with the decisions recorded under "Decisions", and implemented. See "Findings".**
 
 **Goal:** When `save_memory`, `forget_memory` or `recall_memory` gets `{ok:false}` or an exception from any memory provider, mark the tool call failed, give the model an unambiguous error, log a content-free warning, and persist the outcome on the `agent.tool.completed` run event. Successful calls behave the same as today.
 
@@ -40,18 +40,18 @@ For auditing successful calls, `toolCompletionAuditPayload` gains a content-free
 
 ## Test-first steps
 
-- [ ] **Task 0: reproduce.** In `executor.test.ts`, add a test that runs a save through `toolCompletionFromResult` and `toolCompletionAuditPayload` with the exact Pi-wrapped shape `{content, details:{ok:false, error}}`. Record whether it already says `error`. If it does, note in the PR that the incident build predates `4226be0b`, or that the provider returned 2xx, and ask DevOp for the deployed commit. Don't change the provider for this.
-- [ ] **Task 1: failing unit tests** in `memory-tools.test.ts`, for each of `save`, `forget` and `recall`:
+- [x] **Task 0: reproduce.** In `executor.test.ts`, add a test that runs a save through `toolCompletionFromResult` and `toolCompletionAuditPayload` with the exact Pi-wrapped shape `{content, details:{ok:false, error}}`. Record whether it already says `error`. If it does, note in the PR that the incident build predates `4226be0b`, or that the provider returned 2xx, and ask DevOp for the deployed commit. Don't change the provider for this.
+- [x] **Task 1: failing unit tests** in `memory-tools.test.ts`, for each of `save`, `forget` and `recall`:
   - provider `{ok:false, error:"Supermemory save failed: 503"}` → the result has a top-level `error` that starts with `<tool> failed:`, and the logger gets one `warn` with `{provider, operation, error}`;
   - provider throws `new Error("boom")` → same result and log;
   - abort: the signal is aborted and the provider throws `AbortError` → it rethrows, with no log;
   - success → the result is deep-equal to the provider's value, with no log;
   - redaction: the content, query and fake API key (`sk-test-PLACEHOLDER`) appear nowhere in the serialized log calls, including when the provider's error echoes the key.
-- [ ] **Task 2:** implement `runMemoryTool` until Task 1 passes.
-- [ ] **Task 3: failing audit tests** in `executor.test.ts`: the memory failure gives `outcome:"error"` with `error` persisted; the save, recall and forget successes give `outcome:"succeeded"` with `result` equal to the summary; a recall payload has no memory text; non-memory tools get no `result` key, which keeps them unchanged.
-- [ ] **Task 4:** implement `memoryToolAuditSummary` and wire it in.
-- [ ] **Task 5: failing executor test.** A fake provider whose `save` returns `{ok:false}` → `agent.tool.completed` has `outcome:"error"`, and the scripted model sees the error text. Then wire the three handlers to `runMemoryTool` until it passes. Keep `finish(...)` around save and forget so effect persistence doesn't change.
-- [ ] **Task 6:** `pnpm --filter @cortexai-agent-hub/adapters test`, typecheck and lint. Don't run the desktop e2e suite.
+- [x] **Task 2:** implement `runMemoryTool` until Task 1 passes.
+- [x] **Task 3: failing audit tests** in `executor.test.ts`: the memory failure gives `outcome:"error"` with `error` persisted; the save, recall and forget successes give `outcome:"succeeded"` with `result` equal to the summary; a recall payload has no memory text; non-memory tools get no `result` key, which keeps them unchanged.
+- [x] **Task 4:** implement `memoryToolAuditSummary` and wire it in.
+- [x] **Task 5: failing executor test.** A fake provider whose `save` returns `{ok:false}` → `agent.tool.completed` has `outcome:"error"`, and the scripted model sees the error text. Then wire the three handlers to `runMemoryTool` until it passes. Keep `finish(...)` around save and forget so effect persistence doesn't change.
+- [x] **Task 6:** `pnpm --filter @cortexai-agent-hub/adapters test`, typecheck and lint. Don't run the desktop e2e suite.
 
 ## Rebase with PR #50 (CAAH-97)
 
@@ -65,7 +65,15 @@ PR #50 changes `executor.ts` in the import block (~L33), ~L2647, ~L3262 (+170 li
 - **Abort semantics:** abort is rethrown, never turned into a failure, so cancel still behaves the same way.
 - **Root cause may be elsewhere:** if Task 0 shows main was already correct, the incident's `succeeded` came from an older deploy or a provider 2xx. This change makes the next one auditable but can't make Supermemory durable.
 
-## Decisions for Agent Hub PM
+## Decisions
 
-1. The successful-call event stores a content-free summary, not the raw result. Approve, or ask for raw results.
-2. The model-facing error prefix is `"<tool> failed: "`.
+1. The successful-call event stores a content-free summary, not the raw result. Memory text stays out of events.
+2. The model-facing error is `"<tool> failed: <message>"`.
+
+## Findings
+
+- **Task 0:** TukaTek runs `a5516949`, which includes `4226be0b`. The reproduction test passes on main: a top-level `{ok:false, error}` in a Pi result wrapper is already audited as `outcome: "error"`. So the incident wasn't that shape.
+- **Supermemory save:** the documented contract for `POST /v4/memories` is `201 {documentId, memories}` on success and a non-2xx `{error}` on failure, and the client already maps non-2xx to `{ok:false}`. A 2xx save is treated as stored without reading the body, so a 2xx carrying `{error}`, `{success:false}` or an empty `memories` array would still read as saved. That's the one remaining path to a `succeeded` event that didn't persist. It was left unchanged on purpose: the client deliberately doesn't wait for save bodies (the test "cancels unread probe, save, and delete bodies"), so a server that stalls after its headers can't hang a save, and Supermemory doesn't document a 2xx failure.
+- **Supermemory search:** this path already reads the body. Before this change a 2xx `{error}` or `{success:false}` became an empty result, so `recall_memory` reported "nothing remembered". It now returns `{ok:false}`.
+- **Serenity:** it already validates its remember, forget and recall payloads and returns `{ok:false}` on an unexpected one.
+- **Redaction:** the memory text from the request (the save content, recall query or forget reason) is redacted from errors when it's at least 8 characters, along with the run secrets. Memory text that a provider echoes in an error but that wasn't in the request (for example a recall hit) can't be recognized.
