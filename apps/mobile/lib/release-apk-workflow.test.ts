@@ -39,4 +39,39 @@ describe("Android APK release workflow", () => {
       '"android-apk"',
     );
   });
+
+  it("resolves the android-apk EAS config before spending a build", () => {
+    const check = workflow.indexOf("eas config --platform android --profile android-apk");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(workflow.indexOf("eas build --platform android"));
+  });
+});
+
+describe("CI mobile EAS jobs", () => {
+  const ci = readFileSync(
+    path.resolve(import.meta.dirname, "../../../.github/workflows/ci.yml"),
+    "utf8",
+  );
+  const job = (name: string) => {
+    const start = ci.indexOf(`\n  ${name}:\n`);
+    expect(start, name).toBeGreaterThan(-1);
+    const next = ci.slice(start + 1).search(/\n {2}[a-z-]+:\n/);
+    return next === -1 ? ci.slice(start) : ci.slice(start, start + 1 + next);
+  };
+
+  it("checks the android-apk EAS config only when the Expo token is present", () => {
+    const check = job("mobile-eas-config");
+    expect(check).toContain("name: Mobile EAS config");
+    expect(check).toContain("secrets.EXPO_TOKEN");
+    expect(check).toContain("if: steps.token.outputs.present == 'true'");
+    expect(check).toContain(
+      "eas config --platform android --profile android-apk --non-interactive",
+    );
+  });
+
+  it("refuses to publish an OTA update without the production API URL", () => {
+    const publish = job("publish-mobile-update");
+    expect(publish).toContain("EAS_BUILD_PROFILE: production");
+    expect(publish).toContain("--channel production --environment production");
+  });
 });

@@ -118,6 +118,50 @@ jobs:
     with:
       upload_artifacts: true
 
+  mobile-eas-config:
+    name: Mobile EAS config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check for Expo automation token
+        id: token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [[ -n "$EXPO_TOKEN" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Skipped: no EXPO_TOKEN secret." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.token.outputs.present == 'true'
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        if: steps.token.outputs.present == 'true'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Set up Expo
+        if: steps.token.outputs.present == 'true'
+        uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # v9
+        with:
+          eas-version: latest
+          packager: pnpm
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Install dependencies
+        if: steps.token.outputs.present == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Resolve android-apk build config
+        if: steps.token.outputs.present == 'true'
+        working-directory: apps/mobile
+        env:
+          EAS_BUILD_PROFILE: android-apk
+        run: eas config --platform android --profile android-apk --non-interactive > /dev/null
+
   publish-mobile-update:
     name: Publish compatible mobile update
     if: >-
@@ -255,6 +299,9 @@ jobs:
       - name: Publish production update
         if: steps.ota.outputs.publish == 'true'
         working-directory: apps/mobile
+        # Makes app.config.ts refuse to publish when the EAS environment has no HTTPS API URL.
+        env:
+          EAS_BUILD_PROFILE: production
         run: |
           set -euo pipefail
           head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
