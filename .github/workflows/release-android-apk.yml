@@ -48,6 +48,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify mobile project
         run: pnpm --filter @cortexai-agent-hub/mobile check
+      - name: Resolve EAS build config
+        working-directory: apps/mobile
+        run: eas config --platform android --profile android-apk --non-interactive > /dev/null
 
       # EAS signs with the project's managed Android keystore and bakes in the production update
       # channel, so installed APKs receive the same OTA updates as store builds.

@@ -10,10 +10,13 @@ your own branded build, use your own Expo and store accounts.
 
 ## Configure a build
 
-1. Link `apps/mobile` to an Expo project owned by your account.
+1. `apps/mobile` is linked to the TukaTek Expo project `@tukatek/agent-hub`.
+   To use your own account, run `eas init` and change `owner`, `slug`,
+   `extra.eas.projectId` and `updates.url` in `app.json` together.
 2. Choose unique iOS and Android application identifiers.
-3. Configure `EXPO_PUBLIC_API_URL` in the EAS build environment. Production
-   builds require a valid HTTPS URL.
+3. Configure `EXPO_PUBLIC_API_URL` in the EAS `production` and `preview`
+   environments. Every `eas.json` profile maps to one of them, and OTA updates
+   read the same value. Production builds require a valid HTTPS URL.
 4. Keep store application IDs, team IDs, signing credentials, API keys, and
    review-account credentials out of Git.
 5. Before a native iOS or Android build, run
@@ -25,11 +28,23 @@ your own branded build, use your own Expo and store accounts.
 From `apps/mobile`:
 
 ```sh
-eas project:init
 eas env:create --environment production --name EXPO_PUBLIC_API_URL --value https://app.example.com --visibility plaintext
+eas env:create --environment preview --name EXPO_PUBLIC_API_URL --value https://app.example.com --visibility plaintext
+eas config --platform android --profile android-apk
 eas build --platform ios --profile production
 eas submit --platform ios --profile production --latest
 ```
+
+The first build on each platform must run interactively. EAS can't generate
+an Android keystore or iOS signing credentials with `--non-interactive`:
+
+1. `eas build --platform android --profile android-apk`: let EAS generate and
+   store the keystore, then back it up from `eas credentials -p android`.
+2. `eas build --platform ios --profile production`: sign in to the Apple
+   Developer account and let EAS create the distribution certificate,
+   provisioning profile and push key.
+3. `eas submit --platform ios --latest` with an App Store Connect API key, then
+   add the build to an internal TestFlight group in App Store Connect.
 
 EAS can prompt for store identity interactively. For automated submission, add
 the required identifiers through a private CI configuration or a short-lived
