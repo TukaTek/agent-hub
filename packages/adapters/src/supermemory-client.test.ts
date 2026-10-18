@@ -112,6 +112,15 @@ describe("searchSupermemory", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    [{ error: "Invalid request parameters" }, "Invalid request parameters"],
+    [{ success: false }, "Supermemory search failed"],
+  ])("reports a 2xx error body as a failure instead of no results: %j", async (body, message) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(body)));
+    const result = await searchSupermemory("anything", "cortexai-agent-hub:bot-123", config);
+    expect(result).toEqual({ ok: false, error: expect.stringContaining(message) });
+  });
+
   it("reports an unreachable server instead of throwing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED")));
     const result = await searchSupermemory("anything", "cortexai-agent-hub:bot-123", config);

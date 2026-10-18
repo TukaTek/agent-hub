@@ -159,6 +159,24 @@ describe("tool completion audit", () => {
     });
   });
 
+  it("records a memory provider {ok:false} inside a Pi result wrapper as an error", () => {
+    const providerResponse = { ok: false, error: "Supermemory save failed: 503" };
+    const payload = toolCompletionAuditPayload({
+      name: "save_memory",
+      executionId: "call-1",
+      durationMs: 5,
+      result: {
+        content: [{ type: "text", text: JSON.stringify(providerResponse) }],
+        details: providerResponse,
+      },
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "error",
+      error: "Supermemory save failed: 503",
+    });
+  });
+
   it.each([
     ["destination rejected the record", "destination rejected the record"],
     [{ message: "request rejected" }, "request rejected"],
