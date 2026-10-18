@@ -6,7 +6,7 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
 import { AutomatedSenderPoliciesSchema, type MessageBlock } from "@cortexai-agent-hub/contracts";
-import { BOT_MESSAGE_MAX_HOPS } from "@cortexai-agent-hub/core";
+import { botMessageMaxHops } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { TeamChatEngagementJudge } from "./team-chat-judge.js";
@@ -727,7 +727,8 @@ export class TeamChatBridge {
   private async findExternalOrigin(sourceMessageId: string | null) {
     let currentSourceMessageId: string | null = sourceMessageId;
     const visitedRunIds = new Set<string>();
-    for (let depth = 0; currentSourceMessageId && depth <= BOT_MESSAGE_MAX_HOPS; depth += 1) {
+    const maxHops = botMessageMaxHops();
+    for (let depth = 0; currentSourceMessageId && depth <= maxHops; depth += 1) {
       const source = await this.deps.prisma.message.findUnique({
         where: { id: currentSourceMessageId },
         select: { replyTo: { select: { runId: true } } },
