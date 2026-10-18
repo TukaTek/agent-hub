@@ -159,6 +159,50 @@ describe("tool completion audit", () => {
     });
   });
 
+  it("records a memory provider {ok:false} inside a Pi result wrapper as an error", () => {
+    const providerResponse = { ok: false, error: "Supermemory save failed: 503" };
+    const payload = toolCompletionAuditPayload({
+      name: "save_memory",
+      executionId: "call-1",
+      durationMs: 5,
+      result: {
+        content: [{ type: "text", text: JSON.stringify(providerResponse) }],
+        details: providerResponse,
+      },
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "error",
+      error: "Supermemory save failed: 503",
+    });
+    expect(payload).not.toHaveProperty("result");
+  });
+
+  it("persists a content-free result summary for successful memory tools only", () => {
+    const wrapped = (name: string, details: unknown) =>
+      toolCompletionAuditPayload({
+        name,
+        executionId: "call-1",
+        durationMs: 5,
+        result: { content: [{ type: "text", text: JSON.stringify(details) }], details },
+      });
+
+    expect(wrapped("save_memory", { ok: true })).toMatchObject({
+      outcome: "succeeded",
+      result: { ok: true },
+    });
+    const recall = wrapped("recall_memory", {
+      ok: true,
+      value: [{ memory: "User's locker code is 4417", score: 0.9 }],
+    });
+    expect(recall).toMatchObject({ outcome: "succeeded", result: { ok: true, count: 1 } });
+    expect(JSON.stringify(recall)).not.toContain("locker code");
+    expect(
+      wrapped("forget_memory", { ok: true, value: { id: "fact-1", expired: true, reason: null } }),
+    ).toMatchObject({ outcome: "succeeded", result: { ok: true, id: "fact-1", expired: true } });
+    expect(wrapped("read_history", { ok: true })).not.toHaveProperty("result");
+  });
+
   it.each([
     ["destination rejected the record", "destination rejected the record"],
     [{ message: "request rejected" }, "request rejected"],
