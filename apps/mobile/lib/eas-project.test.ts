@@ -12,7 +12,7 @@ const eas = JSON.parse(readFileSync(path.join(root, "eas.json"), "utf8")) as {
 const PROJECT_ID = "c5ac54e3-8365-495d-a638-51b4e0deb329";
 
 function resolvedProfile(name: string): { environment?: string; channel?: string } {
-  const { extends: parent, ...profile } = eas.build[name];
+  const { extends: parent, ...profile } = eas.build[name] ?? {};
   return parent ? { ...resolvedProfile(parent), ...profile } : profile;
 }
 
