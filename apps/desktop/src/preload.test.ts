@@ -35,6 +35,7 @@ describe("desktop preload bridge", () => {
     expect(globalName).toBe("cortexAiAgentHubDesktop");
     expect(bridge.platform).toBe("linux");
     expect(Object.keys(bridge).sort()).toEqual([
+      "computer",
       "localSettings",
       "oauth",
       "platform",
@@ -70,18 +71,6 @@ describe("desktop preload bridge", () => {
       "desktop.update.check",
       "desktop.update.download",
       "desktop.update.install",
-    ]);
-  });
-
-  it("keeps setup off the app bridge so a connected server cannot re-point the app", () => {
-    const { exposeInMainWorld } = runPreload("preload.cjs");
-    const [, bridge] = exposeInMainWorld.mock.calls[0] as [string, Record<string, unknown>];
-    expect(Object.keys(bridge).sort()).toEqual([
-      "localSettings",
-      "oauth",
-      "platform",
-      "update",
-      "window",
     ]);
   });
 

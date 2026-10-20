@@ -79,7 +79,7 @@ test("takeover, routine, plugins, and export are reachable", async ({ page }, te
   await expect(page.getByRole("button", { name: "Close computer" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Skip", exact: true }).last()).toBeVisible();
   await expect(page.getByRole("button", { name: "I’m done", exact: true }).last()).toBeVisible();
-  if (process.env.SANDBOX_PROVIDER === "box") await waitForBoxFramebuffer(page);
+  if (process.env.SANDBOX_PROVIDER === "boat") await waitForBoatFramebuffer(page);
   await captureScreenshot(page, testInfo, "09-computer-takeover-outcomes");
   await page.getByRole("button", { name: "I’m done", exact: true }).last().click();
   await expect(page.getByRole("button", { name: "Close computer" })).toBeVisible();
@@ -389,12 +389,12 @@ test("sign-in, spawn, and stop work in the shell", async ({ page }, testInfo) =>
   await expect(page.getByText(/^Steer /)).toHaveCount(0);
   await expect(composer).toHaveAttribute("placeholder", "Message Chief");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
-  const voiceButton = page
+  const holdToTalk = page
     .getByTestId("composer-bar")
-    .getByRole("button", { name: "Voice", exact: true });
-  await expect(voiceButton).toBeVisible();
+    .getByRole("button", { name: "Hold to talk", exact: true });
+  await expect(holdToTalk).toBeVisible();
   await composer.fill("Use the newer report and keep the answer short.");
-  await expect(voiceButton).toHaveCount(0);
+  await expect(holdToTalk).toHaveCount(0);
   await composer.press("Tab");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");
@@ -497,7 +497,7 @@ async function threadRunStatus(page: Page) {
   return result.run?.status ?? "idle";
 }
 
-async function waitForBoxFramebuffer(page: Page) {
+async function waitForBoatFramebuffer(page: Page) {
   await expect
     .poll(
       async () => {
@@ -515,7 +515,7 @@ async function waitForBoxFramebuffer(page: Page) {
         }
         return false;
       },
-      { timeout: 60_000, message: "the Box noVNC framebuffer must be ready" },
+      { timeout: 60_000, message: "the Boat noVNC framebuffer must be ready" },
     )
     .toBe(true);
 }

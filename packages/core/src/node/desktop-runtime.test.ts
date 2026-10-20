@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -9,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -219,6 +221,8 @@ describe("shared Linux desktop lifecycle", () => {
   it("drops libnss_wrapper before the screen browser exec", () => {
     const command = ensureScreenCommand(0, "bot", "token");
     expect(command).toContain("*libnss_wrapper.so");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
+    expect(command).toContain("${_rest%%[: ]*}");
     expect(command).toContain("unset LD_PRELOAD");
     expect(command).toContain(
       '[ "$(cat /tmp/cortexai-agent-hub/desktop-targets/view-1)" != "$desired" ]',
@@ -250,6 +254,85 @@ describe("shared Linux desktop lifecycle", () => {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
       "[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)",
     );
+  });
+
+  it.each([false, true])(
+    "repairs an empty control route or fails if publication fails (failPublish=%s)",
+    async (failPublish) => {
+      const root = mkdtempSync("/tmp/cortexai-agent-hub-control-");
+      roots.push(root);
+      mkdirSync(path.join(root, "sockets"));
+      mkdirSync(path.join(root, "desktop-targets"));
+      const socket = path.join(
+        root,
+        `sockets/control-1-${createHash("sha256").update("human").digest("hex").slice(0, 32)}`,
+      );
+      const input = net.createServer();
+      const gateway = net.createServer((connection) => connection.destroy());
+      await new Promise<void>((resolve) => input.listen(socket, resolve));
+      await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+      const address = gateway.address();
+      if (!address || typeof address === "string") throw new Error("expected port");
+      writeFileSync(path.join(root, "control-token-1"), "human");
+      writeFileSync(path.join(root, "desktop-targets/control-1"), "");
+      try {
+        const script = interactiveScreenCommand(true, "human", {
+          ...screenPorts(0),
+          controlPort: String(address.port),
+        })
+          .replaceAll("/tmp/cortexai-agent-hub", root)
+          .replaceAll("/usr/share/novnc", root);
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            [
+              ...(failPublish ? ["mv() { return 1; }"] : []),
+              "pgrep() { return 0; }",
+              "pkill() { echo unexpected-stop >&2; return 1; }",
+              "flock() { :; }",
+              "command() { echo /fake/websockify; }",
+              script,
+            ].join("\n"),
+          ],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        expect(result.status, result.stderr).toBe(failPublish ? 1 : 0);
+        expect(result.stderr).not.toContain("unexpected-stop");
+        if (failPublish) return;
+        expect(readFileSync(path.join(root, "desktop-targets/control-1"), "utf8")).toBe(
+          `human: unix_socket:${socket}\n`,
+        );
+      } finally {
+        input.close();
+        gateway.close();
+      }
+    },
+  );
+
+  it("fails without publishing a token when the input server cannot start", () => {
+    const root = mkdtempSync("/tmp/cortexai-agent-hub-control-");
+    roots.push(root);
+    const script = interactiveScreenCommand(true, "human").replaceAll(
+      "/tmp/cortexai-agent-hub",
+      root,
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "nohup() { return 1; }",
+          "pgrep() { return 1; }",
+          "pkill() { :; }",
+          "sleep() { :; }",
+          script,
+        ].join("\n"),
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    expect(result.status).not.toBe(0);
+    expect(() => readFileSync(path.join(root, "control-token-1"))).toThrow();
   });
 
   it("stops the terminal with the control lease and the screen transports", () => {

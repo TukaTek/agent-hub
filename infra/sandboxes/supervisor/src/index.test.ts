@@ -11,6 +11,7 @@ import {
   MAX_SUPERVISOR_REQUEST_BYTES,
   resolveDockerSocketPath,
   supervisorApp,
+  supervisorFileWriteSchema,
   supervisorRequestBodyLimit,
   waitForScreenReady,
 } from "./index.js";
@@ -22,6 +23,7 @@ import {
   ComputerControlUnavailableError,
   clearComputerScreenRegistry,
   completeReleasedScreen,
+  completeWarmReleasedScreen,
   computerCommandEnv,
   computerControlTimeoutMs,
   containerActionStep,
@@ -37,6 +39,7 @@ import {
   isComputerControlUnavailable,
   nextScreenIndex,
   normalizeWorkspaceRelative,
+  oldestIdleScreen,
   parseObservation,
   preferComputerControl,
   releaseAssignedScreen,
@@ -220,6 +223,26 @@ describe("sandbox supervisor HTTP boundary", () => {
     }
   });
 
+  it("allows configured uploads through both the file schema and body guard", () => {
+    const limit = 25 * 1024 * 1024;
+    const content = Buffer.alloc(20 * 1024 * 1024).toString("base64");
+    const payload = { path: "attachments/large.txt", content };
+    expect(supervisorFileWriteSchema(limit).safeParse(payload).success).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(
+      supervisorRequestBodyLimit("POST", "/computers/id/files", limit),
+    );
+    expect(supervisorFileWriteSchema().safeParse(payload).success).toBe(false);
+    expect(
+      supervisorFileWriteSchema(limit).safeParse({
+        path: "large.txt",
+        content: "A".repeat(Math.ceil(limit / 3) * 4 + 1),
+      }).success,
+    ).toBe(false);
+    expect(supervisorRequestBodyLimit("POST", "/computers/id/actions", limit)).toBe(
+      MAX_SUPERVISOR_REQUEST_BYTES,
+    );
+  });
+
   it("keeps the larger file-write allowance scoped to that exact POST route", () => {
     expect(supervisorRequestBodyLimit("POST", "/computers/id/files")).toBe(
       MAX_SUPERVISOR_FILE_REQUEST_BYTES,
@@ -330,6 +353,33 @@ describe("sandbox supervisor input containment", () => {
       argv: ["env", "DISPLAY=:1", "xdotool", "click", "--repeat", "20", "4"],
     });
   });
+
+  it.each([undefined, "/home/cortexai-agent-hub/.browser-profiles/bot-test"])(
+    "opens workspace files in the assigned browser (profile=%s)",
+    (profile) => {
+      for (const [file, url] of [
+        [
+          "screenshots/it's #1%.png",
+          "file:///home/cortexai-agent-hub/screenshots/it's%20%231%25.png",
+        ],
+        ["/image.png", "file:///home/cortexai-agent-hub/image.png"],
+        [
+          "screenshots/back\\slash.png",
+          "file:///home/cortexai-agent-hub/screenshots/back/slash.png",
+        ],
+      ] as const) {
+        expect(containerActionStep({ kind: "open", path: file }, ":2", profile)).toEqual({
+          argv: [
+            "env",
+            "DISPLAY=:2",
+            ...(profile ? [`CORTEXAI_AGENT_HUB_BROWSER_PROFILE=${profile}`] : []),
+            "cortexai-agent-hub-browser",
+            url,
+          ],
+        });
+      }
+    },
+  );
 
   it("routes Docker browser aliases through the safe wrapper on every display", () => {
     for (const application of DOCKER_BROWSER_ALIASES) {
@@ -706,23 +756,32 @@ describe("sandbox supervisor input containment", () => {
     expect(nextScreenIndex(assigned, "bot-9")).toBe(8);
   });
 
-  it("retains a screen slot when teardown fails", async () => {
-    const assigned = new Map<string, ScreenAssignment>();
-    expect(nextScreenIndex(assigned, "writer")).toBe(0);
-    expect(releaseAssignedScreen(assigned, "writer")).toBe(0);
+  it.each([false, true])(
+    "retains a screen slot when teardown fails (retainBrowser=%s)",
+    async (retainBrowser) => {
+      const assigned = new Map<string, ScreenAssignment>();
+      expect(nextScreenIndex(assigned, "writer")).toBe(0);
+      expect(releaseAssignedScreen(assigned, "writer")).toBe(0);
 
-    await expect(
-      teardownReleasedScreen(assigned, "writer", 0, async () => ({
-        code: 1,
-        stderr: "browser still running",
-      })),
-    ).rejects.toThrow("browser still running");
+      await expect(
+        teardownReleasedScreen(
+          assigned,
+          "writer",
+          0,
+          async () => ({
+            code: 1,
+            stderr: "browser still running",
+          }),
+          { retainBrowser },
+        ),
+      ).rejects.toThrow("browser still running");
 
-    expect(assigned.get("writer")).toEqual({ index: 0, releasing: true });
-    expect(() => nextScreenIndex(assigned, "writer")).toThrow(/still being released/);
-    expect(nextScreenIndex(assigned, "researcher")).toBe(1);
-    expect(releaseAssignedScreen(assigned, "writer")).toBe(0);
-  });
+      expect(assigned.get("writer")).toEqual({ index: 0, releasing: true });
+      expect(() => nextScreenIndex(assigned, "writer")).toThrow(/still being released/);
+      expect(nextScreenIndex(assigned, "researcher")).toBe(1);
+      expect(releaseAssignedScreen(assigned, "writer")).toBe(0);
+    },
+  );
 
   it("clears all screen assignments when a container stops so slots can be reused", () => {
     const registry = new Map<string, Map<string, ScreenAssignment>>();
@@ -798,6 +857,49 @@ describe("sandbox supervisor input containment", () => {
     completeReleasedScreen(assigned, "writer", 0);
   });
 
+  it("retains warm slots, clears their idle marker on reuse, and evicts only the oldest idle Team slot", () => {
+    const assigned = new Map<string, ScreenAssignment>();
+    expect(nextScreenIndex(assigned, "writer", "run-1:1")).toBe(0);
+    assigned.get("writer")!.viewToken = "view-token";
+    expect(releaseAssignedScreen(assigned, "writer", "run-1:1")).toBe(0);
+    completeWarmReleasedScreen(assigned, "writer", 0, 100);
+
+    expect(assigned.get("writer")).toEqual({
+      index: 0,
+      leaseId: "run-1:1",
+      viewToken: "view-token",
+      idleAt: 100,
+    });
+    expect(nextScreenIndex(assigned, "researcher", "team-run:1", 3)).toBe(1);
+    expect(releaseAssignedScreen(assigned, "researcher", "team-run:1")).toBe(1);
+    completeWarmReleasedScreen(assigned, "researcher", 1, 200);
+    expect(nextScreenIndex(assigned, "controlled", "run-controlled:1", 3)).toBe(2);
+    assigned.get("controlled")!.controlled = true;
+    assigned.get("controlled")!.idleAt = 50;
+    expect(oldestIdleScreen(assigned, 3)).toBe("writer");
+
+    expect(nextScreenIndex(assigned, "writer", "run-2:2", 3)).toBe(0);
+    expect(assigned.get("writer")?.idleAt).toBeUndefined();
+    expect(oldestIdleScreen(assigned, 3)).toBe("researcher");
+    expect(releaseAssignedScreen(assigned, "writer", "run-1:1")).toBeUndefined();
+    expect(assigned.get("writer")?.releasing).toBeUndefined();
+  });
+
+  it("keeps a warm slot evictable when a viewer repeats the completed run lease", () => {
+    const assigned = new Map<string, ScreenAssignment>();
+    expect(nextScreenIndex(assigned, "writer", "run-1:1", 1)).toBe(0);
+    expect(releaseAssignedScreen(assigned, "writer", "run-1:1")).toBe(0);
+    completeWarmReleasedScreen(assigned, "writer", 0, 100);
+
+    expect(nextScreenIndex(assigned, "writer", "run-1:1", 1)).toBe(0);
+    expect(assigned.get("writer")?.idleAt).toBe(100);
+    expect(oldestIdleScreen(assigned, 1)).toBe("writer");
+
+    expect(nextScreenIndex(assigned, "writer", "run-2:2", 1)).toBe(0);
+    expect(assigned.get("writer")?.idleAt).toBeUndefined();
+    expect(oldestIdleScreen(assigned, 1)).toBeUndefined();
+  });
+
   it("releases a retained screen after the same run resumes", () => {
     const assigned = new Map<string, ScreenAssignment>();
     expect(nextScreenIndex(assigned, "writer", "run-1:1")).toBe(0);
@@ -844,8 +946,69 @@ describe("sandbox supervisor input containment", () => {
     expect(extra).toContain(`--user-data-dir=${browserProfilePathForScreen("researcher")}`);
   });
 
+  it.each([0, 1])("releases screen %i access without stopping its browser or display", (index) => {
+    const stop = screenReleaseStopCommand(index, {
+      hasRegistry: true,
+      cancelRunWork: false,
+      screenId: "writer",
+    });
+    expect(stop).toContain(`sockets/view-${index + 1}-`);
+    expect(stop).toContain(`sockets/control-${index + 1}-`);
+    expect(stop).toContain(`rm -f /tmp/cortexai-agent-hub/control-token-${index + 1}`);
+    expect(stop).not.toContain("--user-data-dir");
+    expect(stop).not.toContain("browser-profile-");
+    expect(stop).not.toContain("browser-launch-");
+    expect(stop).not.toContain("Xvfb");
+    expect(stop).not.toContain("fluxbox");
+    expect(stop).not.toContain("websockify");
+  });
+
+  it("retains the browser slot and fence across run and idle viewer releases", async () => {
+    const assigned = new Map<string, ScreenAssignment>();
+    nextScreenIndex(assigned, "researcher", "other-run:1");
+    expect(nextScreenIndex(assigned, "writer", "run-1:2")).toBe(1);
+    assigned.get("writer")!.viewToken = "old-view-token";
+    assigned.get("writer")!.controlled = true;
+    assigned.get("writer")!.controlToken = "old-control-token";
+    expect(releaseAssignedScreen(assigned, "writer", "run-1:2")).toBe(1);
+    await teardownReleasedScreen(assigned, "writer", 1, async () => ({ code: 0, stderr: "" }), {
+      retainBrowser: true,
+    });
+
+    expect(assigned.get("writer")).toEqual({
+      index: 1,
+      leaseId: "run-1:2",
+      idleAt: expect.any(Number),
+    });
+    expect(oldestIdleScreen(assigned, 2)).toBe("writer");
+    expect(nextScreenIndex(assigned, "new-bot", "new-run:3")).toBe(2);
+    expect(() => nextScreenIndex(assigned, "writer", "screen-view-writer:0")).toThrow(
+      /owned by a newer execution/,
+    );
+    expect(releaseAssignedScreen(assigned, "writer", "screen-view-writer:0")).toBeUndefined();
+    expect(nextScreenIndex(assigned, "writer", "run-2:4")).toBe(1);
+    expect(releaseAssignedScreen(assigned, "writer", "run-1:2")).toBeUndefined();
+    expect(releaseAssignedScreen(assigned, "writer", "run-2:4")).toBe(1);
+    await teardownReleasedScreen(assigned, "writer", 1, async () => ({ code: 0, stderr: "" }), {
+      retainBrowser: true,
+    });
+    expect(assigned.get("researcher")).toEqual({ index: 0, leaseId: "other-run:1" });
+
+    const idle = new Map<string, ScreenAssignment>();
+    nextScreenIndex(idle, "writer", "screen-view-writer:0");
+    expect(releaseAssignedScreen(idle, "writer", "screen-view-writer:0")).toBe(0);
+    await teardownReleasedScreen(idle, "writer", 0, async () => ({ code: 0, stderr: "" }), {
+      retainBrowser: true,
+    });
+    expect(nextScreenIndex(idle, "writer", "run-3:5")).toBe(0);
+  });
+
   it("on cancel, stops only the matching bot's primary-display Chromium", () => {
-    const stop = stopExtraScreenCommand(0, "writer");
+    const stop = screenReleaseStopCommand(0, {
+      hasRegistry: true,
+      cancelRunWork: true,
+      screenId: "writer",
+    });
     expect(stop).toContain(`--user-data-dir=${browserProfilePathForScreen("writer")}`);
     expect(stop).not.toContain(`--user-data-dir=${browserProfilePathForScreen("researcher")}`);
     expect(stop).not.toContain("Xvfb");

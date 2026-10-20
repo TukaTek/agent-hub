@@ -14,6 +14,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
+import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import {
@@ -85,6 +86,7 @@ export interface AuthEnv {
   signupAllowlist: string | undefined;
   extraOrigins?: string[];
   email?: TransactionalEmailProvider;
+  logger?: BetterAuthOptions["logger"];
   onEmailError?: (error: unknown) => void;
   beforeDeleteUser?: (userId: string) => Promise<void>;
   hub?: HubAuthConfig;
@@ -307,6 +309,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
   const discovery = env.oidc ? oidcDiscovery(env.oidc) : undefined;
   const auth = betterAuth({
     appName: "CortexAI Agent Hub",
+    logger: env.logger,
     secret: env.secret,
     baseURL: env.baseURL,
     trustedOrigins: [...buildTrustedOrigins(env), "cortexai-agent-hub://"],

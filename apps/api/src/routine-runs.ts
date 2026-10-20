@@ -4,6 +4,7 @@ import type {
   RoutineRun,
   RoutineRunCursor,
 } from "@cortexai-agent-hub/contracts";
+import { runFailureError } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { Prisma } from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
@@ -46,6 +47,7 @@ export async function listRoutineRuns(
       threadId: true,
       thread: { select: { groupId: true } },
       status: true,
+      error: true,
       createdAt: true,
       startedAt: true,
       completedAt: true,
@@ -79,6 +81,7 @@ export async function listRoutineRuns(
       botId: run.botId,
       groupId: run.thread.groupId,
       status: run.status as RoutineRun["status"],
+      error: runFailureError({ type: `run.${run.status}`, payload: { error: run.error } }),
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() ?? null,
       completedAt: run.completedAt?.toISOString() ?? null,

@@ -9,6 +9,7 @@ import {
   boundedSandboxCommandTimeoutMs,
   readBoundedJsonResponse,
   resolveSupervisorToken,
+  uploadSizeFromEnv,
 } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { getLogger, SERVICE_NAMES } from "@cortexai-agent-hub/logging";
@@ -26,6 +27,7 @@ import {
   COMPUTER_UID,
   COMPUTER_USER,
   computerBridgeNameFor,
+  computerDnsMatches,
   computerHomeStorage,
   computerNetworkCreateOptions,
   computerNetworkNameFor,
@@ -40,6 +42,7 @@ import {
   legacyNetworkOwnedSolelyBy,
   publishedLoopbackControlHostPort,
   resolveComputerControlEndpoint,
+  resolveComputerDns,
   resolveComputerEgressMode,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
@@ -59,6 +62,7 @@ import {
   browserProfilePathForScreen,
   ComputerControlUnavailableError,
   clearComputerScreenRegistry,
+  completeWarmReleasedScreen,
   computerActionSchema,
   computerCommandEnv,
   computerControlTimeoutMs,
@@ -73,6 +77,7 @@ import {
   isComputerControlUnavailable,
   nextScreenIndex,
   normalizeWorkspaceRelative,
+  oldestIdleScreen,
   parseObservation,
   preferComputerControl,
   quiesceBrowserProfilesCommand,
@@ -106,6 +111,7 @@ let dockerApiVersion: string | undefined;
 const supervisorToken = resolveSupervisorToken(process.env);
 const screenNetworkMode = resolveScreenNetworkMode(process.env.SANDBOX_SCREEN_NETWORK);
 const computerEgressMode = resolveComputerEgressMode();
+const computerDns = resolveComputerDns();
 const teamScreenLimit = resolveTeamScreenLimit();
 // Host-run supervisors on Docker Desktop (macOS/Windows) cannot reach container
 // IPs, so computer control must use a published loopback port instead.
@@ -115,13 +121,33 @@ const computerScreens = new Map<string, Map<string, ScreenAssignment>>();
 const computerScreenBoots = new Map<string, string>();
 
 export const MAX_SUPERVISOR_REQUEST_BYTES = 1024 * 1024;
-export const MAX_SUPERVISOR_FILE_REQUEST_BYTES = 16 * 1024 * 1024 + 64 * 1024;
+const maxUploadSizeBytes = uploadSizeFromEnv(process.env);
 
-/** Keep normal control requests small while allowing the existing 16 MiB file payload. */
-export function supervisorRequestBodyLimit(method: string, pathname: string): number {
+function supervisorFileContentLimit(maxBytes: number): number {
+  // Preserve the internal workspace-write allowance as well as configured chat uploads.
+  return Math.max(16 * 1024 * 1024, Math.ceil(maxBytes / 3) * 4);
+}
+
+export const MAX_SUPERVISOR_FILE_REQUEST_BYTES =
+  supervisorFileContentLimit(maxUploadSizeBytes) + 64 * 1024;
+
+/** Keep normal control requests small; file writes also need a base64 JSON envelope. */
+export function supervisorRequestBodyLimit(
+  method: string,
+  pathname: string,
+  maxBytes = maxUploadSizeBytes,
+): number {
   return method === "POST" && /^\/computers\/[^/]+\/files\/?$/.test(pathname)
-    ? MAX_SUPERVISOR_FILE_REQUEST_BYTES
+    ? supervisorFileContentLimit(maxBytes) + 64 * 1024
     : MAX_SUPERVISOR_REQUEST_BYTES;
+}
+
+export function supervisorFileWriteSchema(maxBytes = maxUploadSizeBytes) {
+  return z.object({
+    path: z.string(),
+    content: z.string().max(supervisorFileContentLimit(maxBytes)),
+    executable: z.boolean().optional(),
+  });
 }
 
 const limitSupervisorRequestBody: MiddlewareHandler = async (c, next) => {
@@ -244,6 +270,8 @@ app.post("/computers", async (c) => {
               (reconnect || Boolean(info.NetworkSettings?.Networks?.[networkMode])))) &&
           restrictedBridgeOk &&
           info.Config.User === computerUser &&
+          // DNS is fixed when a container is created, so a changed setting replaces it.
+          computerDnsMatches(info.HostConfig.Dns, computerDns) &&
           controlPublishOk &&
           (!storage.homeVolume || homeVolumeMatches(info.HostConfig.Mounts, storage.homeVolume)) &&
           // A computer that cannot rejoin its network is replaced below instead.
@@ -314,6 +342,7 @@ app.post("/computers", async (c) => {
               networkMode,
               controlToken: randomUUID(),
               publishControlPort: controlViaLoopback,
+              dns: computerDns,
             }),
           );
           await container.start();
@@ -484,6 +513,12 @@ app.post("/computers/:id/browser", async (c) => {
             z.discriminatedUnion("kind", [
               z.object({ kind: z.literal("click"), ref: z.string().min(1).max(200) }),
               z.object({
+                kind: z.literal("upload"),
+                ref: z.string().min(1).max(200),
+                paths: z.array(z.string().min(1).max(1024)).min(1).max(10),
+                roots: z.array(z.string().min(1).max(1024)).max(2).optional(),
+              }),
+              z.object({
                 kind: z.enum(["fill", "type"]),
                 ref: z.string().min(1).max(200),
                 text: z.string().max(32_000),
@@ -524,6 +559,11 @@ app.post("/computers/:id/browser", async (c) => {
           "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           "CORTEXAI_AGENT_HUB_BROWSER_WATCH_STDIN=1",
           "CORTEXAI_AGENT_HUB_BROWSER_ARGS_STDIN=1",
+          ...(process.env.CORTEXAI_AGENT_HUB_BROWSER_UPLOAD_MAX_BYTES !== undefined
+            ? [
+                `CORTEXAI_AGENT_HUB_BROWSER_UPLOAD_MAX_BYTES=${process.env.CORTEXAI_AGENT_HUB_BROWSER_UPLOAD_MAX_BYTES}`,
+              ]
+            : []),
         ],
         timeoutMs: 25_000,
         signal,
@@ -705,13 +745,7 @@ app.get("/computers/:id/files", async (c) => {
 });
 
 app.post("/computers/:id/files", async (c) => {
-  const body = z
-    .object({
-      path: z.string(),
-      content: z.string().max(16 * 1024 * 1024),
-      executable: z.boolean().optional(),
-    })
-    .parse(await c.req.json());
+  const body = supervisorFileWriteSchema().parse(await c.req.json());
   try {
     const { container } = await managedContainer(
       c.req.param("id"),
@@ -741,6 +775,7 @@ app.get("/computers/:id/screen", async (c) => {
       c.req.header("x-cortexai-agent-hub-space-id"),
       c.req.header("x-cortexai-agent-hub-screen-id"),
       c.req.header("x-cortexai-agent-hub-screen-lease-id"),
+      false,
     );
     const screenUrl = await publishedScreenUrl(container, info, layout.viewPort);
     return c.redirect(screenUrlWithToken(screenUrl, viewToken));
@@ -771,9 +806,31 @@ app.post("/computers/:id/screen-mode", async (c) => {
     const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
     const { container, info } = await managedContainer(id, botId, spaceId);
     const { layout, viewToken } = await withComputerScreenLock(id, async () => {
-      const screen = await ensureManagedScreen(id, container, botId, screenId, screenLeaseId);
+      const screen = await ensureManagedScreen(
+        id,
+        container,
+        botId,
+        screenId,
+        screenLeaseId,
+        !body.interactive && body.revokeControl === false,
+      );
       if (body.interactive || body.revokeControl !== false) {
-        await setInteractiveScreen(container, body.interactive, body.controlToken, screen.layout);
+        const changed = await setInteractiveScreen(
+          container,
+          body.interactive,
+          body.controlToken,
+          screen.layout,
+        );
+        const slot = computerScreens.get(id)?.get(screen.screenKey);
+        if (slot && changed) {
+          if (body.interactive) {
+            slot.controlled = true;
+            slot.controlToken = body.controlToken;
+          } else {
+            delete slot.controlled;
+            delete slot.controlToken;
+          }
+        }
       }
       return screen;
     });
@@ -815,6 +872,7 @@ app.post("/computers/:id/terminal", async (c) => {
         botId,
         c.req.header("x-cortexai-agent-hub-screen-id"),
         c.req.header("x-cortexai-agent-hub-screen-lease-id"),
+        false,
       );
       const result = await runContainerCommand(
         container,
@@ -899,6 +957,8 @@ app.delete("/computers/:id/screen", async (c) => {
       c.req.header("x-cortexai-agent-hub-bot-id") ||
       id;
     const cancelRunWork = c.req.header("x-cortexai-agent-hub-cancel-run-work") === "1";
+    const keepScreenWarm =
+      c.req.header("x-cortexai-agent-hub-preserve-screen") === "1" && !cancelRunWork;
     const screenLeaseId = c.req.header("x-cortexai-agent-hub-screen-lease-id");
 
     await withComputerScreenLock(id, async () => {
@@ -910,21 +970,53 @@ app.delete("/computers/:id/screen", async (c) => {
         info.State?.StartedAt,
       );
       const index = assigned ? releaseAssignedScreen(assigned, screenId, screenLeaseId) : undefined;
-      const stop = screenReleaseStopCommand(index, {
-        hasRegistry: Boolean(assigned),
-        cancelRunWork,
-        screenId,
-      });
-      if (assigned && index !== undefined) {
-        await teardownReleasedScreen(assigned, screenId, index, () =>
-          runContainerCommand(container, ["bash", "-c", stop]),
-        );
-      } else if (stop) {
-        const result = await runContainerCommand(container, ["bash", "-c", stop]);
-        if (result.code !== 0) {
-          throw new Error(result.stderr || "computer screen failed to stop");
+      if (keepScreenWarm) {
+        if (assigned && index !== undefined) {
+          let controlReleased = false;
+          try {
+            const control = await runContainerCommand(container, [
+              "bash",
+              "-c",
+              interactiveScreenCommand(false, undefined, screenPorts(index)),
+            ]);
+            controlReleased = control.code === 0;
+          } catch {
+            // If revocation is uncertain, full teardown is safer than retaining control.
+          }
+          if (controlReleased) {
+            completeWarmReleasedScreen(assigned, screenId, index, Date.now());
+          } else {
+            await teardownReleasedScreen(assigned, screenId, index, () =>
+              runContainerCommand(container, [
+                "bash",
+                "-c",
+                stopExtraScreenCommand(index, screenId),
+              ]),
+            );
+          }
+        }
+      } else {
+        const stop = screenReleaseStopCommand(index, {
+          hasRegistry: Boolean(assigned),
+          cancelRunWork,
+          screenId,
+        });
+        if (assigned && index !== undefined) {
+          await teardownReleasedScreen(
+            assigned,
+            screenId,
+            index,
+            () => runContainerCommand(container, ["bash", "-c", stop]),
+            { retainBrowser: !cancelRunWork },
+          );
+        } else if (stop) {
+          const result = await runContainerCommand(container, ["bash", "-c", stop]);
+          if (result.code !== 0) {
+            throw new Error(result.stderr || "computer screen failed to stop");
+          }
         }
       }
+      // Ordinary release retains the browser's slot; cancellation can empty the registry.
       // Keep an emptied registry. A missing one means the supervisor lost track of the
       // container, and the next screen request then resets every desktop process in it.
     });
@@ -1187,10 +1279,11 @@ async function managedScreen(
   spaceId: string | undefined,
   screenId: string | undefined,
   screenLeaseId: string | undefined,
+  restoreControl = true,
 ) {
   const { container } = await managedContainer(id, botId, spaceId);
   return withComputerScreenLock(id, () =>
-    ensureManagedScreen(id, container, botId, screenId, screenLeaseId),
+    ensureManagedScreen(id, container, botId, screenId, screenLeaseId, restoreControl),
   );
 }
 
@@ -1200,10 +1293,18 @@ async function ensureManagedScreen(
   botId: string | undefined,
   screenId: string | undefined,
   screenLeaseId: string | undefined,
+  restoreControl = true,
 ) {
   // Docker can restart independently of the supervisor's screen lock.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const screen = await ensureManagedScreenAttempt(id, container, botId, screenId, screenLeaseId);
+    const screen = await ensureManagedScreenAttempt(
+      id,
+      container,
+      botId,
+      screenId,
+      screenLeaseId,
+      restoreControl,
+    );
     const info = await container.inspect();
     if (info.State?.StartedAt === screen.info.State?.StartedAt) {
       // Confirm the pending boot marker only after setup completes against the same boot.
@@ -1226,6 +1327,7 @@ async function ensureManagedScreenAttempt(
   botId: string | undefined,
   screenId: string | undefined,
   screenLeaseId: string | undefined,
+  restoreControl = true,
 ) {
   // Callers hold the screen lock: an inspection before waiting can describe an older boot.
   const info = await container.inspect();
@@ -1248,6 +1350,28 @@ async function ensureManagedScreenAttempt(
     if (info.State?.StartedAt) computerScreenBoots.set(id, info.State.StartedAt);
   }
   const screenKey = screenId || botId || id;
+  if (!assigned.has(screenKey)) {
+    const usedIndexes = new Set([...assigned.values()].map((slot) => slot.index));
+    const hasFreeIndex = Array.from({ length: teamScreenLimit }, (_, index) => index).some(
+      (index) => !usedIndexes.has(index),
+    );
+    if (!hasFreeIndex) {
+      const evictedScreenId = oldestIdleScreen(assigned, teamScreenLimit);
+      const evicted = evictedScreenId ? assigned.get(evictedScreenId) : undefined;
+      if (evictedScreenId && evicted) {
+        const evictedIndex = releaseAssignedScreen(assigned, evictedScreenId, evicted.leaseId);
+        if (evictedIndex !== undefined) {
+          await teardownReleasedScreen(assigned, evictedScreenId, evictedIndex, () =>
+            runContainerCommand(container, [
+              "bash",
+              "-c",
+              stopExtraScreenCommand(evictedIndex, evictedScreenId),
+            ]),
+          );
+        }
+      }
+    }
+  }
   const index = nextScreenIndex(assigned, screenKey, screenLeaseId, teamScreenLimit);
   const layout = screenPorts(index);
   const slot = assigned.get(screenKey)!;
@@ -1271,6 +1395,10 @@ async function ensureManagedScreenAttempt(
     if (assigned.size === 0) clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
     const detail = [ensured.stderr, browserLog.stdout].filter(Boolean).join("\n").trim();
     throw new Error(detail || `computer screen ${layout.display} failed to start`);
+  }
+  // Ensuring the view must also recover an active human lease after its VNC process dies.
+  if (restoreControl && slot.controlToken) {
+    await setInteractiveScreen(container, true, slot.controlToken, layout);
   }
   return {
     container,

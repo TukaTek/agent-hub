@@ -11,7 +11,6 @@ import {
 } from "@cortexai-agent-hub/core";
 import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../lib/auth";
@@ -42,7 +41,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const hubUnavailable = t`Sign-in is temporarily unavailable, CortexAI Hub can't be reached`;
   const ssoErrors: Record<SsoCallbackError, string> = {
     sso_expired: t`Your sign-in expired. Try again.`,
@@ -125,7 +123,6 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   function changeEmail() {
     setStep("email");
     setPassword("");
-    setShowPassword(false);
     setError(null);
     emailRef.current?.focus();
   }
@@ -417,32 +414,19 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               <Label htmlFor={passwordFieldId} className="text-muted-foreground">
                 <Trans>Password</Trans>
               </Label>
-              <div className="relative">
-                <Input
-                  ref={passwordRef}
-                  id={passwordFieldId}
-                  name="password"
-                  autoComplete={mode === "in" ? "current-password" : "new-password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t`Password`}
-                  type={showPassword ? "text" : "password"}
-                  required
-                  minLength={8}
-                  className={`${fieldClass} pr-12`}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowPassword((shown) => !shown)}
-                  aria-label={showPassword ? t`Hide password` : t`Show password`}
-                  aria-pressed={showPassword}
-                  className="absolute inset-y-0 right-2 my-auto text-muted-foreground"
-                >
-                  {showPassword ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
+              <Input
+                ref={passwordRef}
+                id={passwordFieldId}
+                name="password"
+                autoComplete={mode === "in" ? "current-password" : "new-password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t`Password`}
+                type="password"
+                required
+                minLength={8}
+                className={fieldClass}
+              />
               {mode === "in" && reset?.passwordReset ? (
                 <div className="mt-2 text-right text-sm">
                   <Link to="/forgot-password" className="font-medium text-foreground">

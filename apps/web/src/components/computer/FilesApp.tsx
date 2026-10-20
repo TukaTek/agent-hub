@@ -1,9 +1,10 @@
-import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
+import { attachmentSizeLabel } from "@cortexai-agent-hub/contracts";
 import { Button } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowLeft, Download, File, Folder, Upload } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { decodeArtifactBase64, downloadArtifactBytes } from "../../lib/artifact-open";
+import { getMaxUploadSizeBytes } from "../../lib/bootstrap";
 import {
   basename,
   type ComputerFileEntry,
@@ -143,8 +144,10 @@ export function FilesApp({
     setError(null);
     try {
       for (const file of Array.from(files)) {
-        if (file.size > ATTACHMENT_MAX_BYTES) {
-          throw new Error(t`File is too large to upload.`);
+        if (file.size > getMaxUploadSizeBytes()) {
+          throw new Error(
+            t`File exceeds the ${attachmentSizeLabel(getMaxUploadSizeBytes())} upload limit.`,
+          );
         }
         await rpc.computer.uploadFile({
           botId,

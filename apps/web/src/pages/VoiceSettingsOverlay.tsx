@@ -5,6 +5,11 @@ import type {
   VoiceStatus,
 } from "@cortexai-agent-hub/contracts";
 import {
+  DEFAULT_COMPATIBLE_STT_MODEL,
+  DEFAULT_COMPATIBLE_TTS_MODEL,
+  OPENAI_COMPATIBLE_PROVIDER_ID,
+} from "@cortexai-agent-hub/contracts";
+import {
   Button,
   Dialog,
   DialogClose,
@@ -19,7 +24,7 @@ import {
 import { Trans, useLingui } from "@lingui/react/macro";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { rpc } from "../lib/rpc";
+import { useBoundSpaceId, useSpaceRpc } from "../lib/space-rpc";
 import { errorText } from "../lib/user-error";
 
 export function VoiceSettingsOverlay({
@@ -32,10 +37,15 @@ export function VoiceSettingsOverlay({
   embedded?: boolean;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const rpc = useSpaceRpc();
+  const spaceId = useBoundSpaceId();
   const { t } = useLingui();
   const apiKeyId = useId();
   const voiceSelectId = useId();
   const speechModelId = useId();
+  const baseUrlId = useId();
+  const ttsModelId = useId();
+  const sttModelId = useId();
   const [catalog, setCatalog] = useState<VoiceCatalogEntry[]>([]);
   const [credentials, setCredentials] = useState<VoiceCredential[]>([]);
   const [status, setStatus] = useState<VoiceStatus | null>(null);
@@ -44,6 +54,9 @@ export function VoiceSettingsOverlay({
   const [apiKey, setApiKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [speechModel, setSpeechModel] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [ttsModel, setTtsModel] = useState("");
+  const [sttModel, setSttModel] = useState("");
   const speechModelSave = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<"connect" | "disconnect" | "voice" | "test" | null>(null);
@@ -76,6 +89,9 @@ export function VoiceSettingsOverlay({
     const activeVoice = cred?.voiceId ?? "";
     setVoiceId(activeVoice);
     setSpeechModel(cred?.speechModel ?? "");
+    setBaseUrl(cred?.endpoint ?? "");
+    setTtsModel(cred?.ttsModel ?? "");
+    setSttModel(cred?.sttModel ?? "");
     if (cred) {
       const listed = await rpc.voice.voices({ provider: selected });
       setVoices(listed);
@@ -98,8 +114,11 @@ export function VoiceSettingsOverlay({
     [voices, voiceId],
   );
 
+  const selfHosted = selected?.id === OPENAI_COMPATIBLE_PROVIDER_ID;
+  const canConnect = selfHosted ? Boolean(baseUrl.trim()) : apiKey.trim().length >= 8;
+
   async function connectKey() {
-    if (!selected || !apiKey.trim()) return;
+    if (!selected || !canConnect) return;
     setError(null);
     setNotice(null);
     markPending("connect");
@@ -107,8 +126,16 @@ export function VoiceSettingsOverlay({
       await rpc.voice.connect({
         provider: selected.id,
         apiKey: apiKey.trim(),
+        // The server drops this voice when the address or speech model really changed.
         voiceId: voiceId || undefined,
         ...(selected.id === "fish-audio" ? { speechModel: speechModel.trim() } : {}),
+        ...(selfHosted
+          ? {
+              baseUrl: baseUrl.trim(),
+              ttsModel: ttsModel.trim() || undefined,
+              sttModel: sttModel.trim() || undefined,
+            }
+          : {}),
       });
       setApiKey("");
       await refresh(selected.id);
@@ -177,7 +204,7 @@ export function VoiceSettingsOverlay({
     markPending("test");
     try {
       const { speaker } = await import("../lib/tts.js");
-      await speaker.speak(t`Hi, this is how I'll sound when I read replies out loud.`);
+      await speaker.speak(t`Hi, this is how I'll sound when I read replies out loud.`, { spaceId });
       if (speaker.state.error) {
         setError(speaker.state.error);
         return;
@@ -269,6 +296,22 @@ export function VoiceSettingsOverlay({
           {notice ? <p className="mb-4 text-sm text-success">{notice}</p> : null}
           {selected ? (
             <>
+              {selfHosted ? (
+                <Field className="mt-5">
+                  <FieldLabel htmlFor={baseUrlId}>
+                    <Trans>Server URL</Trans>
+                  </FieldLabel>
+                  <Input
+                    id={baseUrlId}
+                    type="url"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={baseUrl}
+                    onChange={(event) => setBaseUrl(event.target.value)}
+                    placeholder="http://192.168.1.10:8880/v1"
+                  />
+                </Field>
+              ) : null}
               <Field className="mt-5">
                 <FieldLabel htmlFor={apiKeyId}>
                   <Trans>API key</Trans>
@@ -279,17 +322,57 @@ export function VoiceSettingsOverlay({
                   autoComplete="new-password"
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={credential ? t`Paste a replacement key` : t`Paste your API key`}
+                  placeholder={
+                    selfHosted
+                      ? t`Optional`
+                      : credential
+                        ? t`Paste a replacement key`
+                        : t`Paste your API key`
+                  }
                 />
               </Field>
+              {selfHosted ? (
+                <>
+                  <Field className="mt-5">
+                    <FieldLabel htmlFor={ttsModelId}>
+                      <Trans>Speech model</Trans>
+                    </FieldLabel>
+                    <Input
+                      id={ttsModelId}
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={ttsModel}
+                      maxLength={200}
+                      onChange={(event) => setTtsModel(event.target.value)}
+                      placeholder={DEFAULT_COMPATIBLE_TTS_MODEL}
+                    />
+                  </Field>
+                  <Field className="mt-5">
+                    <FieldLabel htmlFor={sttModelId}>
+                      <Trans>Transcription model</Trans>
+                    </FieldLabel>
+                    <Input
+                      id={sttModelId}
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={sttModel}
+                      maxLength={200}
+                      onChange={(event) => setSttModel(event.target.value)}
+                      placeholder={DEFAULT_COMPATIBLE_STT_MODEL}
+                    />
+                  </Field>
+                </>
+              ) : null}
               <Button
                 type="button"
                 className="mt-3"
-                disabled={busy || apiKey.trim().length < 8}
+                disabled={busy || !canConnect}
                 onClick={() => void connectKey()}
               >
                 {pending === "connect" ? (
                   <Trans>Connecting…</Trans>
+                ) : credential && selfHosted ? (
+                  <Trans>Reconnect</Trans>
                 ) : credential ? (
                   <Trans>Replace key</Trans>
                 ) : (

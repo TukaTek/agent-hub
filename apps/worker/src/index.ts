@@ -1,6 +1,7 @@
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
 import { ComposioConnector, IntegrationProviderSettings } from "@cortexai-agent-hub/adapters";
 import { createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
+import { phoneCallSettings } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { createWorkerSecretStore } from "./secret-store.js";
 
@@ -48,10 +49,14 @@ import {
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
   sandboxProviderOptionsFromEnv,
+  shutdownPiTelemetry,
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
-import { resolveEncryptionKey, resolveSupervisorToken } from "@cortexai-agent-hub/core";
-
+import {
+  resolveEncryptionKey,
+  resolveSupervisorToken,
+  uploadSizeFromEnv,
+} from "@cortexai-agent-hub/core";
 import {
   createBoardEvents,
   createDb,
@@ -213,6 +218,7 @@ async function main() {
           }
         : {},
     ),
+    maxUploadSizeBytes: uploadSizeFromEnv(process.env),
     prisma,
     runtime,
     // Live per-account Codex catalog; never refreshes or writes credentials.
@@ -251,6 +257,7 @@ async function main() {
     events,
     onTicketChange: ticketChanges,
     ticketBoardEnabled,
+    ...phoneCallSettings(process.env),
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
@@ -328,6 +335,7 @@ async function main() {
       await prisma.$disconnect().catch(() => undefined);
       await pool.end().catch(() => undefined);
     } finally {
+      await shutdownPiTelemetry();
       await logger.flush({ timeoutMs: 2_000 });
     }
   };

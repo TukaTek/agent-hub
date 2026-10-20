@@ -31,7 +31,10 @@ shutdown() {
 trap shutdown TERM INT
 
 if [[ -n "${CORTEXAI_AGENT_HUB_COMPUTER_CONTROL_TOKEN:-}" ]]; then
-  /usr/local/bin/cortexai-agent-hub-computer-control >/tmp/cortexai-agent-hub/control.log 2>&1 &
+  while true; do
+    /usr/local/bin/cortexai-agent-hub-computer-control
+    sleep 1
+  done >/tmp/cortexai-agent-hub/control.log 2>&1 &
 fi
 
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1

@@ -1,4 +1,5 @@
 import type { Bot, BotSection } from "@cortexai-agent-hub/contracts";
+import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@cortexai-agent-hub/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -201,7 +202,10 @@ export function PickerInfoDialog({
           </DialogTitle>
           <DialogDescription>
             {topic === "group" ? (
-              <Trans>Shared chat with 2-6 bots. They all reply in the same thread.</Trans>
+              <Trans>
+                Shared chat with {GROUP_MEMBER_MIN}-{GROUP_MEMBER_MAX} bots. They all reply in the
+                same thread.
+              </Trans>
             ) : (
               <Trans>Private workspace with its own bots and groups.</Trans>
             )}
@@ -491,7 +495,7 @@ export function DeleteItemDialog({
   onConfirm,
 }: {
   item: { name: string };
-  noun: "group" | "routine" | "space";
+  noun: "group" | "routine" | "section" | "space";
   description?: React.ReactNode;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
@@ -530,7 +534,9 @@ export function DeleteItemDialog({
                       ? t`Could not delete group`
                       : noun === "space"
                         ? t`Could not delete space`
-                        : t`Could not delete routine`,
+                        : noun === "section"
+                          ? t`Could not delete section`
+                          : t`Could not delete routine`,
                   ),
                 );
                 setDeleting(false);

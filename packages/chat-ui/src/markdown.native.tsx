@@ -8,9 +8,10 @@ import type {
 import Markdown, {
   createMarkdownIt,
   FitImage,
+  renderRules as libraryRenderRules,
   MarkdownStream,
 } from "@ronradtke/react-native-markdown-display";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { createContext, memo, useCallback, useContext, useMemo, useState } from "react";
 import type {
   NativeScrollEvent,
@@ -50,6 +51,7 @@ import {
 } from "./markdown";
 
 import { useMarkdownLinkAppOrigin, useMarkdownLinkCopy } from "./markdown-link-prompt";
+import { isMermaidFence } from "./mermaid";
 
 function keepMarkdownLinkToken(_url: string) {
   return true;
@@ -64,6 +66,9 @@ const WORD_JOINER = "\u2060";
 // around the link.
 const ISOLATE = "\u2068";
 const POP_ISOLATE = "\u2069";
+
+// The library's own rules, for the blocks this file only sometimes replaces.
+const libraryRules = libraryRenderRules(Text);
 
 // One shared parser: the Markdown components memoize on its identity.
 const markdownParser = createMarkdownIt();
@@ -600,6 +605,8 @@ function TableScrollView({
   const [scrollX, setScrollX] = useState(0);
   const widths = useMemo(() => fittedColumnWidths(table, viewportWidth), [table, viewportWidth]);
   const contentWidth = widths.reduce((total, width) => total + width, 0);
+  // A table that fits isn't a scroll area, so VoiceOver shouldn't announce scroll bars on it.
+  const overflows = viewportWidth > 0 && contentWidth > viewportWidth;
   const tableLayout = useMemo(
     () => ({ widths, viewportWidth, scrollX }),
     [widths, viewportWidth, scrollX],
@@ -623,6 +630,9 @@ function TableScrollView({
       <TableLayoutContext.Provider value={tableLayout}>
         <ScrollView
           horizontal
+          scrollEnabled={overflows}
+          showsHorizontalScrollIndicator={overflows}
+          showsVerticalScrollIndicator={false}
           nestedScrollEnabled
           directionalLockEnabled
           scrollEventThrottle={16}
@@ -633,12 +643,46 @@ function TableScrollView({
           ]}
           contentContainerStyle={{ flexGrow: 0 }}
         >
-          <View style={{ width: contentWidth, minWidth: contentWidth, flexShrink: 0 }}>
+          <View
+            // iOS won't scroll while an ancestor, like a pressable bubble, holds the touch.
+            onStartShouldSetResponder={() => Platform.OS === "ios" && overflows}
+            style={{ width: contentWidth, minWidth: contentWidth, flexShrink: 0 }}
+          >
             {children}
           </View>
         </ScrollView>
       </TableLayoutContext.Provider>
     </View>
+  );
+}
+
+export type MermaidDiagramProps = {
+  source: string;
+  palette: ColorTokens;
+  colorScheme: ResolvedAppearance;
+  /** The code block, for the app to show while the diagram draws or when it cannot. */
+  fallback: ReactNode;
+};
+
+/**
+ * Draws a ```mermaid fence. Mermaid needs a browser engine, so the app supplies the drawing
+ * (a WebView); without one, a fence stays a code block.
+ */
+export const MermaidDiagramContext = createContext<ComponentType<MermaidDiagramProps> | null>(null);
+
+const DiagramSurfaceContext = createContext<{
+  streaming: boolean;
+  palette: ColorTokens;
+  colorScheme: ResolvedAppearance;
+}>({ streaming: false, palette: darkTokens, colorScheme: "dark" });
+
+function MermaidFence({ source, fallback }: { source: string; fallback: ReactNode }) {
+  const Diagram = useContext(MermaidDiagramContext);
+  const { streaming, palette, colorScheme } = useContext(DiagramSurfaceContext);
+  // A streaming reply may still be writing the fence, so it reads as code until the reply ends.
+  if (!Diagram || streaming || !source.trim()) return fallback;
+  return (
+    <Diagram source={source} palette={palette} colorScheme={colorScheme} fallback={fallback} />
   );
 }
 
@@ -700,6 +744,15 @@ function listItemRule(
 // outside the text flow and collapses the bubble height, overlapping later messages.
 const renderRules: RenderRules = {
   list_item: listItemRule,
+  fence: (node, children, parents, styleMap, ...extra) => {
+    const codeBlock = libraryRules.fence?.(node, children, parents, styleMap, ...extra);
+    if (!isMermaidFence(typeof node.sourceInfo === "string" ? node.sourceInfo : "")) {
+      return codeBlock;
+    }
+    return (
+      <MermaidFence key={node.key} source={node.content.replace(/\n$/, "")} fallback={codeBlock} />
+    );
+  },
   textgroup: (node, children, _parent, styleMap) => (
     <Text
       key={node.key}
@@ -1022,6 +1075,10 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 }: ChatMarkdownProps & { palette?: ColorTokens; colorScheme?: ResolvedAppearance }) {
   const openLink = useNativeLinkConfirm();
   const styles = useMemo(() => markdownStyles(palette), [palette]);
+  const diagramSurface = useMemo(
+    () => ({ streaming, palette, colorScheme }),
+    [streaming, palette, colorScheme],
+  );
   const sharedProps = {
     colorScheme,
     markdownit: markdownParser,
@@ -1037,13 +1094,15 @@ export const ChatMarkdown = memo(function ChatMarkdown({
     <OpenLinkContext.Provider value={openLink}>
       <View style={layout.wrap}>
         <LinkFaviconsPausedContext.Provider value={streaming}>
-          {streaming ? (
-            <MarkdownStream {...sharedProps} cursorColor={palette.mutedForeground} streaming>
-              {children}
-            </MarkdownStream>
-          ) : (
-            <Markdown {...sharedProps}>{children}</Markdown>
-          )}
+          <DiagramSurfaceContext.Provider value={diagramSurface}>
+            {streaming ? (
+              <MarkdownStream {...sharedProps} cursorColor={palette.mutedForeground} streaming>
+                {children}
+              </MarkdownStream>
+            ) : (
+              <Markdown {...sharedProps}>{children}</Markdown>
+            )}
+          </DiagramSurfaceContext.Provider>
         </LinkFaviconsPausedContext.Provider>
       </View>
     </OpenLinkContext.Provider>
@@ -1098,5 +1157,4 @@ const layout = StyleSheet.create({
 
 export type { ChatMarkdownProps, LinkFavicons } from "./markdown";
 export { LinkFaviconsContext, RemoteImagesContext } from "./markdown";
-
 export { MarkdownLinkPromptProvider } from "./markdown-link-prompt";

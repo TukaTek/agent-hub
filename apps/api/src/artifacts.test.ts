@@ -4,6 +4,7 @@ import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactListCursorError,
+  createOwnedArtifact,
   deleteArtifactFamily,
   listSpaceArtifacts,
   storeInboundAttachment,
@@ -381,6 +382,62 @@ describe("deleteArtifactFamily", () => {
   });
 });
 
+describe("configured artifact upload limit", () => {
+  it.each([
+    ["song.mp3", "audio/mp3", "audio/mpeg"],
+    ["song.wav", "audio/x-wav", "audio/wav"],
+    ["song.ogg", "", "audio/ogg"],
+    ["song.m4a", "audio/x-m4a", "audio/mp4"],
+    ["song.m4a", "audio/aac", "audio/mp4"],
+  ])("normalizes %s uploads before validation/storage", async (name, mimeType, expected) => {
+    const reachedStorage = new Error("reached storage");
+    const put = vi.fn().mockRejectedValue(reachedStorage);
+    const deps = { prisma: {} as PrismaClient, artifacts: { put } as unknown as ArtifactStore };
+    await expect(
+      createOwnedArtifact(deps, actor, {
+        botId: "bot-1",
+        name,
+        mimeType,
+        contentBase64: "YXVkaW8=",
+      }),
+    ).rejects.toBe(reachedStorage);
+    expect(put).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: expected }),
+      expect.anything(),
+    );
+    put.mockClear();
+    await expect(
+      createOwnedArtifact(deps, actor, {
+        botId: "bot-1",
+        name: "song.flac",
+        mimeType: "audio/flac",
+        contentBase64: "YXVkaW8=",
+      }),
+    ).rejects.toThrow("Unsupported attachment type");
+    expect(put).not.toHaveBeenCalled();
+  });
+  it("rejects oversized attachments before storage and accepts uploads above the old cap", async () => {
+    const stored = new Error("reached storage");
+    const put = vi.fn().mockRejectedValue(stored);
+    const deps = {
+      prisma: {} as PrismaClient,
+      artifacts: { put } as unknown as ArtifactStore,
+      maxUploadSizeBytes: 12 * 1024 * 1024,
+    };
+    const upload = (size: number) =>
+      createOwnedArtifact(deps, actor, {
+        botId: "bot-1",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        contentBase64: Buffer.alloc(size).toString("base64"),
+      });
+    await expect(upload(deps.maxUploadSizeBytes + 1)).rejects.toThrow("12 MiB limit");
+    expect(put).not.toHaveBeenCalled();
+    await expect(upload(deps.maxUploadSizeBytes)).rejects.toBe(stored);
+    expect(put).toHaveBeenCalledOnce();
+  });
+});
+
 describe("storeInboundAttachment", () => {
   const reachedStorage = new Error("reached storage");
   function setup(existing: unknown = null) {
@@ -389,6 +446,7 @@ describe("storeInboundAttachment", () => {
     const deps = {
       prisma: { artifact: { findFirst } } as unknown as PrismaClient,
       artifacts: { put } as unknown as ArtifactStore,
+      maxUploadSizeBytes: 8,
     };
     const store = (attachment: Parameters<typeof storeInboundAttachment>[2]["attachment"]) =>
       storeInboundAttachment(deps, actor, { botId: "bot-1", attachment, clientNonce: "nonce-1" });
@@ -419,22 +477,22 @@ describe("storeInboundAttachment", () => {
   it("skips the download when the platform reports an oversize file", async () => {
     const { put, store } = setup();
     const fetch = vi.fn(async () => new Uint8Array(4));
-    await expect(
-      store({ name: "a.png", mimeType: "image/png", size: ATTACHMENT_MAX_BYTES + 1, fetch }),
-    ).rejects.toThrow("limit");
+    await expect(store({ name: "a.png", mimeType: "image/png", size: 9, fetch })).rejects.toThrow(
+      "limit",
+    );
     expect(fetch).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
   });
 
   it("rejects unsupported types and oversize downloads before storage", async () => {
     const { put, store } = setup();
-    const fetch = vi.fn(async () => new Uint8Array(ATTACHMENT_MAX_BYTES + 1));
+    const fetch = vi.fn(async () => new Uint8Array(9));
     await expect(
       store({ name: "a.exe", mimeType: "application/x-msdownload", fetch }),
     ).rejects.toThrow("Unsupported");
     await expect(store({ name: "a.png", mimeType: "image/png", fetch })).rejects.toThrow("limit");
     expect(put).not.toHaveBeenCalled();
-    fetch.mockResolvedValueOnce(new Uint8Array(ATTACHMENT_MAX_BYTES));
+    fetch.mockResolvedValueOnce(new Uint8Array(8));
     await expect(store({ name: "a.png", mimeType: "image/png", fetch })).rejects.toBe(
       reachedStorage,
     );
@@ -450,6 +508,9 @@ describe("storeInboundAttachment", () => {
         fetch,
       }),
     ).rejects.toThrow("Unsupported");
+    await expect(store({ name: "report.docm", mimeType: "audio/mpeg", fetch })).rejects.toThrow(
+      "Unsupported",
+    );
     expect(fetch).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
   });

@@ -15,6 +15,7 @@ const lifecycle = vi.hoisted(() => ({ computer: undefined as ComputerRef | undef
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComputerLifecycleModule>()),
   acquireComputerExecutionLease: async () => null,
+  acquireDedicatedScreenLeaseFence: async () => null,
   provisionComputer: async () => lifecycle.computer,
 }));
 
@@ -120,6 +121,7 @@ async function runTool(tool: ToolCase, outcome: Outcome) {
     yield { type: "done" as const, text: "Done" };
   });
   const prisma = {
+    user: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),

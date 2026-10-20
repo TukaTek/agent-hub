@@ -7,6 +7,7 @@ import type {
   ComputerRef,
   PortableFile,
   SandboxProvider,
+  WorkspaceDirectoryRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import { ATTACHMENT_MAX_BYTES, type ComputerMode } from "@cortexai-agent-hub/contracts";
 import { parseScreenLeaseId } from "@cortexai-agent-hub/core";
@@ -130,19 +131,12 @@ export async function ensureComputerWorkspaceLayout(
   context: AdapterContext,
 ): Promise<void> {
   if (scope !== "team" || !botId) return;
-  let exitCode: number | undefined;
-  let stderr = "";
-  for await (const event of sandbox.execute(
+  await manageComputerWorkspaceDirectories(
+    sandbox,
     computer,
-    { argv: ["mkdir", "-p", "shared", teamBotWorkspaceDirectory(botId)] },
+    { action: "ensure", paths: ["shared", teamBotWorkspaceDirectory(botId)] },
     context,
-  )) {
-    if (event.type === "stderr") stderr += event.data;
-    if (event.type === "exit") exitCode = event.code;
-  }
-  if (exitCode !== 0) {
-    throw new Error(`Could not prepare Team Computer folders${stderr ? `: ${stderr.trim()}` : ""}`);
-  }
+  );
 }
 
 const TEAM_BOT_FOLDER_NAME = /^[A-Za-z0-9_-]+$/;
@@ -199,6 +193,14 @@ export async function removeComputerWorkspaceDirectories(
   names: readonly string[],
   context: AdapterContext,
 ): Promise<void> {
+  if (sandbox.workspaceDirectories) {
+    await sandbox.workspaceDirectories(
+      computer,
+      { action: "remove", parent, names: [...names] },
+      context,
+    );
+    return;
+  }
   let exitCode: number | undefined;
   let stderr = "";
   for await (const event of sandbox.execute(
@@ -322,6 +324,8 @@ async function listTeamBotEntries(
   let exitCode: number | undefined;
   let stdout = "";
   let stderr = "";
+  if (sandbox.workspaceDirectories)
+    return sandbox.workspaceDirectories(computer, { action: "list" }, context);
   for await (const event of sandbox.execute(
     computer,
     { argv: ["bash", "-eu", "-c", LIST_TEAM_BOT_ENTRIES], cwd: "." },
@@ -431,4 +435,38 @@ async function writePortableFile(root: string, file: PortableFile) {
   }
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, file.content, { mode: file.executable ? 0o700 : 0o600 });
+}
+
+/** Route directory intents through native providers while preserving the Unix fallback. */
+export async function manageComputerWorkspaceDirectories(
+  sandbox: SandboxProvider,
+  computer: ComputerRef,
+  request: WorkspaceDirectoryRequest,
+  context: AdapterContext,
+): Promise<string[]> {
+  if (sandbox.workspaceDirectories) return sandbox.workspaceDirectories(computer, request, context);
+  if (request.action === "list") return listTeamBotEntries(sandbox, computer, context);
+  if (request.action === "remove") {
+    await removeComputerWorkspaceDirectories(
+      sandbox,
+      computer,
+      request.parent,
+      request.names,
+      context,
+    );
+    return [];
+  }
+  let code: number | undefined;
+  let stderr = "";
+  for await (const event of sandbox.execute(
+    computer,
+    { argv: ["mkdir", "-p", ...request.paths] },
+    context,
+  )) {
+    if (event.type === "exit") code = event.code;
+    if (event.type === "stderr") stderr += event.data;
+  }
+  if (code !== 0)
+    throw new Error(`Could not prepare Team Computer folders${stderr ? `: ${stderr.trim()}` : ""}`);
+  return [];
 }

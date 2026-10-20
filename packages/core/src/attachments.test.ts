@@ -19,6 +19,49 @@ const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 describe("attachment helpers", () => {
+  it.each([
+    ["mp3", "audio/mpeg"],
+    ["wav", "audio/wav"],
+    ["ogg", "audio/ogg"],
+    ["m4a", "audio/mp4"],
+  ])("infers and round-trips %s audio", (extension, mimeType) => {
+    for (const reported of [undefined, "", mimeType, "application/octet-stream"]) {
+      expect(inferAttachmentMimeType(`song.${extension}`, reported)).toBe(mimeType);
+      expect(inferAttachmentMimeType(`SONG.${extension.toUpperCase()}`, reported)).toBe(mimeType);
+    }
+    expect(attachmentExtensionForMimeType(mimeType)).toBe(`.${extension}`);
+    expect(() => validateAttachmentMimeType(mimeType)).not.toThrow();
+  });
+  it.each([
+    ["audio/mp3", "audio/mpeg"],
+    ["audio/x-wav", "audio/wav"],
+    ["audio/wave", "audio/wav"],
+    ["audio/vnd.wave", "audio/wav"],
+    ["audio/x-m4a", "audio/mp4"],
+  ])("normalizes %s without needing an extension", (alias, expected) => {
+    expect(inferAttachmentMimeType("clip", alias)).toBe(expected);
+  });
+  it("uses M4A's container for an AAC codec report but does not allow raw AAC or FLAC", () => {
+    expect(inferAttachmentMimeType("clip.m4a", "audio/aac")).toBe("audio/mp4");
+    expect(inferAttachmentMimeType("clip.m4a", "audio/x-m4a")).toBe("audio/mp4");
+    expect(inferAttachmentMimeType("clip.aac", "audio/aac")).toBeNull();
+    expect(inferAttachmentMimeType("clip.flac", "audio/flac")).toBeNull();
+    expect(attachmentExtensionForMimeType("audio/flac")).toBe("");
+    for (const reportedType of ["__proto__", "constructor", "toString"]) {
+      expect(inferAttachmentMimeType("clip", reportedType)).toBeNull();
+    }
+  });
+  it("enforces configured limits before and after base64 decoding", () => {
+    const limit = 1024 * 1024;
+    for (const size of [limit, limit + 1, limit + 3]) {
+      const payload = Buffer.alloc(size).toString("base64");
+      if (size === limit) expect(decodeAttachmentBase64(payload, limit).byteLength).toBe(limit);
+      else expect(() => decodeAttachmentBase64(payload, limit)).toThrow("1 MiB limit");
+    }
+    const larger = Buffer.alloc(11 * limit).toString("base64");
+    expect(decodeAttachmentBase64(larger, 12 * limit).byteLength).toBe(11 * limit);
+    expect(() => decodeAttachmentBase64(larger)).toThrow("10 MiB limit");
+  });
   it("accepts zip archives and rejects unsupported mime types and empty payloads", () => {
     expect(() => validateAttachmentMimeType("application/zip")).not.toThrow();
     expect(() => validateAttachmentMimeType("application/x-msdownload")).toThrow(
@@ -111,6 +154,14 @@ describe("attachment helpers", () => {
     }
   });
 
+  it.each(["audio/mp3", "audio/x-wav", "audio/x-m4a", "application/x-zip-compressed"])(
+    "keeps a macro-enabled Office file out when it is reported as %s",
+    (reportedType) => {
+      expect(inferAttachmentMimeType("report.docm", reportedType)).toBeNull();
+      expect(inferAttachmentMimeType("book.XLSM", reportedType)).toBeNull();
+    },
+  );
+
   it("trusts a known extension over the browser-reported type", () => {
     // Windows reports .csv as Excel and .zip as x-zip-compressed.
     expect(inferAttachmentMimeType("data.csv", "application/vnd.ms-excel")).toBe("text/csv");
@@ -132,7 +183,7 @@ describe("attachment helpers", () => {
   it("gives every allowed type an extension that round-trips", () => {
     for (const mimeType of ATTACHMENT_ALLOWED_MIME_TYPES) {
       const extension = attachmentExtensionForMimeType(mimeType);
-      expect(extension).toMatch(/^\.[a-z]+$/);
+      expect(extension).toMatch(/^\.[a-z0-9]+$/);
       expect(inferAttachmentMimeType(`f${extension}`)).toBe(mimeType);
     }
     for (const extension of supportedAttachmentExtensions()) {
@@ -182,6 +233,9 @@ describe("attachment helpers", () => {
       },
     ];
     expect(userTurnMessageForRun("messaging", "run-new", messages)).toEqual(messages[1]);
+    expect(userTurnMessageForRun("reaction", "run-new", messages, "message-new")).toEqual(
+      messages[1],
+    );
     expect(userTurnMessageForRun("routine", "run-new", messages)).toBeUndefined();
     expect(userTurnMessageForRun("user", "run-old", messages)).toEqual(messages[0]);
     expect(userTurnMessageForRun("user", "run-new", messages)).toEqual(messages[1]);

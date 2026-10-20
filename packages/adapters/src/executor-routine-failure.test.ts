@@ -6,6 +6,7 @@ import { createRunExecutor } from "./executor.js";
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComputerLifecycleModule>()),
   acquireComputerExecutionLease: async () => null,
+  acquireDedicatedScreenLeaseFence: async () => null,
   provisionComputer: async () => ({ id: "computer-1", kind: "desktop" }),
 }));
 
@@ -46,6 +47,7 @@ async function failRun(scenario: Scenario) {
     throw scenario.error;
   });
   const prisma = {
+    user: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),
@@ -319,6 +321,7 @@ function retryHarness(scenario: RetryScenario = {}) {
     },
   };
   const prisma = {
+    user: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => failed),
       findFirst: vi.fn(async ({ select }: { select: { id?: boolean } }) =>

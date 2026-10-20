@@ -1,6 +1,8 @@
 import { parseTicketRef } from "@cortexai-agent-hub/contracts";
+import { escapePromptData } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { coerceTicketStatus } from "@cortexai-agent-hub/db";
+import { byteLength, truncateUtf8 } from "./utf8.js";
 
 const MAX_TICKET_CONTEXT_BYTES = 4 * 1024;
 
@@ -131,25 +133,4 @@ export async function loadAgentTicketContext(
     });
   }
   return renderTicketContext(entries, maxBytes);
-}
-
-function escapePromptData(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function byteLength(value: string): number {
-  return Buffer.byteLength(value, "utf8");
-}
-
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (maxBytes <= 0) return "";
-  const characters: string[] = [];
-  let bytes = 0;
-  for (const character of value) {
-    const characterBytes = byteLength(character);
-    if (bytes + characterBytes > maxBytes) break;
-    characters.push(character);
-    bytes += characterBytes;
-  }
-  return characters.join("");
 }

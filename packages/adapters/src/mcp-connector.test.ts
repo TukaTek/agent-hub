@@ -381,7 +381,7 @@ describe("MCP connector session cache", () => {
     }
   });
 
-  it("propagates bounded read-only delivery hints without changing old tools or approval hints", async () => {
+  it("propagates bounded read-only delivery hints and read-only annotations without changing old tools", async () => {
     const state = {
       failNext: false,
       initializations: 0,
@@ -413,7 +413,9 @@ describe("MCP connector session cache", () => {
     expect(tools.find((t) => t.name.endsWith("__paged"))?.maxResultChars).toBe(120_000);
     expect(tools.find((t) => t.name.endsWith("__old"))?.maxResultChars).toBeUndefined();
     expect(tools.find((t) => t.name.endsWith("__write"))?.maxResultChars).toBeUndefined();
-    expect(tools.every((t) => t.readOnly === undefined)).toBe(true);
+    expect(tools.find((t) => t.name.endsWith("__paged"))?.readOnly).toBe(true);
+    expect(tools.find((t) => t.name.endsWith("__old"))?.readOnly).toBeUndefined();
+    expect(tools.find((t) => t.name.endsWith("__write"))?.readOnly).toBe(false);
   });
   it("keeps large MCP schemas out of the initial runtime tool catalog", async () => {
     const state = {
@@ -1262,4 +1264,35 @@ describe("allowlistDrift", () => {
       stringAllowedCount: 1,
     });
   });
+});
+
+it("preserves explicit MCP read-only annotations for unattended consumers", async () => {
+  const state = {
+    failNext: false,
+    initializations: 0,
+    tools: [
+      { name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+      { name: "write", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+      { name: "unknown", inputSchema: { type: "object" } },
+    ],
+  };
+  vi.stubGlobal("fetch", mcpFetch(state));
+  const connector = new McpConnector(
+    { botMcpServer: { findMany: vi.fn(async () => [ASSIGNMENT]) } } as never,
+    new EncryptedSecretStore("fake-key"),
+    { network: TEST_NETWORK },
+  );
+  try {
+    const tools = await connector.discoverTools({
+      operationId: "test",
+      traceId: "test",
+      spaceId: "w1",
+      userId: "u1",
+      botId: "bot-1",
+      signal: new AbortController().signal,
+    });
+    expect(tools.map((tool) => tool.readOnly)).toEqual([true, false, undefined]);
+  } finally {
+    await connector.close();
+  }
 });

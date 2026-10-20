@@ -25,8 +25,8 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
   await openNewGroup(page);
   await page.locator("label:has-text('Name') input").fill("Draft team");
   const panel = page.getByTestId("side-panel");
-  await panel.getByRole("button", { name: "Researcher" }).click();
-  await panel.getByRole("button", { name: "Research Writer" }).click();
+  await panel.getByRole("checkbox", { name: "Add Researcher to the group" }).click();
+  await panel.getByRole("checkbox", { name: "Add Research Writer to the group" }).click();
   await captureScreenshot(page, testInfo, "group-creation");
   await page.route("**/rpc/groups/create", async (route) => route.abort("failed"));
   await page.getByRole("button", { name: "Create group", exact: true }).click();
@@ -94,12 +94,12 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
     .getByRole("button", { name: /^Draft team/ })
     .locator(".cortexai-agent-hub-group-avatar");
   await expect(groupAvatar).toBeVisible();
-  await expect(groupAvatar.locator(".cortexai-agent-hub-bot-avatar")).toHaveCount(2);
+  await expect(groupAvatar.locator(".cortexai-agent-hub-organic-avatar")).toHaveCount(2);
   const workingAvatar = groupAvatar.locator('[data-working="true"]');
   await expect(workingAvatar).toHaveCount(1);
-  await expect(workingAvatar.locator(".cortexai-agent-hub-bot-avatar-ring")).toHaveCSS(
+  await expect(workingAvatar.locator(".cortexai-agent-hub-organic-avatar-body-working")).toHaveCSS(
     "animation-name",
-    "cortexai-agent-hub-avatar-spin",
+    /cortexai-agent-hub-organic-/,
   );
   await captureScreenshot(page, testInfo, "group-avatar-active");
   await page.unroute("**/rpc/groups/list");
@@ -129,7 +129,9 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
   await sidebar.getByRole("button", { name: /^Review team/ }).click();
   await expect(page.getByRole("combobox", { name: "Message Review team" })).toHaveValue("");
   await sidebar.getByRole("button", { name: /^Draft team/ }).click();
-  await expect(page.getByRole("combobox", { name: "Message Draft team" })).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "Message Draft team" })).toHaveValue(
+    "@Researcher unfinished draft",
+  );
 
   const composer = page.getByRole("combobox", { name: "Message Draft team" });
   await composer.fill("@Res");

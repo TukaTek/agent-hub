@@ -170,6 +170,7 @@ export class McpConnector implements ConnectorProvider {
               description: tool.description ?? tool.name,
               inputSchema: tool.inputSchema as Record<string, unknown>,
               ...mcpResultBudget(tool),
+              readOnly: tool.annotations?.readOnlyHint,
               route: {
                 connectorId: "mcp",
                 resourceId: assignment.serverId,

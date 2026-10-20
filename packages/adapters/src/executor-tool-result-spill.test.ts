@@ -1,6 +1,6 @@
 import type { AgentRunRequest, ComputerRef } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
-import { BoxSandboxProvider } from "./box-sandbox.js";
+import { BoatSandboxProvider } from "./boat-sandbox.js";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
 import { CreateOSSandboxProvider } from "./createos-sandbox.js";
 import { DaytonaSandboxProvider } from "./daytona-sandbox.js";
@@ -16,6 +16,7 @@ const lifecycle = vi.hoisted(() => ({ computer: undefined as ComputerRef | undef
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComputerLifecycleModule>()),
   acquireComputerExecutionLease: async () => null,
+  acquireDedicatedScreenLeaseFence: async () => null,
   provisionComputer: async () => lifecycle.computer,
 }));
 
@@ -107,6 +108,7 @@ async function runScenario(
     yield { type: "done" as const, text: "Done" };
   });
   const prisma = {
+    user: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),
@@ -301,7 +303,7 @@ describe("oversized tool results spill to the bot computer", () => {
     ["docker", () => new DockerSandboxProvider("http://supervisor.invalid", "token")],
     ["createos", () => new CreateOSSandboxProvider({ apiKey: "key" })],
     ["e2b", () => new E2BSandboxProvider("key")],
-    ["box", () => new BoxSandboxProvider({ apiKey: "key" }, {} as never)],
+    ["boat", () => new BoatSandboxProvider({ apiKey: "key" }, {} as never)],
     ["daytona", () => new DaytonaSandboxProvider({ apiKey: "key" }, {} as never)],
     ["fake", () => new FakeSandboxProvider()],
     ["desktop", () => new DesktopSandboxProvider()],

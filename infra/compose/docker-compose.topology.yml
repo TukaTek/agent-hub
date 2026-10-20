@@ -33,6 +33,7 @@ services:
     command: ["pnpm", "--filter", "@cortexai-agent-hub/sandbox-supervisor", "start"]
     user: root
     environment:
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
       NODE_ENV: production
       DATA_DIR: /data
       SUPERVISOR_HOST: "0.0.0.0"
@@ -45,6 +46,7 @@ services:
       CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT: ${CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT:-2048}
       SANDBOX_SCREEN_NETWORK: isolated
       SANDBOX_COMPUTER_EGRESS: ${SANDBOX_COMPUTER_EGRESS:-open}
+      SANDBOX_COMPUTER_DNS: ${SANDBOX_COMPUTER_DNS:-}
       LOG_LEVEL: info
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -71,6 +73,7 @@ services:
       - -lc
       - pnpm --filter @cortexai-agent-hub/db exec prisma migrate deploy && pnpm --filter @cortexai-agent-hub/api start
     environment: &app-environment
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
       NODE_ENV: production
       DATABASE_URL: postgres://cortexai-agent-hub:topology-only-password@postgres:5432/cortexai-agent-hub
       DATA_DIR: /data
