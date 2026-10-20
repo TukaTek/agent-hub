@@ -24,8 +24,11 @@ describe("rebrand", () => {
     [".rk-chat-markdown-copy {", ".cortexai-agent-hub-chat-markdown-copy {"],
     ["width: var(--rk-diagram-width);", "width: var(--cortexai-agent-hub-diagram-width);"],
     ['markOnce("rk:renderer:shell-ready")', 'markOnce("cortexai-agent-hub:renderer:shell-ready")'],
-    ['sessionStorage.getItem("rk:preload-recovery")', 'sessionStorage.getItem("cortexai-agent-hub:preload-recovery")'],
-    ["`rk:main:${name}`", "`cortexai-agent-hub:main:${name}`"],
+    [
+      'sessionStorage.getItem("rk:preload-recovery")',
+      'sessionStorage.getItem("cortexai-agent-hub:preload-recovery")',
+    ],
+    ['mark("rk:main:window-shown")', 'mark("cortexai-agent-hub:main:window-shown")'],
   ])("maps %s", (input, output) => {
     expect(rebrand(input)).toEqual({ text: output, unresolved: [] });
   });
