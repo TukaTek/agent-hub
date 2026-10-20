@@ -335,12 +335,13 @@ describe("sandbox idle", () => {
 
 describe("maximum active lifetime", () => {
   const now = new Date("2026-01-01T12:00:00.000Z").getTime();
-  const longAgo = new Date(now - DEFAULT_COMPUTER_MAX_ACTIVE_MS - 1);
+  const capMs = 2 * 60 * 60 * 1000;
+  const longAgo = new Date(now - capMs - 1);
   const recently = new Date(now - 60_000);
 
   beforeEach(() => {
     vi.stubEnv("SANDBOX_IDLE_MS", undefined);
-    vi.stubEnv("COMPUTER_MAX_ACTIVE_MS", undefined);
+    vi.stubEnv("COMPUTER_MAX_ACTIVE_MS", String(capMs));
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(now);
   });
@@ -349,6 +350,20 @@ describe("maximum active lifetime", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("leaves the cap off when COMPUTER_MAX_ACTIVE_MS is unset", async () => {
+    vi.stubEnv("COMPUTER_MAX_ACTIVE_MS", undefined);
+    expect(DEFAULT_COMPUTER_MAX_ACTIVE_MS).toBe(0);
+    const harness = idleHarness({
+      billsWhileRunning: true,
+      runningSince: longAgo,
+      backgroundWorkProbeCode: 0,
+    });
+    await touchRunningComputer(harness.deps, harness.computer);
+    await sleepComputerIfIdle(harness.deps, harness.computer.id);
+    expect(harness.sandbox.keepAlive).toHaveBeenCalledTimes(2);
+    expect(harness.sandbox.stop).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -490,7 +505,7 @@ describe("maximum active lifetime", () => {
       where.status.in.includes("waiting_takeover") ? { id: "waiting-for-user" } : null,
     );
 
-    for (const elapsed of [0, 60_000, DEFAULT_COMPUTER_MAX_ACTIVE_MS + 60_000]) {
+    for (const elapsed of [0, 60_000, capMs + 60_000]) {
       vi.setSystemTime(now + elapsed);
       Object.assign(harness.computer, {
         controlLeaseExpiresAt: new Date(now + elapsed + 60_000),

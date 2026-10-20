@@ -15,11 +15,11 @@ import { isSandboxGoneError } from "./e2b-sandbox.js";
 
 export const DEFAULT_SANDBOX_IDLE_MS = 10 * 60 * 1000;
 /**
- * Default uptime cap for providers that bill while running. Background work and viewers
+ * Uptime cap for providers that bill while running. Background work and viewers
  * do not extend it; executing runs and active user control leases defer suspension.
- * COMPUTER_MAX_ACTIVE_MS configures the limit; 0 disables it.
+ * COMPUTER_MAX_ACTIVE_MS configures the limit; it is off (0) unless set.
  */
-export const DEFAULT_COMPUTER_MAX_ACTIVE_MS = 2 * 60 * 60 * 1000;
+export const DEFAULT_COMPUTER_MAX_ACTIVE_MS = 0;
 const EXECUTING_RUN_STATUSES = ["leased", "running"] as const;
 const BACKGROUND_WORK_MARKER_PREFIX = "/tmp/cortexai-agent-hub-background-";
 const BACKGROUND_WORK_IDLE_SENTINEL = "cortexai-agent-hub-background-idle";

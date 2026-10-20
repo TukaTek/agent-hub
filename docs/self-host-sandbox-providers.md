@@ -59,9 +59,10 @@ the web UI. They require egress to the provider. For air-gapped hosts prefer
 
 A run starts its computer only when it first uses a computer tool. With idle sleep on,
 a computer suspends after `SANDBOX_IDLE_MS` idle. On providers that bill while running
-(E2B, Daytona, Boat, CreateOS, Railway), it also suspends after `COMPUTER_MAX_ACTIVE_MS`
-(default 2 hours) up in one stretch, even with background work or an open screen, unless
-a run is executing on it or a user is in control of its screen. `0` turns the cap off.
+(E2B, Daytona, Boat, CreateOS, Railway), setting `COMPUTER_MAX_ACTIVE_MS` (off by default;
+`7200000` is 2 hours) also suspends it after that long up in one stretch, even with
+background work or an open screen, unless a run is executing on it or a user is in control
+of its screen.
 That exception lifts only the uptime cap; idle suspension after `SANDBOX_IDLE_MS` still
 applies once nothing holds the computer.
 Docker and this-Mac computers are never capped. The next use resumes it.
