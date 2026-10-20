@@ -639,10 +639,13 @@ export async function requestWithBotSecret(input: {
   const timeoutMs = getRequestTimeoutMs();
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = combineSignals(input.signal, controller.signal, timeout);
-  const plaintext = await input.secretStore.load(row.ciphertext, {
-    recordId: row.id,
-    signal,
-  });
+  let plaintext: string;
+  try {
+    plaintext = await input.secretStore.load(row.ciphertext, { recordId: row.id, signal });
+  } catch (error) {
+    if (!timeout.aborted && !input.signal.aborted) throw error;
+    return { error: secretRequestFailureMessage(error, url, timeout, input.signal, timeoutMs) };
+  }
   const headers = new Headers({ accept: "application/json", "content-type": request.contentType });
   const { name: headerName, value: headerValue } = credentialHeader(destination, plaintext);
   const redactions = [

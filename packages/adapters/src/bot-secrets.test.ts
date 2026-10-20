@@ -517,6 +517,26 @@ describe("authenticated secret requests", () => {
       });
     });
 
+    it("reports a timeout that expires while the credential is still loading", async () => {
+      vi.stubEnv("CORTEXAI_AGENT_HUB_SECRET_REQUEST_TIMEOUT_MS", "50");
+      const { input, fetch } = await fixture();
+      const load = vi.spyOn(secretStore, "load").mockImplementationOnce(
+        (_ref, context) =>
+          new Promise((_resolve, reject) => {
+            const signal = typeof context === "object" ? context.signal : undefined;
+            signal?.addEventListener("abort", () => reject(signal.reason));
+          }),
+      );
+      try {
+        expect(await requestWithBotSecret(input)).toEqual({
+          error: "Request timed out after 1 second.",
+        });
+        expect(fetch).not.toHaveBeenCalled();
+      } finally {
+        load.mockRestore();
+      }
+    });
+
     it("defaults to a 120 second timeout", async () => {
       const timeout = vi.spyOn(AbortSignal, "timeout");
       try {
