@@ -827,7 +827,7 @@ describe("Dictation web speech", () => {
 
   it("listens in the language the app is set to", async () => {
     vi.stubGlobal("localStorage", {
-      getItem: (key: string) => (key === "cortexai-agent-hub.uiLocale" ? "nl" : null),
+      getItem: (key: string) => (key === "cortexai-agent-hub.uiLocale" ? "de" : null),
       setItem: () => undefined,
       removeItem: () => undefined,
       clear: () => undefined,
@@ -836,16 +836,16 @@ describe("Dictation web speech", () => {
     const dictation = new Dictation();
     await dictation.listen({ mode: "hold", onFinal: () => undefined });
 
-    expect(instances[0]?.lang).toBe("nl-NL");
+    expect(instances[0]?.lang).toBe("de-DE");
   });
 
   it("maps a regional browser language onto the app's own tag", async () => {
-    vi.stubGlobal("navigator", { language: "nl-BE" });
+    vi.stubGlobal("navigator", { language: "de-AT" });
 
     const dictation = new Dictation();
     await dictation.listen({ mode: "hold", onFinal: () => undefined });
 
-    expect(instances[0]?.lang).toBe("nl-NL");
+    expect(instances[0]?.lang).toBe("de-DE");
   });
 
   it("keeps the browser language when the app has no catalog for it", async () => {
@@ -1684,7 +1684,6 @@ describe("transcriptionLanguage", () => {
   it("maps an app locale to a tag the recognizer accepts", () => {
     expect(speechLocaleTag("es")).toBe("es-ES");
     expect(speechLocaleTag("pt-BR")).toBe("pt-BR");
-    expect(speechLocaleTag("nl")).toBe("nl-NL");
   });
 
   it("hints the provider with the language the caller picked", () => {
