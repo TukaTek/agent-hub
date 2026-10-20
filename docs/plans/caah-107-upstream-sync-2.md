@@ -218,7 +218,7 @@ Every new flag defaults to off or to today's behavior, except one (D2). Upstream
 | `BOAT_API_KEY`, `BOAT_API_URL` | unset | Replace `BOX_*`. `SANDBOX_PROVIDER=box`, `BOX_API_KEY`, `BOX_API_URL` and `BOX_BASE_URL` still work. The default API is now Boat's; a deployment that set `BOX_API_URL` to the old Box URL should drop it. CI's manual Boat e2e reads a `BOAT_API_KEY` repository secret. |
 | `SANDBOX_HOST_URL`, `SANDBOX_HOST_TOKEN` | unset | Local computer access (#1519). Set only by the desktop app for its own local stack, and only after the user consents. Never for a remote server. |
 | `SANDBOX_COMPUTER_DNS` | unset | Docker computers only (#1521). |
-| `COMPUTER_MAX_ACTIVE_MS` | **2 hours (upstream)** | Caps uptime on billing providers (#1465). **On by default upstream; see D2.** |
+| `COMPUTER_MAX_ACTIVE_MS` | off (`0`) | Caps uptime on billing providers (#1465). Upstream defaults to 2 hours; D2 keeps it off here. |
 | `MAX_UPLOAD_SIZE_MB` | 10 | Today's fixed limit (#1440). |
 | `CORTEXAI_AGENT_HUB_MESSAGE_USER_MAX_CHARS` | 500 | Today's cap (#1453). |
 | `CORTEXAI_AGENT_HUB_BROWSER_UPLOAD_MAX_BYTES` | upstream default | Bots attaching files to upload fields (#1469). |
