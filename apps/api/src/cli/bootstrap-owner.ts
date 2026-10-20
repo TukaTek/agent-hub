@@ -1,4 +1,4 @@
-import { createAuth } from "@cortexai-agent-hub/auth";
+import { createAuth, hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import { createDb } from "@cortexai-agent-hub/db";
 
 function required(name: string): string {
@@ -6,6 +6,10 @@ function required(name: string): string {
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
+
+// Hub owns every sign-in in Hub mode, so a local password owner would route around it.
+if (hubAuthFromEnv(process.env))
+  throw new Error("Owner bootstrap can't be combined with Hub sign-in");
 
 const { prisma, pool } = createDb(required("DATABASE_URL"));
 try {

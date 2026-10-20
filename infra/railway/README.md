@@ -27,7 +27,7 @@ The token must be able to create environments and sandboxes in the project. Pref
 
 ## Updates and backups
 
-To update, connect the service to the desired source branch and deploy its latest commit in the application environment. Do not deploy application services into the sandbox environment. The owner bootstrap keeps existing accounts and passwords. Changing `OWNER_PASSWORD` later does not reset an account password.
+To update, connect the service to the desired source branch and deploy its latest commit in the application environment. Do not deploy application services into the sandbox environment. The owner bootstrap keeps existing accounts and passwords. Changing `OWNER_PASSWORD` later does not reset an account password. The template creates a password owner, so it refuses to start with `AUTH_MODE=hub`.
 
 Back up PostgreSQL, `/data`, and `ENCRYPTION_KEY` before upgrades. Railway volume persistence is not a backup. Keep backups private and test restoring them together. Do not delete volumes to fix a failed deploy.
 
