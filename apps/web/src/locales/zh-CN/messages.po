@@ -617,7 +617,6 @@ msgstr "API 已恢复，但更新未完成。请查看宿主日志。"
 #: src/components/AskCard.tsx
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/lib/localized-provider-hint.ts
-#: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -1290,7 +1289,6 @@ msgid "Confirmations"
 msgstr ""
 
 #: src/components/integrations/IntegrationSetup.tsx
-#: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 #: src/pages/memory-providers/SupermemorySettingsForm.tsx
 #: src/pages/VoiceSettingsOverlay.tsx
@@ -1341,7 +1339,6 @@ msgstr "已连接，下一条消息起即可使用其工具。"
 
 #: src/components/integrations/IntegrationSetup.tsx
 #: src/pages/McpServersOverlay.tsx
-#: src/pages/memory-providers/HonchoSettingsForm.tsx
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 #: src/pages/memory-providers/SupermemorySettingsForm.tsx
 #: src/pages/shell/message-cards.tsx
@@ -5083,10 +5080,6 @@ msgstr ""
 msgid "Use this model"
 msgstr "使用此模型"
 
-#: src/pages/memory-providers/HonchoSettingsForm.tsx
-msgid "Use up to 512 letters, digits, _ or -."
-msgstr ""
-
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Use your own key"
 msgstr "使用自己的密钥"
@@ -5223,10 +5216,6 @@ msgstr ""
 #: src/pages/Auth.tsx
 msgid "Working…"
 msgstr "处理中…"
-
-#: src/pages/memory-providers/HonchoSettingsForm.tsx
-msgid "Workspace"
-msgstr ""
 
 #: src/components/computer/TerminalApp.tsx
 msgid "Wrote {path}"

@@ -5,12 +5,6 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
-  createHonchoProvider,
-  HONCHO_PROVIDER_ID,
-  honchoRequiresDeploymentOwner,
-  prepareHonchoConnection,
-} from "./honcho-memory-provider.js";
-import {
   classifySerenityConnectionSettings,
   createSerenityProvider,
   prepareSerenityConnection,
@@ -89,15 +83,6 @@ const MEMORY_PROVIDER_ADAPTERS: ReadonlyMap<string, MemoryProviderAdapter> = new
         options?: { allowPrivateEndpoint?: boolean },
       ) => prepareSerenityConnection(settings, credentials, undefined, options),
       create: createSerenityProvider,
-    },
-  ],
-  [
-    HONCHO_PROVIDER_ID,
-    {
-      requiresDeploymentOwner: honchoRequiresDeploymentOwner,
-      prepare: (settings: Record<string, string>, credentials: Record<string, string>) =>
-        prepareHonchoConnection(settings, credentials),
-      create: createHonchoProvider,
     },
   ],
 ]);

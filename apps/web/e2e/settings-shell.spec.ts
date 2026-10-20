@@ -124,26 +124,3 @@ test("Hub accounts retain managed identity controls in the new settings shell", 
   await expect(settings.getByRole("heading", { name: "Password", exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "settings-shell-hub-account");
 });
-
-test("Honcho memory settings empty and filled", async ({ page }, testInfo) => {
-  // These screenshots never submit credentials or contact Honcho.
-  const stamp = Date.now();
-  await signup(
-    page,
-    `memory-honcho-${stamp}@cortexai-agent-hub.test`,
-    "password12",
-    "Memory settings",
-  );
-  await completeOnboarding(page);
-  const settings = await openUserSettings(page, "memory");
-  const memory = settings.getByTestId("memory-settings");
-  await memory.getByLabel("Provider").selectOption("honcho");
-  await expect(memory.getByLabel("API key", { exact: true })).toBeVisible();
-  await expect(memory.getByLabel("Workspace", { exact: true })).toBeVisible();
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
-  await captureScreenshot(page, testInfo, "memory-honcho-empty");
-  await memory.getByLabel("API key", { exact: true }).fill("hch-test-key");
-  await memory.getByLabel("Workspace", { exact: true }).fill("team-notes");
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
-  await captureScreenshot(page, testInfo, "memory-honcho-filled");
-});
