@@ -29,6 +29,12 @@ describe("rebrand", () => {
       'sessionStorage.getItem("cortexai-agent-hub:preload-recovery")',
     ],
     ['mark("rk:main:window-shown")', 'mark("cortexai-agent-hub:main:window-shown")'],
+    [
+      `marker.replace("${old}", "[${old[0]}]${old.slice(1)}")`,
+      'marker.replace("cortexai-agent-hub", "[c]ortexai-agent-hub")',
+    ],
+    [`  ${Old}: "${Old}",`, '  "CortexAI Agent Hub": "CortexAI Agent Hub",'],
+    [`{ ${Old}: 1 }`, '{ "CortexAI Agent Hub": 1 }'],
   ])("maps %s", (input, output) => {
     expect(rebrand(input)).toEqual({ text: output, unresolved: [] });
   });
