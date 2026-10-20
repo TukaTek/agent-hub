@@ -12,10 +12,7 @@ const RULES = [
   [new RegExp(`(?<![A-Za-z0-9])${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
   [new RegExp(`(?<![A-Za-z0-9])${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
   // The display name has spaces, so a bare object key needs quotes.
-  [
-    new RegExp(`(?<=(?:^|[{,])\\s*)${Old}(?=\\s*:\\s*["'\`\\d{[])`, "gm"),
-    '"CortexAI Agent Hub"',
-  ],
+  [new RegExp(`(?<=(?:^|[{,])\\s*)${Old}(?=\\s*:\\s*["'\`\\d{[])`, "gm"), '"CortexAI Agent Hub"'],
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
   // pgrep/pkill patterns bracket the first letter so they never match themselves.
   [new RegExp(`\\[${old[0]}\\]${old.slice(1)}`, "g"), "[c]ortexai-agent-hub"],
