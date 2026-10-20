@@ -1745,6 +1745,25 @@ describe("Pi runtime thinking blocks bound to a different conversation", () => {
     expect(providerState.stream).toHaveBeenCalledTimes(2);
   });
 
+  it("does not retry once output has already been forwarded", async () => {
+    providerState.stream.mockImplementation(() => {
+      const failed = message(primary, [], "error", mismatch);
+      const result = new AssistantMessageEventStream();
+      result.push({ type: "start", partial: { ...failed, content: [], stopReason: "stop" } });
+      result.push({ type: "text_start", contentIndex: 0, partial: { ...failed, content: [] } });
+      result.push({
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "Partial",
+        partial: { ...failed, content: [{ type: "text", text: "Partial" }] },
+      });
+      result.push({ type: "error", reason: "error", error: failed });
+      return result;
+    });
+    await expect(run(request())).rejects.toThrow("bound to a different conversation");
+    expect(providerState.stream).toHaveBeenCalledOnce();
+  });
+
   it("uses a backup that fits only after discarded thinking blocks are omitted", async () => {
     const thinking = "x".repeat(12_000);
     const input = request([
