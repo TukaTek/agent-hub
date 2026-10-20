@@ -19,7 +19,7 @@ CortexAI Agent Hub is in beta. Learn more at the [CortexAI product page](https:/
 - Assistants that can delegate to peer assistants or short-lived subagents
 - Bring-your-own model credentials through Pi
 - App integrations through Composio or Pipedream Connect, plus user-installed Treg, remote MCP, and OpenAPI tool sources
-- Docker, E2B, Daytona, CreateOS, Box, and trusted local-computer support
+- Docker, E2B, Daytona, CreateOS, Boat, and trusted local-computer support
 
 ## Stack
 
@@ -31,8 +31,16 @@ CortexAI Agent Hub is in beta. Learn more at the [CortexAI product page](https:/
 - Better Auth
 - Graphile Worker
 - Pi
-- Docker, E2B, Daytona, CreateOS, and Box
+- Docker, E2B, Daytona, CreateOS, and Boat
 - Composio, Pipedream Connect, MCP, and OpenAPI integrations
+
+## Deploy on Railway
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/cortexai-agent-hub-template)
+
+Deploy a private CortexAI Agent Hub instance with PostgreSQL, persistent storage and Railway computers.
+Enter your email and Railway API token, then connect a model after signing in.
+See [setup, security defaults and backups](./infra/railway/README.md).
 
 ## Quick start (published images)
 
@@ -57,7 +65,7 @@ place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or wh
 disposable); `docker compose down -v` deletes all Postgres state.
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
-Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, or `box`
+Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, `boat`, or `railway`
 with the matching API key.
 
 Default image tag is `edge` (main builds, `linux/amd64` + `linux/arm64`). Details and tags:
@@ -77,8 +85,7 @@ the desktop app, the mobile app, or a browser.
 
 ```bash
 bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=box (or e2b / daytona / createos) with its API key, CORTEXAI_AGENT_HUB_HOST=your.domain
-
+# edit .env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, CORTEXAI_AGENT_HUB_HOST=your.domain
 bash install-images.sh
 ```
 
@@ -150,6 +157,25 @@ Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, and
 `CREATEOS_SANDBOX_ROOTFS` default to `https://api.sb.createos.sh`, `s-2vcpu-2gb`,
 and `desktop:1`.
 
+To use Railway computers, set `SANDBOX_PROVIDER=railway`, `RAILWAY_API_TOKEN`
+and `RAILWAY_ENVIRONMENT_ID` on the API and worker. Choose the sandbox environment
+explicitly; Railway's automatic environment ID identifies the hosted app's environment.
+Use the narrowest Railway API token that works: prefer a project token if sufficient
+for sandbox operations and supported by the client's authentication. This provider
+currently uses bearer authentication, so use a team/workspace token rather than a
+personal account token.
+The live screen and desktop require `PRIVATE` networking so Railway's public domain
+can serve the screen. Computers use this mode and can reach other services in the
+same Railway project/environment, as well as the public internet. We recommend a
+dedicated Railway project (or at least a separate environment) for sandboxes,
+separate from the app and database. Recreate existing `ISOLATED` computers before use.
+The desktop is installed on first start. Stopping a computer saves its portable
+home and destroys the sandbox; the next start restores that home in a new sandbox.
+Railway sandbox usage is metered.
+New computers start in Railway's default region. Set `RAILWAY_SANDBOX_REGION` (for example
+`asia-southeast1-eqsg3a`) to keep them near the API; a running computer moves on its next start.
+Workspace exports reject files above 64 MiB without truncating them. Set `RAILWAY_MAX_WORKSPACE_FILE_BYTES` to change this limit.
+
 ## Desktop and mobile
 
 The Electron and Expo apps are clients of the same CortexAI Agent Hub API used by the web app.
@@ -181,10 +207,11 @@ Mobile build and release instructions live in [docs/mobile-release.md](./docs/mo
 ## UI language
 
 The web (and Electron-hosted) UI supports English, Deutsch, 한국어, Türkçe, हिन्दी,
-Português (Brasil), 简体中文, Español, and Русский under **Settings → Language**. The Expo
-app ships English, 简体中文, Русский, and Deutsch catalogs; **Account → Language** offers
-English and 简体中文, and the other catalogs follow the device language or
-`EXPO_PUBLIC_DEFAULT_UI_LOCALE`. The marketing
+Português (Brasil), 简体中文, Español, Русский, Français, and עברית under
+**Settings → Language**. The Expo app ships English, 简体中文, Русский, and Deutsch
+catalogs, and **Account → Language** lists all four. A device language or
+`EXPO_PUBLIC_DEFAULT_UI_LOCALE` still selects the starting catalog before a saved choice.
+The marketing
 homepage (`apps/www`) is available in en/de/ko/zh via footer language links (`/`, `/de/`,
 `/ko/`, `/zh/`); other marketing pages stay English. The Russian marketing homepage and
 native Electron setup/menu remain separate follow-up work.
@@ -221,6 +248,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow and test m
 - [Desktop releases](./docs/desktop-release.md)
 - [Mobile releases](./docs/mobile-release.md)
 - [Performance testing](./docs/performance.md)
+- [Fleet management](./docs/fleet-management.md)
 
 ## Contributing
 

@@ -32,7 +32,8 @@ function createPlatform(
   adapterOverrides: Partial<Adapter> = {},
 ) {
   let chat: ChatInstance | undefined;
-  const adapter: Adapter = createMockAdapter("mock", {
+  const adapterName = overrides.adapterName ?? overrides.provider ?? "mock";
+  const adapter: Adapter = createMockAdapter(adapterName, {
     initialize: vi.fn(async (instance: ChatInstance) => {
       chat = instance;
     }),
@@ -80,7 +81,7 @@ function createPlatform(
   });
   const platform: MessagingPlatform = {
     provider: "mock",
-    capabilities: { direct: true, groups: true, typing: true },
+    capabilities: { direct: true, groups: true, receipt: "typing" },
     adapter,
     ...overrides,
   };
@@ -139,7 +140,7 @@ describe("ChatSdkMessagingSurface inbound", () => {
       const surface = new ChatSdkMessagingSurface([
         {
           provider: "slack",
-          capabilities: { direct: true, groups: true, typing: false },
+          capabilities: { direct: true, groups: true, receipt: "reaction" },
           adapter,
           enrichTeamRoom: enrichSlackTeamRoom,
         },
@@ -353,7 +354,7 @@ describe("ChatSdkMessagingSurface inbound", () => {
 
   it("drops non-DM events for platforms without group support", async () => {
     const { surface, events } = createSurface({
-      capabilities: { direct: true, groups: false, typing: false },
+      capabilities: { direct: true, groups: false, receipt: null },
     });
     const response = await surface.handleWebhook(
       "mock",
@@ -500,6 +501,30 @@ describe("ChatSdkMessagingSurface webhook plumbing", () => {
 });
 
 describe("ChatSdkMessagingSurface outbound", () => {
+  it("posts Telegram replies as Markdown", async () => {
+    const { surface, adapter } = createSurface({ provider: "telegram" });
+    const body = "# Heading\n\n**bold** and [link](https://example.test)";
+
+    await surface.sendToThread({ threadId: "telegram:123", body }, context);
+
+    expect(adapter.postMessage).toHaveBeenCalledExactlyOnceWith("telegram:123", {
+      markdown: body,
+    });
+  });
+
+  it.each(["slack", "whatsapp", "lark", "sendblue"])(
+    "keeps %s replies as strings",
+    async (provider) => {
+      const { surface, adapter } = createSurface({ provider });
+      const body = "**bold** and [link](https://example.test)";
+      const threadId = `${provider}:C1:9`;
+
+      await surface.sendToThread({ threadId, body }, context);
+
+      expect(adapter.postMessage).toHaveBeenCalledExactlyOnceWith(threadId, body);
+    },
+  );
+
   it("posts to a thread through the platform adapter and returns the handle", async () => {
     const { surface, adapter } = createSurface();
     const result = await surface.sendToThread({ threadId: "mock:C1:9", body: "hi" }, context);
@@ -543,29 +568,39 @@ describe("ChatSdkMessagingSurface outbound", () => {
 });
 
 describe("ChatSdkMessagingSurface thread history", () => {
-  it("returns the messages before the asking one, oldest first, without the bot's own", async () => {
-    const message = (id: string, isMe = false) =>
-      createTestMessage(id, `text ${id}`, {
-        threadId: "mock:C1:100",
-        author: { userId: "U1", userName: "ada", fullName: "Ada", isBot: false, isMe },
+  it.each(["mock", "mock-work"])(
+    "returns history with provider %s, oldest first, without the bot's own",
+    async (provider) => {
+      const message = (id: string, isMe = false) =>
+        createTestMessage(id, `text ${id}`, {
+          threadId: "mock:C1:100",
+          author: { userId: "U1", userName: "ada", fullName: "Ada", isBot: false, isMe },
+        });
+      const fetchMessages = vi.fn(async () => ({
+        messages: [message("100"), message("101", true), message("102"), message("103")],
+      }));
+      const { surface } = createSurface({ provider, adapterName: "mock" }, { fetchMessages });
+
+      const history = await surface.fetchThreadHistory(
+        `${provider}:C1:100`,
+        { before: "103", limit: 50 },
+        context,
+      );
+
+      expect(fetchMessages).toHaveBeenCalledWith("mock:C1:100", {
+        limit: 51,
+        direction: "backward",
       });
-    const fetchMessages = vi.fn(async () => ({
-      messages: [message("100"), message("101", true), message("102"), message("103")],
-    }));
-    const { surface } = createSurface({}, { fetchMessages });
-
-    const history = await surface.fetchThreadHistory(
-      "mock:C1:100",
-      { before: "103", limit: 50 },
-      context,
-    );
-
-    expect(fetchMessages).toHaveBeenCalledWith("mock:C1:100", { limit: 51, direction: "backward" });
-    expect(history.map((event) => [event.handle, event.content, event.isDirect])).toEqual([
-      ["100", "text 100", false],
-      ["102", "text 102", false],
-    ]);
-  });
+      expect(history.map((event) => [event.provider, event.threadId])).toEqual([
+        [provider, `${provider}:C1:100`],
+        [provider, `${provider}:C1:100`],
+      ]);
+      expect(history.map((event) => [event.handle, event.content, event.isDirect])).toEqual([
+        ["100", "text 100", false],
+        ["102", "text 102", false],
+      ]);
+    },
+  );
 
   it("returns nothing when the asking message is outside the fetched page", async () => {
     const fetchMessages = vi.fn(async () => ({
@@ -579,25 +614,39 @@ describe("ChatSdkMessagingSurface thread history", () => {
   });
 });
 
-describe("ChatSdkMessagingSurface typing", () => {
-  it("forwards typing to platforms that support it", async () => {
-    const { surface, adapter } = createSurface();
-    await surface.sendTyping("mock:Duser:1", context);
-    expect(adapter.startTyping).toHaveBeenCalledWith("mock:Duser:1");
+describe("ChatSdkMessagingSurface acknowledge", () => {
+  it.each(["mock", "mock-work"])("reacts with eyes on provider %s", async (provider) => {
+    const { surface, adapter } = createSurface({
+      provider,
+      adapterName: "mock",
+      capabilities: { direct: true, groups: true, receipt: "reaction" },
+    });
+    await surface.acknowledge(`${provider}:Duser:1`, "1700000000.000100", context);
+    expect(adapter.addReaction).toHaveBeenCalledWith("mock:Duser:1", "1700000000.000100", "eyes");
+    expect(adapter.startTyping).not.toHaveBeenCalled();
   });
 
-  it("no-ops when the platform lacks typing support", async () => {
+  it("starts typing on typing platforms", async () => {
+    const { surface, adapter } = createSurface();
+    await surface.acknowledge("mock:Duser:1", "m-1", context);
+    expect(adapter.startTyping).toHaveBeenCalledWith("mock:Duser:1");
+    expect(adapter.addReaction).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when the platform has no receipt", async () => {
     const { surface, adapter } = createSurface({
-      capabilities: { direct: true, groups: true, typing: false },
+      capabilities: { direct: true, groups: true, receipt: null },
     });
-    await surface.sendTyping("mock:Duser:1", context);
+    await surface.acknowledge("mock:Duser:1", "m-1", context);
     expect(adapter.startTyping).not.toHaveBeenCalled();
+    expect(adapter.addReaction).not.toHaveBeenCalled();
   });
 
   it("no-ops for a thread on an unknown provider", async () => {
     const { surface, adapter } = createSurface();
-    await surface.sendTyping("nope:Duser:1", context);
+    await surface.acknowledge("nope:Duser:1", "m-1", context);
     expect(adapter.startTyping).not.toHaveBeenCalled();
+    expect(adapter.addReaction).not.toHaveBeenCalled();
   });
 });
 
@@ -606,7 +655,7 @@ describe("ChatSdkMessagingSurface shape", () => {
     expect(() => new ChatSdkMessagingSurface([])).toThrow(/>=1 platform/);
     const { surface } = createSurface();
     expect(surface.platforms()).toEqual([
-      { provider: "mock", capabilities: { direct: true, groups: true, typing: true } },
+      { provider: "mock", capabilities: { direct: true, groups: true, receipt: "typing" } },
     ]);
     expect(surface.describe().capabilities).toEqual({ providers: ["mock"] });
     expect(providerOfThreadId("mock:C1:9")).toBe("mock");

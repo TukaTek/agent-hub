@@ -15,6 +15,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import type { MessagingReceipts } from "./messaging-receipts.js";
 import type { TeamChatEngagementJudge } from "./team-chat-judge.js";
 import {
   MESSAGE_ROUTING_REARMED_REASON,
@@ -69,6 +70,7 @@ interface TeamChatBridgeDeps {
   providerId: string;
   botId: string;
   judge?: TeamChatEngagementJudge;
+  acknowledge?: MessagingReceipts["acknowledge"];
   reconcileIntervalMs?: number;
   ambientDebounceMs?: number;
 }
@@ -303,6 +305,18 @@ export class TeamChatBridge {
       externalMessage = await this.deps.prisma.externalMessage.update({
         where: { id: externalMessage.id },
         data: { kind: message.kind, status, nextAttemptAt, engagementReason: null, judgedAt: null },
+      });
+    }
+    if (message.kind !== "ambient") {
+      const externalMessageId = externalMessage.id;
+      this.deps.acknowledge?.(message.conversationId, message.eventId, async () => {
+        const row = await this.deps.prisma.externalMessage.findUnique({
+          where: { id: externalMessageId },
+          select: { deliveredAt: true, status: true },
+        });
+        return (
+          Boolean(row?.deliveredAt) || row?.status === "ignored" || row?.status === "cancelled"
+        );
       });
     }
     await this.ensureTranscriptMessage(externalMessage, conversation, message.attachments ?? []);

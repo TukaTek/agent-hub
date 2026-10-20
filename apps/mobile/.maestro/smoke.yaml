@@ -4,18 +4,19 @@ name: CortexAI Agent Hub mobile smoke
 - launchApp:
     clearState: true
 
-- assertVisible: "Sign in to CortexAI Agent Hub"
-- assertVisible: "Sign up"
-- tapOn: "Sign up"
 - assertVisible: "Sign up for CortexAI Agent Hub"
 - assertVisible: "Name"
 - tapOn: "Sign in"
+- runFlow:
+    when:
+      true: ${typeof CORTEXAI_AGENT_HUB_MOBILE_API_URL !== "undefined" && CORTEXAI_AGENT_HUB_MOBILE_API_URL != null && CORTEXAI_AGENT_HUB_MOBILE_API_URL.trim() !== ""}
+    file: helpers/server.yaml
 - assertVisible: "Sign in to CortexAI Agent Hub"
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_EMAIL}
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_PASSWORD}
-- tapOn: "Sign in to CortexAI Agent Hub"
+- hideKeyboard
 - tapOn: "Sign in"
 
 - extendedWaitUntil:

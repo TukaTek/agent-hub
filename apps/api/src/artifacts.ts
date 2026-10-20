@@ -5,6 +5,8 @@ import {
   ARTIFACT_NAME_MAX_LENGTH,
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
+  attachmentSizeLabel,
+  isAttachmentAudioMimeType,
 } from "@cortexai-agent-hub/contracts";
 import {
   AttachmentValidationError,
@@ -32,6 +34,7 @@ export async function createOwnedArtifact(
   deps: {
     prisma: PrismaClient;
     artifacts: ArtifactStore;
+    maxUploadSizeBytes?: number;
   },
   actor: Actor,
   input: {
@@ -46,17 +49,22 @@ export async function createOwnedArtifact(
 ) {
   const replayed = await findReplayedArtifact(deps.prisma, actor, input);
   if (replayed) return createdArtifact(replayed);
+  const inferredType = inferAttachmentMimeType(input.name, input.mimeType);
   const mimeType =
-    inferAttachmentMimeType(input.name, input.mimeType) === "application/zip"
-      ? "application/zip"
+    inferredType && (inferredType === "application/zip" || isAttachmentAudioMimeType(inferredType))
+      ? inferredType
       : input.mimeType;
   validateAttachmentMimeType(mimeType);
-  const bytes = decodeAttachmentBase64(input.contentBase64);
+  const bytes = decodeAttachmentBase64(input.contentBase64, deps.maxUploadSizeBytes);
   return storeOwnedArtifact(deps, actor, { ...input, mimeType, bytes });
 }
 
 export async function storeInboundAttachment(
-  deps: { prisma: PrismaClient; artifacts: ArtifactStore },
+  deps: {
+    prisma: PrismaClient;
+    artifacts: ArtifactStore;
+    maxUploadSizeBytes?: number;
+  },
   owner: ArtifactOwner,
   input: {
     botId: string;
@@ -73,8 +81,11 @@ export async function storeInboundAttachment(
   if (!mimeType) {
     throw new AttachmentValidationError(`Unsupported attachment type: ${attachment.mimeType}`);
   }
-  const tooLarge = new AttachmentValidationError("Attachment exceeds the 10 MiB limit");
-  if ((attachment.size ?? 0) > ATTACHMENT_MAX_BYTES) throw tooLarge;
+  const maxBytes = deps.maxUploadSizeBytes ?? ATTACHMENT_MAX_BYTES;
+  const tooLarge = new AttachmentValidationError(
+    `Attachment exceeds the ${attachmentSizeLabel(maxBytes)} limit`,
+  );
+  if ((attachment.size ?? 0) > maxBytes) throw tooLarge;
   const timeoutMs = Math.min(2_000, (input.downloadDeadline ?? Infinity) - Date.now());
   if (timeoutMs <= 0) throw new AttachmentValidationError("Attachment download timed out");
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -89,7 +100,7 @@ export async function storeInboundAttachment(
     timeout,
   ]).finally(() => clearTimeout(timer));
   if (bytes.byteLength === 0) throw new AttachmentValidationError("Attachment content is empty");
-  if (bytes.byteLength > ATTACHMENT_MAX_BYTES) throw tooLarge;
+  if (bytes.byteLength > maxBytes) throw tooLarge;
   return storeOwnedArtifact(deps, owner, {
     botId: input.botId,
     name,

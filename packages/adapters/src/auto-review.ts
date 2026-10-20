@@ -11,7 +11,7 @@ import type {
   CacheCapabilities,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { AutoReviewJudgeDecision } from "@cortexai-agent-hub/core";
-import { redactSecrets } from "@cortexai-agent-hub/core";
+import { escapePromptData, redactSecrets } from "@cortexai-agent-hub/core";
 import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import { LOCAL_PROVIDER_ID } from "./pi-local-provider.js";
@@ -204,10 +204,6 @@ function truncate(value: string, max: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= max) return trimmed;
   return `${trimmed.slice(0, max - 1)}…`;
-}
-
-function escapePromptData(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 export function sanitizeAutoReviewReason(reason: string | undefined): string | undefined {

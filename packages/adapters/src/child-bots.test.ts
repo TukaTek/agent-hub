@@ -160,6 +160,8 @@ describe("spawned bot creation", () => {
         runId: "run-1",
         spawnKey: "tool-call-2",
         name: "Painter",
+        description: " Paints murals. ",
+        instructions: " Ask before using the shared screen. ",
         computerMode: "dedicated",
       },
     );
@@ -168,6 +170,8 @@ describe("spawned bot creation", () => {
       expect.objectContaining({ userId: "user-1", spaceId: "workspace-1" }),
       expect.objectContaining({
         name: "Painter",
+        description: "Paints murals.",
+        instructions: "Ask before using the shared screen.",
         computerMode: "dedicated",
         parentBotId: "parent-1",
       }),
@@ -846,8 +850,8 @@ describe("destroyBot", () => {
       const team = {
         id: "team-computer",
         homeKey: "team-workspace-1",
-        kind: "box",
-        providerRef: "box-1",
+        kind: "boat",
+        providerRef: "boat-1",
         scope: "team",
         state: "running",
       };
@@ -1366,8 +1370,8 @@ describe("destroyBot", () => {
       const team = {
         id: "team-computer",
         homeKey: "team-workspace-1",
-        kind: "box",
-        providerRef: "box-1",
+        kind: "boat",
+        providerRef: "boat-1",
         scope: "team",
         state: "running",
       };

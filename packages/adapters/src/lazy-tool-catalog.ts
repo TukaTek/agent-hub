@@ -218,34 +218,79 @@ export function loadCatalogEntry(
   entries: CatalogEntry[],
   args: Record<string, unknown>,
 ): CatalogEntry {
-  const entry = findCatalogEntry(entries, String(args.id ?? ""));
-  if (!entry) throw new Error("Tool is unknown or not authorized for this bot");
+  const candidates = findCatalogEntries(entries, String(args.id ?? ""));
+  if (candidates.length > 1) {
+    throw new Error(
+      `Tool name is ambiguous; use one of these ids: ${candidates
+        .slice(0, 5)
+        .map((candidate) => candidate.id)
+        .join(", ")}`,
+    );
+  }
+  const entry = candidates[0];
+  if (!entry) {
+    throw new Error(
+      "Tool is unknown or not authorized for this bot. Use the exact id returned by search.",
+    );
+  }
   assertSchemaSize(entry);
   return entry;
 }
 
-/** Exact ID first, then a unique full name, then a unique short name. */
-function findCatalogEntry(entries: CatalogEntry[], id: string): CatalogEntry | undefined {
+/**
+ * Exact ID first, then every entry whose full name, short name or group-qualified name matches.
+ * Models often name a tool by the source label they saw in search ("pc-files:read_file",
+ * "pc-files/read_file", "pc-files__read_file") instead of copying the opaque id.
+ */
+function findCatalogEntries(entries: CatalogEntry[], id: string): CatalogEntry[] {
   const byId = entries.find((candidate) => candidate.id === id);
-  if (byId) return byId;
-  const byName = entries.filter((candidate) => candidate.tool.name === id);
-  if (byName.length === 1) return byName[0];
-  const byShort = entries.filter((candidate) => catalogShortName(candidate) === id);
-  return byShort.length === 1 ? byShort[0] : undefined;
+  if (byId) return [byId];
+  return entries.filter(
+    (candidate) =>
+      candidate.tool.name === id ||
+      catalogShortName(candidate) === id ||
+      matchesGroupQualifiedName(candidate, id),
+  );
 }
 
-/** Budgets for every key execution accepts, bound to the entry that key executes. */
+/** Budgets for every key execution accepts, bound to the one entry that key executes. */
 function catalogResultBudgets(entries: CatalogEntry[]): Record<string, number> {
   const budgets: Record<string, number> = Object.create(null);
   for (const entry of entries) {
     if (boundedResultChars(entry.tool.maxResultChars) === undefined) continue;
     for (const key of [entry.id, entry.tool.name, catalogShortName(entry)]) {
       if (Object.hasOwn(budgets, key)) continue;
-      const budget = boundedResultChars(findCatalogEntry(entries, key)?.tool.maxResultChars);
+      const matches = findCatalogEntries(entries, key);
+      const budget =
+        matches.length === 1 ? boundedResultChars(matches[0]!.tool.maxResultChars) : undefined;
       if (budget !== undefined) budgets[key] = budget;
     }
   }
   return budgets;
+}
+
+const GROUP_SEPARATORS = [":", "/", "__", "."];
+
+function matchesGroupQualifiedName(entry: CatalogEntry, id: string): boolean {
+  const group = entry.group.toLowerCase();
+  const qualifiedName = id.trim();
+  const shortName = catalogShortName(entry);
+  for (const separator of GROUP_SEPARATORS) {
+    let separatorIndex = qualifiedName.indexOf(separator);
+    while (separatorIndex !== -1) {
+      if (qualifiedName.slice(0, separatorIndex).toLowerCase() === group) {
+        const rest = qualifiedName.slice(separatorIndex + separator.length);
+        if (rest === shortName || rest === entry.tool.name) return true;
+        try {
+          if (decodeURIComponent(rest) === shortName) return true;
+        } catch {
+          // Malformed escape: not a match.
+        }
+      }
+      separatorIndex = qualifiedName.indexOf(separator, separatorIndex + 1);
+    }
+  }
+  return false;
 }
 
 function assertSchemaSize(entry: CatalogEntry): void {

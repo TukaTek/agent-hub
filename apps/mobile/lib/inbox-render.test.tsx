@@ -10,6 +10,7 @@ import { expect, it, vi } from "vitest";
 import type { MobileBot } from "./api";
 import { botTag, formatThreadTime } from "./inbox";
 import { retainInboxValue } from "./inbox-retention";
+import { inboxRowActionList } from "./inbox-swipe";
 
 const testFileUrl = import.meta.url;
 const source = readFileSync(new URL("../app/index.tsx", testFileUrl), "utf8");
@@ -43,6 +44,9 @@ function measure(before: boolean) {
     ConversationRow: () => null,
     BotAvatar: () => null,
     WorkingIndicator: () => null,
+    // Rows in the current space carry the iOS swipe host; it must not defeat the memo.
+    InboxSwipeRow: ({ children }: { children: ReactElement }) => children,
+    inboxRowActionList,
   };
   const compile = (text: string) =>
     ts.transpileModule(text, {
@@ -61,14 +65,20 @@ function measure(before: boolean) {
     useCallback,
     BotRow,
     appearance: "light",
+    botAction: action,
+    botSections: [],
+    editSectionFromMenu: action,
+    organizeFromMenu: action,
+    SWIPE_ROWS: true,
     day: new Date(2026, 9, 10).getTime(),
     chooseInboxSpace: action,
     collapsedRosterParents: new Set(),
     confirmDeleteSpace: action,
+    deleteSection: action,
     me: { spaceId: "space-1" },
     openBot: action,
     openGroup: action,
-    openSearchHit: action,
+    groupAction: action,
     organizeBot: action,
     organizeGroup: action,
     spaceBusy: false,
@@ -185,14 +195,22 @@ it.each(["midnight", "focus", "foreground"])(
       BotAvatar: () => null,
       GroupAvatar: () => null,
       WorkingIndicator: () => null,
+      InboxSwipeRow: ({ children }: { children: ReactElement }) => children,
+      inboxRowActionList,
       appearance: "light",
+      botAction: action,
+      groupAction: action,
+      botSections: [],
+      editSectionFromMenu: action,
+      organizeFromMenu: action,
+      SWIPE_ROWS: true,
       chooseInboxSpace: action,
       collapsedRosterParents: new Set(),
       confirmDeleteSpace: action,
+      deleteSection: action,
       me: { spaceId: "space-1" },
       openBot: action,
       openGroup: action,
-      openSearchHit: action,
       organizeBot: action,
       organizeGroup: action,
       spaceBusy: false,
@@ -333,6 +351,55 @@ it("renders saved bot rows without a title or notification setting", () => {
       "|No messages yet|Beta, No messages yet",
       "|No messages yet|Gamma, notifications silenced, No messages yet muted",
     ]);
+  } finally {
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
+it("waits for a saved or live inbox before publishing a remounted session's search roster", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const publish = vi.fn();
+  const effectStart = source.indexOf(
+    "  useEffect(() => {\n",
+    source.indexOf("  const inboxSpaces ="),
+  );
+  const effect = source.slice(effectStart, source.indexOf("  const listData =", effectStart));
+  const compiled = ts.transpileModule(
+    `return function PublishRoster({ me, inboxSpaces }) { ${effect}\nreturn null; };`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+  ).outputText;
+  const PublishRoster = new Function("useEffect", "setSearchInbox", compiled)(
+    useEffect,
+    publish,
+  ) as ComponentType<{ me: { spaceId: string } | null; inboxSpaces: unknown[] }>;
+  const root = createRoot(document.createElement("div"));
+  const loaded = [{ id: "space-a", bots: [{ id: "bot-a" }], groups: [] }];
+  try {
+    act(() => root.render(<PublishRoster key="session-1" me={null} inboxSpaces={[]} />));
+    expect(publish).not.toHaveBeenCalled();
+    // Either a verified saved inbox or the first live response supplies me and the roster.
+    act(() =>
+      root.render(
+        <PublishRoster key="session-1" me={{ spaceId: "space-a" }} inboxSpaces={loaded} />,
+      ),
+    );
+    expect(publish).toHaveBeenLastCalledWith(loaded);
+    publish.mockClear();
+    // HomeSession remounts Home for the new generation, even behind an unfocused route.
+    act(() => root.render(<PublishRoster key="session-2" me={null} inboxSpaces={[]} />));
+    expect(publish).not.toHaveBeenCalled();
+    act(() =>
+      root.render(
+        <PublishRoster key="session-2" me={{ spaceId: "space-a" }} inboxSpaces={loaded} />,
+      ),
+    );
+    expect(publish).toHaveBeenCalledExactlyOnceWith(loaded);
+    // A loaded inbox may legitimately become empty; only the initial placeholder is skipped.
+    act(() =>
+      root.render(<PublishRoster key="session-2" me={{ spaceId: "space-a" }} inboxSpaces={[]} />),
+    );
+    expect(publish).toHaveBeenLastCalledWith([]);
   } finally {
     act(() => root.unmount());
     vi.unstubAllGlobals();

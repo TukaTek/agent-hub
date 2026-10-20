@@ -9,6 +9,7 @@ import { userTurnMessageForRun } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import { materializeCurrentTurnFiles } from "../../../packages/adapters/src/thread-artifacts.js";
+import type { MessagingReceipts } from "./messaging-receipts.js";
 import {
   TeamChatBridge,
   teamChatAmbientPrompt,
@@ -2490,7 +2491,7 @@ describe("team chat bridge", () => {
           botId: "bot-1",
           signal: new AbortController().signal,
         },
-        computer: { id: "computer-1", kind: "fake", providerRef: "fake-1" },
+        computer: async () => ({ id: "computer-1", kind: "fake", providerRef: "fake-1" }),
         computerMode: "team",
       },
     );
@@ -2775,5 +2776,132 @@ describe("team chat bridge", () => {
         data: expect.objectContaining({ status: "running", lastError: "enqueue failed" }),
       }),
     );
+  });
+});
+
+describe("team chat bridge receipt", () => {
+  type Acknowledge = MessagingReceipts["acknowledge"];
+
+  function receiptBridge(acknowledge: Acknowledge) {
+    const rows = new Map<string, Record<string, unknown>>();
+    const sendUserMessage = vi.fn(async () => ({
+      messageId: "transcript-1",
+      runId: null,
+      seq: 1,
+      taskId: null,
+    }));
+    const prisma = {
+      externalConversation: {
+        upsert: vi.fn(async () => ({
+          id: "conversation-1",
+          provider: "slack",
+          spaceId: "space-1",
+          botId: "bot-1",
+          userId: "owner-1",
+          thread: { id: "thread-1" },
+        })),
+      },
+      externalMessage: {
+        upsert: vi.fn(async ({ create }: { create: Record<string, unknown> }) => {
+          const row = {
+            id: `external-${String(create.providerEventId)}`,
+            ...create,
+            threadMessageId: null,
+            deliveredAt: null,
+          };
+          rows.set(row.id, row);
+          return row;
+        }),
+        findUnique: vi.fn(
+          async ({ where }: { where: { id: string } }) => rows.get(where.id) ?? null,
+        ),
+        update: vi.fn(async () => ({})),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        findMany: vi.fn(async () => []),
+      },
+      run: { findMany: vi.fn(async () => []) },
+    } as unknown as PrismaClient;
+    const bridge = new TeamChatBridge({
+      prisma,
+      events: { sendUserMessage },
+      jobs: { enqueue: vi.fn() },
+      send: vi.fn(),
+      providerId: "slack",
+      botId: "bot-1",
+      acknowledge,
+    });
+    (
+      bridge as unknown as {
+        target: { id: string; spaceId: string; userId: string; name: string };
+      }
+    ).target = { id: "bot-1", spaceId: "space-1", userId: "owner-1", name: "Chief" };
+    return { bridge, sendUserMessage, rows };
+  }
+
+  function inbound(
+    eventId: string,
+    kind: TeamChatInboundMessage["kind"],
+    conversationId: string,
+  ): TeamChatInboundMessage {
+    return {
+      eventId,
+      workspaceId: "T-1",
+      kind,
+      conversationKey: `channel:${conversationId}`,
+      conversationId,
+      senderId: "U-1",
+      senderName: "Ada",
+      content: "Can you look at this?",
+    };
+  }
+
+  it("acknowledges mentions and direct messages before mirroring them", async () => {
+    const acknowledge = vi.fn<Acknowledge>();
+    const { bridge, sendUserMessage } = receiptBridge(acknowledge);
+
+    await bridge.receive(inbound("1700000000.000100", "mention", "slack:C1:1700000000.000100"));
+    await bridge.receive(inbound("1700000000.000200", "direct", "slack:D1:"), {
+      queueAgent: false,
+    });
+
+    expect(acknowledge.mock.calls).toEqual([
+      ["slack:C1:1700000000.000100", "1700000000.000100", expect.any(Function)],
+      ["slack:D1:", "1700000000.000200", expect.any(Function)],
+    ]);
+    expect(acknowledge.mock.invocationCallOrder[0]!).toBeLessThan(
+      sendUserMessage.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("does not acknowledge ambient messages", async () => {
+    const acknowledge = vi.fn<Acknowledge>();
+    const { bridge } = receiptBridge(acknowledge);
+
+    await bridge.receive(inbound("1700000000.000300", "ambient", "slack:C1:1700000000.000300"));
+    await bridge.receive(inbound("1700000000.000400", "mention", "slack:C1:1700000000.000400"));
+
+    expect(acknowledge.mock.calls).toEqual([
+      ["slack:C1:1700000000.000400", "1700000000.000400", expect.any(Function)],
+    ]);
+  });
+
+  it("reports the message handled once its reply is delivered or the bridge lets it go", async () => {
+    const acknowledge = vi.fn<Acknowledge>();
+    const { bridge, rows } = receiptBridge(acknowledge);
+
+    await bridge.receive(inbound("1700000000.000500", "mention", "slack:C1:1700000000.000500"));
+    const handled = acknowledge.mock.calls[0]![2];
+    const row = rows.get("external-1700000000.000500")!;
+
+    await expect(handled()).resolves.toBe(false);
+    row.deliveredAt = new Date("2026-01-01T00:00:00Z");
+    await expect(handled()).resolves.toBe(true);
+    row.deliveredAt = null;
+    for (const status of ["ignored", "cancelled"]) {
+      row.status = status;
+      await expect(handled()).resolves.toBe(true);
+    }
+    row.status = "running";
+    await expect(handled()).resolves.toBe(false);
   });
 });

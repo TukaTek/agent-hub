@@ -1,5 +1,4 @@
 export const DE_MESSAGES: Record<string, string> = {
-  "Archived Assistants": "Archivierte Assistenten",
   Assistant: "Assistent",
   "Could not delete Assistant": "Assistent konnte nicht gelöscht werden",
   "Could not restore Assistant": "Assistent konnte nicht wiederhergestellt werden",
@@ -7,6 +6,49 @@ export const DE_MESSAGES: Record<string, string> = {
     "Diese Gruppe löschen? Assistenten und ihre eigenen Threads bleiben erhalten.",
   "This permanently deletes your account, Assistants, conversations, memories, files, and saved connections. This cannot be undone.":
     "Das löscht dein Konto, deine Assistenten, Unterhaltungen, Erinnerungen, Dateien und gespeicherten Verbindungen endgültig. Das lässt sich nicht rückgängig machen.",
+  Close: "Schließen",
+  Link: "Link",
+  "Lets this bot organize, retune and schedule the bots it creates. You approve each change.":
+    "Erlaubt diesem Bot, die von ihm erstellten Bots zu organisieren, anzupassen und zu planen. Du genehmigst jede Änderung.",
+  "Too many attempts. Try again in a few minutes.":
+    "Zu viele Versuche. Versuche es in ein paar Minuten erneut.",
+  "The server had a problem. Try again in a moment.":
+    "Auf dem Server ist ein Problem aufgetreten. Versuche es gleich noch einmal.",
+  "Password sign-in is turned off on this server":
+    "Die Anmeldung mit Passwort ist auf diesem Server deaktiviert",
+  "Could not save your sign-in on this device. Try again.":
+    "Deine Anmeldung konnte auf diesem Gerät nicht gespeichert werden. Versuche es erneut.",
+  "Your OpenRouter": "Dein OpenRouter",
+  "Your OpenAI": "Dein OpenAI",
+  "Your Anthropic": "Dein Anthropic",
+  "Your model provider": "Dein Modellanbieter",
+  "The model provider returned an error.": "Der Modellanbieter hat einen Fehler zurückgegeben.",
+  "{provider} is rate limiting requests. Try again shortly.":
+    "{provider} begrenzt die Anfragerate. Versuche es gleich noch einmal.",
+  "{summary} Resets {date}.": "{summary} Zurücksetzung am {date}.",
+  "{provider} rejected the API key. Check your connection settings.":
+    "{provider} hat den API-Schlüssel abgelehnt. Prüfe deine Verbindungseinstellungen.",
+  "{provider} could not find the requested model.":
+    "{provider} konnte das angeforderte Modell nicht finden.",
+  "{provider} took too long to respond. Try again.":
+    "{provider} hat zu lange zum Antworten gebraucht. Versuche es erneut.",
+  "{provider} key hit its limit.": "{provider}: Schlüssellimit erreicht.",
+  "{provider} key hit its daily limit.": "{provider}: tägliches Schlüssellimit erreicht.",
+  "{provider} key hit its weekly limit.": "{provider}: wöchentliches Schlüssellimit erreicht.",
+  "{provider} key hit its monthly limit.": "{provider}: monatliches Schlüssellimit erreicht.",
+  "{provider} reached its credit limit.": "{provider}: Guthabenlimit erreicht.",
+  "{provider} reached its daily credit limit.": "{provider}: tägliches Guthabenlimit erreicht.",
+  "{provider} reached its weekly credit limit.":
+    "{provider}: wöchentliches Guthabenlimit erreicht.",
+  "{provider} reached its monthly credit limit.": "{provider}: monatliches Guthabenlimit erreicht.",
+  "{provider} reached its spending limit.": "{provider}: Ausgabenlimit erreicht.",
+  "{provider} reached its daily spending limit.": "{provider}: tägliches Ausgabenlimit erreicht.",
+  "{provider} reached its weekly spending limit.":
+    "{provider}: wöchentliches Ausgabenlimit erreicht.",
+  "{provider} reached its monthly spending limit.":
+    "{provider}: monatliches Ausgabenlimit erreicht.",
+  Details: "Details",
+
   "Couldn't refresh — showing the last loaded messages.":
     "Aktualisierung fehlgeschlagen – die zuletzt geladenen Nachrichten werden angezeigt.",
   "Try Again": "Erneut versuchen",
@@ -18,7 +60,7 @@ export const DE_MESSAGES: Record<string, string> = {
   Yesterday: "Gestern",
   You: "Du",
   "Original message unavailable": "Originalnachricht nicht verfügbar",
-  "No archived bots": "Keine archivierten Bots",
+  "No archived chats": "Keine archivierten Chats",
   "Recover computer?": "Computer wiederherstellen?",
   "Recreate a computer that is not working.":
     "Einen nicht funktionierenden Computer neu erstellen.",
@@ -63,8 +105,6 @@ export const DE_MESSAGES: Record<string, string> = {
   "Custom server {host}": "Eigener Server {host}",
   "Don’t have an account?": "Du hast noch kein Konto?",
   Email: "E-Mail",
-  "Enter your CortexAI Agent Hub server address.":
-    "Gib die Adresse deines CortexAI Agent Hub-Servers ein.",
   "Forgot password?": "Passwort vergessen?",
   "Loading…": "Wird geladen…",
   Password: "Passwort",
@@ -90,6 +130,8 @@ export const DE_MESSAGES: Record<string, string> = {
   "Delete space": "Space löschen",
   "Delete {name}?": "{name} löschen?",
   "Expand {name}": "{name} ausklappen",
+  "Mark as Read": "Als gelesen markieren",
+  "Mark as Unread": "Als ungelesen markieren",
   "Long press to pin or move to a section":
     "Lange drücken, um anzuheften oder in einen Abschnitt zu verschieben",
   "Long press to pin, move, or silence notifications":
@@ -163,6 +205,7 @@ export const DE_MESSAGES: Record<string, string> = {
   "Failed to stop work": "Arbeit konnte nicht gestoppt werden",
   File: "Datei",
   "Hide {label}": "{label} ausblenden",
+  Diagram: "Diagramm",
   Image: "Bild",
   "Jump to latest": "Zur neuesten Nachricht springen",
   "Jump to latest, new messages": "Zur neuesten Nachricht springen, neue Nachrichten",
@@ -234,7 +277,7 @@ export const DE_MESSAGES: Record<string, string> = {
   "{count} agents working": "{count} Agents arbeiten",
   "{from} messaged {to}": "{from} hat {to} geschrieben",
   "{name} (max {count} attachments)": "{name} (max. {count} Anhänge)",
-  "{name} (over 10 MiB)": "{name} (über 10 MiB)",
+  "{name} (over {limit})": "{name} (über {limit})",
   "{name} (permission denied)": "{name} (Zugriff verweigert)",
   "{name} (unsupported type)": "{name} (Dateityp nicht unterstützt)",
   "{name} is working": "{name} arbeitet",
@@ -291,6 +334,7 @@ export const DE_MESSAGES: Record<string, string> = {
   "Could not load routine": "Routine konnte nicht geladen werden",
   "Git event": "Git-Ereignis",
   "Message event": "Nachrichtenereignis",
+  "When something changes": "Wenn sich etwas ändert",
   "Open conversation": "Unterhaltung öffnen",
   Paused: "Pausiert",
   Prompt: "Prompt",
@@ -299,6 +343,12 @@ export const DE_MESSAGES: Record<string, string> = {
   "Teams message": "Teams-Nachricht",
   "This routine no longer exists": "Diese Routine gibt es nicht mehr",
   Webhook: "Webhook",
+  // app/bot-profile.tsx
+  Profile: "Profil",
+  Routines: "Routinen",
+  "Could not load routines": "Routinen konnten nicht geladen werden",
+  "Get notified when this Bot finishes or needs input":
+    "Benachrichtigung, wenn dieser Bot fertig ist oder Eingabe braucht",
   // app/computer.tsx
   "Booting {label}": "{label} wird gestartet",
   Bot: "Bot",
@@ -498,19 +548,21 @@ export const DE_MESSAGES: Record<string, string> = {
   "Speak + transcribe": "Sprechen + transkribieren",
   "Speak only": "Nur sprechen",
   "Speech model": "Sprachmodell",
+  "Transcription model": "Transkriptionsmodell",
+  Reconnect: "Erneut verbinden",
   "This device": "Dieses Gerät",
   "Your phone's built-in voice. Free, no account needed":
     "Die eingebaute Stimme deines Telefons. Kostenlos, kein Konto nötig",
   // app/(settings)/account.tsx
   "Agent messages": "Agent-Nachrichten",
-  "Alerts from routines": "Meldungen von Routinen",
   Appearance: "Erscheinungsbild",
-  "Archived bots": "Archivierte Bots",
+  Archived: "Archiviert",
   "Avatar style": "Avatar-Stil",
   Avatars: "Avatare",
   Cancel: "Abbrechen",
   "Could not change language": "Sprache konnte nicht geändert werden",
   "Could not delete account": "Konto konnte nicht gelöscht werden",
+  "Could not load chats": "Chats konnten nicht geladen werden",
   "Could not restore bot": "Bot konnte nicht wiederhergestellt werden",
   "Could not sign out": "Abmeldung fehlgeschlagen",
   "Could not update notifications": "Benachrichtigungen konnten nicht aktualisiert werden",
@@ -542,7 +594,6 @@ export const DE_MESSAGES: Record<string, string> = {
     "Das löscht dein Konto, deine Bots, Unterhaltungen, Erinnerungen, Dateien und gespeicherten Verbindungen endgültig. Das lässt sich nicht rückgängig machen.",
   "Try again.": "Versuche es erneut.",
   Usage: "Nutzung",
-  "While agents are working": "Während Agents arbeiten",
   "Your account": "Dein Konto",
   "{runs} runs · {tokens} tokens": "{runs} Ausführungen · {tokens} Token",
   "{style} avatars": "Avatare: {style}",
@@ -574,6 +625,11 @@ export const DE_MESSAGES: Record<string, string> = {
   "New section": "Neuer Abschnitt",
   Pin: "Anheften",
   "Rename section": "Abschnitt umbenennen",
+  "Section actions for {name}": "Abschnittsaktionen für {name}",
+  "Could not delete section": "Abschnitt konnte nicht gelöscht werden",
+  "Delete section": "Abschnitt löschen",
+  "Its bots and groups are kept and leave the section.":
+    "Seine Bots und Gruppen bleiben erhalten und verlassen den Abschnitt.",
   "Resume notifications": "Benachrichtigungen wieder einschalten",
   "Save section name": "Abschnittsnamen speichern",
   "Section name": "Abschnittsname",
@@ -798,4 +854,32 @@ export const DE_MESSAGES: Record<string, string> = {
     "Melde dich bei deinem bestehenden Konto an, um SSO zu verknüpfen",
   "SSO is temporarily unavailable. Try again.":
     "SSO ist vorübergehend nicht verfügbar. Versuche es erneut.",
+  "Members ({count})": "Mitglieder ({count})",
+  "Show all": "Alle anzeigen",
+  "Show selected": "Ausgewählte anzeigen",
+  "Filter bots": "Bots filtern",
+  "Pick {min}–{max}": "{min}–{max} auswählen",
+  "No members yet": "Noch keine Mitglieder",
+  Applied: "Angewendet",
+  Apply: "Anwenden",
+  Dismissed: "Verworfen",
+  Edit: "Bearbeiten",
+  "Instruction history": "Anweisungsverlauf",
+  Instructions: "Anweisungen",
+  "Instructions updated": "Anweisungen aktualisiert",
+  "Let this bot update its own instructions":
+    "Dieser Bot darf seine eigenen Anweisungen aktualisieren",
+  Restored: "Wiederhergestellt",
+  Undo: "Rückgängig",
+  "Update instructions?": "Anweisungen aktualisieren?",
+  "Could not restore instructions": "Anweisungen konnten nicht wiederhergestellt werden",
+  "Hide chats": "Chats ausblenden",
+  "Show chats": "Chats einblenden",
+  "Remove photo": "Foto entfernen",
+  Shape: "Form",
+  "Shape {number}": "Form {number}",
+  "Fleet management": "Flottenverwaltung",
+  "Try again": "Erneut versuchen",
+  "Your session expired": "Deine Sitzung ist abgelaufen",
+  "The server had a problem": "Auf dem Server ist ein Problem aufgetreten",
 };

@@ -6,12 +6,16 @@ import type {
 import {
   CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
   OPENAI_COMPATIBLE_PROVIDER_ID as CONTRACT_OPENAI_COMPAT,
+  canonicalPiProviderId,
   cloudflareGatewayRouting,
   isCloudflareAiGatewayProvider,
+  MAX_ENABLED_MODEL_IDS,
   modelOutputLeavesInputRoom,
 } from "@cortexai-agent-hub/contracts";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { enabledOpenAiCompatibleModelIds } from "./model-selection.js";
 import { modelIdSupportsImages, updateModelImageCapabilities } from "./model-vision.js";
+import { normalizeOpenAiCompatibleBaseUrl } from "./openai-compatible-url.js";
 import { modelCredentialAuthKind } from "./pi-catalog-availability.js";
 import {
   CHATGPT_OAUTH_PROVIDER,
@@ -29,6 +33,22 @@ export type BuildModelConnectOptions = {
   /** Skip writing visionModelIds when prior plaintext was unavailable during key replacement. */
   omitVisionModelIds?: boolean;
 };
+
+/** Reuse a saved probe key only for the endpoint it was saved for. */
+export function storedOpenAiCompatibleProbeKey(
+  baseUrl: string,
+  storedPlaintext?: string,
+): string | undefined {
+  const previous = tryParseModelSecret(storedPlaintext);
+  if (
+    previous?.kind !== "openai_compatible" ||
+    !previous.apiKey?.trim() ||
+    previous.baseUrl !== normalizeOpenAiCompatibleBaseUrl(baseUrl)
+  ) {
+    return undefined;
+  }
+  return previous.apiKey;
+}
 
 export function buildModelConnectPlaintext(
   input: ModelConnectInput,
@@ -87,6 +107,14 @@ export function buildModelConnectPlaintext(
     const includeVisionModelIds =
       !options?.omitVisionModelIds &&
       (input.supportsImages !== undefined || previousVisionModelIds !== undefined);
+    const enabledModelIds = enabledOpenAiCompatibleModelIds(
+      {
+        kind: "openai_compatible",
+        baseUrl: prepared.baseUrl,
+        enabledModelIds: input.enabledModelIds ?? compatiblePrevious?.enabledModelIds,
+      },
+      prepared.modelId,
+    );
     const compatibleCacheCapabilities =
       input.cacheCapabilities ?? compatiblePrevious?.cacheCapabilities;
     const secret: StoredModelSecret = {
@@ -101,6 +129,13 @@ export function buildModelConnectPlaintext(
       ...(contextWindow !== undefined ? { contextWindow } : {}),
       ...(prepared.apiKey ? { apiKey: prepared.apiKey } : {}),
       ...(includeVisionModelIds ? { visionModelIds } : {}),
+      // The default is always implicit in the effective list. At the input limit,
+      // keep the explicit selections rather than growing storage by one on every
+      // save from a different space.
+      enabledModelIds:
+        enabledModelIds.length > MAX_ENABLED_MODEL_IDS
+          ? enabledModelIds.filter((id) => id !== prepared.modelId)
+          : enabledModelIds,
       ...(maxImagesPerPrompt !== undefined ? { maxImagesPerPrompt } : {}),
     };
     return serializeModelSecret(secret);
@@ -229,7 +264,7 @@ export function modelCredentialDto(
 ): ModelCredential {
   const credential: ModelCredential = {
     id: row.id,
-    provider: row.provider,
+    provider: canonicalPiProviderId(row.provider),
     label: row.label,
     hasKey: storedModelSecretHasApiKey(plaintext),
     isDefault: row.isDefault,
@@ -281,6 +316,9 @@ export function modelCredentialDto(
     cacheCapabilities: parsed.cacheCapabilities,
     ...(parsed.maxImagesPerPrompt !== undefined
       ? { maxImagesPerPrompt: parsed.maxImagesPerPrompt }
+      : {}),
+    ...(parsed.enabledModelIds !== undefined
+      ? { enabledModelIds: enabledOpenAiCompatibleModelIds(parsed, row.defaultModel) }
       : {}),
     thinkingLevels: getSupportedThinkingLevels(
       openAiCompatibleModel(row.defaultModel ?? "custom", parsed.baseUrl, parsed.reasoning),

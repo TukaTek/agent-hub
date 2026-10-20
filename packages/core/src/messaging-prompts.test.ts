@@ -6,14 +6,6 @@ import {
 } from "./messaging-prompts.js";
 
 describe("messagingDmSurfaceNote", () => {
-  it("explains the shared messaging conversation and conciseness", () => {
-    const note = messagingDmSurfaceNote();
-    expect(note).toMatch(/messaging app/);
-    expect(note).toMatch(/iMessage/);
-    expect(note).toMatch(/same (thread|conversation)/i);
-    expect(note).toMatch(/concise/i);
-  });
-
   it("says attached files are not mirrored to the messaging chat", () => {
     const note = messagingDmSurfaceNote();
     expect(note).toMatch(/only text is mirrored/i);

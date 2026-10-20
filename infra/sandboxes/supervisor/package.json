@@ -10,18 +10,18 @@
     "test": "vitest run --root ../../.. infra/sandboxes/supervisor/src"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.1",
+    "@hono/node-server": "2.1.5",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/logging": "workspace:*",
     "dockerode": "5.0.1",
-    "hono": "4.13.7",
-    "tsx": "4.23.13",
-    "zod": "4.6.2"
+    "hono": "4.13.13",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cortexai-agent-hub/ui-tokens": "workspace:*",
-    "@types/dockerode": "4.0.1",
+    "@types/dockerode": "4.0.2",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }

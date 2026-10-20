@@ -11,19 +11,19 @@
     "test": "vitest run --root ../.. packages/testkit/src"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.1",
+    "@hono/node-server": "2.1.5",
     "@cortexai-agent-hub/adapter-kit": "workspace:*",
     "@cortexai-agent-hub/adapters": "workspace:*",
     "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/db": "workspace:*",
-    "@testcontainers/postgresql": "12.1.0",
+    "@testcontainers/postgresql": "12.2.1",
     "pngjs": "7.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0",
+    "@playwright/test": "1.64.1",
     "@types/pngjs": "6.0.5",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }

@@ -16,6 +16,7 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import {
   connectedModelChoices,
+  credentialForModel,
   modelOptionKey,
   parseModelOptionKey,
   resolveSelectableModelId,
@@ -33,6 +34,7 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { X } from "lucide-react";
 import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { ErrorBoundary, SectionLoadFailed } from "../../components/ErrorBoundary";
+import { InstructionSettings } from "../../components/InstructionSettings";
 import { botProfilePatch } from "../../lib/bot-profile-patch";
 import { thinkingLevelLabel } from "../../lib/model-catalog";
 import { rpc } from "../../lib/rpc";
@@ -220,9 +222,10 @@ export function BotSettings({
     instructions?: string;
     color?: string;
     notifyOnFinish?: boolean;
-    computerMode: ComputerMode;
+    computerMode?: ComputerMode;
     memoryScope?: "isolated" | "shared" | null;
     autoSpeak?: boolean;
+    fleetManagement?: boolean;
     voiceId?: string | null;
     modelProvider?: string | null;
     modelId?: string | null;
@@ -248,6 +251,8 @@ export function BotSettings({
   const [computerMode, setComputerMode] = useState(bot.computerMode);
   const [memoryScope, setMemoryScope] = useState(bot.memoryScope);
   const [autoSpeak, setAutoSpeak] = useState(bot.autoSpeak);
+  const [fleetManagement, setFleetManagement] = useState(bot.fleetManagement);
+  useEffect(() => setFleetManagement(bot.fleetManagement), [bot.fleetManagement]);
   const [voiceId, setVoiceId] = useState(bot.voiceId ?? "");
   const [voices, setVoices] = useState<VoiceInfo[]>([]);
   const [modelKey, setModelKey] = useState(
@@ -284,6 +289,7 @@ export function BotSettings({
       description?: string;
       color?: string;
       notifyOnFinish?: boolean;
+      fleetManagement?: boolean;
       disabledBuiltinTools?: string[];
       baseDisabledBuiltinTools?: string[];
     }) => Promise<void>
@@ -327,9 +333,7 @@ export function BotSettings({
             resolveSelectableModelId(catalog, entry.provider, entry.id) === effectiveModelId,
         )
       : undefined;
-  const effectiveCredential = credentials.find(
-    (entry) => entry.provider === effectiveProvider && entry.modelId === effectiveModelId,
-  );
+  const effectiveCredential = credentialForModel(credentials, effectiveProvider, effectiveModelId);
   const thinkingOptions = (
     effectiveCredential?.thinkingLevels ??
     effectiveEntry?.thinkingLevels ??
@@ -343,32 +347,36 @@ export function BotSettings({
     description?: string;
     color?: string;
     notifyOnFinish?: boolean;
+    fleetManagement?: boolean;
     disabledBuiltinTools?: string[];
     baseDisabledBuiltinTools?: string[];
   }) {
-    const selected = selectedModel;
-    const nextName = (patchOverrides?.name !== undefined ? patchOverrides.name : name).trim();
-    const nextTitle = (patchOverrides?.title !== undefined ? patchOverrides.title : title).trim();
-    const nextDescription = (
-      patchOverrides?.description !== undefined ? patchOverrides.description : description
-    ).trim();
-    const nextColor = patchOverrides?.color !== undefined ? patchOverrides.color : color;
-    const nextNotify =
-      patchOverrides?.notifyOnFinish !== undefined ? patchOverrides.notifyOnFinish : notifyOnFinish;
-
-    if (nextName) setName(nextName);
-    setTitle(nextTitle);
-    setDescription(nextDescription);
-
     try {
       setSaving(true);
       setError(null);
+      if (patchOverrides?.fleetManagement !== undefined) {
+        await onSave({ fleetManagement: patchOverrides.fleetManagement });
+        return;
+      }
+      const selected = selectedModel;
+      const nextName = (patchOverrides?.name !== undefined ? patchOverrides.name : name).trim();
+      const nextTitle = (patchOverrides?.title !== undefined ? patchOverrides.title : title).trim();
+      const nextDescription = (
+        patchOverrides?.description !== undefined ? patchOverrides.description : description
+      ).trim();
+      const nextColor = patchOverrides?.color !== undefined ? patchOverrides.color : color;
+      const nextNotify =
+        patchOverrides?.notifyOnFinish !== undefined
+          ? patchOverrides.notifyOnFinish
+          : notifyOnFinish;
+
+      if (nextName) setName(nextName);
+      setTitle(nextTitle);
+      setDescription(nextDescription);
       const patch = {
         name: nextName || bot.name,
         title: nextTitle,
-        // One field feeds both, so it only goes on the wire when it changed: a
-        // model, thinking or voice save must not overwrite longer instructions,
-        // nor fail on a description that is already above its own limit.
+        // Keep untouched profile fields off the wire.
         ...botProfilePatch(savedDescriptionRef.current, nextDescription),
         // Unchanged color stays off the wire so a legacy named value cannot fail a name save.
         ...(nextColor !== bot.color ? { color: nextColor } : {}),
@@ -379,7 +387,10 @@ export function BotSettings({
         voiceId: voiceId || null,
         modelProvider: selected?.provider ?? null,
         modelId: selected?.modelId ?? null,
-        ...(modelMetaReady
+        ...(modelMetaReady &&
+        (thinkingOptions.length > 0 ||
+          (selected?.provider ?? null) !== bot.modelProvider ||
+          (selected?.modelId ?? null) !== bot.modelId)
           ? {
               thinkingLevel: thinkingOptions.length
                 ? ((thinkingLevel || null) as ThinkingLevel | null)
@@ -421,6 +432,8 @@ export function BotSettings({
       }
       savedDescriptionRef.current = nextDescription;
     } catch (err) {
+      if (patchOverrides?.fleetManagement !== undefined)
+        setFleetManagement(!patchOverrides.fleetManagement);
       setError(errorText(err, t`Could not save`));
     } finally {
       pendingSavesRef.current -= 1;
@@ -453,6 +466,7 @@ export function BotSettings({
     description?: string;
     color?: string;
     notifyOnFinish?: boolean;
+    fleetManagement?: boolean;
     disabledBuiltinTools?: string[];
   }) {
     // Serialize full-object auto-saves so an older in-flight request cannot
@@ -559,6 +573,7 @@ export function BotSettings({
             ›
           </span>
         </summary>
+        <InstructionSettings key={bot.id} bot={bot} />
         <ComputerModePicker value={computerMode} onChange={setComputerMode} />
         <ErrorBoundary fallback={<SectionLoadFailed />}>
           <Suspense fallback={null}>
@@ -660,6 +675,27 @@ export function BotSettings({
           />
           <Trans>Read replies aloud</Trans>
         </label>
+        <label
+          htmlFor={`${ids}-fleet-management`}
+          className="mt-5 flex cursor-pointer items-center gap-3 text-[14px] text-foreground/75"
+        >
+          <Switch
+            id={`${ids}-fleet-management`}
+            checked={fleetManagement}
+            disabled={saving}
+            onCheckedChange={(checked) => {
+              setFleetManagement(checked);
+              void enqueueSave({ fleetManagement: checked });
+            }}
+          />
+          <Trans>Fleet management</Trans>
+        </label>
+        <div className="text-[12px] text-muted-foreground/70">
+          <Trans>
+            Lets this bot organize, retune and schedule the bots it creates. You approve each
+            change.
+          </Trans>
+        </div>
         {voices.length ? (
           <label htmlFor={`${ids}-voice`} className={fieldLabelClass}>
             <Trans>Voice</Trans>

@@ -1,7 +1,11 @@
 import type { AgentRunRequest, AgentRuntime, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
 import { historyCompactJob } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { blocksToAgentHistoryText, withHubModelDefaults } from "@cortexai-agent-hub/core";
+import {
+  blocksToAgentHistoryText,
+  escapePromptData,
+  withHubModelDefaults,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { recordUsage } from "@cortexai-agent-hub/db";
 import { getLogger, unwrapJobPayload } from "@cortexai-agent-hub/logging";
@@ -83,10 +87,6 @@ export function selectCompactedHistory(options: {
   }
 
   return { history: uncompacted, summary, usedLocalSummary: true };
-}
-
-function escapePromptData(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 export function formatCompactedSummary(summary: string, historyCompactedUpToSeq: number): string {

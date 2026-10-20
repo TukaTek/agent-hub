@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { JobPublisher, SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import { runContinueJob, SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import { inboundRoutineModelPin } from "@cortexai-agent-hub/adapters";
+import { escapePromptData } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
@@ -49,10 +50,6 @@ export type InboundTarget = {
   bot: Pick<WebhookTarget["bot"], "id" | "spaceId" | "userId">;
   threadId: string;
 };
-
-function escapePromptData(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
 
 /** Fence inbound delivery JSON as untrusted data so agents do not treat it as instructions. */
 export function formatUntrustedDeliveryPayload(label: string, payload: unknown): string {

@@ -1,6 +1,10 @@
 import type { RealtimeFanout } from "@cortexai-agent-hub/adapter-kit";
 import { encodeLoginSecret } from "@cortexai-agent-hub/contracts";
-
+import {
+  TAKEOVER_COMPUTER_DONE_STATE,
+  TAKEOVER_COMPUTER_PENDING_STATE,
+  TAKEOVER_COMPUTER_SKIPPED_STATE,
+} from "@cortexai-agent-hub/core";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "./client.js";
 import {
@@ -17,6 +21,7 @@ import {
   pauseRunForInput,
   pauseRunForTakeover,
   sendUserMessage,
+  settleReleasedTakeoverCards,
 } from "./events.js";
 import { RunHistoryWriteError } from "./messages.js";
 
@@ -573,6 +578,229 @@ describe("finalizeComputerControlRelease", () => {
     ).resolves.toEqual({ runId: null });
 
     expect(tx.computer.updateMany).toHaveBeenCalledOnce();
+  });
+
+  it("settles a pending card on the run thread before the release event", async () => {
+    const fanout = new TestFanout();
+    const publish = vi.spyOn(fanout, "publish");
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "group-thread" }]),
+      computer: {
+        updateMany: vi.fn().mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 }),
+      },
+      bot: {
+        findFirst: vi.fn().mockResolvedValue({
+          thread: { id: "bot-thread" },
+        }),
+      },
+      run: {
+        findUnique: vi.fn().mockResolvedValue({
+          threadId: "group-thread",
+          status: "queued",
+          startedAt: null,
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      message: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "message-1",
+            blocks: [
+              {
+                kind: "computer",
+                state: TAKEOVER_COMPUTER_PENDING_STATE,
+                text: "Sign in to continue.",
+              },
+              { kind: "text", text: "keep" },
+            ],
+          },
+          {
+            id: "message-2",
+            blocks: [{ kind: "computer", state: TAKEOVER_COMPUTER_DONE_STATE, text: "already" }],
+          },
+        ]),
+        update: vi.fn().mockResolvedValue({ id: "message-1" }),
+      },
+      thread: {
+        update: vi
+          .fn()
+          .mockResolvedValueOnce({ nextEventSeq: 8 })
+          .mockResolvedValueOnce({ nextEventSeq: 9 }),
+      },
+      event: {
+        create: vi.fn(
+          async ({ data }: { data: { seq: number; type: string; threadId: string } }) => ({
+            ...event(data.seq),
+            type: data.type,
+            threadId: data.threadId,
+          }),
+        ),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    const input = {
+      spaceId: "workspace-1",
+      computerId: "computer-1",
+      botId: "bot-1",
+      runId: "run-1",
+      leaseId: "lease-1",
+      holder: "bot" as const,
+      reason: "done" as const,
+    };
+
+    await expect(finalizeComputerControlRelease(prisma, input, fanout)).resolves.toEqual({
+      runId: "run-1",
+    });
+    await expect(finalizeComputerControlRelease(prisma, input, fanout)).resolves.toBe(false);
+
+    expect(tx.message.update).toHaveBeenCalledOnce();
+    expect(tx.message.update).toHaveBeenCalledWith({
+      where: { id: "message-1" },
+      data: {
+        blocks: [
+          { kind: "computer", state: TAKEOVER_COMPUTER_DONE_STATE, text: "Sign in to continue." },
+          { kind: "text", text: "keep" },
+        ],
+      },
+    });
+    expect(tx.event.create.mock.calls.map(([call]) => call.data.type)).toEqual([
+      "thread.message.updated",
+      "computer.takeover.released",
+    ]);
+    expect(tx.event.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: "thread.message.updated",
+          threadId: "group-thread",
+          runId: "run-1",
+          payload: expect.objectContaining({
+            messageId: "message-1",
+            blocks: [
+              {
+                kind: "computer",
+                state: TAKEOVER_COMPUTER_DONE_STATE,
+                text: "Sign in to continue.",
+              },
+              { kind: "text", text: "keep" },
+            ],
+          }),
+        }),
+      }),
+    );
+    expect(tx.event.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: "computer.takeover.released",
+          threadId: "group-thread",
+          payload: { holder: "bot", leaseId: "lease-1", reason: "done" },
+        }),
+      }),
+    );
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith("thread:group-thread", JSON.stringify({ cursor: 8 }));
+  });
+
+  it("still releases control after the run was stopped, leaving its card alone", async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "group-thread" }]),
+      computer: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      bot: { findFirst: vi.fn().mockResolvedValue({ thread: { id: "bot-thread" } }) },
+      run: {
+        findUnique: vi.fn().mockResolvedValue({
+          threadId: "group-thread",
+          status: "cancelled",
+          startedAt: null,
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      message: { findMany: vi.fn(), update: vi.fn() },
+      thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 4 }) },
+      event: {
+        create: vi.fn(
+          async ({ data }: { data: { seq: number; type: string; threadId: string } }) => ({
+            ...event(data.seq),
+            type: data.type,
+            threadId: data.threadId,
+          }),
+        ),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+
+    await expect(
+      finalizeComputerControlRelease(prisma, {
+        spaceId: "workspace-1",
+        computerId: "computer-1",
+        botId: "bot-1",
+        runId: "run-1",
+        leaseId: "lease-1",
+        holder: "bot",
+        reason: "expired",
+      }),
+    ).resolves.toEqual({ runId: null });
+
+    expect(tx.message.findMany).not.toHaveBeenCalled();
+    expect(tx.event.create.mock.calls.map(([call]) => call.data.type)).toEqual([
+      "computer.takeover.released",
+    ]);
+  });
+});
+
+describe("settleReleasedTakeoverCards", () => {
+  it("writes a pending card once and does not write or notify when nothing is pending", async () => {
+    const notify = vi.fn();
+    let blocks: Array<{ kind: string; state?: string; text: string }> = [
+      { kind: "text", text: "keep" },
+      { kind: "computer", state: TAKEOVER_COMPUTER_PENDING_STATE, text: "Sign in to continue." },
+      { kind: "computer", state: "Ready", text: "other" },
+    ];
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      message: {
+        findMany: vi.fn(async () => [{ id: "message-1", blocks }]),
+        update: vi.fn(async ({ data }: { data: { blocks: typeof blocks } }) => {
+          blocks = data.blocks;
+          return { id: "message-1" };
+        }),
+      },
+      thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 4 }) },
+      run: { findUnique: vi.fn().mockResolvedValue({ status: "queued", startedAt: null }) },
+      event: {
+        create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+          ...event(data.seq),
+          type: data.type,
+        })),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    const input = {
+      spaceId: "workspace-1",
+      threadId: "thread-1",
+      botId: "bot-1",
+      runId: "run-1",
+      reason: "takeover-skipped",
+    };
+
+    await settleReleasedTakeoverCards(prisma, input, notify);
+    await settleReleasedTakeoverCards(prisma, input, notify);
+
+    expect(tx.message.update).toHaveBeenCalledOnce();
+    expect(blocks).toEqual([
+      { kind: "text", text: "keep" },
+      { kind: "computer", state: TAKEOVER_COMPUTER_SKIPPED_STATE, text: "Sign in to continue." },
+      { kind: "computer", state: "Ready", text: "other" },
+    ]);
+    expect(tx.event.create).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith("thread-1", 3);
   });
 });
 
@@ -2425,6 +2653,7 @@ describe("sendUserMessage", () => {
         botId: "bot-1",
         userId: "user-1",
         runId: null,
+        originTrigger: "webhook",
         modelProvider: "openai-compatible",
         modelId: "private-model",
         thinkingLevel: "low",
@@ -2646,7 +2875,14 @@ describe("sendUserMessage", () => {
     ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-user" });
 
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
-      data: { messageId: "message-1", botId: "bot-1", userId: "user-1", runId: "run-user" },
+      data: {
+        messageId: "message-1",
+        botId: "bot-1",
+        userId: "user-1",
+        runId: "run-user",
+        // Kept so an unclaimed release continues as messaging, never as an owner follow-up.
+        originTrigger: "messaging",
+      },
     });
   });
 });
@@ -2800,6 +3036,44 @@ describe("claimSteering", () => {
       }),
     );
   });
+
+  it.each(["user", "follow_up", "messaging"])(
+    "keeps held webhook deliveries out of a %s turn",
+    async (trigger) => {
+      const tx = {
+        $queryRaw: vi.fn(),
+        run: {
+          findFirst: vi.fn(async () => ({
+            id: "run-1",
+            trigger,
+            sourceMessage: { blocks: [{ kind: "channel_message", channelId: "channel-1" }] },
+          })),
+        },
+        steeringMessage: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
+      };
+      const prisma = {
+        $transaction: async (action: (client: typeof tx) => unknown) => action(tx),
+      } as unknown as PrismaClient;
+      await claimSteering(prisma, {
+        threadId: "thread-1",
+        botId: "bot-1",
+        runId: "run-1",
+        leaseOwner: "worker-1",
+        leaseFence: 1,
+        seenIds: [],
+      });
+      expect(tx.steeringMessage.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { runId: null, originTrigger: trigger === "messaging" ? "messaging" : null },
+              { runId: "run-1" },
+            ],
+          }),
+        }),
+      );
+    },
+  );
 
   it("leaves channel and in-app pending rows for a direct-message run", async () => {
     const tx = {
@@ -3221,6 +3495,135 @@ describe("appendEvent", () => {
     ).rejects.toThrow(RunHistoryWriteError);
     expect(tx.run.findUnique).not.toHaveBeenCalled();
     expect(tx.event.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("instruction proposal answers", () => {
+  function fixture() {
+    const request = {
+      instructions: "Draft only",
+      reason: "Learned preference",
+      previousInstructions: "Original",
+    };
+    const block = {
+      kind: "ask",
+      approvalEffectId: "effect-1",
+      text: "Update instructions?",
+      status: "pending",
+      instructionUpdate: {
+        botId: "bot-1",
+        before: "Original",
+        after: "Draft only",
+        reason: "Learned preference",
+      },
+      actions: [
+        { id: "allow", label: "Apply" },
+        { id: "deny", label: "Dismiss" },
+      ],
+    };
+    const tx = {
+      $queryRaw: vi.fn(async () => []),
+      run: {
+        findFirst: vi.fn(async () => ({ botId: "bot-1", userId: "owner" })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        findUnique: vi.fn(async () => ({ status: "queued" })),
+      },
+      message: {
+        findFirst: vi.fn(async () => ({ id: "message-1", blocks: [block] })),
+        update: vi.fn(async () => ({ id: "message-1" })),
+      },
+      externalEffect: {
+        findFirst: vi.fn(async () => ({
+          id: "effect-1",
+          kind: "propose_instructions_update",
+          request,
+        })),
+        findUniqueOrThrow: vi.fn(async () => ({ request })),
+        update: vi.fn(),
+      },
+      bot: { updateMany: vi.fn() },
+      task: { updateMany: vi.fn() },
+      thread: { update: vi.fn(async () => ({ nextEventSeq: 10 })) },
+      event: {
+        create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+          ...event(data.seq),
+          type: data.type,
+        })),
+      },
+    };
+    const prisma = { $transaction: async (action: (client: typeof tx) => unknown) => action(tx) };
+    const answer = (value: string, userId = "owner") =>
+      answerRunInput(
+        prisma as never,
+        {
+          spaceId: "workspace-1",
+          threadId: "thread-1",
+          runId: "run-1",
+          messageId: "message-1",
+          answeredByUserId: userId,
+          answer: value,
+        },
+        new TestFanout(),
+      );
+    return { tx, answer };
+  }
+  it("stores edited text as the approved request without replacing the user's task", async () => {
+    const f = fixture();
+    expect(await f.answer(JSON.stringify({ instructions: "Never send" }))).toBe(true);
+    expect(f.tx.externalEffect.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          request: {
+            instructions: "Never send",
+            reason: "Learned preference",
+            previousInstructions: "Original",
+          },
+          idempotencyKey: expect.any(String),
+        }),
+      }),
+    );
+    expect(f.tx.externalEffect.update).toHaveBeenCalledWith({
+      where: { id: "effect-1" },
+      data: { status: "approved" },
+    });
+    expect(f.tx.task.updateMany).not.toHaveBeenCalled();
+    expect(f.tx.message.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          blocks: [
+            expect.objectContaining({
+              instructionUpdate: expect.objectContaining({ after: "Never send" }),
+              detail: "Learned preference\n\n- Original\n+ Never send",
+            }),
+          ],
+        },
+      }),
+    );
+  });
+  it("rejects edits from another user, invalid payloads, and generic always-allow", async () => {
+    const f = fixture();
+    for (const value of [
+      '{"instructions":42}',
+      '{"instructions":"new","botId":"other"}',
+      JSON.stringify({ instructions: "x".repeat(20001) }),
+      "always",
+    ])
+      expect(await f.answer(value)).toBe(false);
+    expect(await f.answer('{"instructions":"new"}', "other-user")).toBe(false);
+    expect(f.tx.externalEffect.update).not.toHaveBeenCalled();
+    expect(f.tx.run.updateMany).not.toHaveBeenCalled();
+  });
+  it("dismisses and frees the bot reservation", async () => {
+    const f = fixture();
+    expect(await f.answer("deny")).toBe(true);
+    expect(f.tx.bot.updateMany).toHaveBeenCalledWith({
+      where: { id: "bot-1", pendingInstructionsRunId: "run-1" },
+      data: { pendingInstructionsRunId: null },
+    });
+    expect(f.tx.externalEffect.update).toHaveBeenCalledWith({
+      where: { id: "effect-1" },
+      data: { status: "denied" },
+    });
   });
 });
 

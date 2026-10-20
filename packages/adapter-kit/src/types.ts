@@ -13,6 +13,8 @@ export interface AdapterContext {
   runId?: string;
   /** Opaque fence for releasing a graphical screen without tearing down its replacement. */
   screenLeaseId?: string;
+  /** Retain a completed run's screen for reuse by this bot. */
+  keepScreenWarm?: boolean;
   /** When releasing a screen after cancel, also stop orphaned browser work on that screen. */
   cancelRunWork?: boolean;
   signal: AbortSignal;
@@ -86,6 +88,11 @@ export interface ComputerRef {
   /** True when this call started a stopped computer. Providers that cannot tell leave it unset. */
   started?: boolean;
 }
+
+export type WorkspaceDirectoryRequest =
+  | { action: "ensure"; paths: string[] }
+  | { action: "list" }
+  | { action: "remove"; parent: ".browser-profiles" | "bots"; names: string[] };
 
 export interface CommandRequest {
   argv: string[];
@@ -314,6 +321,14 @@ export interface MemoryCommitRequest {
   sourceThreadId?: string;
 }
 
+export interface MemoryRemoveRequest {
+  /** When set, only this exact document is removed, never a newer one at the same path. */
+  id?: string;
+  scope: "bot" | "user";
+  botId?: string;
+  path: string;
+}
+
 export interface MemoryRevision {
   id: string;
   path: string;
@@ -456,6 +471,7 @@ export interface AgentRunRequest {
   botId: string;
   threadId: string;
   runId: string;
+  routineId?: string | null;
   sourceMessageId?: string | null;
   prompt: string;
   instructions: string;
@@ -640,6 +656,12 @@ export interface VoiceTranscribeRequest {
   audio: Uint8Array;
   mimeType: string;
   apiKey: string;
+  /**
+   * Language of the recording, as a BCP-47 tag or an ISO 639-1 code. Providers treat it
+   * as a hint: Fish Audio guesses when it is missing, and a wrong guess turns speech in
+   * one language into lookalike words of another.
+   */
+  language?: string;
   signal?: AbortSignal;
 }
 
@@ -652,6 +674,8 @@ export interface BackgroundJobPayloads {
   "computer.update": { updateId: string };
   "computer.control-expire": { computerId: string; leaseId: string };
   "skill.teaching-expire": { skillId: string };
+  /** The bot's call rang out: mark it missed if nobody answered. */
+  "call.expire": { threadId: string; callId: string };
   "history.compact": { threadId: string };
   "messaging.deliver": { runId?: string };
   /** Reconcile durable remote-agent intent; scope is loaded from the database. */
@@ -719,10 +743,12 @@ export interface TransactionalEmail {
   html?: string;
 }
 
+export type MessagingReceipt = "typing" | "reaction";
+
 export interface MessagingCapabilities {
   direct: boolean;
   groups: boolean;
-  typing: boolean;
+  receipt: MessagingReceipt | null;
 }
 
 /** One messaging platform behind the chat surface (sendblue, slack, …). */
@@ -918,10 +944,15 @@ export interface BrowserSnapshotResult {
   error?: string;
 }
 
-export type BrowserActKind = "click" | "fill" | "type";
+export type BrowserActKind = "click" | "fill" | "type" | "upload";
+
+/** Most files one upload step may attach. */
+export const MAX_BROWSER_UPLOAD_FILES = 10;
 
 export type BrowserActStep =
   | { kind: "click"; ref: string }
+  /** Attaches computer files to a file input without opening a native file chooser. */
+  | { kind: "upload"; ref: string; paths: string[]; roots?: string[] }
   | {
       kind: "fill" | "type";
       ref: string;

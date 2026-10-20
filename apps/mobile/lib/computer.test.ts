@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { ComputerStatus } from "./computer.js";
 import {
@@ -39,6 +36,35 @@ describe("embeddableScreenUrl", () => {
   it("leaves a public stream URL alone", () => {
     const url = "https://sandbox.e2b.app/stream?authKey=abc&view_only=true";
     expect(embeddableScreenUrl(url, "https://api.cortexai-agent-hub.test")).toBe(url);
+  });
+
+  it.each(["screen.example", "8.8.8.8", "172.32.0.1", "100.63.255.255", "100.128.0.1"])(
+    "rejects public HTTP screens on %s",
+    (host) => {
+      expect(embeddableScreenUrl(`http://${host}/embed.html`, "https://api.example")).toBeNull();
+    },
+  );
+
+  it.each([
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "server.local",
+    "10.0.2.2",
+    "192.168.1.20",
+    "172.16.0.1",
+    "172.31.255.255",
+    "100.64.0.1",
+    "100.127.255.255",
+  ])("keeps LAN and local HTTP screens on %s", (host) => {
+    const url = `http://${host}:16080/embed.html`;
+    expect(embeddableScreenUrl(url, "http://localhost:3100")).toBe(url);
+  });
+
+  it("rejects loopback HTTP screens rewritten to a public API host", () => {
+    expect(
+      embeddableScreenUrl("http://localhost:16080/embed.html", "https://api.example"),
+    ).toBeNull();
   });
 
   it("keeps loopback screens when the API is also loopback", () => {
@@ -236,36 +262,5 @@ describe("readScreenUrl", () => {
     const sleep = vi.fn().mockResolvedValue(undefined);
     await expect(readScreenUrl(request, { attempts: 2, sleep })).resolves.toBeNull();
     expect(request).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("mobile computer screen", () => {
-  it("boots, takes over, heartbeats, and releases like web", () => {
-    const src = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "../app/computer.tsx"),
-      "utf8",
-    );
-    expect(src).toContain("computer/boot");
-    expect(src).toContain("computer/takeover");
-    expect(src).toContain("computer/release");
-    expect(src).toContain("computer/heartbeat");
-    expect(src).toContain("Take control");
-    expect(src).toContain("Release");
-    expect(src).toContain("Close computer");
-    expect(src).toContain("ComputerKeyboardBar");
-    expect(src).toContain("NATIVE_COMPUTER_KEYBOARD_BOOT");
-    expect(src).toContain("computerKeyboardReadyProbe");
-    expect(src).toContain("createComputerKeyboardBridge");
-    expect(src).toContain("currentApiBase()");
-    expect(src).toContain("SafeAreaProvider");
-    expect(src).toContain("readScreenUrl");
-    expect(src).toContain("SCREEN_URL_OPEN_ATTEMPTS");
-    expect(src).toContain("nextLoadedScreenUrl");
-    expect(src).toContain("retainScreenSource");
-    expect(src).toContain("isReady()");
-    expect(src).not.toContain("${embeddedScreenUrl ??");
-    expect(src).toContain(`key={\`$\{nativeKeyboard ? "keys" : "view"}:$\{sourceUrl.current}\`}`);
-    expect(src).not.toContain("key={url}");
-    expect(src).not.toContain("key={sourceUrl.current}");
   });
 });

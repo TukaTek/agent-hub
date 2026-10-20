@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type {
   AgentContextStrategy,
   AgentRuntime,
@@ -110,6 +108,7 @@ import { storeInboundAttachment } from "./artifacts.js";
 import { authCapabilities } from "./auth-capabilities.js";
 import { createBillingService } from "./billing.js";
 import { mountBillingRoutes } from "./billing-webhook.js";
+import { mountDiagramScript } from "./diagram-script.js";
 import type { AppEnv } from "./env.js";
 import { loadEnv } from "./env.js";
 import { healthRoutes, hubPolicyHealth } from "./health.js";
@@ -119,7 +118,9 @@ import {
   teamChatSenderCanWakeMessageRoutines,
   wakeMessageRoutines,
 } from "./messaging-inbound.js";
+import { createMessagingReceipts } from "./messaging-receipts.js";
 import { mountMessagingWebhookRoutes } from "./messaging-webhook.js";
+import { monitoringRoutes } from "./monitoring.js";
 import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
 import { mountScreenTarget } from "./screen-proxy.js";
@@ -303,8 +304,8 @@ export async function createApp(
       daytonaApiKey: env.daytonaApiKey,
       daytonaApiUrl: env.daytonaApiUrl,
       daytonaTarget: env.daytonaTarget,
-      boxApiKey: env.boxApiKey,
-      boxApiUrl: env.boxApiUrl,
+      boatApiKey: env.boatApiKey,
+      boatApiUrl: env.boatApiUrl,
       dataDir: env.dataDir,
       prisma,
     });
@@ -414,6 +415,14 @@ export async function createApp(
     signupsEnabled: env.signupsEnabled,
     signupAllowlist: env.signupAllowlist,
     email,
+    logger: {
+      level: "error",
+      log: (_level, _message, ...args) =>
+        getLogger().error(
+          "auth.request.failed",
+          args.find((arg) => arg instanceof Error),
+        ),
+    },
     onEmailError: (error) => getLogger().error("transactional email delivery failed", error),
     onHubSsoError: (reason) => getLogger().warn("hub.sso.failed", { "hub.sso.reason": reason }),
     extraOrigins: MOBILE_AUTH_ORIGINS,
@@ -481,6 +490,7 @@ export async function createApp(
           }
         : {},
     ),
+    maxUploadSizeBytes: env.maxUploadSizeBytes,
     contextStrategy,
     prisma,
     runtime,
@@ -520,6 +530,9 @@ export async function createApp(
     events,
     onTicketChange: ticketChanges,
     ticketBoardEnabled,
+    phoneCallsEnabled: env.phoneCallsEnabled,
+    phoneCallRingSeconds: env.phoneCallRingSeconds,
+    phoneCallCooldownMinutes: env.phoneCallCooldownMinutes,
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
@@ -586,6 +599,8 @@ export async function createApp(
       openSignup: env.messagingOpenSignup,
     },
     env: {
+      phoneCallsEnabled: env.phoneCallsEnabled,
+      phoneCallRingSeconds: env.phoneCallRingSeconds,
       ticketBoardEnabled,
       agentRuntime: env.agentRuntime,
       defaultProvider: env.defaultProvider,
@@ -647,8 +662,10 @@ export async function createApp(
         }),
     );
   }
-  mountApiRequestBodyLimits(app);
+  app.route("/", monitoringRoutes(env.browserMonitoring));
+  mountApiRequestBodyLimits(app, env.maxUploadSizeBytes);
   mountScreenTarget(app, prisma, env.screenProxySecret);
+  mountDiagramScript(app);
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");
     if (isBlockedAuthPath(path)) {
@@ -730,6 +747,7 @@ export async function createApp(
   /** Constructed even before start() succeeds so stop() can cancel in-flight startup. */
   let teamChatBridgeInstance: TeamChatBridge | undefined;
   const pendingTeamChatInbound = new PendingTeamChatInbound();
+  const receipts = messaging ? createMessagingReceipts(messaging) : undefined;
   if (messaging) {
     const inboundDeps = {
       prisma,
@@ -741,21 +759,7 @@ export async function createApp(
         signupsEnabled: env.signupsEnabled,
         signupAllowlist: env.signupAllowlist,
       },
-      typing: (threadId) => {
-        // Keep conversation addresses out of trace ids — those reach logs
-        // and telemetry, a different trust boundary than the database.
-        const operationId = `messaging.typing:${randomUUID()}`;
-        return messaging.sendTyping(threadId, {
-          operationId,
-          traceId: operationId,
-          spaceId: "",
-          userId: "",
-          // Cosmetic side call: the wait is bounded so a stalled vendor
-          // response never holds our callback chain (the Chat SDK adapter
-          // API cannot cancel the underlying request itself).
-          signal: AbortSignal.timeout(2000),
-        });
-      },
+      acknowledge: receipts?.acknowledge,
     } satisfies Parameters<typeof createMessagingInboundHandler>[0];
     const inbound = createMessagingInboundHandler(inboundDeps);
     const handleTeamChatInbound = async (
@@ -876,10 +880,15 @@ export async function createApp(
         send: createMessagingTeamChatSender(messaging),
         fetchThreadHistory: createMessagingTeamChatHistory(messaging),
         storeAttachment: ({ spaceId, userId, ...input }) =>
-          storeInboundAttachment({ prisma, artifacts }, { spaceId, userId }, input),
+          storeInboundAttachment(
+            { prisma, artifacts, maxUploadSizeBytes: env.maxUploadSizeBytes },
+            { spaceId, userId },
+            input,
+          ),
         providerId: "slack",
         botId: env.teamChatBotId,
         judge,
+        acknowledge: receipts?.acknowledge,
       });
       teamChatBridgeInstance = bridge;
       try {
@@ -992,22 +1001,30 @@ export async function createApp(
 
   app.route(
     "/",
-    healthRoutes(async () => ({
-      runtime: env.agentRuntime,
-      sandbox: env.sandboxProvider,
-      composio: Boolean(stack.composio),
-      pipedream: Boolean(pipedream),
-      messaging: Boolean(messaging),
-      email: email?.describe().id ?? null,
-      billing: billingProvider?.describe().id ?? null,
-      jobs: jobKind,
-      realtime: realtime.describe().id,
-      secrets: secrets.describe(),
-      degraded: secrets.describe().capabilities.degraded ?? false,
-      revision: env.gitSha ?? null,
-      // Revision, freshness, source and state only; never a setting value.
-      ...hubPolicyHealth(hubPolicy ? await hubPolicy.status() : null),
-    })),
+    healthRoutes(
+      async () => ({
+        runtime: env.agentRuntime,
+        sandbox: env.sandboxProvider,
+        composio: Boolean(stack.composio),
+        pipedream: Boolean(pipedream),
+        messaging: Boolean(messaging),
+        email: email?.describe().id ?? null,
+        billing: billingProvider?.describe().id ?? null,
+        jobs: jobKind,
+        realtime: realtime.describe().id,
+        secrets: secrets.describe(),
+        degraded: secrets.describe().capabilities.degraded ?? false,
+        revision: env.gitSha ?? null,
+        // Revision, freshness, source and state only; never a setting value.
+        ...hubPolicyHealth(hubPolicy ? await hubPolicy.status() : null),
+      }),
+      // The statement timeout ends a stuck probe on the server too, freeing its connection.
+      () =>
+        prisma.$transaction([
+          prisma.$executeRaw`SET LOCAL statement_timeout = 1500`,
+          prisma.$queryRaw`SELECT 1`,
+        ]),
+    ),
   );
 
   return {
@@ -1033,6 +1050,7 @@ export async function createApp(
       messagingStopped = true;
       clearMessagingRetryDelay?.();
       clearTeamChatRetryDelay?.();
+      receipts?.stop();
       pendingTeamChatInbound.reject(new Error("Team chat bridge stopped before startup"));
       // Cancel in-flight start() before awaiting the retry task so stop() cannot
       // sit on DB/reconcile work that bridge.start() is still running.
