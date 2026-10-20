@@ -13,6 +13,9 @@ const RULES = [
   [new RegExp(`(?<![A-Za-z0-9])${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
   [new RegExp(`${old}(?!\\.com\\b)`, "g"), "cortexai-agent-hub"],
+  // Upstream's short prefix for CSS classes and variables, performance marks and storage keys.
+  [/(?<![\w-])rk([-:])(?=[\w$])/g, "cortexai-agent-hub$1"],
+  [/--rk-(?=\w)/g, "--cortexai-agent-hub-"],
 ];
 const UNRESOLVED = new RegExp(`[\\w.+-]*@?${old}\\.com\\b[\\w./-]*`, "g");
 const KEEP = new Set(["LICENSE", "NOTICE"]);
