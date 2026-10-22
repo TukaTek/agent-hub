@@ -117,6 +117,13 @@ RUN set -eux; \
   tar -xzf "$archive" -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_${gh_arch}/bin/gh"; \
   rm -f "$archive"; \
   gh --version
+# Node.js 22 (>=22.23.4, security patch) for bot tooling; replaces the Node 18 runtime.
+COPY --from=node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+  && ln -sf ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
+  && node --version && npm --version
 ENV DISPLAY=:1
 ENV HOME=/home/cortexai-agent-hub
 # Keep UTF-8 explicit (an empty LANG broke non-ASCII file handling in the
