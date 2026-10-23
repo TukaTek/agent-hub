@@ -41,7 +41,7 @@ test("the computer overlay toolbar never covers the desktop dock", async ({ page
       body: JSON.stringify({ json: { url: "https://screen.example/vnc.html" } }),
     }),
   );
-  await page.getByTitle("Agent computer").click();
+  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
   const preview = page.getByTestId("computer-preview");
   await preview.hover();
   await preview.getByTestId("computer-preview-open").click();
