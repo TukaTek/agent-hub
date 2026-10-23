@@ -210,80 +210,44 @@ test("Hub accounts retain managed identity controls in the new settings shell", 
   await captureScreenshot(page, testInfo, "settings-shell-hub-account");
 });
 
-test("Honcho memory settings empty and filled", async ({ page }, testInfo) => {
-  // These screenshots never submit credentials or contact Honcho.
+test("self-hosted memory settings in light and dark", async ({ page }, testInfo) => {
+  // These screenshots never submit credentials or contact a memory service.
   const stamp = Date.now();
   await signup(
     page,
-    `memory-honcho-${stamp}@cortexai-agent-hub.test`,
+    `memory-settings-${stamp}@cortexai-agent-hub.test`,
     "password12",
     "Memory settings",
   );
   await completeOnboarding(page);
   const settings = await openUserSettings(page, "memory");
   const memory = settings.getByTestId("memory-settings");
-  await memory.getByLabel("Provider").selectOption("honcho");
-  await expect(memory.getByLabel("API key", { exact: true })).toBeVisible();
-  await expect(memory.getByLabel("Workspace", { exact: true })).toBeVisible();
-  await expect(memory.getByLabel("User peer", { exact: true })).toHaveCount(0);
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await captureScreenshot(page, testInfo, "memory-honcho-empty");
-  await memory.getByLabel("API key", { exact: true }).fill("hch-test-key");
-  await memory.getByLabel("Workspace", { exact: true }).fill("team-notes");
-  const userPeer = memory.getByLabel("User peer", { exact: true });
-  await userPeer.fill("bot-123");
-  await expect(userPeer).toHaveAttribute("aria-invalid", "true");
-  await expect(
-    memory.getByText(
-      "cortexai-agent-hub-shared and IDs starting with bot- are reserved for CortexAI Agent Hub.",
-    ),
-  ).toBeVisible();
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
-  await captureScreenshot(page, testInfo, "memory-honcho-user-peer-reserved");
-  await userPeer.fill("user-alex");
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
-  await captureScreenshot(page, testInfo, "memory-honcho-filled");
-  await memory.getByRole("button", { name: "Local", exact: true }).click();
-  await expect(memory.getByLabel("Base URL", { exact: true })).toHaveValue("http://localhost:8000");
-  await memory
-    .getByLabel("Base URL", { exact: true })
-    .fill("http://honcho-api.railway.internal:8000");
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
-  await memory.getByLabel("Base URL", { exact: true }).fill("");
-  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
-  await memory
-    .getByLabel("Base URL", { exact: true })
-    .fill("http://honcho-api.railway.internal:8000");
-  await captureScreenshot(page, testInfo, "memory-honcho-local");
-  const documents = memory.getByTestId("space-memory-documents");
-  await documents.scrollIntoViewIfNeeded();
-  await expect(documents).toBeVisible();
-  await captureScreenshot(page, testInfo, "memory-honcho-local-bottom");
 
-  const scrollToTop = () =>
-    memory.locator(".cortexai-agent-hub-scroll").evaluate((element) => {
-      element.scrollTop = 0;
-    });
   await memory.getByLabel("Provider").selectOption("supermemory");
-  await scrollToTop();
   await expect(memory.getByLabel("Organization API key", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "memory-supermemory-cloud");
   await memory.getByRole("button", { name: "Local", exact: true }).click();
   await expect(memory.getByLabel("Base URL", { exact: true })).toHaveValue("http://localhost:6767");
   await expect(memory.getByLabel("Instance API key", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "memory-supermemory-local");
+  const documents = memory.getByTestId("space-memory-documents");
+  await documents.scrollIntoViewIfNeeded();
+  await expect(documents).toBeVisible();
+  await captureScreenshot(page, testInfo, "memory-supermemory-local-bottom");
 
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await memory.getByLabel("Provider").selectOption("honcho");
-  await scrollToTop();
+  await memory.locator(".cortexai-agent-hub-scroll").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await memory.getByRole("button", { name: "Cloud", exact: true }).click();
   await expect(memory.getByRole("button", { name: "Cloud", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await expect(memory.getByLabel("API key", { exact: true })).toBeVisible();
-  await captureScreenshot(page, testInfo, "memory-honcho-cloud-dark");
+  await expect(memory.getByLabel("Organization API key", { exact: true })).toBeVisible();
+  await captureScreenshot(page, testInfo, "memory-supermemory-cloud-dark");
   await documents.scrollIntoViewIfNeeded();
   await expect(documents).toBeVisible();
   await captureScreenshot(page, testInfo, "memory-dark-bottom");

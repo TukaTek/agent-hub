@@ -44,29 +44,26 @@ afterEach(() => {
 });
 
 describe("SpaceMemoryProviderResolver", () => {
-  it.each(["honcho", "supermemory"])(
-    "disables %s without loading credentials when local DNS revalidation fails",
-    async (provider) => {
-      vi.mocked(lookup).mockRejectedValue(new Error("DNS unavailable"));
-      const { resolver, secrets } = resolverFor(JSON.stringify({ apiKey: "fake-key" }), {
-        provider,
-        mode: "local",
-        baseUrl: "http://memory.example.test:8000",
-        allowPrivateEndpoint: true,
-      });
+  it("disables supermemory without loading credentials when local DNS revalidation fails", async () => {
+    vi.mocked(lookup).mockRejectedValue(new Error("DNS unavailable"));
+    const { resolver, secrets } = resolverFor(JSON.stringify({ apiKey: "fake-key" }), {
+      provider: "supermemory",
+      mode: "local",
+      baseUrl: "http://memory.example.test:8000",
+      allowPrivateEndpoint: true,
+    });
 
-      await expect(resolver.resolve("workspace-1")).resolves.toBeNull();
-      expect(lookup).toHaveBeenCalled();
-      expect(secrets.load).not.toHaveBeenCalled();
-    },
-  );
+    await expect(resolver.resolve("workspace-1")).resolves.toBeNull();
+    expect(lookup).toHaveBeenCalled();
+    expect(secrets.load).not.toHaveBeenCalled();
+  });
 
-  it("gates and revalidates saved local Honcho endpoints like other local providers", async () => {
+  it("gates and revalidates saved local endpoints", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const local = { provider: "honcho", mode: "local" as const };
+    const local = { provider: "supermemory", mode: "local" as const };
 
-    const notOwner = resolverFor("honcho-admin-token", {
+    const notOwner = resolverFor("sm_fake_key", {
       ...local,
       baseUrl: "http://10.0.0.8:8000",
       allowPrivateEndpoint: false,
@@ -74,7 +71,7 @@ describe("SpaceMemoryProviderResolver", () => {
     await expect(notOwner.resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(notOwner.secrets.load).not.toHaveBeenCalled();
 
-    const publicHost = resolverFor("honcho-admin-token", {
+    const publicHost = resolverFor("sm_fake_key", {
       ...local,
       baseUrl: "http://203.0.113.10:8000",
       allowPrivateEndpoint: true,
@@ -82,7 +79,7 @@ describe("SpaceMemoryProviderResolver", () => {
     await expect(publicHost.resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(publicHost.secrets.load).not.toHaveBeenCalled();
 
-    const missingUrl = resolverFor("honcho-admin-token", {
+    const missingUrl = resolverFor("sm_fake_key", {
       ...local,
       baseUrl: "",
       allowPrivateEndpoint: true,
@@ -90,13 +87,13 @@ describe("SpaceMemoryProviderResolver", () => {
     await expect(missingUrl.resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(missingUrl.secrets.load).not.toHaveBeenCalled();
 
-    const owned = resolverFor(JSON.stringify({ apiKey: "honcho-admin-token" }), {
+    const owned = resolverFor(JSON.stringify({ apiKey: "sm_fake_key" }), {
       ...local,
       baseUrl: "http://10.0.0.8:8000",
       allowPrivateEndpoint: true,
     });
     const configured = await owned.resolver.resolve("workspace-1");
-    expect(configured?.provider.describe().id).toBe("honcho");
+    expect(configured?.provider.describe().id).toBe("supermemory");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
