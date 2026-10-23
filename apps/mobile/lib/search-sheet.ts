@@ -1,11 +1,12 @@
 import type { SearchHit, SpaceBot, SpaceGroup } from "@cortexai-agent-hub/contracts";
+import { dedupeSearchHits, searchHitListKey } from "@cortexai-agent-hub/core";
 import type { MobileBot, MobileGroup } from "./api";
 import { t } from "./i18n";
 import { filterBots } from "./inbox";
 import type { InboxSpace } from "./inbox-spaces";
 import { previewSnippet } from "./preview";
 import { mobileSearchDestination } from "./search-destination";
-import { dedupeSearchHits, searchHitListKey, searchHitRowPreview } from "./search-list";
+import { searchHitRowPreview } from "./search-list";
 
 export type SearchSheetRow = {
   key: string;

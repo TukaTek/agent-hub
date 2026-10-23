@@ -15,6 +15,7 @@ import {
   MAX_MODEL_CONTEXT_WINDOW,
   MAX_MODEL_MAX_TOKENS,
   ModelContextLimitsSchema,
+  parseModelHeaders,
   ThinkingLevelSchema,
 } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
@@ -280,6 +281,7 @@ export type StoredModelSecret =
   | ({
       kind: "openai_compatible";
       baseUrl: string;
+      headers?: Record<string, string>;
       apiKey?: string;
       reasoning?: boolean;
       thinkingLevel?: ThinkingLevel | null;
@@ -400,6 +402,7 @@ export function parseModelSecret(plaintext: string): StoredModelSecret {
     if (typeof parsed.baseUrl !== "string" || !parsed.baseUrl.trim()) {
       throw new Error(CORRUPT_MODEL_SECRET_MESSAGE);
     }
+    const headers = parsed.headers === undefined ? undefined : parseModelHeaders(parsed.headers);
     const apiKey = typeof parsed.apiKey === "string" ? parsed.apiKey : undefined;
     const parsedThinkingLevel = ThinkingLevelSchema.nullable().safeParse(parsed.thinkingLevel);
     const thinkingLevel = parsedThinkingLevel.success ? parsedThinkingLevel.data : undefined;
@@ -423,6 +426,7 @@ export function parseModelSecret(plaintext: string): StoredModelSecret {
     return {
       kind: "openai_compatible",
       baseUrl: parsed.baseUrl.trim(),
+      ...(headers !== undefined ? { headers } : {}),
       ...(apiKey ? { apiKey } : {}),
       ...(typeof parsed.reasoning === "boolean" ? { reasoning: parsed.reasoning } : {}),
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
@@ -483,6 +487,7 @@ export function serializeModelSecret(secret: StoredModelSecret): string {
       kind: "openai_compatible",
       ...modelLimits(secret as unknown as Record<string, unknown>),
       baseUrl: secret.baseUrl,
+      ...(secret.headers !== undefined ? { headers: parseModelHeaders(secret.headers) } : {}),
       ...(secret.apiKey ? { apiKey: secret.apiKey } : {}),
       ...(secret.reasoning !== undefined ? { reasoning: secret.reasoning } : {}),
       ...(secret.thinkingLevel !== undefined ? { thinkingLevel: secret.thinkingLevel } : {}),
@@ -514,9 +519,17 @@ export function serializeModelSecret(secret: StoredModelSecret): string {
   });
 }
 
+const MIN_REDACTED_HEADER_VALUE_LENGTH = 8;
+
 export function secretValuesToRedact(secret: StoredModelSecret): string[] {
   if (secret.kind === "api_key") return secret.key ? [secret.key] : [];
-  if (secret.kind === "openai_compatible") return secret.apiKey ? [secret.apiKey] : [];
+  if (secret.kind === "openai_compatible")
+    return [
+      secret.apiKey,
+      ...Object.values(secret.headers ?? {}).filter(
+        (value) => value.length >= MIN_REDACTED_HEADER_VALUE_LENGTH,
+      ),
+    ].filter((value): value is string => Boolean(value));
   return [secret.credential.access, secret.credential.refresh].filter(Boolean);
 }
 

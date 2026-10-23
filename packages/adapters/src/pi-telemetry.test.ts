@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { runWithLogContext } from "@cortexai-agent-hub/logging";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { SpanStatusCode } from "@opentelemetry/api";
@@ -46,6 +47,17 @@ afterEach(async () => {
 });
 
 describe("Pi OpenTelemetry", () => {
+  it("continues the request/job trace instead of starting an unrelated trace", async () => {
+    const { output, provider } = setup();
+    await runWithLogContext({ "trace.id": "a".repeat(32), "span.id": "b".repeat(16) }, () =>
+      withPiTelemetry(ids, async () => undefined),
+    );
+    await provider.forceFlush();
+    const [span] = output.getFinishedSpans();
+    expect(span?.spanContext().traceId).toBe("a".repeat(32));
+    expect(span?.parentSpanContext?.spanId).toBe("b".repeat(16));
+  });
+
   it.each([undefined, "", "  "])(
     "does not initialize or create spans with endpoint %j",
     async (endpoint) => {
@@ -281,6 +293,7 @@ describe("Pi OpenTelemetry", () => {
             provider: "openai-compatible",
             id: "fixture",
             baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+            allowPrivateEndpoint: true,
             apiKey: "fake-fixture-key",
             maxTokens: 256,
             contextWindow: 4096,
@@ -380,6 +393,7 @@ describe("Pi OpenTelemetry", () => {
           provider: "openai-compatible",
           id: "fixture",
           baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+          allowPrivateEndpoint: true,
           apiKey: "fake-fixture-key",
           maxTokens: 256,
           contextWindow: 4096,

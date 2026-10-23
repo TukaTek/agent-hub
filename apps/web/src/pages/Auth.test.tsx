@@ -6,7 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const authClient = vi.hoisted(() => ({ signIn: { email: vi.fn() } }));
+const authClient = vi.hoisted(() => ({
+  signIn: { email: vi.fn(), emailOtp: vi.fn() },
+  emailOtp: { sendVerificationOtp: vi.fn() },
+}));
 vi.mock("../lib/auth", () => ({ authClient }));
 vi.mock("../lib/rpc", () => ({ clearSpaceSelection: vi.fn() }));
 vi.mock("../lib/auth-capabilities", async () => {
@@ -22,7 +25,8 @@ vi.mock("../lib/auth-capabilities", async () => {
 });
 vi.mock("./Welcome", () => ({ WelcomePage: () => null }));
 vi.mock("@lingui/react/macro", () => {
-  const t = (parts: TemplateStringsArray) => parts.join("");
+  const t = (parts: TemplateStringsArray | { message: string }) =>
+    "message" in parts ? parts.message : parts.join("");
   return { useLingui: () => ({ t }), Trans: ({ children }: { children: ReactNode }) => children };
 });
 vi.mock("@cortexai-agent-hub/ui-web", () => ({
@@ -32,6 +36,27 @@ vi.mock("@cortexai-agent-hub/ui-web", () => ({
     ...props
   }: ComponentProps<"button"> & { variant?: string; size?: string }) => <button {...props} />,
   Input: (props: ComponentProps<"input">) => <input {...props} />,
+  InputOTP: ({
+    maxLength,
+    onChange,
+    onComplete,
+    children: _children,
+    ...props
+  }: Omit<ComponentProps<"input">, "onChange"> & {
+    onChange: (value: string) => void;
+    onComplete?: (value: string) => void;
+  }) => (
+    <input
+      {...props}
+      data-otp=""
+      onChange={(event) => {
+        onChange(event.target.value);
+        if (event.target.value.length === maxLength) onComplete?.(event.target.value);
+      }}
+    />
+  ),
+  InputOTPGroup: () => null,
+  InputOTPSlot: () => null,
   Label: ({ htmlFor, children }: ComponentProps<"label">) => (
     <label htmlFor={htmlFor}>{children}</label>
   ),
@@ -49,10 +74,11 @@ function stubServer(
   next: unknown = { next: "password" },
   continueStatus = 200,
   signIn: { body: unknown; status: number } = { body: { message: "Access denied" }, status: 401 },
+  capabilities: Record<string, unknown> = {},
 ) {
   fetchMock = vi.fn(async (url: string) => {
     if (url === "/api/auth/capabilities")
-      return Response.json({ mode, passwordReset: false, resetUrl: null });
+      return Response.json({ mode, passwordReset: false, resetUrl: null, ...capabilities });
     if (url === "/api/auth/hub/sign-in/continue")
       return Response.json(next, { status: continueStatus });
     if (url === "/api/auth/hub/sign-in")
@@ -365,4 +391,58 @@ it("signs in local accounts through the same two steps and keeps the next allowl
     password: "password12",
   });
   expect(requestsTo("/api/auth/hub/sign-in")).toEqual([]);
+});
+
+const emailCodeServer = { passwordAuth: true, sso: null, emailCode: true };
+const codeInput = () => container.querySelector<HTMLInputElement>("[data-otp]");
+
+it("sends a local account an email code after the email step and signs in with it", async () => {
+  stubServer("local", { next: "password" }, 200, undefined, emailCodeServer);
+  authClient.emailOtp.sendVerificationOtp.mockResolvedValue({ data: {}, error: null });
+  authClient.signIn.emailOtp.mockResolvedValue({ data: {}, error: null });
+  await render();
+  await continueWithEmail();
+  await type(await until(codeInput), "123456");
+  await until(() => container.textContent?.includes("app home"));
+  expect(authClient.emailOtp.sendVerificationOtp).toHaveBeenCalledExactlyOnceWith({
+    email,
+    type: "sign-in",
+  });
+  expect(authClient.signIn.emailOtp).toHaveBeenCalledExactlyOnceWith({
+    email,
+    otp: "123456",
+    name: undefined,
+  });
+  expect(authClient.signIn.email).not.toHaveBeenCalled();
+});
+
+it("keeps password sign-in one step away from the code", async () => {
+  stubServer("local", { next: "password" }, 200, undefined, emailCodeServer);
+  authClient.emailOtp.sendVerificationOtp.mockResolvedValue({ data: {}, error: null });
+  authClient.signIn.email.mockResolvedValue({ data: {}, error: null });
+  await render();
+  await continueWithEmail();
+  await until(codeInput);
+  await click(button("Use password"));
+  await type(await until(passwordInput), "password12");
+  await click(button("Sign in"));
+  await until(() => container.textContent?.includes("app home"));
+  expect(authClient.signIn.email).toHaveBeenCalledExactlyOnceWith({
+    email,
+    password: "password12",
+  });
+});
+
+it("never sends an email code in Hub mode", async () => {
+  stubServer("hub", { next: "password" }, 200, undefined, {
+    passwordAuth: false,
+    sso: null,
+    emailCode: true,
+  });
+  await render();
+  await continueWithEmail();
+  await until(passwordInput);
+  expect(codeInput()).toBeNull();
+  expect(button("Use email code")).toBeUndefined();
+  expect(authClient.emailOtp.sendVerificationOtp).not.toHaveBeenCalled();
 });

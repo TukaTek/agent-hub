@@ -1,6 +1,6 @@
 import type { ConnectorProvider, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
 import { routineJobKey, routineWakeupJob } from "@cortexai-agent-hub/adapter-kit";
-import { RoutineWatchSchema } from "@cortexai-agent-hub/contracts";
+import { RoutineWatchSchema, TimeZoneSchema } from "@cortexai-agent-hub/contracts";
 import {
   cronFromPreset,
   isOneShotRoutineCron,
@@ -203,6 +203,13 @@ export interface ScheduleToolDeps {
   jobs: JobPublisher;
 }
 
+/** The user's saved timezone, so "every morning at 9" means their 9, not UTC's. */
+export async function userTimeZone(prisma: PrismaClient, userId: string): Promise<string> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } });
+  const timezone = user?.timezone;
+  return timezone && TimeZoneSchema.safeParse(timezone).success ? timezone : "UTC";
+}
+
 /** Persist and enqueue a bot routine that wakes in the originating thread. */
 export async function createScheduleFromTool(
   deps: ScheduleToolDeps,
@@ -225,7 +232,13 @@ export async function createScheduleFromTool(
   if (!name) return { error: "name is required." };
   if (!prompt) return { error: "prompt is required." };
 
-  const timezone = String(input.timezone ?? "UTC");
+  const parsedTimezone = TimeZoneSchema.safeParse(
+    input.timezone ?? (await userTimeZone(deps.prisma, input.userId)),
+  );
+  if (!parsedTimezone.success) {
+    return { error: parsedTimezone.error.issues.map((issue) => issue.message).join("; ") };
+  }
+  const timezone = parsedTimezone.data;
   if (input.schedule.watch !== undefined) {
     return createWatchFromTool(deps, { ...input, name, prompt, timezone });
   }
@@ -418,18 +431,20 @@ export async function cancelScheduleFromTool(
     return { error: "Provide routineId or the exact schedule name to cancel." };
   }
 
+  const scope = {
+    spaceId: input.spaceId,
+    botId: input.botId,
+    userId: input.userId,
+    ...(input.threadId ? { threadId: input.threadId } : {}),
+  };
   const existing = await deps.prisma.routine.findFirst({
-    where: {
-      spaceId: input.spaceId,
-      botId: input.botId,
-      userId: input.userId,
-      ...(input.threadId ? { threadId: input.threadId } : {}),
-      ...(routineId ? { id: routineId } : { name: name! }),
-    },
+    where: { ...scope, ...(routineId ? { id: routineId } : { name: name! }) },
   });
   if (!existing) return { error: "Schedule not found." };
 
-  await deps.prisma.routine.delete({ where: { id: existing.id } });
+  // The scope is part of the delete, so the routine cannot change hands between the read and it.
+  const { count } = await deps.prisma.routine.deleteMany({ where: { ...scope, id: existing.id } });
+  if (count === 0) return { error: "Schedule not found." };
   await deps.jobs.cancel(routineJobKey(existing.id));
   return { ok: true as const, routineId: existing.id, name: existing.name };
 }

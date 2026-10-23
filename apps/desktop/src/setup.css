@@ -110,6 +110,10 @@ html[data-platform="darwin"] .titlebar {
   cursor: pointer;
 }
 
+.choice[hidden] {
+  display: none;
+}
+
 .choice:hover {
   border-color: var(--input);
 }

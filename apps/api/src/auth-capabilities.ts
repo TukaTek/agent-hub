@@ -5,10 +5,18 @@ type SsoAvailability = "available" | "unavailable" | "checking";
 
 export function authCapabilities(
   env: Pick<AppEnv, "hubAuth" | "oidc" | "passwordAuth" | "webOrigin">,
-  options: { email: boolean; billing: boolean; ssoAvailability?: SsoAvailability },
+  options: {
+    email: boolean;
+    billing: boolean;
+    ssoAvailability?: SsoAvailability;
+    emailCode?: boolean;
+    passkeyRpId?: string | null;
+    nativePasskeys?: { ios: boolean; android: boolean };
+  },
 ): AuthCapabilitiesResponse {
   if (env.hubAuth) {
     const hubSso = Boolean(env.hubAuth.sso);
+    // Hub owns sign-in, so no local credential (password, email code or passkey) is offered.
     return {
       mode: "hub",
       hubSso,
@@ -16,7 +24,9 @@ export function authCapabilities(
       passwordAuth: false,
       passwordReset: false,
       resetUrl: null,
+      emailCode: false,
       billing: false,
+      passkeyRpId: null,
     };
   }
   const passwordAuth = env.passwordAuth !== false;
@@ -29,6 +39,9 @@ export function authCapabilities(
     passwordAuth,
     passwordReset: passwordAuth && options.email,
     resetUrl: passwordAuth && options.email ? new URL("/reset-password", env.webOrigin).href : null,
+    emailCode: options.emailCode ?? false,
     billing: options.billing,
+    passkeyRpId: options.passkeyRpId ?? null,
+    ...(options.nativePasskeys ? { nativePasskeys: options.nativePasskeys } : {}),
   };
 }

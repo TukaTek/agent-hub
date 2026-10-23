@@ -1,5 +1,6 @@
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
+import { loadPeerHistory, peerConversations } from "@cortexai-agent-hub/core";
 import {
   BotAvatar,
   Button,
@@ -7,11 +8,10 @@ import {
   DialogClose,
   DialogContent,
   DialogTitle,
+  Spinner,
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useMemo, useState } from "react";
-import { loadPeerHistory } from "../lib/peer-history";
-import { peerConversations } from "../lib/peer-messages";
 import { rpc } from "../lib/rpc";
 
 /**
@@ -102,7 +102,7 @@ export function PeerMessagesOverlay({
 
         {!historyReady ? (
           <div className="grid flex-1 place-items-center px-8 text-center text-[13.5px] text-muted-foreground/80">
-            <Trans>Loading…</Trans>
+            <Spinner aria-label={t`Loading…`} />
           </div>
         ) : historyFailed ? (
           <div className="grid flex-1 place-items-center px-8 text-center text-[13.5px] text-muted-foreground/80">

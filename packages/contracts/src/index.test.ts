@@ -26,6 +26,15 @@ import {
 } from "./index.js";
 
 describe("contracts", () => {
+  it("leaves bot management to the database default and preserves explicit choices", () => {
+    expect(CreateBotInput.parse({ name: "New bot" }).fleetManagement).toBeUndefined();
+    for (const fleetManagement of [false, true]) {
+      expect(CreateBotInput.parse({ name: "New bot", fleetManagement }).fleetManagement).toBe(
+        fleetManagement,
+      );
+    }
+  });
+
   it("bounds the count and length of compatible model selections", () => {
     const input = {
       provider: "openai-compatible",
@@ -111,6 +120,21 @@ describe("contracts", () => {
       contextWindow: 32768,
     });
     expect(valid.success).toBe(true);
+  });
+
+  it("validates Workers AI account routing without requiring a gateway", () => {
+    const provider = "cloudflare-workers-ai";
+    expect(
+      ModelConnectInputSchema.safeParse({
+        provider,
+        accountId: "account-fixture",
+        apiKey: "fixture-key",
+      }).success,
+    ).toBe(true);
+    expect(ModelConnectInputSchema.safeParse({ provider, maxTokens: 2048 }).success).toBe(true);
+    for (const accountId of ["", "../account", "account/other", "a".repeat(65)]) {
+      expect(ModelConnectInputSchema.safeParse({ provider, accountId }).success).toBe(false);
+    }
   });
 
   it("validates each Cloudflare routing id and allows an update to send only one", () => {
@@ -416,6 +440,7 @@ describe("contracts", () => {
         status: run.status,
         trigger: run.trigger,
         notificationsEnabled: true,
+        agentMessage: null,
         promptSnippet: "Review the report",
         updatedAt: "2026-08-26T00:00:01.000Z",
       }).success,
@@ -500,5 +525,27 @@ describe("contracts", () => {
         data: rows.slice(0, 2_501),
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("compatible connection headers", () => {
+  const input = {
+    provider: "openai-compatible",
+    baseUrl: "https://example.invalid/v1",
+    modelId: "test",
+  };
+  it("retains trimmed header names", () => {
+    expect(
+      ModelConnectInputSchema.parse({ ...input, headers: { " x-session ": "secret" } }),
+    ).toHaveProperty("headers", { "x-session": "secret" });
+  });
+});
+
+it("retains legacy unknown-field stripping for model connections", () => {
+  expect(
+    ModelConnectInputSchema.parse({ provider: "test", apiKey: "fake-key", futureOption: true }),
+  ).toEqual({
+    provider: "test",
+    apiKey: "fake-key",
   });
 });

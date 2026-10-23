@@ -6,6 +6,7 @@ import {
   clipToolResultContent,
   clipToolResultText,
   DEFAULT_TOOL_RESULT_TEXT_LIMIT,
+  effectiveOutputReserve,
   MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
   MODEL_STREAM_IDLE_TIMEOUT_MS,
   modelStreamFirstEventTimeoutMs,
@@ -167,6 +168,26 @@ describe("billedPromptTokens", () => {
       cacheWriteTokens: 0,
       outputTokens: 5,
     });
+  });
+});
+
+describe("effectiveOutputReserve", () => {
+  it.each([
+    [262_144, 4096, 4096],
+    [32_768, 8192, 8192],
+    [32_768, 32_768, 8192],
+    [32_768, 65_536, 8192],
+    [101, 26, 25],
+    [3, 10, 1],
+    [1, 1, 1],
+    [100, 1, 1],
+  ])("limits output in a %i-token window from %i to %i", (window, configured, effective) => {
+    expect(effectiveOutputReserve(window, configured)).toBe(effective);
+  });
+
+  it("resolves an omitted maxTokens before applying the context limit", () => {
+    expect(resolveCompletionMaxTokens(undefined, undefined, undefined, false, 4096)).toBe(1024);
+    expect(resolveCompletionMaxTokens(undefined, undefined, undefined, false, 262_144)).toBe(4096);
   });
 });
 

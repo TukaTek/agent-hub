@@ -1,0 +1,119 @@
+appId: com.tukatek.cortexai.agenthub
+name: Keyboard lifecycle regression
+tags:
+  - screenshots
+---
+- launchApp:
+    clearState: true
+    permissions:
+      notifications: deny
+
+# A cold API 34 emulator can show a launcher ANR over the healthy app.
+- extendedWaitUntil:
+    visible: "Sign up for CortexAI Agent Hub|Pixel Launcher isn't responding"
+    timeout: 30000
+- runFlow:
+    when:
+      visible: "Pixel Launcher isn't responding"
+    commands:
+      - tapOn: "Close app"
+- extendedWaitUntil:
+    visible: "Sign up for CortexAI Agent Hub"
+    timeout: 30000
+- takeScreenshot: "02-sign-up"
+- tapOn: "Sign in"
+- runFlow:
+    when:
+      notVisible:
+        id: "server-address"
+    commands:
+      - assertVisible: "Sign in to CortexAI Agent Hub"
+      - takeScreenshot: "01-sign-in"
+      - tapOn: "Use a custom server"
+- assertVisible: "Server"
+- takeScreenshot: "03-server"
+- runFlow: helpers/server.yaml
+
+- tapOn: "Email"
+- inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
+- tapOn:
+    text: "Use password"
+    optional: true
+- tapOn: "Password"
+- inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
+- hideKeyboard
+- tapOn: "Sign in"
+- tapOn:
+    text: "Don’t allow"
+    optional: true
+
+- extendedWaitUntil:
+    visible: "Researcher"
+    timeout: 30000
+- openLink: "cortexai-agent-hub:///thread?botId=${CORTEXAI_AGENT_HUB_SCREENSHOT_BOT_ID}&name=Researcher"
+- extendedWaitUntil:
+    visible: "Message Researcher"
+    timeout: 15000
+- tapOn: "Message Researcher"
+- inputText: "Keyboard lifecycle check"
+- pressKey: Enter
+- inputText: "Second line"
+- assertVisible: 'Keyboard lifecycle check\nSecond line'
+- assertVisible: "Send"
+- takeScreenshot: "keyboard-initial"
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- tapOn: "Message Researcher"
+- assertVisible: 'Keyboard lifecycle check\nSecond line'
+- assertVisible: "Send"
+- takeScreenshot: "keyboard-resumed"
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Researcher"
+    timeout: 30000
+- tapOn: "Researcher"
+- extendedWaitUntil:
+    visible: "Message Researcher"
+    timeout: 15000
+- tapOn: "Message Researcher"
+- inputText: "Keyboard lifecycle check"
+- pressKey: Enter
+- inputText: "Second line"
+- assertVisible: 'Keyboard lifecycle check\nSecond line'
+- assertVisible: "Send"
+- takeScreenshot: "keyboard-restarted"
+- hideKeyboard
+- openLink: "cortexai-agent-hub:///account"
+- scrollUntilVisible:
+    element: "Sign out"
+    direction: DOWN
+- tapOn: "Sign out"
+- extendedWaitUntil:
+    visible: "Sign in to CortexAI Agent Hub"
+    timeout: 15000
+- tapOn: "Email"
+- inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
+- tapOn:
+    text: "Use password"
+    optional: true
+- tapOn: "Password"
+- inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
+- hideKeyboard
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "Researcher"
+    timeout: 15000
+- openLink: "cortexai-agent-hub:///thread?botId=${CORTEXAI_AGENT_HUB_SCREENSHOT_BOT_ID}&name=Researcher"
+- extendedWaitUntil:
+    visible: "Message Researcher"
+    timeout: 15000
+- tapOn: "Message Researcher"
+- inputText: "Keyboard lifecycle check"
+- pressKey: Enter
+- inputText: "Second line"
+- assertVisible: 'Keyboard lifecycle check\nSecond line'
+- assertVisible: "Send"
+- takeScreenshot: "keyboard-signed-in-again"
+- hideKeyboard

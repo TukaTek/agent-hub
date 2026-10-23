@@ -23,6 +23,9 @@ tags:
 - runFlow: helpers/server.yaml
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
+- tapOn:
+    text: "Use password"
+    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
 - hideKeyboard

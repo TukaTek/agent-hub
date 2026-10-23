@@ -42,7 +42,7 @@ export class IntegrationProviderSettings {
   private create(config: IntegrationProviderConfig): ManagedConnectorProvider {
     if (this.factory) return this.factory(config);
     return config.provider === "composio"
-      ? new ComposioConnector(config.apiKey)
+      ? new ComposioConnector({ apiKey: config.apiKey })
       : new PipedreamConnector({ ...config, identitySecret: this.identitySecret });
   }
 
@@ -176,6 +176,9 @@ class ConfiguredIntegrationProvider implements ManagedConnectorProvider {
   async listConnectedExternalIds(context: AdapterContext) {
     return (await this.resolve())?.listConnectedExternalIds(context) ?? [];
   }
+  async listReconnectRefs(context: AdapterContext) {
+    return (await (await this.resolve())?.listReconnectRefs?.(context)) ?? [];
+  }
   async connectionReady(context: AdapterContext, externalId: string) {
     return (await this.required()).connectionReady(context, externalId);
   }
@@ -206,7 +209,7 @@ export function createIntegrationConnectorStack(
   before: ConnectorProvider[],
   after: ConnectorProvider[],
 ) {
-  return createConnectorStack(false, composio, [
+  return createConnectorStack(composio, [
     ...before,
     ...settings
       .providers()

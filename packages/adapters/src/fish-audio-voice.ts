@@ -9,6 +9,7 @@ import type {
   VoiceTranscribeRequest,
   VoiceVerifyResult,
 } from "@cortexai-agent-hub/adapter-kit";
+import { VoiceAccountError } from "@cortexai-agent-hub/adapter-kit";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
 import {
@@ -17,7 +18,7 @@ import {
   speechUploadName,
   verifyVoiceHttpGet,
   voiceDeadline,
-  voiceHttpError,
+  voiceRequestError,
 } from "./voice-http.js";
 
 const API = "https://api.fish.audio";
@@ -269,21 +270,21 @@ function rejectFish(
   model?: string,
 ): never {
   const detail = fishErrorDetail(body, apiKey);
-  getLogger().error("Fish Audio request failed", {
+  const error = voiceRequestError(
+    status,
+    "Fish Audio",
+    what,
+    typeof body === "string" || !detail ? null : { message: detail },
+  );
+  // Spent credit or a rejected key is the user's account to fix, not a server fault.
+  getLogger()[error instanceof VoiceAccountError ? "warn" : "error"]("Fish Audio request failed", {
     provider: "fish-audio",
     operation: what,
     "http.status": status,
     ...(model ? { "fish.model": model } : {}),
     ...(detail ? { "error.detail": detail } : {}),
   });
-  throw new Error(
-    voiceHttpError(
-      status,
-      "Fish Audio",
-      what,
-      typeof body === "string" || !detail ? null : { message: detail },
-    ),
-  );
+  throw error;
 }
 
 /** Upstream message, or a short raw body when Fish did not return JSON. */

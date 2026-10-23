@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  CORTEXAI_AGENT_HUB_CLOUD_URL,
   DEFAULT_LOCAL_WEB_URL,
   desktopStackImageTag,
   isCortexAiAgentHubHealth,
@@ -137,6 +138,10 @@ describe("saved setup", () => {
       mode: "existing",
       serverUrl: "http://192.168.1.20:3100",
     });
+  });
+
+  it("offers no hosted Cloud address until one exists", () => {
+    expect(CORTEXAI_AGENT_HUB_CLOUD_URL).toBeNull();
   });
 });
 

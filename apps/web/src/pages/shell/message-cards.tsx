@@ -1,5 +1,5 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { abortableDelay } from "@cortexai-agent-hub/core";
+import { appConnectedInput, waitForConnection } from "@cortexai-agent-hub/core";
 import {
   Button,
   Dialog,
@@ -14,6 +14,7 @@ import { BuiCard, SuccessPop } from "../../components/ai/primitives";
 import type { ArtifactTarget } from "../../lib/artifact-open";
 import { chartViewport } from "../../lib/chart-viewport";
 import { connectMcpOauth } from "../../lib/mcp-connect";
+import { importChunk } from "../../lib/preload-recovery";
 import { rpc } from "../../lib/rpc";
 import { useArtifactImage } from "../../lib/use-artifact-image";
 import { errorText } from "../../lib/user-error";
@@ -81,7 +82,7 @@ export function ChoiceCard({
         {block.subtitle ? (
           <div className="mt-0.5 text-[13px] text-foreground/75">{block.subtitle}</div>
         ) : null}
-        <div className="mt-3 space-y-2.5">
+        <div className="mt-3 space-y-2">
           {block.options
             .filter((option) => !block.answerId || option.id === block.answerId)
             .map((option) => (
@@ -90,9 +91,9 @@ export function ChoiceCard({
                 type="button"
                 disabled={Boolean(block.answerId) || pending}
                 onClick={() => void choose(option.id)}
-                className={`flex w-full items-start gap-3 rounded-xl px-3.5 py-3.5 text-start text-foreground disabled:opacity-60 ${block.answerId ? "bg-accent" : "bg-muted hover:bg-accent"}`}
+                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-start text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-60 ${block.answerId ? "bg-foreground/10" : "bg-background enabled:hover:bg-foreground/5 enabled:active:bg-foreground/15"}`}
               >
-                <span className="mt-0.5 grid h-[24px] w-[24px] shrink-0 place-items-center rounded-[7px] bg-background text-[12.5px] font-medium text-foreground/75">
+                <span className="grid h-[24px] w-[24px] shrink-0 place-items-center rounded-[7px] bg-card text-[12.5px] leading-none font-medium text-foreground/75">
                   {option.letter}
                 </span>
                 <span
@@ -105,7 +106,7 @@ export function ChoiceCard({
                   />
                 </span>
                 {block.answerId === option.id ? (
-                  <span className="mt-0.5 text-foreground/75">✓</span>
+                  <span className="text-foreground/75">✓</span>
                 ) : null}
               </button>
             ))}
@@ -150,9 +151,13 @@ function OnboardingFocusOptionLabel({
 
 export function AppConnectCard({
   botId,
+  threadId,
+  messageId,
   block,
 }: {
   botId: string;
+  threadId: string;
+  messageId?: string;
   block: Extract<MessageBlock, { kind: "app_connect" }>;
 }) {
   const { t } = useLingui();
@@ -182,22 +187,20 @@ export function AppConnectCard({
           "popup,width=560,height=720",
         );
       }
-      for (let i = 0; i < 60; i += 1) {
-        if (controller.signal.aborted) return;
-        const row = await rpc.connections
-          .complete({ connectionId: started.connectionId })
+      const result = await waitForConnection(
+        started.connectionId,
+        (input) => rpc.connections.complete(input, { signal: controller.signal }),
+        { signal: controller.signal, attempts: 60 },
+      );
+      if (result.status === "aborted") return;
+      if (result.status === "connected") {
+        setLocalStatus("connected");
+        await rpc.onboarding
+          .appConnected(appConnectedInput(botId, threadId, block, messageId))
           .catch(() => undefined);
-        if (row?.status === "connected") {
-          if (controller.signal.aborted) return;
-          setLocalStatus("connected");
-          await rpc.onboarding
-            .appConnected({ botId, provider: block.provider, connectorId: block.connectorId })
-            .catch(() => undefined);
-          return;
-        }
-        await abortableDelay(2_000, controller.signal);
+        return;
       }
-      if (!controller.signal.aborted) setError(t`Authorization timed out. Please try again.`);
+      setError(t`Authorization timed out. Please try again.`);
     } catch (error) {
       if (!controller.signal.aborted) {
         setError(errorText(error, t`Could not authorize this app`));
@@ -213,7 +216,7 @@ export function AppConnectCard({
     <BuiCard
       role="group"
       aria-label={t`${block.name} connection`}
-      className="w-[min(420px,80%)] px-4 py-3.5"
+      className="w-full max-w-[440px] px-4 py-3.5"
     >
       <div className="flex items-center gap-3.5">
         {block.logo ? (
@@ -236,12 +239,7 @@ export function AppConnectCard({
         {status === "connected" ? (
           <SuccessPop label={t`Connected`} />
         ) : (
-          <Button
-            variant="secondary"
-            className="rounded-full hover:border-border hover:bg-accent hover:text-foreground"
-            disabled={busy}
-            onClick={() => void authorize()}
-          >
+          <Button className="rounded-full" disabled={busy} onClick={() => void authorize()}>
             {busy ? t`Waiting…` : t`Authorize`}
           </Button>
         )}
@@ -274,7 +272,7 @@ function ChartCanvas({
     // Plot loads lazily so threads without charts never pay for the library.
     void (async () => {
       try {
-        const { buildPlotParts } = await import("@cortexai-agent-hub/core/plot");
+        const { buildPlotParts } = await importChunk(() => import("@cortexai-agent-hub/core/plot"));
         if (cancelled || !ref.current) return;
         // Hover inspection by default: give the first mark a tooltip unless
         // the spec already asks for one somewhere.
@@ -489,7 +487,7 @@ export function ChartBlockView({
   const expandedViewport = chartViewport(viewport.width, viewport.height);
   return (
     <>
-      <div className="group relative max-w-[74%] rounded-[20px] bg-muted p-4">
+      <div className="group relative w-[552px] max-w-full rounded-[20px] bg-muted p-4">
         <ChartCanvas spec={spec} data={data} width={520} />
         <Button
           variant="outline"

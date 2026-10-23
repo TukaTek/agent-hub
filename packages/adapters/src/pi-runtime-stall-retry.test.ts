@@ -28,7 +28,7 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
-import { CODEX_STREAM_IDLE_TIMEOUT_MESSAGE, PiAgentRuntime } from "./pi-runtime.js";
+import { MODEL_STREAM_IDLE_TIMEOUT_MESSAGE, PiAgentRuntime } from "./pi-runtime.js";
 import {
   MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
   MODEL_STREAM_IDLE_TIMEOUT_MS,
@@ -260,7 +260,7 @@ describe("model stream stall retry", () => {
       await vi.advanceTimersByTimeAsync(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS + 1);
     }
 
-    await expect(done).rejects.toThrow(CODEX_STREAM_IDLE_TIMEOUT_MESSAGE);
+    await expect(done).rejects.toThrow(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE);
     expect(providerState.stream).toHaveBeenCalledTimes(3);
   });
 
@@ -310,7 +310,7 @@ describe("model stream stall retry", () => {
     const { done } = run(request([backupChoice]));
     await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS + 1);
 
-    await expect(done).rejects.toThrow(CODEX_STREAM_IDLE_TIMEOUT_MESSAGE);
+    await expect(done).rejects.toThrow(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE);
     expect(providerState.stream).toHaveBeenCalledTimes(1);
   });
 
@@ -444,7 +444,7 @@ describe("model stream stall retry", () => {
     expect(modelCalls()[2]).toEqual(
       expect.objectContaining({
         stall: "first-event",
-        errorMessage: CODEX_STREAM_IDLE_TIMEOUT_MESSAGE,
+        errorMessage: MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
       }),
     );
   });

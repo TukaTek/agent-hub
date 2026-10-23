@@ -32,8 +32,9 @@ import {
   removeDeletedBotWorkspaces,
   restoreComputerWorkspace,
 } from "./computer-workspace.js";
-import { isSandboxGoneError } from "./e2b-sandbox.js";
 import { resolveAgentHomePath } from "./home.js";
+import { ObjectAgentHomeStore } from "./home-object-store.js";
+import { isSandboxGoneError } from "./sandbox-errors.js";
 
 type ComputerUpdateProgress = (
   stage: Exclude<ComputerUpdate["stage"], "preparing">,
@@ -164,6 +165,8 @@ export async function provisionComputer(
   controlHolder: "bot" | "none" = "none",
   onProgress?: ComputerUpdateProgress,
 ): Promise<ComputerRef> {
+  const started = performance.now();
+  const log = getLogger().child({ "computer.id": computerId, "run.id": context.runId });
   let existing = await deps.prisma.computer.findUniqueOrThrow({ where: { id: computerId } });
   if (existing.maintenanceId && existing.maintenanceId !== context.operationId)
     throw new ComputerBusyError();
@@ -208,6 +211,11 @@ export async function provisionComputer(
         context.botId,
         context,
       );
+      log.info("computer.provisioned", {
+        provider: ref.kind,
+        operation: "reuse",
+        durationMs: Math.round(performance.now() - started),
+      });
       return ref;
     }
   }
@@ -322,15 +330,22 @@ export async function provisionComputer(
   if (claimed.count !== 1) throw new ComputerBusyError();
   let provisioned: ComputerRef | undefined;
   try {
+    // Docker mounts the cached directory, so it must hold the stored revision before boot.
+    if (!reconnecting && deps.home instanceof ObjectAgentHomeStore)
+      await deps.home.hydrate(existing.homeKey);
     await onProgress?.("recreating");
-    const ref = await deps.sandbox.provision(
-      {
-        botId: existing.homeKey,
-        homePath,
-        providerRef: existing.providerRef ?? undefined,
-        providerKind: existing.kind as ComputerRef["kind"],
-      },
-      context,
+    const ref = await getLogger().withContext(
+      { "computer.id": computerId, "run.id": context.runId, previousState: existing.state },
+      () =>
+        deps.sandbox.provision(
+          {
+            botId: existing.homeKey,
+            homePath,
+            providerRef: existing.providerRef ?? undefined,
+            providerKind: existing.kind as ComputerRef["kind"],
+          },
+          context,
+        ),
     );
     provisioned = ref;
     await deps.sandbox.prepare(ref, context);
@@ -395,8 +410,17 @@ export async function provisionComputer(
     if (activated.count !== 1) {
       throw new ComputerBusyError();
     }
+    log.info("computer.provisioned", {
+      provider: ref.kind,
+      operation: replacement ? "create" : ref.started ? "resume" : "reuse",
+      durationMs: Math.round(performance.now() - started),
+    });
     return ref;
   } catch (error) {
+    log.warn("computer.provision_failed", {
+      provider: existing.kind,
+      durationMs: Math.round(performance.now() - started),
+    });
     // A failed reconnect never owns an existing workspace, even if setup failed.
     const rollbackError =
       provisioned && (!reconnecting || provisioned.fresh === true)
@@ -491,10 +515,7 @@ export function screenLeaseIdForRun(
   return screenLeaseId(lease?.runId ?? runId, lease?.fence ?? fence);
 }
 
-/**
- * Dedicated computers do not take an active computer-execution lease, but a retained screen
- * needs an increasing fence across runs. Keep the sequence in the expired per-computer/bot row.
- */
+/** Dedicated screen leases serialize workers and retain the fence after release. */
 export async function acquireDedicatedScreenLeaseFence(
   prisma: PrismaClient,
   input: {
@@ -532,15 +553,18 @@ export async function acquireDedicatedScreenLeaseFence(
       FOR UPDATE SKIP LOCKED`;
     if (currentRun.length !== 1) throw new ComputerBusyError();
 
-    const expiredAt = new Date(0);
+    // An unexpired holder owns the screen until release, pause, or expiry. Keep the
+    // expired row so explicit release never resets the next worker's screen fence.
+    // The current worker ownership check also permits resuming this run's held takeover.
     const now = new Date();
+    const expiresAt = new Date(now.getTime() + EXECUTION_LEASE_MS);
     const [existing] = await tx.computerExecutionLease.updateManyAndReturn({
       where: {
         computerId: input.computerId,
         botId: input.botId,
-        expiresAt: { lte: now },
+        OR: [{ expiresAt: { lte: now } }, { runId: input.runId }],
       },
-      data: { runId: input.runId, expiresAt: expiredAt, fence: { increment: 1 } },
+      data: { runId: input.runId, expiresAt, fence: { increment: 1 } },
       select: { fence: true },
     });
     if (existing) {
@@ -564,7 +588,7 @@ export async function acquireDedicatedScreenLeaseFence(
           botId: input.botId,
           runId: input.runId,
           fence,
-          expiresAt: expiredAt,
+          expiresAt,
         },
         select: { fence: true },
       });

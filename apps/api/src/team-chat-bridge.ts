@@ -14,6 +14,7 @@ import {
   promptTextForAttachments,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import { clearRunTurnCheckpoints } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { MessagingReceipts } from "./messaging-receipts.js";
 import type { TeamChatEngagementJudge } from "./team-chat-judge.js";
@@ -1372,6 +1373,7 @@ export class TeamChatBridge {
             leaseExpiresAt: null,
           },
         });
+        await clearRunTurnCheckpoints(this.deps.prisma, [sent.runId]);
         const taskId =
           sent.taskId ??
           (

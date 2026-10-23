@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import type { ThreadScrollState } from "@cortexai-agent-hub/core";
 import {
   foldPeerReplies,
+  jumpTargetId,
   openThreadWindow,
   withLiveStreamingProgress,
 } from "@cortexai-agent-hub/core";
@@ -73,10 +74,13 @@ function mountJumpProbe(latest: MobileSnapshot, page: unknown, targetKey: "botId
       snapRef: useRef<MobileSnapshot | null>(latest),
       streamResponsesRef: useRef(false),
       setSnap,
+      setComposingBots: vi.fn(),
+      liveMessageComposing: () => false,
       setExpandedPeerMarkers,
       setThreadScrollState,
       scrollBehavior: useRef(new ThreadScrollBehavior()),
       foldPeerReplies,
+      jumpTargetId,
       openThreadWindow,
       withLiveStreamingProgress,
       reconcileVisibleThreadSnapshot,

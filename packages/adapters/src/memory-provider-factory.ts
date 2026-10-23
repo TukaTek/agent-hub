@@ -4,30 +4,31 @@ import type {
   SemanticMemoryProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
+import { revalidateLocalServiceSettings } from "./local-service-endpoint.js";
 import {
   classifySerenityConnectionSettings,
   createSerenityProvider,
   prepareSerenityConnection,
   SERENITY_PROVIDER_ID,
-  serenityRequiresDeploymentOwner,
+  serenityRequiresPrivateEndpoint,
 } from "./serenity-memory-provider.js";
 
-export { MemoryProviderDeploymentOwnerRequiredError } from "./serenity-memory-provider.js";
+export { MemoryProviderPrivateEndpointRequiredError } from "./serenity-memory-provider.js";
 
 import {
-  assertSupermemoryLocalBaseUrl,
   createSupermemoryProvider,
   decodeLegacySupermemoryCredentials,
   prepareSupermemoryConnection,
   SUPERMEMORY_PROVIDER_ID,
-  supermemoryRequiresDeploymentOwner,
+  supermemoryRequiresPrivateEndpoint,
 } from "./supermemory-memory-provider.js";
 
 export interface MemoryProviderConnectionInput {
   provider: string;
   settings: Record<string, string>;
   credentials: Record<string, string>;
-  /** When false, Serenity must not probe endpoints that classify as private. */
+  /** When false, providers must not probe endpoints that classify as private. */
   allowPrivateEndpoint?: boolean;
 }
 
@@ -47,9 +48,11 @@ export interface MemoryProviderResolver {
 }
 
 interface MemoryProviderAdapter {
-  requiresDeploymentOwner(settings: Record<string, string>): boolean;
+  requiresPrivateEndpoint(settings: Record<string, string>): boolean;
   /** Async trust classification (e.g. DNS) without probing credentials. */
   classifySettings?(settings: Record<string, string>): Promise<Record<string, string>>;
+  /** Recheck persisted endpoint settings before their credentials are decrypted. */
+  revalidate?(settings: Record<string, string>): Promise<void>;
   prepare(
     settings: Record<string, string>,
     credentials: Record<string, string>,
@@ -66,7 +69,8 @@ const MEMORY_PROVIDER_ADAPTERS: ReadonlyMap<string, MemoryProviderAdapter> = new
   [
     SUPERMEMORY_PROVIDER_ID,
     {
-      requiresDeploymentOwner: supermemoryRequiresDeploymentOwner,
+      requiresPrivateEndpoint: supermemoryRequiresPrivateEndpoint,
+      revalidate: revalidateLocalServiceSettings,
       prepare: prepareSupermemoryConnection,
       create: createSupermemoryProvider,
       decodeLegacyCredentials: decodeLegacySupermemoryCredentials,
@@ -75,7 +79,7 @@ const MEMORY_PROVIDER_ADAPTERS: ReadonlyMap<string, MemoryProviderAdapter> = new
   [
     SERENITY_PROVIDER_ID,
     {
-      requiresDeploymentOwner: serenityRequiresDeploymentOwner,
+      requiresPrivateEndpoint: serenityRequiresPrivateEndpoint,
       classifySettings: classifySerenityConnectionSettings,
       prepare: (
         settings: Record<string, string>,
@@ -94,16 +98,16 @@ function memoryProviderAdapter(provider: string): MemoryProviderAdapter {
 }
 
 /** Adapters classify their settings; callers enforce the deployment trust boundary. */
-export function memoryProviderRequiresDeploymentOwner(
+export function memoryProviderRequiresPrivateEndpoint(
   provider: string,
   settings: Record<string, string>,
 ): boolean {
-  return memoryProviderAdapter(provider).requiresDeploymentOwner(settings);
+  return memoryProviderAdapter(provider).requiresPrivateEndpoint(settings);
 }
 
 /**
  * Run provider-specific trust classification (DNS, etc.) without credentialed probes.
- * Callers must authorize deployment-owner endpoints before prepare/probe.
+ * Callers must authorize private endpoints through operator configuration before prepare/probe.
  */
 export async function classifyMemoryProviderSettings(
   provider: string,
@@ -155,7 +159,7 @@ function decodeCredentials(provider: string, plaintext: string): Record<string, 
 
 export class SpaceMemoryProviderResolver implements MemoryProviderResolver {
   constructor(
-    private readonly prisma: Pick<PrismaClient, "spaceMemoryConfig" | "deploymentSettings">,
+    private readonly prisma: Pick<PrismaClient, "spaceMemoryConfig">,
     private readonly secrets: SecretStore,
   ) {}
 
@@ -166,20 +170,16 @@ export class SpaceMemoryProviderResolver implements MemoryProviderResolver {
     });
     if (!config) return null;
     const settings = toStringRecord(config.settings);
-    if (memoryProviderRequiresDeploymentOwner(config.provider, settings)) {
-      const deployment = await this.prisma.deploymentSettings.findUnique({
-        where: { id: "default" },
-        select: { ownerUserId: true },
-      });
-      // Also disable pre-existing local configurations authored outside the deployment boundary.
-      if (!deployment?.ownerUserId || deployment.ownerUserId !== config.userId) return null;
+    if (memoryProviderRequiresPrivateEndpoint(config.provider, settings)) {
+      // Saved configurations cannot bypass an operator's current network policy.
+      if (process.env.MCP_ALLOW_PRIVATE_ENDPOINT !== "true") return null;
     }
-    if (
-      config.provider === SUPERMEMORY_PROVIDER_ID &&
-      settings.mode === "local" &&
-      settings.baseUrl
-    ) {
-      await assertSupermemoryLocalBaseUrl(settings.baseUrl, { allowPrivateEndpoint: true });
+    const adapter = memoryProviderAdapter(config.provider);
+    try {
+      await adapter.revalidate?.(settings);
+    } catch {
+      getLogger().warn("Semantic memory disabled: endpoint revalidation failed");
+      return null;
     }
     const credentials = decodeCredentials(
       config.provider,

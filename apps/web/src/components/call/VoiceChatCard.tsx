@@ -5,7 +5,13 @@ import {
   voiceChatDuration,
   voiceChatSummary,
 } from "@cortexai-agent-hub/core";
-import { Button, buttonVariants, cn } from "@cortexai-agent-hub/ui-web";
+import {
+  Button,
+  buttonVariants,
+  Collapsible,
+  CollapsibleContent,
+  cn,
+} from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { ChevronDown, Phone, PhoneIncoming, PhoneMissed } from "lucide-react";
 import { useState } from "react";
@@ -107,7 +113,12 @@ export function VoiceChatCard({
               )}
             >
               <span className="sr-only">{open ? t`Hide transcript` : t`Show transcript`}</span>
-              <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
+              <ChevronDown
+                className={cn(
+                  "size-4 transition-transform duration-150 ease-out motion-reduce:transition-none",
+                  open && "rotate-180",
+                )}
+              />
             </span>
           ) : null}
         </button>
@@ -122,29 +133,31 @@ export function VoiceChatCard({
           {summary}
         </p>
       ) : null}
-      {open ? (
-        <div className="space-y-1.5 px-3 pb-3 text-sm">
-          {transcript.map((line) => {
-            if (!line.text) {
-              return <span key={line.id} data-message-id={line.id} className="sr-only" />;
-            }
-            return (
-              <p
-                key={line.id}
-                data-message-id={line.id}
-                dir="auto"
-                className={cn(
-                  line.role === "user"
-                    ? "text-end text-muted-foreground"
-                    : "rounded-md bg-muted/60 px-3 py-2 text-foreground",
-                )}
-              >
-                {line.text}
-              </p>
-            );
-          })}
-        </div>
-      ) : null}
+      <Collapsible open={open} className="contents">
+        <CollapsibleContent className="flex flex-col">
+          <div className="space-y-1.5 px-3 pb-3 text-sm">
+            {transcript.map((line) => {
+              if (!line.text) {
+                return <span key={line.id} data-message-id={line.id} className="sr-only" />;
+              }
+              return (
+                <p
+                  key={line.id}
+                  data-message-id={line.id}
+                  dir="auto"
+                  className={cn(
+                    line.role === "user"
+                      ? "text-end text-muted-foreground"
+                      : "rounded-md bg-muted/60 px-3 py-2 text-foreground",
+                  )}
+                >
+                  {line.text}
+                </p>
+              );
+            })}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

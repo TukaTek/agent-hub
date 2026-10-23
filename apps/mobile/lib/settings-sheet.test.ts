@@ -58,9 +58,9 @@ describe("settings sheet", () => {
 });
 
 describe("settings links", () => {
-  it("knows every page in the settings group", () => {
+  it("knows every public page in the settings group", () => {
     const pages = readdirSync(resolve(mobileRoot, "app/(settings)"))
-      .filter((file) => file !== "_layout.tsx")
+      .filter((file) => file !== "_layout.tsx" && file !== "model-picker.tsx")
       .map((file) => file.replace(/\.tsx$/, ""));
 
     for (const page of pages) expect(isSettingsLink(`/${page}`), page).toBe(true);
@@ -68,6 +68,8 @@ describe("settings links", () => {
 
   it("reads the page from any link form", () => {
     expect(isSettingsLink("cortexai-agent-hub:///models")).toBe(true);
+    // Picker sessions only exist after an in-sheet push, never from a link.
+    expect(isSettingsLink("cortexai-agent-hub:///model-picker")).toBe(false);
     expect(isSettingsLink("cortexai-agent-hub://voice")).toBe(true);
     expect(isSettingsLink("cortexai-agent-hub:///account?focus=usage")).toBe(true);
     expect(isSettingsLink("cortexai-agent-hub://integrations/")).toBe(true);
@@ -75,6 +77,8 @@ describe("settings links", () => {
     expect(isSettingsLink("cortexai-agent-hub:///thread?botId=bot-1")).toBe(false);
     expect(isSettingsLink("cortexai-agent-hub://group-thread?groupId=group-1")).toBe(false);
     expect(isSettingsLink("/new")).toBe(false);
+    expect(isSettingsLink("/artifacts")).toBe(false);
+    expect(isSettingsLink("cortexai-agent-hub:///artifacts")).toBe(false);
     expect(isSettingsLink("cortexai-agent-hub://")).toBe(false);
     expect(isSettingsLink("cortexai-agent-hub:///accounts")).toBe(false);
   });
@@ -95,6 +99,10 @@ describe("settings links", () => {
       redirectSystemPath({ path: "cortexai-agent-hub:///thread?botId=bot-1", initial: false }),
     ).toBe("cortexai-agent-hub:///thread?botId=bot-1");
     expect(close).toHaveBeenCalledTimes(1);
+    expect(redirectSystemPath({ path: "cortexai-agent-hub:///artifacts", initial: false })).toBe(
+      "cortexai-agent-hub:///artifacts",
+    );
+    expect(close).toHaveBeenCalledTimes(2);
     unregister();
   });
 });

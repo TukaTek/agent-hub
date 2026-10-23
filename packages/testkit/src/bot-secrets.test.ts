@@ -13,10 +13,16 @@ import {
   WORKSPACE_DELIVERY_INSTRUCTION,
 } from "@cortexai-agent-hub/adapters";
 import { ATTACHMENT_MAX_BYTES, type MessageBlock } from "@cortexai-agent-hub/contracts";
-import { answerRunInput, parseComputerMode } from "@cortexai-agent-hub/db";
+import {
+  answerRunInput,
+  parseComputerMode,
+  runAsSystem,
+  runAsTenant,
+} from "@cortexai-agent-hub/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
+import { asSystem } from "./system-db.js";
 
 const hasDb = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
 const describeIntegration = hasDb ? describe : describe.skip;
@@ -29,6 +35,7 @@ const key = "fake-reusable-api-key";
 
 describeIntegration("reusable credential lifecycle", () => {
   let handles: Awaited<ReturnType<typeof createApp>>;
+  let db: Awaited<ReturnType<typeof createApp>>["prisma"];
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-secret-lifecycle-"));
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const echoAuth: typeof globalThis.fetch = async (_url, init) => {
@@ -55,6 +62,7 @@ describeIntegration("reusable credential lifecycle", () => {
       defaultModel: "scripted",
       remoteConnectors: { fetch, resolveHostname },
     });
+    db = asSystem(handles.prisma);
   });
   afterAll(async () => {
     await handles?.stop();
@@ -95,7 +103,7 @@ describeIntegration("reusable credential lifecycle", () => {
       try {
         const seeded = await seedRun(`reusable-${requireApproval}`, "Save the API credential");
         if (requireApproval) {
-          await handles.prisma.actionApprovalRule.create({
+          await db.actionApprovalRule.create({
             data: {
               spaceId: seeded.me.spaceId,
               createdByUserId: seeded.me.userId,
@@ -105,10 +113,12 @@ describeIntegration("reusable credential lifecycle", () => {
             },
           });
         }
-        await handles.executor.continueRun(seeded.run.id, "test-worker");
+        await runAsSystem("background job run.continue", () =>
+          handles.executor.continueRun(seeded.run.id, "test-worker"),
+        );
         const approve = async (runId: string, interruptBeforeCard = false) => {
           if (!requireApproval) return;
-          const message = await handles.prisma.message.findFirstOrThrow({
+          const message = await db.message.findFirstOrThrow({
             where: { runId, role: "bot" },
             orderBy: { createdAt: "desc" },
           });
@@ -121,20 +131,22 @@ describeIntegration("reusable credential lifecycle", () => {
             // Reproduce a worker stopping after releasing the approved effect to intended,
             // before the protected card transaction commits. No background job is enqueued.
             expect(
-              await answerRunInput(handles.prisma, {
-                spaceId: seeded.me.spaceId,
-                threadId: seeded.thread.id,
-                runId,
-                messageId: message.id,
-                answeredByUserId: seeded.me.userId,
-                answer: "allow",
-              }),
+              await runAsTenant(seeded.me, () =>
+                answerRunInput(handles.prisma, {
+                  spaceId: seeded.me.spaceId,
+                  threadId: seeded.thread.id,
+                  runId,
+                  messageId: message.id,
+                  answeredByUserId: seeded.me.userId,
+                  answer: "allow",
+                }),
+              ),
             ).toBe(true);
-            await handles.prisma.externalEffect.updateMany({
+            await db.externalEffect.updateMany({
               where: { runId, kind: "request_secret", status: "approved" },
               data: { status: "intended" },
             });
-            await handles.prisma.run.update({
+            await db.run.update({
               where: { id: runId },
               data: {
                 status: "running",
@@ -142,7 +154,9 @@ describeIntegration("reusable credential lifecycle", () => {
                 leaseExpiresAt: new Date(Date.now() - 60_000),
               },
             });
-            await handles.executor.continueRun(runId, "recovery-worker");
+            await runAsSystem("background job run.continue", () =>
+              handles.executor.continueRun(runId, "recovery-worker"),
+            );
           } else {
             await rpc(seeded.cookie, "threads/answer", {
               botId: seeded.bot.id,
@@ -153,7 +167,7 @@ describeIntegration("reusable credential lifecycle", () => {
           }
           await vi.waitFor(
             async () => {
-              const run = await handles.prisma.run.findUniqueOrThrow({ where: { id: runId } });
+              const run = await db.run.findUniqueOrThrow({ where: { id: runId } });
               expect(["completed", "waiting_input"]).toContain(run.status);
             },
             { timeout: 15_000 },
@@ -161,7 +175,7 @@ describeIntegration("reusable credential lifecycle", () => {
         };
         await approve(seeded.run.id);
         const answer = async (runId: string, value: string) => {
-          const message = await handles.prisma.message.findFirstOrThrow({
+          const message = await db.message.findFirstOrThrow({
             where: { runId, role: "bot" },
             orderBy: { createdAt: "desc" },
           });
@@ -178,18 +192,20 @@ describeIntegration("reusable credential lifecycle", () => {
           });
           await vi.waitFor(
             async () => {
-              expect(
-                await handles.prisma.run.findUniqueOrThrow({ where: { id: runId } }),
-              ).toMatchObject({ status: "completed", error: null });
+              expect(await db.run.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({
+                status: "completed",
+                error: null,
+              });
             },
             { timeout: 15_000 },
           );
         };
-        expect(
-          await handles.prisma.run.findUniqueOrThrow({ where: { id: seeded.run.id } }),
-        ).toMatchObject({ status: "waiting_input", error: null });
+        expect(await db.run.findUniqueOrThrow({ where: { id: seeded.run.id } })).toMatchObject({
+          status: "waiting_input",
+          error: null,
+        });
         // An invalid value rolls back the run transition and leaves the card pending.
-        const pending = await handles.prisma.message.findFirstOrThrow({
+        const pending = await db.message.findFirstOrThrow({
           where: { runId: seeded.run.id, role: "bot" },
           orderBy: { seq: "desc" },
         });
@@ -213,12 +229,12 @@ describeIntegration("reusable credential lifecycle", () => {
             }),
           ).rejects.toThrow();
         }
-        expect(
-          await handles.prisma.run.findUniqueOrThrow({ where: { id: seeded.run.id } }),
-        ).toMatchObject({ status: "waiting_input" });
-        expect(await handles.prisma.botSecret.count({ where: { botId: seeded.bot.id } })).toBe(0);
+        expect(await db.run.findUniqueOrThrow({ where: { id: seeded.run.id } })).toMatchObject({
+          status: "waiting_input",
+        });
+        expect(await db.botSecret.count({ where: { botId: seeded.bot.id } })).toBe(0);
         await answer(seeded.run.id, key);
-        const stored = await handles.prisma.botSecret.findFirstOrThrow({
+        const stored = await db.botSecret.findFirstOrThrow({
           where: { botId: seeded.bot.id },
         });
         expect(stored).toMatchObject({
@@ -228,13 +244,11 @@ describeIntegration("reusable credential lifecycle", () => {
         });
         expect(stored.ciphertext).toMatch(/^v2:/);
         expect(stored.ciphertext).not.toContain(key);
-        expect(
-          await handles.prisma.secret.count({ where: { kind: `run-secret:${seeded.run.id}` } }),
-        ).toBe(0);
+        expect(await db.secret.count({ where: { kind: `run-secret:${seeded.run.id}` } })).toBe(0);
 
         const nextRun = async (nextCalls: typeof calls) => {
           calls = nextCalls;
-          const task = await handles.prisma.task.create({
+          const task = await db.task.create({
             data: {
               userId: seeded.me.userId,
               spaceId: seeded.me.spaceId,
@@ -244,7 +258,7 @@ describeIntegration("reusable credential lifecycle", () => {
               status: "queued",
             },
           });
-          const run = await handles.prisma.run.create({
+          const run = await db.run.create({
             data: {
               userId: seeded.me.userId,
               spaceId: seeded.me.spaceId,
@@ -255,7 +269,9 @@ describeIntegration("reusable credential lifecycle", () => {
               status: "queued",
             },
           });
-          await handles.executor.continueRun(run.id, "test-worker");
+          await runAsSystem("background job run.continue", () =>
+            handles.executor.continueRun(run.id, "test-worker"),
+          );
           return run.id;
         };
         const request = {
@@ -271,15 +287,13 @@ describeIntegration("reusable credential lifecycle", () => {
           request,
         ]);
         await approve(useRun);
-        expect(await handles.prisma.run.findUniqueOrThrow({ where: { id: useRun } })).toMatchObject(
-          {
-            status: "completed",
-            error: null,
-          },
-        );
+        expect(await db.run.findUniqueOrThrow({ where: { id: useRun } })).toMatchObject({
+          status: "completed",
+          error: null,
+        });
         expect(fetch).toHaveBeenCalledTimes(1);
         expect(
-          await handles.prisma.externalEffect.findFirstOrThrow({
+          await db.externalEffect.findFirstOrThrow({
             where: { runId: useRun, kind: "secret_request" },
           }),
         ).toMatchObject({
@@ -296,19 +310,19 @@ describeIntegration("reusable credential lifecycle", () => {
             args: { label: "API key", purpose: "api_key", credential: destination, replace: true },
           },
         ]);
-        expect(
-          await handles.prisma.run.findUniqueOrThrow({ where: { id: rotateRun } }),
-        ).toMatchObject({ status: "waiting_input" });
+        expect(await db.run.findUniqueOrThrow({ where: { id: rotateRun } })).toMatchObject({
+          status: "waiting_input",
+        });
         await approve(rotateRun, true);
-        expect(
-          await handles.prisma.run.findUniqueOrThrow({ where: { id: rotateRun } }),
-        ).toMatchObject({ status: "waiting_input" });
-        expect(
-          await handles.prisma.botSecret.findUniqueOrThrow({ where: { id: stored.id } }),
-        ).toMatchObject({ ciphertext: stored.ciphertext });
+        expect(await db.run.findUniqueOrThrow({ where: { id: rotateRun } })).toMatchObject({
+          status: "waiting_input",
+        });
+        expect(await db.botSecret.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
+          ciphertext: stored.ciphertext,
+        });
         await answer(rotateRun, `${key}-rotated`);
         expect(
-          await handles.prisma.botSecret.findUniqueOrThrow({ where: { id: stored.id } }),
+          await db.botSecret.findUniqueOrThrow({ where: { id: stored.id } }),
         ).not.toMatchObject({ ciphertext: stored.ciphertext });
         await nextRun([request]);
         expect(new Headers(fetch.mock.calls.at(-1)?.[1]?.headers).get("Authorization")).toBe(
@@ -316,13 +330,13 @@ describeIntegration("reusable credential lifecycle", () => {
         );
         const count = fetch.mock.calls.length;
         await nextRun([{ name: "forget_secret", args: { name: destination.name } }, request]);
-        expect(await handles.prisma.botSecret.count({ where: { botId: seeded.bot.id } })).toBe(0);
+        expect(await db.botSecret.count({ where: { botId: seeded.bot.id } })).toBe(0);
         expect(fetch).toHaveBeenCalledTimes(count);
         const [messages, events, effects, tasks] = await Promise.all([
-          handles.prisma.message.findMany({ where: { threadId: seeded.thread.id } }),
-          handles.prisma.event.findMany({ where: { threadId: seeded.thread.id } }),
-          handles.prisma.externalEffect.findMany({ where: { spaceId: seeded.me.spaceId } }),
-          handles.prisma.task.findMany({ where: { botId: seeded.bot.id } }),
+          db.message.findMany({ where: { threadId: seeded.thread.id } }),
+          db.event.findMany({ where: { threadId: seeded.thread.id } }),
+          db.externalEffect.findMany({ where: { spaceId: seeded.me.spaceId } }),
+          db.task.findMany({ where: { botId: seeded.bot.id } }),
         ]);
         expect(JSON.stringify({ seen, messages, events, effects, tasks })).not.toContain(key);
       } finally {
@@ -851,8 +865,8 @@ describeIntegration("reusable credential lifecycle", () => {
       instructions: "",
       notifyOnFinish: false,
     });
-    const thread = await handles.prisma.thread.findUniqueOrThrow({ where: { botId: bot.id } });
-    const task = await handles.prisma.task.create({
+    const thread = await db.thread.findUniqueOrThrow({ where: { botId: bot.id } });
+    const task = await db.task.create({
       data: {
         spaceId: me.spaceId,
         botId: bot.id,
@@ -862,7 +876,7 @@ describeIntegration("reusable credential lifecycle", () => {
         status: "queued",
       },
     });
-    const run = await handles.prisma.run.create({
+    const run = await db.run.create({
       data: {
         spaceId: me.spaceId,
         botId: bot.id,

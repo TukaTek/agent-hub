@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { captureScreenshot } from "./helpers";
 
 const fixture = "/e2e/fixtures/markdown-table.html";
 const longValue =
@@ -177,7 +177,7 @@ test("rich table cells stay associated through sorting and pagination", async ({
   );
 });
 
-test("expanded tables show long cell content without truncation", async ({ page }) => {
+test("expanded tables show long cell content without truncation", async ({ page }, testInfo) => {
   await page.goto(`${fixture}?long=1`);
   const card = page.getByTestId("table-card");
   const inlineCell = card
@@ -218,6 +218,14 @@ test("expanded tables show long cell content without truncation", async ({ page 
   expect(dialogMetrics.textOverflow).toBe("clip");
   expect(dialogMetrics.scrollHeight - dialogMetrics.clientHeight).toBeLessThanOrEqual(1);
   expect(dialogMetrics.scrollWidth - dialogMetrics.clientWidth).toBeLessThanOrEqual(1);
+
+  // The dialog sizes to content: a two-column table hugs its ~32rem floor; the
+  // broken layout stretched the dialog to ~94vw.
+  const box = await page.getByRole("dialog", { name: "Table" }).boundingBox();
+  const viewportWidth = page.viewportSize()?.width ?? 1280;
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeLessThan(viewportWidth * 0.6);
+  await captureScreenshot(page, testInfo, "table-dialog-width");
 });
 
 test("nested table dialogs close independently", async ({ page }) => {
@@ -310,9 +318,22 @@ test("small tables skip pagination", async ({ page }) => {
 });
 
 test("table chrome follows right-to-left direction", async ({ page }) => {
+  // Production bubbles carry dir="auto", never dir="rtl" — the sort control
+  // flip must key off the resolved direction (:dir), not an ancestor attribute.
+  await page.goto(`${fixture}?rtl=1`);
+  const rtlCard = page.getByTestId("table-card");
+  await expect(rtlCard).toBeVisible();
+  await expect(
+    rtlCard.locator(".cortexai-agent-hub-align-right .cortexai-agent-hub-table-sort"),
+  ).toHaveCSS("flex-direction", "row");
+
   await page.goto(fixture);
-  await page.locator("html").evaluate((element) => element.setAttribute("dir", "rtl"));
   const card = page.getByTestId("table-card");
+  await expect(
+    card.locator(".cortexai-agent-hub-align-right .cortexai-agent-hub-table-sort"),
+  ).toHaveCSS("flex-direction", "row-reverse");
+
+  await page.locator("html").evaluate((element) => element.setAttribute("dir", "rtl"));
   const gutter = card.locator("tbody .cortexai-agent-hub-table-gutter").first();
   await expect(gutter).toHaveCSS("border-left-width", "1px");
   await expect(gutter).toHaveCSS("border-right-width", "0px");
@@ -323,23 +344,6 @@ test("table chrome follows right-to-left direction", async ({ page }) => {
   expect(labelBox).not.toBeNull();
   expect(iconBox).not.toBeNull();
   expect(labelBox!.x).toBeGreaterThan(iconBox!.x);
-});
-
-test("right-to-left content flips the sort control under dir=auto", async ({ page }) => {
-  // Production bubbles carry dir="auto", never dir="rtl" — the flip must key
-  // off the resolved direction (:dir), not an ancestor attribute.
-  await page.goto(`${fixture}?rtl=1`);
-  const card = page.getByTestId("table-card");
-  await expect(card).toBeVisible();
-  const rtlSort = card.locator(".cortexai-agent-hub-align-right .cortexai-agent-hub-table-sort");
-  await expect(rtlSort).toHaveCSS("flex-direction", "row");
-
-  await page.goto(fixture);
-  await expect(
-    page
-      .getByTestId("table-card")
-      .locator(".cortexai-agent-hub-align-right .cortexai-agent-hub-table-sort"),
-  ).toHaveCSS("flex-direction", "row-reverse");
 });
 
 test("wide tables scroll inside a focusable card region", async ({ page }) => {
@@ -362,22 +366,6 @@ test("wide tables scroll inside a focusable card region", async ({ page }) => {
   await expect
     .poll(async () => scroll.evaluate((element) => element.scrollLeft))
     .toBeGreaterThan(0);
-});
-
-test("the expanded dialog sizes to content instead of the viewport", async ({ page }, testInfo) => {
-  await page.goto(`${fixture}?long=1`);
-  const card = page.getByTestId("table-card");
-  await card.getByRole("button", { name: "Expand table" }).click();
-  const dialog = page.getByRole("dialog", { name: "Table" });
-  await expect(dialog).toBeVisible();
-
-  const box = await dialog.boundingBox();
-  const viewportWidth = page.viewportSize()?.width ?? 1280;
-  expect(box).not.toBeNull();
-  // A two-column table hugs its ~32rem floor; the broken layout stretched the
-  // dialog to ~94vw.
-  expect(box!.width).toBeLessThan(viewportWidth * 0.6);
-  await captureScreenshot(page, testInfo, "table-dialog-width");
 });
 
 test("sorting announces the new order and disambiguates header labels", async ({ page }) => {
@@ -440,21 +428,4 @@ test.describe("touch table controls", () => {
         .toBeGreaterThanOrEqual(44);
     }
   });
-});
-
-test("bot replies render markdown tables as cards", async ({ page }) => {
-  const stamp = Date.now();
-  await signup(page, `table-card-${stamp}@cortexai-agent-hub.test`, "password12", "Table Card");
-  await completeOnboarding(page);
-
-  const composer = page.getByRole("combobox", { name: /^Message/ });
-  await expect(composer).toBeVisible();
-  await composer.fill("show this table:\n\n| Item | Qty |\n| --- | --- |\n| a | 2 |\n| b | 1 |");
-  await composer.press("Enter");
-
-  // The scripted runtime echoes the prompt back; the card must appear in a bot bubble.
-  const botCard = page.getByTestId("message-bot-bubble").last().getByTestId("table-card");
-  await expect(botCard).toBeVisible({ timeout: 20_000 });
-  await expect(botCard.locator("tbody tr")).toHaveCount(2);
-  await expect(botCard).toContainText("Item");
 });

@@ -4,15 +4,25 @@ import {
   HUB_SSO_ACCESS_DENIED,
   type HubSignInRefusalCode,
   hubRefusalCallbackError,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
   readBoundedJsonResponse,
   type SignInContinueResponse,
   type SsoCallbackError,
   signupRequiresEmailVerification,
 } from "@cortexai-agent-hub/core";
-import { Button, Input, Label } from "@cortexai-agent-hub/ui-web";
+import {
+  Button,
+  Input,
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+  Label,
+} from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { PasskeySignIn } from "../components/PasskeySignIn";
 import { authClient } from "../lib/auth";
 import type { AuthCapabilities } from "../lib/auth-capabilities";
 import { fetchAuthCapabilities } from "../lib/auth-capabilities";
@@ -33,6 +43,7 @@ const fieldClass =
 export const submitClass =
   "mt-3 h-12 w-full rounded-xl bg-brand text-base font-semibold text-brand-foreground hover:bg-brand/90 focus-visible:border-brand focus-visible:ring-brand/40";
 const MAX_AUTH_RESPONSE_BYTES = 64 * 1024;
+const CODE_LENGTH = 6;
 
 export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) {
   const { t } = useLingui();
@@ -85,16 +96,24 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     signInStep === "desktop_sso_unavailable";
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const [method, setMethod] = useState<"code" | "password">("code");
+  const [codeSent, setCodeSent] = useState(false);
+  const [code, setCode] = useState("");
+  // Hub owns sign-in, so an email code only applies to local accounts.
+  const useCode = !hubMode && Boolean(reset?.passwordAuth && reset.emailCode) && mode !== "forgot";
+  const codeMode = useCode && method === "code" && (mode === "up" || signInStep === "password");
+  const codeStep = codeMode && codeSent;
   const passwordFieldId = mode === "in" ? "current-password" : "new-password";
-  const title = sent ? (
-    <Trans>Check your email</Trans>
-  ) : mode === "in" ? (
-    <Trans>Sign in to CortexAI Agent Hub</Trans>
-  ) : mode === "up" ? (
-    <Trans>Create your CortexAI Agent Hub</Trans>
-  ) : (
-    <Trans>Reset your password</Trans>
-  );
+  const title =
+    sent || codeStep ? (
+      <Trans>Check your email</Trans>
+    ) : mode === "in" ? (
+      <Trans>Sign in to CortexAI Agent Hub</Trans>
+    ) : mode === "up" ? (
+      <Trans>Create your CortexAI Agent Hub</Trans>
+    ) : (
+      <Trans>Reset your password</Trans>
+    );
 
   useEffect(() => {
     setReset(null);
@@ -123,6 +142,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   function changeEmail() {
     setStep("email");
     setPassword("");
+    setCodeSent(false);
+    setCode("");
     setError(null);
     emailRef.current?.focus();
   }
@@ -130,9 +151,14 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (signInUnavailable || !passwordForm) return;
+    if (codeStep) {
+      // An unfinished code would spend one of the code's three attempts.
+      if (code.length === CODE_LENGTH) await verifyCode(code);
+      return;
+    }
     const issue = credentialIssue({
       email,
-      password: mode === "forgot" || signInStep === "email" ? undefined : password,
+      password: mode === "forgot" || signInStep === "email" || codeMode ? undefined : password,
     });
     if (issue) {
       setError(credentialIssueText(issue));
@@ -176,9 +202,10 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           next === "password" ||
           next === "sso_unavailable" ||
           next === "other_sso_unavailable"
-        )
+        ) {
           setStep(next);
-        else setError(t`Could not continue`);
+          if (next === "password" && useCode && method === "code") await sendCode();
+        } else setError(t`Could not continue`);
         return;
       }
       if (hubMode) {
@@ -221,6 +248,10 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         setResetSent(true);
         return;
       }
+      if (codeMode) {
+        await sendCode();
+        return;
+      }
       const trimmedEmail = email.trim();
       const result =
         mode === "up"
@@ -238,19 +269,68 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         setSearchParams({ verify: "email" });
         return;
       }
-      clearSpaceSelection();
-      navigate(
-        mode === "up"
-          ? "/onboarding"
-          : searchParams.get("next") === "/integrations/setup"
-            ? "/integrations/setup"
-            : "/app",
-      );
+      enterApp();
     } catch {
       setError(t`Could not reach the server`);
     } finally {
       setPending(false);
     }
+  }
+
+  async function sendCode() {
+    const request = await authClient.emailOtp.sendVerificationOtp({
+      email: email.trim(),
+      type: "sign-in",
+    });
+    if (request.error) {
+      setError(authErrorText(request.error, t`Could not continue`));
+      return;
+    }
+    setCode("");
+    setCodeSent(true);
+  }
+
+  async function verifyCode(otp: string) {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      const trimmedEmail = email.trim();
+      const result = await authClient.signIn.emailOtp({
+        email: trimmedEmail,
+        otp,
+        // Only used when this creates the account.
+        name: mode === "up" ? name || trimmedEmail.split("@")[0] || "User" : undefined,
+      });
+      if (result.error) {
+        setError(authErrorText(result.error, t`Could not continue`));
+        setCode("");
+        return;
+      }
+      enterApp();
+    } catch {
+      setError(t`Could not reach the server`);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function enterApp() {
+    clearSpaceSelection();
+    navigate(
+      mode === "up"
+        ? "/onboarding"
+        : searchParams.get("next") === "/integrations/setup"
+          ? "/integrations/setup"
+          : "/app",
+    );
+  }
+
+  function chooseMethod(next: "code" | "password") {
+    setMethod(next);
+    setCodeSent(false);
+    setCode("");
+    setError(null);
   }
 
   async function signInWithSso() {
@@ -332,7 +412,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         </>
       ) : (
         <>
-          {mode === "up" ? (
+          {mode === "up" && !codeStep ? (
             <div className="mb-4 w-full">
               <Label htmlFor="name" className="text-muted-foreground">
                 <Trans>Name</Trans>
@@ -348,40 +428,66 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               />
             </div>
           ) : null}
-          <div className="w-full">
-            <Label htmlFor="email" className="text-muted-foreground">
-              <Trans>Email</Trans>
-            </Label>
-            <Input
-              ref={emailRef}
-              id="email"
-              name="email"
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder={t`Your email address`}
-              type="email"
-              required
-              readOnly={
-                signInUnavailable ||
-                signInStep === "password" ||
-                (signInStep === "email" && pending)
-              }
-              className={fieldClass}
-            />
-            {signInStep === "password" || signInUnavailable ? (
-              <div className="mt-2 text-right text-sm">
-                <Button
-                  type="button"
-                  variant="link"
-                  onClick={changeEmail}
-                  className="h-auto p-0 font-medium text-foreground"
-                >
-                  <Trans>Use a different email</Trans>
-                </Button>
-              </div>
-            ) : null}
-          </div>
+          {codeStep ? (
+            <div className="flex w-full justify-center">
+              <InputOTP
+                aria-label={t({ message: "Code", context: "email sign-in" })}
+                maxLength={CODE_LENGTH}
+                pattern={"^\\d+$"}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                value={code}
+                onChange={setCode}
+                onComplete={(value: string) => void verifyCode(value)}
+              >
+                <InputOTPGroup>
+                  {[0, 1, 2, 3, 4, 5].map((index) => (
+                    <InputOTPSlot
+                      key={index}
+                      index={index}
+                      className="size-12 text-lg first:rounded-l-xl last:rounded-r-xl"
+                    />
+                  ))}
+                </InputOTPGroup>
+              </InputOTP>
+            </div>
+          ) : (
+            <div className="w-full">
+              <Label htmlFor="email" className="text-muted-foreground">
+                <Trans>Email</Trans>
+              </Label>
+              <Input
+                ref={emailRef}
+                id="email"
+                name="email"
+                autoComplete={signInStep === "email" && !hubMode ? "username webauthn" : "username"}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder={t`Your email address`}
+                type="email"
+                required
+                readOnly={
+                  signInUnavailable ||
+                  signInStep === "password" ||
+                  (signInStep === "email" && pending)
+                }
+                className={fieldClass}
+              />
+              {signInStep === "password" || signInUnavailable ? (
+                <div className="mt-2 text-right text-sm">
+                  <Button
+                    type="button"
+                    variant="link"
+                    onClick={changeEmail}
+                    className="h-auto p-0 font-medium text-foreground"
+                  >
+                    <Trans>Use a different email</Trans>
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          )}
           {signInStep === "sso_unavailable" ? (
             <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
               <Trans>
@@ -409,7 +515,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               </Trans>
             </p>
           ) : null}
-          {mode !== "forgot" && (signInStep === null || signInStep === "password") ? (
+          {mode !== "forgot" && !codeMode && (signInStep === null || signInStep === "password") ? (
             <div className="mt-4 w-full">
               <Label htmlFor={passwordFieldId} className="text-muted-foreground">
                 <Trans>Password</Trans>
@@ -424,7 +530,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 placeholder={t`Password`}
                 type="password"
                 required
-                minLength={8}
+                minLength={mode === "up" ? MIN_PASSWORD_LENGTH : undefined}
+                maxLength={MAX_PASSWORD_LENGTH}
                 className={fieldClass}
               />
               {mode === "in" && reset?.passwordReset ? (
@@ -442,10 +549,15 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             </p>
           ) : null}
           {signInUnavailable ? null : (
-            <Button type="submit" size="lg" disabled={pending} className={submitClass}>
+            <Button
+              type="submit"
+              size="lg"
+              disabled={pending || (codeStep && code.length < CODE_LENGTH)}
+              className={submitClass}
+            >
               {pending ? (
                 <Trans>Working…</Trans>
-              ) : signInStep === "email" ? (
+              ) : codeMode || signInStep === "email" ? (
                 <Trans>Continue</Trans>
               ) : signInStep === "password" ? (
                 <Trans>Sign in</Trans>
@@ -456,7 +568,35 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               )}
             </Button>
           )}
-          {reset.sso && mode !== "forgot" ? (
+          {signInStep === "email" && !hubMode && reset.passkeyRpId ? (
+            <PasskeySignIn
+              disabled={pending}
+              className={submitClass}
+              onSignedIn={enterApp}
+              onError={setError}
+            />
+          ) : null}
+          {useCode && (mode === "up" || signInStep === "password") ? (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              disabled={pending}
+              className="mt-3 text-muted-foreground"
+              onClick={() =>
+                chooseMethod(codeMode && (!codeStep || mode !== "up") ? "password" : "code")
+              }
+            >
+              {codeStep && mode === "up" ? (
+                <Trans>Back</Trans>
+              ) : codeMode ? (
+                <Trans>Use password</Trans>
+              ) : (
+                <Trans>Use email code</Trans>
+              )}
+            </Button>
+          ) : null}
+          {reset.sso && mode !== "forgot" && !codeStep ? (
             <Button
               type="button"
               variant="link"
@@ -468,7 +608,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               <Trans>Continue with {reset.sso.name}</Trans>
             </Button>
           ) : null}
-          {!hubMode ? (
+          {!hubMode && !codeStep ? (
             <p className="mt-8 text-muted-foreground">
               {mode === "in" ? (
                 <>
@@ -645,7 +785,8 @@ function PasswordField({
         autoComplete="new-password"
         type="password"
         required
-        minLength={8}
+        minLength={MIN_PASSWORD_LENGTH}
+        maxLength={MAX_PASSWORD_LENGTH}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className={fieldClass}

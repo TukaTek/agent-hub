@@ -102,10 +102,39 @@ it("starts expanded when there are five or fewer items", async () => {
   expect(list).not.toBeNull();
 });
 
-it("shows the empty state inline and expanded when there are no items", async () => {
+it("hides the entire empty section", async () => {
   await renderWith([]);
+  expect(container.querySelector('[data-testid="bot-scratchpad"]')).toBeNull();
+});
+
+it("renders work without status chrome, adds from the heading and removes an item", async () => {
+  const [item] = fixtureItems(1);
+  const parked = { ...item!, status: "parked" as const, notes: "Compare both themes" };
+  api.remove.mockResolvedValue({ ok: true });
+  api.list.mockResolvedValueOnce([parked]).mockResolvedValueOnce([]);
+  await act(async () => root.render(<ScratchpadSection botId="bot-fixture" />));
+  expect(container.textContent).toContain("Compare both themes");
+  expect(container.textContent).not.toContain("parked");
+  expect(container.querySelector('[aria-label="Park"]')).toBeNull();
+  expect(container.querySelector('input[aria-label="New open-work item"]')).toBeNull();
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Add open work"]')!.click(),
+  );
+  expect(container.querySelector('input[aria-label="New open-work item"]')).not.toBeNull();
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Remove"]')!.click(),
+  );
+  expect(api.remove).toHaveBeenCalledWith({ itemId: parked.id });
+  expect(renderedTitles()).toEqual([]);
+});
+
+it("expands a collapsed list when adding from the heading", async () => {
+  await renderWith(fixtureItems(12));
+  expect(header().getAttribute("aria-expanded")).toBe("false");
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Add open work"]')!.click(),
+  );
   expect(header().getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).toContain("None yet");
   expect(container.querySelector('input[aria-label="New open-work item"]')).not.toBeNull();
 });
 

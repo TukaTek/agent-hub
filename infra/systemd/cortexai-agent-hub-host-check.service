@@ -1,0 +1,13 @@
+[Unit]
+Description=Check host storage, backup health and SSH access rules
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/cortexai-agent-hub/backup.env
+ExecStart=/usr/local/sbin/cortexai-agent-hub-host-check
+StateDirectory=cortexai-agent-hub/alerts
+StateDirectoryMode=0700
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cortexai-agent-hub/alerts
+ProtectHome=true
+PrivateTmp=true

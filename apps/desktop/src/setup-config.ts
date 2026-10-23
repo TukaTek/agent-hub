@@ -4,6 +4,11 @@ import type { DesktopSetup, DesktopStackProbeResponse } from "@cortexai-agent-hu
 
 /** Managed desktop origin; development keeps its usual web/API ports. */
 export const DEFAULT_LOCAL_WEB_URL = "http://127.0.0.1:45173";
+/**
+ * Hosted CortexAI Agent Hub; setup saves it as an `existing` server so it opens like any other.
+ * There is no hosted service yet, so setup hides the Cloud choice while this is null.
+ */
+export const CORTEXAI_AGENT_HUB_CLOUD_URL: string | null = null;
 export const PROBE_RESPONSE_LIMIT_BYTES = 64 * 1024;
 
 export const SETUP_FILE_NAME = "setup.json";

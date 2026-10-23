@@ -1,0 +1,11 @@
+[Unit]
+Description=Notify operators when a production backup fails
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cortexai-agent-hub-host-alert backup-failure "Nightly backup failed. Inspect cortexai-agent-hub-backup.service on the server."
+StateDirectory=cortexai-agent-hub/alerts
+StateDirectoryMode=0700
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cortexai-agent-hub/alerts
+PrivateTmp=true
