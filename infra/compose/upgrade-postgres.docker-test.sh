@@ -57,7 +57,7 @@ as_app() {
 # The shape the row-level security migration and provisionRuntimeRole leave behind.
 sql "${old[@]}" >/dev/null <<'SQL'
 CREATE ROLE cortexai_agent_hub_app LOGIN PASSWORD 'app-test-password' NOSUPERUSER NOBYPASSRLS;
-GRANT CONNECT ON DATABASE cortexai-agent-hub TO cortexai_agent_hub_app;
+GRANT CONNECT ON DATABASE "cortexai-agent-hub" TO cortexai_agent_hub_app;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cortexai_agent_hub_app;
 CREATE TABLE threads (id serial PRIMARY KEY, "spaceId" text NOT NULL, title text);
