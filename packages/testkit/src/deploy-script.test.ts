@@ -367,7 +367,7 @@ describe("production deploy script", () => {
     it("uses the GHCR image of the GitHub repository the checkout tracks by default", () => {
       const deploy = fixture();
       const next = commit(deploy.upstream, "next");
-      const github = "https://github.com/Example/CortexAI Agent Hub.git";
+      const github = "https://github.com/Example/Agent-Hub.git";
       git(deploy.checkout, "remote", "set-url", "origin", github);
       // The deploy runs with HOME set to the fixture root, so fetches still reach the local upstream.
       write(
@@ -376,7 +376,7 @@ describe("production deploy script", () => {
       );
       expect(deploy.run().status).toBe(0);
       expect(commandsOf(deploy)).toContain(
-        `docker pull --quiet ghcr.io/example/cortexai-agent-hub/app:sha-${next}`,
+        `docker pull --quiet ghcr.io/example/agent-hub/app:sha-${next}`,
       );
     });
 

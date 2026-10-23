@@ -194,7 +194,7 @@ describe("ComposioConnector over the fake Composio client", () => {
     const events = await run(
       connector,
       "GITHUB_LIST_RELEASES",
-      { owner: "elie222", repo: "cortexai-agent-hub" },
+      { owner: "TukaTek", repo: "agent-hub" },
       ctx,
     );
     expect(events).toEqual([
@@ -216,7 +216,7 @@ describe("ComposioConnector over the fake Composio client", () => {
     const ctx = context([connection("GMAIL", await connect(connector, "GMAIL"))]);
 
     await expect(
-      run(connector, "GITHUB_LIST_RELEASES", { owner: "elie222", repo: "cortexai-agent-hub" }, ctx),
+      run(connector, "GITHUB_LIST_RELEASES", { owner: "TukaTek", repo: "agent-hub" }, ctx),
     ).resolves.toEqual([
       {
         type: "error",

@@ -162,5 +162,5 @@ describe("browser notifications", () => {
 });
 
 it("uses a readable fallback for opaque notification names", () => {
-  expect(browserNotificationMessage(event(), "__TestTok1__").title).toBe("Bot");
+  expect(browserNotificationMessage(event(), "__TestTok1__").title).toBe("Assistant");
 });

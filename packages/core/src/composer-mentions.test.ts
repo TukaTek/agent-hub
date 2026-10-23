@@ -254,5 +254,5 @@ it("searches the readable fallback when a mention name is opaque", () => {
       routines: [],
       connectors: [],
     }),
-  ).toEqual([{ kind: "bot", id: "bot-1", name: "Bot", subtitle: "Bot", color: undefined }]);
+  ).toEqual([{ kind: "bot", id: "bot-1", name: "Bot", subtitle: "Assistant", color: undefined }]);
 });

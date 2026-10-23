@@ -9,7 +9,7 @@ describe("transparentColor", () => {
   });
 
   it("reads rgba palette colors and drops their alpha", () => {
-    expect(transparentColor(darkTokens.overlay)).toBe("rgba(0, 0, 0, 0)");
+    expect(transparentColor(darkTokens.overlay)).toBe("rgba(4, 4, 5, 0)");
     expect(transparentColor(lightTokens.overlay)).toBe("rgba(0, 0, 0, 0)");
     expect(transparentColor("rgb(1, 2, 3)")).toBe("rgba(1, 2, 3, 0)");
   });

@@ -60,10 +60,10 @@ describe("egress probe", () => {
     expect(script.trim().endsWith("exit 0")).toBe(true);
   });
 
-  it("probes from a named cortexai-agent-hub-c bridge and cleans up", async () => {
+  it("probes from a named cah-c bridge and cleans up", async () => {
     const { docker, raw, container, network } = fakeDocker();
     await expect(verifyRestrictedEgress(docker, "computer:test")).resolves.toBeUndefined();
-    expect(EGRESS_PROBE_BRIDGE).toMatch(/^cortexai-agent-hub-c/);
+    expect(EGRESS_PROBE_BRIDGE).toMatch(/^cah-c/);
     expect(EGRESS_PROBE_BRIDGE.length).toBeLessThanOrEqual(15);
     expect(raw.createNetwork).toHaveBeenCalledWith(
       expect.objectContaining({

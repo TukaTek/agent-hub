@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { HUB_SSO_ACCESS_DENIED } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
 import { symmetricDecrypt } from "better-auth/crypto";
@@ -20,7 +20,7 @@ import {
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
 import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
 import { createHubSessionAuthorizer, createUserWorkAuthorizer } from "./hub-sessions.js";
-import { createAuth } from "./index.js";
+import { CLIENT_IP_HEADER, createAuth } from "./index.js";
 
 vi.mock("better-auth/adapters/prisma", async () => {
   const { memoryAdapter } = await import("better-auth/adapters/memory");
@@ -31,6 +31,7 @@ vi.mock("better-auth/adapters/prisma", async () => {
 });
 vi.mock("@cortexai-agent-hub/db", () => ({
   bootstrapUserSpace: vi.fn(async () => ({ spaceId: "space-1" })),
+  recordSecurityEvent: vi.fn(async () => undefined),
 }));
 vi.mock("./hub-client.js", async (original) => ({
   ...(await original<typeof import("./hub-client.js")>()),
@@ -52,6 +53,13 @@ const ssoConfig = {
   sso: { apiId: "fixture-api-id", secret: "service-secret-not-real" },
 };
 const MOBILE_ORIGIN = "cortexai-agent-hub://";
+const authSecret = "offline-auth-secret-at-least-32-characters";
+
+/** Signs a stored session token the way the session cookie and `set-auth-token` do. */
+function signedBearer(token: string) {
+  return `${token}.${createHmac("sha256", authSecret).update(token).digest("base64")}`;
+}
+
 const authorizeUrl = "https://login.microsoftonline.com/synthetic-tenant/oauth2/v2.0/authorize";
 function fixture(
   hubClient?: ReturnType<typeof createHubClient>,
@@ -169,7 +177,7 @@ function fixture(
   };
   const web = options.sso ? "https://web.example.test" : "http://web.example.test";
   const auth = createAuth(prisma, {
-    secret: "offline-auth-secret-at-least-32-characters",
+    secret: authSecret,
     tokenEncryptionKey: encryptionKey,
     baseURL: web,
     webOrigin: web,
@@ -195,7 +203,9 @@ function fixture(
     });
     expect(response.status).toBe(200);
     expect(await response.clone().text()).not.toContain("access-secret");
-    const token = data.session![0]!.token;
+    // Native clients use the returned token as their bearer, so it must be the signed one.
+    const { token } = (await response.clone().json()) as { token: string };
+    expect(token.startsWith(`${data.session!.at(-1)!.token}.`)).toBe(true);
     const headers = new Headers({ authorization: `Bearer ${token}` });
     return { response, headers };
   }
@@ -255,7 +265,6 @@ describe("Hub authentication through real auth endpoints", () => {
       expect.anything(),
       expect.objectContaining({ id: userId }),
       expect.anything(),
-      { claimDeploymentOwner: false },
     );
     expect(f.grants.size).toBe(1);
     const stored = [...f.grants.values()][0];
@@ -549,14 +558,14 @@ describe("Hub sign-in rate limits", () => {
   async function limited() {
     const f = fixture(undefined, { sso: true });
     (await f.auth.$context).rateLimit.enabled = true;
-    const post = (path: string, forwardedFor: string, body: unknown) =>
+    const post = (path: string, clientIp: string, body: unknown) =>
       f.auth.handler(
         new Request(`https://web.example.test/api/auth${path}`, {
           method: "POST",
           headers: {
             origin: "https://web.example.test",
             "content-type": "application/json",
-            "x-forwarded-for": forwardedFor,
+            [CLIENT_IP_HEADER]: clientIp,
           },
           body: JSON.stringify(body),
         }),
@@ -736,7 +745,7 @@ describe("Hub tenant Entra SSO", () => {
     expect(f.data.verification).toHaveLength(0);
     const token = f.data.session![1]!.token;
     const session = await f.auth.api.getSession({
-      headers: new Headers({ authorization: `Bearer ${token}` }),
+      headers: new Headers({ authorization: `Bearer ${signedBearer(token)}` }),
     });
     expect(session?.user.id).toBe(userId);
     expect(f.grants.size).toBe(2);
@@ -870,7 +879,9 @@ describe("Hub tenant Entra SSO", () => {
     const f = fixture(undefined, { sso: true });
     const { state, cookie } = await f.startSso();
     await f.callback(`code=${code}&state=${state}`, cookie);
-    const headers = new Headers({ authorization: `Bearer ${f.data.session![0]!.token}` });
+    const headers = new Headers({
+      authorization: `Bearer ${signedBearer(f.data.session![0]!.token)}`,
+    });
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       expect(await f.auth.api.getSession({ headers })).not.toBeNull();
@@ -1065,7 +1076,9 @@ describe("Hub tenant Entra SSO", () => {
       expect(first.searchParams.get("prompt")).toBe("login");
       expect(first.searchParams.get("login_hint")).toBe(email);
       const token = f.data.session![0]!.token;
-      await f.auth.api.signOut({ headers: new Headers({ authorization: `Bearer ${token}` }) });
+      await f.auth.api.signOut({
+        headers: new Headers({ authorization: `Bearer ${signedBearer(token)}` }),
+      });
       expect(revoked).toEqual([{ refreshToken: "refresh-secret-1" }]);
       expect(f.data.session).toHaveLength(0);
 
