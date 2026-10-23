@@ -385,7 +385,7 @@ describeIntegration("reusable credential lifecycle", () => {
         });
       try {
         await handles.executor.continueRun(seeded.run.id, "test-worker");
-        const message = await handles.prisma.message.findFirstOrThrow({
+        const message = await db.message.findFirstOrThrow({
           where: { runId: seeded.run.id, role: "bot" },
           orderBy: { seq: "desc" },
         });
@@ -397,9 +397,10 @@ describeIntegration("reusable credential lifecycle", () => {
         });
         await vi.waitFor(
           async () =>
-            expect(
-              await handles.prisma.run.findUniqueOrThrow({ where: { id: seeded.run.id } }),
-            ).toMatchObject({ status: "completed", error: null }),
+            expect(await db.run.findUniqueOrThrow({ where: { id: seeded.run.id } })).toMatchObject({
+              status: "completed",
+              error: null,
+            }),
           { timeout: 15_000 },
         );
       } finally {
@@ -444,7 +445,7 @@ describeIntegration("reusable credential lifecycle", () => {
           yield { type: "done", text: "Done" };
         });
       try {
-        const task = await handles.prisma.task.create({
+        const task = await db.task.create({
           data: {
             userId: seeded.me.userId,
             spaceId: seeded.me.spaceId,
@@ -454,7 +455,7 @@ describeIntegration("reusable credential lifecycle", () => {
             status: "queued",
           },
         });
-        const run = await handles.prisma.run.create({
+        const run = await db.run.create({
           data: {
             userId: seeded.me.userId,
             spaceId: seeded.me.spaceId,
@@ -470,9 +471,9 @@ describeIntegration("reusable credential lifecycle", () => {
         await vi.waitFor(() => expect(finished).toBe(true), { timeout: 15_000 });
         await vi.waitFor(
           async () =>
-            expect(
-              (await handles.prisma.run.findUniqueOrThrow({ where: { id: run.id } })).status,
-            ).not.toBe("queued"),
+            expect((await db.run.findUniqueOrThrow({ where: { id: run.id } })).status).not.toBe(
+              "queued",
+            ),
           { timeout: 15_000 },
         );
         expect(runtime).toHaveBeenCalledOnce();
@@ -511,13 +512,14 @@ describeIntegration("reusable credential lifecycle", () => {
       ]);
       await vi.waitFor(
         async () =>
-          expect(
-            await handles.prisma.run.findUniqueOrThrow({ where: { id: runId } }),
-          ).toMatchObject({ status: "completed", error: null }),
+          expect(await db.run.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({
+            status: "completed",
+            error: null,
+          }),
         { timeout: 15_000 },
       );
       const { artifactId } = results[3] as { artifactId: string };
-      const attached = await handles.prisma.message.findMany({ where: { runId, role: "bot" } });
+      const attached = await db.message.findMany({ where: { runId, role: "bot" } });
       expect(JSON.stringify(attached.map((message) => message.blocks))).toContain(artifactId);
 
       const next = await runTools(seeded, [
@@ -528,7 +530,7 @@ describeIntegration("reusable credential lifecycle", () => {
 
     /** The bot's files as the fake computer stores them, keyed by the path the bot uses. */
     async function computerFiles(botId: string) {
-      const { computer } = await handles.prisma.bot.findUniqueOrThrow({
+      const { computer } = await db.bot.findUniqueOrThrow({
         where: { id: botId },
         include: { computer: true },
       });
@@ -582,7 +584,7 @@ describeIntegration("reusable credential lifecycle", () => {
       ]);
       const stored = (await computerFiles(seeded.bot.id)).get("downloads/binary.pdf");
       expect(stored && sha256(stored.content)).toBe(sha256(body));
-      const artifact = await handles.prisma.artifact.findUniqueOrThrow({
+      const artifact = await db.artifact.findUniqueOrThrow({
         where: { id: (results[2] as { artifactId: string }).artifactId },
       });
       const attached = await new LocalArtifactStore(dataDir).get(artifact.storageKey, {
@@ -627,7 +629,7 @@ describeIntegration("reusable credential lifecycle", () => {
         { error: attachFailure("file not found or unreadable"), path: "out/missing.docx" },
       ]);
       expect(instructions).toContain(WORKSPACE_DELIVERY_INSTRUCTION);
-      const artifact = await handles.prisma.artifact.findUniqueOrThrow({
+      const artifact = await db.artifact.findUniqueOrThrow({
         where: { id: (results[0] as { artifactId: string }).artifactId },
       });
       expect(artifact).toMatchObject({
@@ -635,7 +637,7 @@ describeIntegration("reusable credential lifecycle", () => {
         mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         size: workbook.byteLength,
       });
-      const attached = await handles.prisma.message.findMany({ where: { runId, role: "bot" } });
+      const attached = await db.message.findMany({ where: { runId, role: "bot" } });
       expect(attached.flatMap((message) => message.blocks as MessageBlock[])).toContainEqual(
         expect.objectContaining({ kind: "file", artifactId: artifact.id, name: "report.xlsx" }),
       );
@@ -802,7 +804,7 @@ describeIntegration("reusable credential lifecycle", () => {
         },
         { error: "Could not save the downloaded file to the bot workspace." },
       ]);
-      const effects = await handles.prisma.externalEffect.findMany({
+      const effects = await db.externalEffect.findMany({
         where: { runId, kind: "secret_request" },
       });
       expect(effects).toHaveLength(results.length);
@@ -824,7 +826,7 @@ describeIntegration("reusable credential lifecycle", () => {
       fetch.mockImplementation((url, init) => {
         const pending = pendingUntilAborted(url, init);
         // Another worker taking the lease is how a stopped run loses its tools.
-        void handles.prisma.run
+        void db.run
           .update({ where: { id: cancelledRunId }, data: { leaseOwner: "another-worker" } })
           .then(() => heartbeats.at(-1)?.());
         return pending;
