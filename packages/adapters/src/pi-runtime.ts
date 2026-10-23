@@ -3139,6 +3139,8 @@ function fallbackAwareModelStream(
             if (stall && beforeOutput && stallRetries > 0) {
               stallRetries -= 1;
               log("idle-timeout-retried", { stall });
+              // Stall retries keep their own budget, so they do not spend the provider retry window.
+              windowStartedAt = Date.now();
               if (stallRetries === 0 && (await switchTo(target)) === "aborted") return;
               buffered = [];
               retry = true;

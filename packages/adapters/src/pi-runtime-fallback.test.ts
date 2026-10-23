@@ -993,9 +993,7 @@ describe("Pi runtime ordered model fallback", () => {
         const pending = run(input);
         await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS + 1);
         expect(providerState.stream).toHaveBeenCalledTimes(2);
-        expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual(
-          backup ? [] : [2_000],
-        );
+        expect(providerState.delay).not.toHaveBeenCalled();
         expect(await pending).toContainEqual({ type: "text", text: "recovered" });
       } finally {
         vi.useRealTimers();
