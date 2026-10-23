@@ -359,27 +359,25 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     return reset.mode === "hub" ? <Navigate to="/sign-in" replace /> : <WelcomePage />;
   }
 
+  if (!reset && !capabilityError) {
+    return <div className="h-full bg-background" />;
+  }
+
   if (!reset) {
     return (
       <AuthFrame onSubmit={(event) => event.preventDefault()} title={title}>
-        {capabilityError ? (
-          <div role="alert" className="w-full text-center">
-            <p>
-              <Trans>Could not load sign-in options</Trans>
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setCapabilityAttempt((attempt) => attempt + 1)}
-            >
-              <Trans>Retry</Trans>
-            </Button>
-          </div>
-        ) : (
-          <Button disabled className={submitClass}>
-            <Trans>Loading…</Trans>
+        <div role="alert" className="w-full text-center">
+          <p>
+            <Trans>Could not load sign-in options</Trans>
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setCapabilityAttempt((attempt) => attempt + 1)}
+          >
+            <Trans>Retry</Trans>
           </Button>
-        )}
+        </div>
       </AuthFrame>
     );
   }

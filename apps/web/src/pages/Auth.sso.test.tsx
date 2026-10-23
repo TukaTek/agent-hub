@@ -72,7 +72,7 @@ it("shows no credential form while capabilities load", async () => {
   vi.mocked(fetchAuthCapabilities).mockReturnValue(new Promise(() => undefined));
   await render();
   expect(host.querySelector("input")).toBeNull();
-  expect(host.textContent).toContain("Loading…");
+  expect(host.textContent).toBe("");
 });
 it.each(["in", "up"] as const)("offers SSO and hides credentials on %s", async (mode) => {
   vi.mocked(fetchAuthCapabilities).mockResolvedValue(capabilities);
