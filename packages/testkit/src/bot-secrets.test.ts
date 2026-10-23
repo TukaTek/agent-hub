@@ -384,7 +384,9 @@ describeIntegration("reusable credential lifecycle", () => {
           yield { type: "done", text: "Done" };
         });
       try {
-        await handles.executor.continueRun(seeded.run.id, "test-worker");
+        await runAsSystem("background job run.continue", () =>
+          handles.executor.continueRun(seeded.run.id, "test-worker"),
+        );
         const message = await db.message.findFirstOrThrow({
           where: { runId: seeded.run.id, role: "bot" },
           orderBy: { seq: "desc" },
@@ -466,7 +468,9 @@ describeIntegration("reusable credential lifecycle", () => {
             status: "queued",
           },
         });
-        await handles.executor.continueRun(run.id, "test-worker");
+        await runAsSystem("background job run.continue", () =>
+          handles.executor.continueRun(run.id, "test-worker"),
+        );
         // A run waiting on the previous run's computer lease is retried by the background worker.
         await vi.waitFor(() => expect(finished).toBe(true), { timeout: 15_000 });
         await vi.waitFor(

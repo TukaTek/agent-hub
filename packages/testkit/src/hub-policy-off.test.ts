@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import contract from "../../auth/src/fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import { hubAuthFromEnv } from "../../auth/src/hub-client.js";
+import { asSystem } from "./system-db.js";
 
 process.env.WAKEUP_DRIVER = "memory";
 process.env.SANDBOX_PROVIDER = "fake";
@@ -124,7 +125,7 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
       text: "hello",
     });
     await waitForRuns(bot.id);
-    const run = await handles.prisma.run.findUniqueOrThrow({
+    const run = await asSystem(handles.prisma).run.findUniqueOrThrow({
       where: { id: runId },
       select: { status: true, error: true },
     });
@@ -137,7 +138,7 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
   async function waitForRuns(botId: string) {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
-      const runs = await handles.prisma.run.findMany({
+      const runs = await asSystem(handles.prisma).run.findMany({
         where: { botId },
         select: { status: true },
       });
