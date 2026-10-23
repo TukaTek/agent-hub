@@ -7,7 +7,6 @@ const SPEECH_LOCALE_TAGS = {
   he: "he-IL",
   hi: "hi-IN",
   ko: "ko-KR",
-  nl: "nl-NL",
   "pt-BR": "pt-BR",
   ru: "ru-RU",
   tr: "tr-TR",
