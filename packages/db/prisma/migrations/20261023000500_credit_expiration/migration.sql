@@ -13,7 +13,7 @@ CREATE TABLE model_credit_lots (
 );
 CREATE INDEX "model_credit_lots_organizationId_expiresAt_idx" ON model_credit_lots("organizationId","expiresAt");
 CREATE INDEX "model_credit_lots_expiresAt_idx" ON model_credit_lots("expiresAt");
-GRANT SELECT, INSERT, UPDATE, DELETE ON model_credit_lots TO cortexai-agent-hub_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON model_credit_lots TO cortexai_agent_hub_app;
 CREATE TRIGGER lot_audit_revision BEFORE UPDATE ON model_credit_lots FOR EACH ROW EXECUTE FUNCTION billing_audit_revision();
 CREATE FUNCTION billing_audit_lot() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN

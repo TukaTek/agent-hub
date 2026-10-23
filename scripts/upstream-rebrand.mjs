@@ -16,6 +16,8 @@ const RULES = [
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
   // pgrep/pkill patterns bracket the first letter so they never match themselves.
   [new RegExp(`\\[${old[0]}\\]${old.slice(1)}`, "g"), "[c]ortexai-agent-hub"],
+  // Postgres role names are unquoted SQL identifiers, so they cannot take a hyphen.
+  [new RegExp(`(?<![\\w-])${old}_app(?![a-z])`, "g"), "cortexai_agent_hub_app"],
   [new RegExp(`${old}(?!\\.com\\b)`, "g"), "cortexai-agent-hub"],
   // Upstream's short prefix for CSS classes and variables, performance marks and storage keys.
   [/(?<![\w-])rk([-:])(?=[\w$])/g, "cortexai-agent-hub$1"],

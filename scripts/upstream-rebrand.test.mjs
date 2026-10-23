@@ -35,6 +35,11 @@ describe("rebrand", () => {
     ],
     [`  ${Old}: "${Old}",`, '  "CortexAI Agent Hub": "CortexAI Agent Hub",'],
     [`{ ${Old}: 1 }`, '{ "CortexAI Agent Hub": 1 }'],
+    [
+      `GRANT USAGE ON SCHEMA public TO ${old}_app;`,
+      "GRANT USAGE ON SCHEMA public TO cortexai_agent_hub_app;",
+    ],
+    [`"${old}_app_queue"`, '"cortexai_agent_hub_app_queue"'],
   ])("maps %s", (input, output) => {
     expect(rebrand(input)).toEqual({ text: output, unresolved: [] });
   });

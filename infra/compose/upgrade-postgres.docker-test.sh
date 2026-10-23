@@ -50,16 +50,16 @@ sql() { "$@" exec -T postgres psql -X -At -v ON_ERROR_STOP=1 -U cortexai-agent-h
 as_app() {
   # shellcheck disable=SC2016 # expanded inside the container
   "${new[@]}" exec -T -e PGPASSWORD=app-test-password postgres sh -c \
-    'psql -X -At -v ON_ERROR_STOP=1 -h "$(hostname)" -U cortexai-agent-hub_app -d cortexai-agent-hub -c "$1"' sh "$1"
+    'psql -X -At -v ON_ERROR_STOP=1 -h "$(hostname)" -U cortexai_agent_hub_app -d cortexai-agent-hub -c "$1"' sh "$1"
 }
 
 "${old[@]}" up -d --wait --quiet-pull postgres
 # The shape the row-level security migration and provisionRuntimeRole leave behind.
 sql "${old[@]}" >/dev/null <<'SQL'
-CREATE ROLE cortexai-agent-hub_app LOGIN PASSWORD 'app-test-password' NOSUPERUSER NOBYPASSRLS;
-GRANT CONNECT ON DATABASE cortexai-agent-hub TO cortexai-agent-hub_app;
+CREATE ROLE cortexai_agent_hub_app LOGIN PASSWORD 'app-test-password' NOSUPERUSER NOBYPASSRLS;
+GRANT CONNECT ON DATABASE cortexai-agent-hub TO cortexai_agent_hub_app;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cortexai-agent-hub_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cortexai_agent_hub_app;
 CREATE TABLE threads (id serial PRIMARY KEY, "spaceId" text NOT NULL, title text);
 INSERT INTO threads ("spaceId", title)
   SELECT CASE WHEN i % 2 = 0 THEN 'space-a' ELSE 'space-b' END, 'thread ' || i
@@ -69,8 +69,8 @@ CREATE POLICY threads_tenant ON threads
   USING ("spaceId" = NULLIF(current_setting('app.space_id', true), ''));
 CREATE POLICY threads_system ON threads
   USING (current_setting('app.rls_bypass', true) = 'on');
-GRANT USAGE ON SCHEMA public TO cortexai-agent-hub_app;
-GRANT USAGE, SELECT ON SEQUENCE threads_id_seq TO cortexai-agent-hub_app;
+GRANT USAGE ON SCHEMA public TO cortexai_agent_hub_app;
+GRANT USAGE, SELECT ON SEQUENCE threads_id_seq TO cortexai_agent_hub_app;
 SQL
 "${old[@]}" stop postgres >/dev/null
 

@@ -6,7 +6,7 @@ x-app-environment: &app-environment
   # Runtime
   NODE_ENV: ${NODE_ENV:-production}
   # The app's own login, subject to row-level security (docs/self-host.md#database-roles).
-  DATABASE_URL: postgres://cortexai-agent-hub_app:${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cortexai-agent-hub}
+  DATABASE_URL: postgres://cortexai_agent_hub_app:${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cortexai-agent-hub}
   REALTIME_DATABASE_URL:
   DB_POOL_MAX:
   DATA_DIR: /data

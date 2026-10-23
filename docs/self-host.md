@@ -183,16 +183,16 @@ CortexAI Agent Hub uses two Postgres logins:
 
 - The owner (`POSTGRES_USER`, or `DATABASE_MIGRATION_URL` outside Compose) runs migrations and
   owns the tables.
-- The app login (`cortexai-agent-hub_app` with `POSTGRES_APP_PASSWORD`, or `DATABASE_URL`) is not a
+- The app login (`cortexai_agent_hub_app` with `POSTGRES_APP_PASSWORD`, or `DATABASE_URL`) is not a
   superuser, cannot bypass row-level security, cannot create objects, and can only read and write
   the app tables.
 
 `pnpm db:migrate` (in containers, its prebuilt form `pnpm --filter @cortexai-agent-hub/api db:deploy`, which the
 API container runs before it starts serving) applies the migrations and the job queue
 schema as the owner. It then creates the app login named in `DATABASE_URL`, or updates its
-password, and grants it the `cortexai-agent-hub_app` role. When migrations run as a role without
+password, and grants it the `cortexai_agent_hub_app` role. When migrations run as a role without
 `CREATEROLE`, as on some managed Postgres, create the login yourself and
-`GRANT cortexai-agent-hub_app TO <login>`.
+`GRANT cortexai_agent_hub_app TO <login>`.
 
 Messages, events, threads, memory, artifacts, secrets, model and voice credentials, skills, bots,
 runs, tasks, routines, connections, MCP servers and sign-ins, computers, boards and tickets,
@@ -1538,12 +1538,12 @@ desktop app, `install-images.sh`, the updater sidecar and `infra/compose/deploy-
 when it is missing.
 Elsewhere, add it yourself (`openssl rand -hex 16`) before you pull, or Compose stops at config
 validation with `Set POSTGRES_APP_PASSWORD in .env`. On first start, the API creates the
-`cortexai-agent-hub_app` login, and the API and worker then connect as it. Nothing else changes, and the
+`cortexai_agent_hub_app` login, and the API and worker then connect as it. Nothing else changes, and the
 upgrade does not rewrite any data.
 
 If a feature misbehaves under row-level security, run `ALTER ROLE <login> BYPASSRLS;` on the login
-in `DATABASE_URL` (`cortexai-agent-hub_app` in Compose) as a superuser (the Compose owner is one), then
-restart the API and worker. Role attributes are not inherited, so granting it to `cortexai-agent-hub_app` does
+in `DATABASE_URL` (`cortexai_agent_hub_app` in Compose) as a superuser (the Compose owner is one), then
+restart the API and worker. Role attributes are not inherited, so granting it to `cortexai_agent_hub_app` does
 nothing for a separate login. The app then runs as before, with a startup warning, and later
 migrations leave that login alone. Undo it with
 `NOBYPASSRLS` and another restart, then search the API and worker logs for
@@ -1579,7 +1579,7 @@ now name a Postgres 18 image).
 
 The script stops the stack, copies every role (with its password) and database from Postgres 16
 with `pg_dumpall`, and compares roles, memberships, ownership, grants, row-level security
-policies, sequences and the row count of every table. It also checks that `cortexai-agent-hub_app` signs in
+policies, sequences and the row count of every table. It also checks that `cortexai_agent_hub_app` signs in
 with `POSTGRES_APP_PASSWORD` and does not bypass row-level security. Only then does it switch
 Postgres 18 over and restart the services that were running. The site is down for the whole copy,
 which takes about as long as dumping and restoring the database: a few minutes for a small one. It needs free disk for one more copy of the

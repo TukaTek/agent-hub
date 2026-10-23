@@ -100,7 +100,7 @@ cp .env.example .env
 
 Set `POSTGRES_PASSWORD` and `POSTGRES_APP_PASSWORD` to two values from `openssl rand -hex 16`,
 then put them in `DATABASE_MIGRATION_URL` and `DATABASE_URL`. The app connects as its own
-`cortexai-agent-hub_app` login, which row-level security applies to; migrations run as the owner
+`cortexai_agent_hub_app` login, which row-level security applies to; migrations run as the owner
 ([database roles](docs/self-host.md#database-roles)). Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to
 independent long random values. Docker sandboxes also need a dedicated
 `SANDBOX_SUPERVISOR_TOKEN`. You can also set `OPENROUTER_API_KEY`, or connect a supported

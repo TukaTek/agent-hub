@@ -320,7 +320,7 @@ describe("development restore failures", () => {
       });
       expect(result.status).toBe(fail ? 3 : 0);
       const psql = f.commands().filter((args) => args.includes("psql"));
-      expect(psql[0]?.at(-1)).toContain("CREATE ROLE cortexai-agent-hub_app NOLOGIN");
+      expect(psql[0]?.at(-1)).toContain("CREATE ROLE cortexai_agent_hub_app NOLOGIN");
       const command = psql.find((args) => args.includes("--single-transaction"));
       expect(command).toEqual(
         expect.arrayContaining([

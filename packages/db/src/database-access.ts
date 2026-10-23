@@ -5,7 +5,7 @@ import type { PrismaClient } from "./generated/prisma/client.js";
  * NOLOGIN group role created by the row-level security migration. It holds the
  * runtime grants; the login in DATABASE_URL is this role or a member of it.
  */
-export const RUNTIME_ROLE = "cortexai-agent-hub_app";
+export const RUNTIME_ROLE = "cortexai_agent_hub_app";
 
 export interface DatabaseUrls {
   /** What the API and worker connect with. */
@@ -97,7 +97,7 @@ async function provisionWith(owner: Client, runtimeUrl: string): Promise<{ warni
       "SELECT rolsuper OR rolcreaterole AS can, rolsuper AS superuser FROM pg_roles WHERE rolname = current_user",
     )
   ).rows;
-  // A login an administrator already created and granted cortexai-agent-hub_app (inheritably, so
+  // A login an administrator already created and granted cortexai_agent_hub_app (inheritably, so
   // it can use the grants without SET ROLE) is used as it
   // is when this role may not change it: no CREATEROLE (some managed Postgres), or,
   // on PostgreSQL 16+, CREATEROLE without ADMIN OPTION on that login.
@@ -139,7 +139,7 @@ async function provisionWith(owner: Client, runtimeUrl: string): Promise<{ warni
 }
 
 /** Policy on each graphile-worker table that lets the runtime role use the job queue. */
-export const JOB_QUEUE_POLICY = "cortexai-agent-hub_app_queue";
+export const JOB_QUEUE_POLICY = "cortexai_agent_hub_app_queue";
 
 /**
  * graphile-worker's schema is installed by the job queue migration that runs

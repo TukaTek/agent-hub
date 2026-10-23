@@ -68,6 +68,6 @@ BEGIN
  RETURN OLD;
 END $$;
 CREATE TRIGGER credit_audit_account_closed BEFORE DELETE ON model_credit_accounts FOR EACH ROW EXECUTE FUNCTION billing_audit_account_closed();
-GRANT SELECT,INSERT ON billing_audit_events TO cortexai-agent-hub_app;
-REVOKE UPDATE,DELETE,TRUNCATE ON billing_audit_events FROM cortexai-agent-hub_app;
-REVOKE DELETE,TRUNCATE ON usage_records FROM cortexai-agent-hub_app;
+GRANT SELECT,INSERT ON billing_audit_events TO cortexai_agent_hub_app;
+REVOKE UPDATE,DELETE,TRUNCATE ON billing_audit_events FROM cortexai_agent_hub_app;
+REVOKE DELETE,TRUNCATE ON usage_records FROM cortexai_agent_hub_app;

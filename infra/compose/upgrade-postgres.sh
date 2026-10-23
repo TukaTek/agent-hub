@@ -19,7 +19,7 @@ ENV_FILE="${PROJECT_DIR}/.env"
 OLD_IMAGE="${CORTEXAI_AGENT_HUB_POSTGRES_16_IMAGE:-postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5}"
 LEGACY_DIR=/var/lib/postgresql/16/docker
 STAGING_DIR=/var/lib/postgresql/18/upgrade
-RUNTIME_LOGIN=cortexai-agent-hub_app
+RUNTIME_LOGIN=cortexai_agent_hub_app
 # Services this run stopped, kept in the volume so a retry after a failure still restarts them.
 STOPPED_FILE=/var/lib/postgresql/upgrade-stopped-services
 

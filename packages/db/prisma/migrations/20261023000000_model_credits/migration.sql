@@ -15,4 +15,4 @@ CREATE TABLE "model_credit_entries" (
  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX "model_credit_entries_organizationId_createdAt_idx" ON "model_credit_entries"("organizationId", "createdAt");
-GRANT SELECT, INSERT, UPDATE, DELETE ON "model_credit_accounts", "model_credit_entries" TO cortexai-agent-hub_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "model_credit_accounts", "model_credit_entries" TO cortexai_agent_hub_app;

@@ -14,7 +14,7 @@ done
 # Roles live outside the dump, and its grants name the runtime role. The API's
 # start (its migration step) gives that role its login and grants afterwards.
 "${compose[@]}" exec -T postgres psql -X -U cortexai-agent-hub -d cortexai-agent-hub --set=ON_ERROR_STOP=on -c \
-  "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cortexai-agent-hub_app') THEN CREATE ROLE cortexai-agent-hub_app NOLOGIN; END IF; END \$\$"
+  "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cortexai_agent_hub_app') THEN CREATE ROLE cortexai_agent_hub_app NOLOGIN; END IF; END \$\$"
 # Stop on SQL errors and roll back the dump before restoring files or starting
 # the application. -f is required for psql's single-transaction mode.
 "${compose[@]}" exec -T postgres psql -X -U cortexai-agent-hub -d cortexai-agent-hub \

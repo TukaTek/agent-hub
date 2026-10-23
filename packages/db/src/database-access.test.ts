@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { databaseUrls, rowSecurityWarning } from "./database-access.js";
 
 const owner = "postgres://cortexai-agent-hub:owner-password@postgres:5432/cortexai-agent-hub";
-const runtime = "postgres://cortexai-agent-hub_app:app-password@postgres:5432/cortexai-agent-hub";
+const runtime = "postgres://cortexai_agent_hub_app:app-password@postgres:5432/cortexai-agent-hub";
 
 describe("databaseUrls", () => {
   it("migrates as the owner and runs the app as the runtime login", () => {
@@ -37,7 +37,7 @@ describe("databaseUrls", () => {
 
 describe("rowSecurityWarning", () => {
   it("is silent when the policies apply", () => {
-    expect(rowSecurityWarning({ enforced: true, role: "cortexai-agent-hub_app" })).toBeUndefined();
+    expect(rowSecurityWarning({ enforced: true, role: "cortexai_agent_hub_app" })).toBeUndefined();
   });
 
   it("names the login and why it bypasses the policies", () => {

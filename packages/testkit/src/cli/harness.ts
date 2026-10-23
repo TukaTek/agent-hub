@@ -56,7 +56,7 @@ async function main() {
     // Test code that seeds or inspects rows directly connects as the owner.
     const migrationUrl = container.getConnectionUri();
     const runtimeUrl = new URL(migrationUrl);
-    runtimeUrl.username = "cortexai-agent-hub_app";
+    runtimeUrl.username = "cortexai_agent_hub_app";
     runtimeUrl.password = "cortexai-agent-hub-test-runtime";
     const databaseUrl = runtimeUrl.toString();
     const apiPort = Number(process.env.API_PORT ?? 3110);
