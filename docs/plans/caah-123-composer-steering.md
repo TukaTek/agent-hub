@@ -36,8 +36,14 @@ No backend, contract or migration changes.
   - the user presses Stop.
 - The marker only shows while the thread still has an active run, so a missed event
   cannot leave a stale marker. Once cleared, the message renders as a normal user bubble.
-- Scope is the sender's tab. Other devices and reloads show the message as a normal
-  bubble, which is the current behaviour.
+  If a turn finishes before claiming, the server releases the message to a continuation
+  run that claims it at start. Between those two runs the message can briefly show as a
+  bubble before the continuation's claim clears the queue entry.
+- A claim can land before `threads.send` returns. The Shell keeps each thread's latest claim
+  watermark and does not queue a send that is already below it.
+- Scope is the sender's tab and direct bot threads. Other devices, reloads and group chats
+  show the message as a normal bubble, which is the current behaviour. Groups keep their
+  current placeholder, because "<group> is working" is not the ticket's bot-turn wording.
 
 ## Copy (new user-facing strings)
 
@@ -45,8 +51,8 @@ No backend, contract or migration changes.
   place that says text sent now goes into the running turn instead of starting a new one.
   It replaces the existing placeholder, so no chrome is added.
 - `Queued`: marks a sent message the bot has not taken yet. Without it the message looks
-  delivered and answered-next, which is wrong while the turn is still running.
-- `Queued message`: accessible name of the queued row.
+  delivered and answered-next, which is wrong while the turn is still running. This reuses
+  the existing, already-translated Activity list string, and it also labels the region.
 - `Ctrl+Enter`, `⌘ Enter`, `Enter`: key labels inside the placeholder.
 
 Translated in every Lingui locale (`pnpm --filter @cortexai-agent-hub/web intl:extract`).
@@ -72,7 +78,10 @@ Translated in every Lingui locale (`pnpm --filter @cortexai-agent-hub/web intl:e
 The full-stack Playwright suite needs Postgres via testcontainers (Docker). Docker is not
 available in this workspace, so `composer-steering.spec.ts` and `golden.spec.ts` are
 written but run in CI only. The fixture spec needs only Vite and is run locally for the
-before/after screenshots.
+before/after screenshots (idle, running, queued × light, dark). Before: running showed
+`Message Chief` with a disabled Send next to Stop. After: the steer placeholder with Stop
+alone, and the Queued row above the bar. `composer-steering.spec.ts` also attaches
+full-page idle/running/queued shots in both themes from CI.
 
 ## Open question
 
