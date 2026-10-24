@@ -8,8 +8,10 @@ import {
   AnalyticsTrigger,
   BOT_INSTRUCTIONS_MAX_LENGTH,
   encodeLoginSecret,
+  foldRunTools,
   LoginSecretValue,
   MessageBlock as MessageBlockSchema,
+  RunToolSchema,
 } from "@cortexai-agent-hub/contracts";
 import {
   ACTIVE_RUN_STATUSES,
@@ -1866,6 +1868,9 @@ export async function appendEventInTransaction(
       await assertRunCanWriteHistory(tx, input.runId, { allowCancelled: input.allowCancelledRun })
     )?.firstResponseAt;
   }
+  const seq = isRunEnd(input.type)
+    ? await interruptOpenRunTools(tx, input, thread.nextEventSeq - 1)
+    : thread.nextEventSeq - 1;
   // Unpaired UTF-16 surrogates (e.g. a split emoji high half) are invalid JSON for Postgres.
   const payload = sanitizeJsonValue(input.payload);
   const event = await tx.event.create({
@@ -1873,7 +1878,7 @@ export async function appendEventInTransaction(
       spaceId: input.spaceId,
       threadId: input.threadId,
       botId: input.botId,
-      seq: thread.nextEventSeq - 1,
+      seq,
       type: input.type,
       payload: payload as Prisma.InputJsonValue,
       runId: input.runId,
@@ -1891,6 +1896,53 @@ export async function appendEventInTransaction(
       ).count === 1,
   );
   return { ...event, firstResponse };
+}
+
+function isRunEnd(type: string): boolean {
+  return type === "run.completed" || type === "run.failed" || type === "run.cancelled";
+}
+
+/**
+ * A run that ends with tool calls still running closes them as `interrupted`, so the run log
+ * never shows a call running forever. They take `seq` and the following seqs; returns the seq
+ * left for the terminal event.
+ */
+async function interruptOpenRunTools(
+  tx: Prisma.TransactionClient,
+  input: AppendEventInput,
+  seq: number,
+): Promise<number> {
+  if (!input.runId) return seq;
+  const events = await tx.event.findMany({
+    where: { runId: input.runId, type: "run.tool" },
+    orderBy: { seq: "asc" },
+    select: { payload: true },
+  });
+  const open = foldRunTools(
+    events.flatMap((event) => {
+      const parsed = RunToolSchema.safeParse(event.payload);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  ).filter((entry) => entry.status === "running");
+  if (open.length === 0) return seq;
+  await tx.thread.update({
+    where: { id: input.threadId },
+    data: { nextEventSeq: { increment: open.length } },
+    select: { nextEventSeq: true },
+  });
+  const endedAt = new Date().toISOString();
+  await tx.event.createMany({
+    data: open.map((entry, index) => ({
+      spaceId: input.spaceId,
+      threadId: input.threadId,
+      botId: input.botId,
+      seq: seq + index,
+      type: "run.tool",
+      payload: { ...entry, status: "interrupted", endedAt },
+      runId: input.runId,
+    })),
+  });
+  return seq + open.length;
 }
 
 /** Timing metadata is returned by the transaction that recorded first output. */

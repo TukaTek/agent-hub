@@ -58,6 +58,7 @@ function tx(options?: {
         return { seq: args.data.seq };
       }),
       deleteMany: vi.fn(async () => ({ count: 1 })),
+      findMany: vi.fn(async () => []),
     },
     computerExecutionLease: { updateMany: vi.fn(async () => ({ count: 1 })) },
     computer: { updateMany: vi.fn(async () => ({ count: 1 })) },

@@ -29,6 +29,7 @@ export const ProductEventType = z.enum([
   "computer.takeover.granted",
   "computer.takeover.released",
   "computer.command",
+  "run.tool",
   "memory.revised",
   "routine.created",
   "routine.updated",
@@ -352,6 +353,42 @@ export function foldComputerCommands<T extends ComputerCommand>(events: T[]): T[
   for (const event of events) {
     if (byId.get(event.executionId)?.status === "done" && event.status === "running") continue;
     byId.set(event.executionId, event);
+  }
+  return [...byId.values()];
+}
+
+/**
+ * One tool call in a run, for the "This run" panel. `summary` is the redacted, one-line
+ * argument summary; `error` the redacted failure reason. A paused call stays running until
+ * the resumed attempt finishes it under the same `callId`; a call still running when its run
+ * ends is closed as `interrupted`.
+ */
+export const RUN_TOOL_SUMMARY_MAX_CHARS = 200;
+export const RunToolSchema = z.object({
+  runId: Id,
+  callId: z.string(),
+  tool: z.string(),
+  summary: z.string().max(RUN_TOOL_SUMMARY_MAX_CHARS),
+  status: z.enum(["running", "done", "failed", "interrupted"]),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  error: z.string().max(RUN_TOOL_SUMMARY_MAX_CHARS).optional(),
+});
+export type RunTool = z.infer<typeof RunToolSchema>;
+
+/**
+ * Collapse a run's tool events into one entry per call, in start order. A finished call stays
+ * finished and keeps its earliest start, so live events, replays and resumed attempts merge.
+ */
+export function foldRunTools<T extends RunTool>(events: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const event of events) {
+    const prior = byId.get(event.callId);
+    if (prior && prior.status !== "running" && event.status === "running") continue;
+    byId.set(
+      event.callId,
+      prior && prior.startedAt < event.startedAt ? { ...event, startedAt: prior.startedAt } : event,
+    );
   }
   return [...byId.values()];
 }

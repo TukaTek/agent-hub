@@ -168,11 +168,13 @@ import {
   ComputerCommandSchema,
   canonicalPiProviderId,
   foldComputerCommands,
+  foldRunTools,
   isDeletableMemoryDocument,
   isOllamaCloudBaseUrl,
   mcpOAuthEnvReferences,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   parseTicketRef,
+  RunToolSchema,
   signupSurveyAsksTeamSize,
   storedPiProviderIds,
   usableModelId,
@@ -314,12 +316,10 @@ import { withSerializableRetry } from "./serializable-retry.js";
 
 import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
 import {
-  isBackgroundRun,
-  isPeerRun,
+  forwardsThreadEvent,
   loadAllMessages,
   loadMessagePage,
-  shouldForwardBackgroundThreadEvent,
-  shouldForwardPeerThreadEvent,
+  runKindCaches,
 } from "./thread-message-pages.js";
 import {
   markThreadRead,
@@ -350,6 +350,9 @@ import {
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
+/** A running and a finished event per call: the newest few thousand calls of one run. */
+const RUN_TOOL_HISTORY_EVENTS = 10_000;
+const RUN_TOOL_PAGE_SIZE = 100;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 /** Silence longer than this on a thread stream is indistinguishable from a dead socket. */
 export const HEARTBEAT_MS = 20_000;
@@ -2459,8 +2462,7 @@ export function createRouter(deps: RouterDeps) {
       }),
       subscribe: authed.threads.subscribe.handler(async function* ({ context, input }) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
-        const peerRunCache = new Map<string, Promise<boolean>>();
-        const backgroundRunCache = new Map<string, Promise<boolean>>();
+        const runKinds = runKindCaches();
         const follow = deps.events.follow(target.threadId, input.cursor, context.signal);
         // A half-open stream looks identical to an idle one, so punctuate silence:
         // the client treats any frame as liveness and reconnects once they stop.
@@ -2504,11 +2506,7 @@ export function createRouter(deps: RouterDeps) {
             const event = next.value;
             // Filtered peer events also restart the heartbeat, so check before skipping them.
             await assertStillAuthorized();
-            if (await isPeerRun(deps.prisma, event.runId, peerRunCache)) {
-              if (!shouldForwardPeerThreadEvent(event)) continue;
-            } else if (await isBackgroundRun(deps.prisma, event.runId, backgroundRunCache)) {
-              if (!shouldForwardBackgroundThreadEvent(event)) continue;
-            }
+            if (!(await forwardsThreadEvent(deps.prisma, event, runKinds))) continue;
             yield event;
           }
         } finally {
@@ -6727,6 +6725,50 @@ export function createRouter(deps: RouterDeps) {
       list: authed.runs.list.handler(async ({ context, input }) => ({
         runs: await listSpaceRuns(deps.prisma, context.actor, input.filter),
       })),
+      tools: authed.runs.tools.handler(async ({ context, input }) => {
+        // Same authorization as reading the thread's messages; the run must be in that thread.
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        // Hidden exactly where the live thread stream hides this run's tool events.
+        const visible = await forwardsThreadEvent(
+          deps.prisma,
+          { runId: input.runId, type: "run.tool", payload: {} },
+          runKindCaches(),
+        );
+        if (!visible) return { tools: [], olderCursor: null };
+        const events = await deps.prisma.event.findMany({
+          where: {
+            spaceId: context.actor.spaceId,
+            threadId: target.threadId,
+            runId: input.runId,
+            type: "run.tool",
+          },
+          orderBy: { seq: "desc" },
+          take: RUN_TOOL_HISTORY_EVENTS,
+          select: { seq: true, payload: true },
+        });
+        // A call pages by its first event, so it shows on one page and new calls never shift it.
+        const firstSeq = new Map<string, number>();
+        const calls = foldRunTools(
+          events.reverse().flatMap((event) => {
+            const parsed = RunToolSchema.safeParse(event.payload);
+            if (!parsed.success) return [];
+            if (!firstSeq.has(parsed.data.callId)) firstSeq.set(parsed.data.callId, event.seq);
+            return [parsed.data];
+          }),
+        ).filter(
+          (call) => input.before === undefined || (firstSeq.get(call.callId) ?? 0) < input.before,
+        );
+        const tools = calls.slice(-RUN_TOOL_PAGE_SIZE);
+        return {
+          tools,
+          olderCursor:
+            calls.length > tools.length && tools[0]
+              ? (firstSeq.get(tools[0].callId) ?? null)
+              : null,
+        };
+      }),
     },
     voice: {
       catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),
