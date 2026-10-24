@@ -48,6 +48,29 @@
   --color-brand-foreground: var(--brand-foreground);
   --color-brand-surface: var(--brand-surface);
   --color-brand-surface-foreground: var(--brand-surface-foreground);
+  /* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek. */
+  --color-app: var(--app);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-raised-hover: var(--raised-hover);
+  --color-menu: var(--menu);
+  --color-inset: var(--inset);
+  --color-control: var(--control);
+  --color-hairline: var(--hairline);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-tertiary: var(--ink-tertiary);
+  --color-focus: var(--focus);
+  --color-bubble-user: var(--bubble-user);
+  --color-bubble-user-ink: var(--bubble-user-ink);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-border: var(--accent-border);
+  --color-accent-text: var(--accent-text);
+  --color-accent-ink: var(--accent-ink);
+  --color-success-ink: var(--success-ink);
+  --color-danger: var(--danger);
+  --color-danger-ink: var(--danger-ink);
+  --color-warning-ink: var(--warning-ink);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -65,6 +88,144 @@
     50% {
       opacity: 0;
     }
+  }
+}
+
+/* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek.
+   Not inline, so each `animate-*` utility reads its variable and reduced motion can
+   switch every one off, variants included; `.glass-surface` reads `--shadow-popover`. `rise` is one-time onboarding motion and
+   may run past the 240ms UI ceiling. */
+@theme {
+  --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-pop-in: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-pop-out: pop-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-status-pulse: status-pulse 1.6s steps(2, jump-none) infinite;
+  --animate-rise: rise 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-spot-in: spot-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --shadow-popover:
+    0 24px 64px -12px color-mix(in srgb, black 45%, transparent),
+    0 2px 8px color-mix(in srgb, black 12%, transparent);
+
+  @keyframes panel-in {
+    from {
+      transform: translateX(28px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      transform: scale(0.96) translateY(6px);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1) translateY(0);
+      opacity: 1;
+    }
+  }
+  @keyframes pop-out {
+    from {
+      transform: scale(1) translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: scale(0.96) translateY(6px);
+      opacity: 0;
+    }
+  }
+  /* new message settle-in: subtle, fast, GPU-only */
+  @keyframes msg-in {
+    from {
+      transform: translateY(4px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  /* "Thinking…" label sheen while the model reasons */
+  @keyframes shimmer {
+    from {
+      background-position: 200% 50%;
+    }
+    to {
+      background-position: -200% 50%;
+    }
+  }
+  /* Long-lived activity dots: steps() + holds draw a handful of compositor
+     frames per cycle instead of one per vsync. Indicators that run for
+     minutes must not continuously repaint; stagger via animation-delay. */
+  @keyframes status-pulse {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    30% {
+      opacity: 1;
+    }
+    60% {
+      opacity: 0.25;
+    }
+  }
+  @keyframes rise {
+    from {
+      transform: translateY(10px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes spot-in {
+    from {
+      transform: scale(0.94);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --animate-panel-in: none;
+    --animate-pop-in: none;
+    --animate-pop-out: none;
+    --animate-msg-in: none;
+    --animate-shimmer: none;
+    --animate-status-pulse: none;
+    --animate-rise: none;
+    --animate-spot-in: none;
+  }
+}
+
+/* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek.
+   Glass for popovers and centred pop-ups: the app stays visible behind, blurred.
+   Unlayered so a leftover `bg-popover` on the same element cannot win. */
+.glass-surface {
+  background: color-mix(in srgb, var(--menu) 62%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  backdrop-filter: blur(28px) saturate(170%);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 16%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, white 4%, transparent),
+    var(--shadow-popover);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-surface {
+    background: var(--menu);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
