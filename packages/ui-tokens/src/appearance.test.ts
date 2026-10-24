@@ -57,6 +57,9 @@ describe("appearance preference", () => {
       "brandForeground",
       "brandSurface",
       "brandSurfaceForeground",
+      "bubbleUserInk",
+      "accentFill",
+      "accentInk",
     ]);
     for (const key of Object.keys(darkTokens) as (keyof ColorTokens)[]) {
       if (themeInvariantTokens.has(key)) continue;
@@ -67,6 +70,21 @@ describe("appearance preference", () => {
     // Link icons keep a white plate in both themes; the light user bubble is near-black.
     expect(lightTokens.faviconPlate).toBe("#FFFFFF");
     expect(darkTokens.faviconPlate).toBe("#FFFFFF");
+  });
+
+  it.each([
+    ["dark", darkTokens],
+    ["light", lightTokens],
+  ] as const)("keeps the shadcn names as aliases of the %s surface ladder", (_name, palette) => {
+    expect(palette.app).toBe(palette.background);
+    expect(palette.panel).toBe(palette.sidebar);
+    expect(palette.menu).toBe(palette.popover);
+    expect(palette.hairline).toBe(palette.border);
+    expect(palette.ink).toBe(palette.foreground);
+    expect(palette.bubbleUser).toBe(palette.chatUser);
+    expect(palette.bubbleUserInk).toBe(palette.chatUserForeground);
+    expect(palette.danger).toBe(palette.destructive);
+    expect(palette.accentFill).toBe(palette.brand);
   });
 
   it("keeps the working dot the same green in both themes", () => {
