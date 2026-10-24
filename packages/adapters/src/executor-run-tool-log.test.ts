@@ -231,23 +231,23 @@ describe.each([
       expect(RunToolSchema.parse(event.payload)).toEqual(event.payload);
     }
     expect(entries.map((entry) => `${entry.callId}:${entry.status}`)).toEqual([
-      "call-save:running",
-      "call-save:done",
-      "call-recall:running",
-      "call-recall:failed",
+      "attempt-1:1:running",
+      "attempt-1:1:done",
+      "attempt-1:2:running",
+      "attempt-1:2:failed",
     ]);
     const folded = foldRunTools(entries);
     expect(folded).toEqual([
       expect.objectContaining({
         runId: "run-1",
-        callId: "call-save",
+        callId: "attempt-1:1",
         tool: "save_memory",
         status: "done",
         startedAt: expect.any(String),
         endedAt: expect.any(String),
       }),
       expect.objectContaining({
-        callId: "call-recall",
+        callId: "attempt-1:2",
         tool: "recall_memory",
         summary: "query: deploy key",
         status: "failed",
@@ -263,6 +263,19 @@ describe.each([
     expect(logged).not.toContain(RUN_SECRET);
     expect(logged).not.toContain(MODEL_TOKEN);
     expect(entries[0]!.summary).toBe("content: Deploy key is [redacted], token: [redacted]");
+  });
+
+  it("keeps two tools apart when the provider reuses a call id", async () => {
+    const { entries } = await runWith(
+      scripted,
+      calls.map((call) => ({ ...call, executionId: "call_0" })),
+    );
+
+    expect(foldRunTools(entries).map((entry) => [entry.tool, entry.status])).toEqual([
+      ["save_memory", "done"],
+      ["recall_memory", "failed"],
+    ]);
+    expect(foldRunTools(entries)[1]!.summary).toBe("query: deploy key");
   });
 
   it("never logs a credential the run has not registered yet", async () => {

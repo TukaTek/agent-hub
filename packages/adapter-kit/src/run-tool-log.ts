@@ -117,59 +117,84 @@ export interface RunToolLog {
   }): Promise<void>;
 }
 
+interface TrackedCall {
+  executionId: string;
+  entry: RunTool;
+}
+
 /**
- * Tracks one attempt's tool calls as `run.tool` entries. Runtimes may finish a call before its
- * start is reported, so both orders produce a finished entry with the call's summary.
+ * Tracks one attempt's tool calls as `run.tool` entries. Providers may reuse a call id (often
+ * `call_0` in every response), so each call gets its own `callId` and a start or finish pairs
+ * with the oldest call of that tool and id still waiting for it. Runtimes may finish a call
+ * before its start is reported, so both orders produce a finished entry with the call's summary.
  */
 export function createRunToolLog(options: {
   runId: string;
+  /** Unique per attempt; it prefixes every call id, so ids never repeat within a run. */
+  attemptId: string;
   /** The run's secret redaction, applied to every logged argument and failure text. */
   redact: (text: string) => string;
   record: (entry: RunTool) => Promise<void> | void;
   now?: () => Date;
 }): RunToolLog {
   const now = options.now ?? (() => new Date());
-  const calls = new Map<string, RunTool>();
-  const record = async (entry: RunTool) => {
-    calls.set(entry.callId, entry);
+  let count = 0;
+  // Calls still waiting for their start or their finish to be reported, oldest first.
+  const unstarted: TrackedCall[] = [];
+  const unfinished: TrackedCall[] = [];
+  const find = (calls: TrackedCall[], executionId: string, tool: string) =>
+    calls.findIndex((call) => call.executionId === executionId && call.entry.tool === tool);
+  const track = (executionId: string, entry: Omit<RunTool, "runId" | "callId">) => ({
+    executionId,
+    entry: { runId: options.runId, callId: `${options.attemptId}:${++count}`, ...entry },
+  });
+  const record = async (call: TrackedCall, entry: RunTool) => {
+    call.entry = entry;
     await options.record(entry);
   };
   return {
     async started(call) {
-      const known = calls.get(call.executionId);
       const summary = summarizeToolArgs(call.args, options.redact);
-      if (known && known.summary === summary) return;
-      await record(
-        known
-          ? { ...known, summary }
-          : {
-              runId: options.runId,
-              callId: call.executionId,
-              tool: call.name,
-              summary,
-              status: "running",
-              startedAt: now().toISOString(),
-              endedAt: null,
-            },
-      );
-    },
-    async finished(completion) {
-      const known = calls.get(completion.executionId);
-      if (known && known.status !== "running") return;
-      const endedAt = now();
-      const base = known ?? {
-        runId: options.runId,
-        callId: completion.executionId,
-        tool: completion.name,
-        summary: "",
-        startedAt: new Date(endedAt.getTime() - (completion.durationMs ?? 0)).toISOString(),
-      };
-      if (completion.outcome === "paused") {
-        if (!known) await record({ ...base, status: "running", endedAt: null });
+      const index = find(unstarted, call.executionId, call.name);
+      if (index >= 0) {
+        const [known] = unstarted.splice(index, 1);
+        if (known!.entry.summary !== summary) await record(known!, { ...known!.entry, summary });
         return;
       }
-      await record({
-        ...base,
+      const tracked = track(call.executionId, {
+        tool: call.name,
+        summary,
+        status: "running",
+        startedAt: now().toISOString(),
+        endedAt: null,
+      });
+      unfinished.push(tracked);
+      await record(tracked, tracked.entry);
+    },
+    async finished(completion) {
+      const endedAt = now();
+      const index = find(unfinished, completion.executionId, completion.name);
+      const known = index >= 0 ? unfinished[index]! : undefined;
+      const tracked =
+        known ??
+        track(completion.executionId, {
+          tool: completion.name,
+          summary: "",
+          status: "running",
+          startedAt: new Date(endedAt.getTime() - (completion.durationMs ?? 0)).toISOString(),
+          endedAt: null,
+        });
+      if (!known) unstarted.push(tracked);
+      if (completion.outcome === "paused") {
+        if (!known) {
+          unfinished.push(tracked);
+          await record(tracked, tracked.entry);
+        }
+        return;
+      }
+      if (known) unfinished.splice(index, 1);
+      await record(tracked, {
+        ...tracked.entry,
         status: completion.outcome === "error" ? "failed" : "done",
         endedAt: endedAt.toISOString(),
         ...(completion.outcome === "error" && completion.error

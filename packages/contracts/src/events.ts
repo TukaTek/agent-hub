@@ -358,7 +358,8 @@ export function foldComputerCommands<T extends ComputerCommand>(events: T[]): T[
 }
 
 /**
- * One tool call in a run, for the "This run" panel. `summary` is the redacted, one-line
+ * One tool call in a run, for the "This run" panel. `callId` is unique per call within the run,
+ * even when a provider reuses its own call ids. `summary` is the redacted, one-line
  * argument summary; `error` the redacted failure reason. A paused call stays running until
  * the resumed attempt finishes it under the same `callId`; a call still running when its run
  * ends is closed as `interrupted`.

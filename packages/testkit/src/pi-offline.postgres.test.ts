@@ -185,13 +185,13 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         .toEqual([
           expect.objectContaining({
             runId: sent.runId,
-            callId: JSON.stringify(["pi-tool", "main", "product-write"]),
+            callId: expect.any(String),
             tool: "write_file",
             summary: expect.stringContaining("notes/result.txt"),
             status: "done",
           }),
           expect.objectContaining({
-            callId: JSON.stringify(["pi-tool", "main", "product-shell"]),
+            callId: expect.any(String),
             tool: "shell",
             summary: expect.stringContaining("wc -c notes/result.txt"),
             status: "done",

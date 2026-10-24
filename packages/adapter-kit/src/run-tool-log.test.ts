@@ -1,4 +1,8 @@
-import { RUN_TOOL_SUMMARY_MAX_CHARS, type RunTool } from "@cortexai-agent-hub/contracts";
+import {
+  foldRunTools,
+  RUN_TOOL_SUMMARY_MAX_CHARS,
+  type RunTool,
+} from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
 import { createRunToolLog, summarizeToolArgs } from "./run-tool-log.js";
 
@@ -10,6 +14,7 @@ function fixture() {
   let clock = Date.parse("2026-10-24T10:00:00.000Z");
   const log = createRunToolLog({
     runId: "run-1",
+    attemptId: "attempt-1",
     redact,
     record: (entry) => {
       records.push(entry);
@@ -141,7 +146,7 @@ describe("createRunToolLog", () => {
     expect(records).toEqual([
       {
         runId: "run-1",
-        callId: "call-1",
+        callId: "attempt-1:1",
         tool: "web_search",
         summary: "query: weather",
         status: "running",
@@ -150,7 +155,7 @@ describe("createRunToolLog", () => {
       },
       {
         runId: "run-1",
-        callId: "call-1",
+        callId: "attempt-1:1",
         tool: "web_search",
         summary: "query: weather",
         status: "done",
@@ -209,12 +214,34 @@ describe("createRunToolLog", () => {
     ]);
   });
 
-  it("records each call once even when the start is reported twice", async () => {
+  it("keeps calls apart when a provider reuses a call id", async () => {
     const { log, records } = fixture();
-    const call = { name: "list_files", args: { path: "" }, executionId: "call-1" };
-    await log.started(call);
-    await log.started(call);
-    expect(records).toHaveLength(1);
+    await log.started({ name: "web_search", args: { q: "a" }, executionId: "call_0" });
+    await log.finished({ name: "web_search", executionId: "call_0", outcome: "succeeded" });
+    await log.started({ name: "read_file", args: { path: "b.txt" }, executionId: "call_0" });
+    await log.finished({ name: "read_file", executionId: "call_0", outcome: "error", error: "no" });
+    await log.started({ name: "web_search", args: { q: "c" }, executionId: "call_0" });
+    await log.finished({ name: "web_search", executionId: "call_0", outcome: "succeeded" });
+    expect(foldRunTools(records).map((entry) => [entry.tool, entry.summary, entry.status])).toEqual(
+      [
+        ["web_search", "q: a", "done"],
+        ["read_file", "path: b.txt", "failed"],
+        ["web_search", "q: c", "done"],
+      ],
+    );
+    expect(new Set(records.map((entry) => entry.callId)).size).toBe(3);
+  });
+
+  it("pairs reused call ids in order when completions arrive before starts", async () => {
+    const { log, records } = fixture();
+    await log.finished({ name: "read_file", executionId: "call_0", outcome: "succeeded" });
+    await log.finished({ name: "read_file", executionId: "call_0", outcome: "error", error: "no" });
+    await log.started({ name: "read_file", args: { path: "a.txt" }, executionId: "call_0" });
+    await log.started({ name: "read_file", args: { path: "b.txt" }, executionId: "call_0" });
+    expect(foldRunTools(records).map((entry) => [entry.summary, entry.status])).toEqual([
+      ["path: a.txt", "done"],
+      ["path: b.txt", "failed"],
+    ]);
   });
 
   it("keeps calls separate by call id", async () => {
@@ -224,10 +251,10 @@ describe("createRunToolLog", () => {
     await log.finished({ name: "web_search", executionId: "call-2", outcome: "error" });
     await log.finished({ name: "web_search", executionId: "call-1", outcome: "succeeded" });
     expect(records.map((entry) => `${entry.callId}:${entry.status}`)).toEqual([
-      "call-1:running",
-      "call-2:running",
-      "call-2:failed",
-      "call-1:done",
+      "attempt-1:1:running",
+      "attempt-1:2:running",
+      "attempt-1:2:failed",
+      "attempt-1:1:done",
     ]);
   });
 });

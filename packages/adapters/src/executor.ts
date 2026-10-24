@@ -4693,6 +4693,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         // Same redaction as computer.command; runSecrets grows as the run registers more.
         const runToolLog = createRunToolLog({
           runId,
+          attemptId: attempt.id,
           redact: (text) => redactSecrets(text, runSecrets),
           record: async (payload) => {
             await deps.events
