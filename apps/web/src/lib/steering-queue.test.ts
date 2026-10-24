@@ -7,19 +7,31 @@ import {
   withoutQueuedSteers,
 } from "./steering-queue";
 
-const first = { threadKey: "bot-1", messageId: "msg-4", seq: 4, text: "Use the newer report" };
-const second = { threadKey: "bot-1", messageId: "msg-6", seq: 6, text: "Keep it short" };
-const other = { threadKey: "bot-2", messageId: "msg-5", seq: 5, text: "Elsewhere" };
+const first = {
+  threadKey: "bot-1",
+  runId: "run-1",
+  messageId: "msg-4",
+  seq: 4,
+  text: "Use the newer report",
+};
+const second = { ...first, messageId: "msg-6", seq: 6, text: "Keep it short" };
+const other = { threadKey: "bot-2", runId: "run-2", messageId: "msg-5", seq: 5, text: "Elsewhere" };
+const receipt = { endedRunIds: new Set<string>() };
 
 describe("steering queue", () => {
   it("adds each sent message once", () => {
-    expect(queueSteer(queueSteer([], first), first)).toEqual([first]);
-    expect(queueSteer([first], second)).toEqual([first, second]);
+    expect(queueSteer(queueSteer([], first, receipt), first, receipt)).toEqual([first]);
+    expect(queueSteer([first], second, receipt)).toEqual([first, second]);
   });
 
   it("skips a send the run claimed before the send returned", () => {
-    expect(queueSteer([], first, 5)).toEqual([]);
-    expect(queueSteer([], first, 4)).toEqual([first]);
+    expect(queueSteer([], first, { ...receipt, claimedThrough: 5 })).toEqual([]);
+    expect(queueSteer([], first, { ...receipt, claimedThrough: 4 })).toEqual([first]);
+  });
+
+  it("skips a send whose run ended or was cancelled before the send returned", () => {
+    const queue = [other];
+    expect(queueSteer(queue, first, { endedRunIds: new Set(["run-1"]) })).toBe(queue);
   });
 
   it("clears messages the run claimed, by the claim's sequence watermark", () => {

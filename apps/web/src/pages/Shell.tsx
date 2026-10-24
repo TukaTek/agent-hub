@@ -2428,9 +2428,18 @@ function SpaceShell() {
           accepted = true;
           if (steering && sent.messageId) {
             const text = trimmed || attachments.map((pending) => pending.file.name).join(", ");
-            const entry = { threadKey: botTarget, messageId: sent.messageId, seq: sent.seq, text };
+            const entry = {
+              threadKey: botTarget,
+              runId: sent.runId,
+              messageId: sent.messageId,
+              seq: sent.seq,
+              text,
+            };
             setSteerQueue((queue) =>
-              queueSteer(queue, entry, steeringClaims.current.get(botTarget)),
+              queueSteer(queue, entry, {
+                endedRunIds: terminalRunReceipts.current,
+                claimedThrough: steeringClaims.current.get(botTarget),
+              }),
             );
           }
           if (activeBotId.current === botTarget) {

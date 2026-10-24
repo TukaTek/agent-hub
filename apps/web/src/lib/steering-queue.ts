@@ -1,13 +1,29 @@
 import type { ProductEvent } from "@cortexai-agent-hub/contracts";
 
 /** A message this tab sent into a running turn that the run has not claimed yet. */
-export type QueuedSteer = { threadKey: string; messageId: string; seq: number; text: string };
+export type QueuedSteer = {
+  threadKey: string;
+  runId: string;
+  messageId: string;
+  seq: number;
+  text: string;
+};
 type SteerQueue = readonly QueuedSteer[];
 
-/** `claimedThrough` is the thread's latest claim watermark, which can beat the send's reply. */
-export function queueSteer(queue: SteerQueue, entry: QueuedSteer, claimedThrough = 0): SteerQueue {
+/**
+ * What the thread already settled before the send replied: `claimedThrough` is its latest claim
+ * watermark and `endedRunIds` the runs that finished, failed or were cancelled.
+ */
+type SteerReceipt = { endedRunIds: ReadonlySet<string>; claimedThrough?: number };
+
+export function queueSteer(
+  queue: SteerQueue,
+  entry: QueuedSteer,
+  { endedRunIds, claimedThrough = 0 }: SteerReceipt,
+): SteerQueue {
   return entry.seq < claimedThrough ||
-    queue.some((item) => item.threadKey === entry.threadKey && item.seq === entry.seq)
+    endedRunIds.has(entry.runId) ||
+    queue.some((item) => item.messageId === entry.messageId)
     ? queue
     : [...queue, entry];
 }
