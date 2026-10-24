@@ -28,14 +28,19 @@ export function clearSteerQueue(queue: SteerQueue, threadKey: string): SteerQueu
 
 /**
  * A claim covers every steering message below its sequence watermark. Stop and failure drop
- * pending steering server-side, so the thread's sends become plain messages.
+ * pending steering server-side, so the thread's sends become plain messages; clearing the
+ * conversation deletes them.
  */
 export function settleSteerQueue(
   queue: SteerQueue,
   threadKey: string,
   event: Pick<ProductEvent, "type" | "payload">,
 ): SteerQueue {
-  if (event.type === "run.cancelled" || event.type === "run.failed") {
+  if (
+    event.type === "run.cancelled" ||
+    event.type === "run.failed" ||
+    event.type === "thread.cleared"
+  ) {
     return clearSteerQueue(queue, threadKey);
   }
   const watermark = steeringClaimWatermark(event);

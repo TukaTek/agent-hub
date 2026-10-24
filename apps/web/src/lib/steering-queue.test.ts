@@ -50,6 +50,12 @@ describe("steering queue", () => {
     }
   });
 
+  it("clears the thread when its conversation is cleared", () => {
+    expect(
+      settleSteerQueue([first, second, other], "bot-1", { type: "thread.cleared", payload: {} }),
+    ).toEqual([other]);
+  });
+
   it("keeps the queue for unrelated events", () => {
     const queue = [first];
     for (const type of ["run.completed", "run.started", "thread.message.created"] as const) {

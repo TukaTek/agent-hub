@@ -4084,6 +4084,8 @@ function SpaceShell() {
                   ? { botId: clearTarget.chat.id }
                   : { groupId: clearTarget.chat.id },
               );
+              // A closed chat misses thread.cleared, so drop its deleted queued sends here.
+              setSteerQueue((queue) => clearSteerQueue(queue, clearTarget.chat.id));
               if (
                 (clearTarget.kind === "bot" && active?.id === clearTarget.chat.id) ||
                 (clearTarget.kind === "group" && activeGroup?.id === clearTarget.chat.id)
