@@ -18,6 +18,10 @@ void bootstrapI18n("en").then(() => {
           artifactTarget={{ botId: "bot-1" }}
           activeName="Chief"
           running={state !== "idle"}
+          steerable={state !== "idle"}
+          queued={
+            state === "queued" ? [{ seq: 4, text: "Use the newer report and keep it short." }] : []
+          }
           pendingAttachments={[]}
           attachmentNotice={null}
           sendError={null}
