@@ -168,11 +168,13 @@ import {
   ComputerCommandSchema,
   canonicalPiProviderId,
   foldComputerCommands,
+  foldRunTools,
   isDeletableMemoryDocument,
   isOllamaCloudBaseUrl,
   mcpOAuthEnvReferences,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   parseTicketRef,
+  RunToolSchema,
   signupSurveyAsksTeamSize,
   storedPiProviderIds,
   usableModelId,
@@ -350,6 +352,8 @@ import {
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
+/** A running and a finished event per call: about a thousand calls for one run. */
+const RUN_TOOL_HISTORY_EVENTS = 2_000;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 /** Silence longer than this on a thread stream is indistinguishable from a dead socket. */
 export const HEARTBEAT_MS = 20_000;
@@ -6727,6 +6731,29 @@ export function createRouter(deps: RouterDeps) {
       list: authed.runs.list.handler(async ({ context, input }) => ({
         runs: await listSpaceRuns(deps.prisma, context.actor, input.filter),
       })),
+      tools: authed.runs.tools.handler(async ({ context, input }) => {
+        // Same authorization as reading the thread's messages; the run must be in that thread.
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        const events = await deps.prisma.event.findMany({
+          where: {
+            spaceId: context.actor.spaceId,
+            threadId: target.threadId,
+            runId: input.runId,
+            type: "run.tool",
+          },
+          orderBy: { seq: "asc" },
+          take: RUN_TOOL_HISTORY_EVENTS,
+          select: { payload: true },
+        });
+        return foldRunTools(
+          events.flatMap((event) => {
+            const parsed = RunToolSchema.safeParse(event.payload);
+            return parsed.success ? [parsed.data] : [];
+          }),
+        );
+      }),
     },
     voice: {
       catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),

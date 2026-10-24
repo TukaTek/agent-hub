@@ -171,6 +171,29 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
           exitCode: 0,
         }),
       ]);
+      // Pi reports completions without blocking the turn, so the last one may land just after.
+      await expect
+        .poll(() =>
+          rpc<Array<Record<string, unknown>>>(handles.app, cookie, "runs/tools", {
+            botId: bot.id,
+            runId: sent.runId,
+          }),
+        )
+        .toEqual([
+          expect.objectContaining({
+            runId: sent.runId,
+            callId: JSON.stringify(["pi-tool", "main", "product-write"]),
+            tool: "write_file",
+            summary: expect.stringContaining("notes/result.txt"),
+            status: "done",
+          }),
+          expect.objectContaining({
+            callId: JSON.stringify(["pi-tool", "main", "product-shell"]),
+            tool: "shell",
+            summary: expect.stringContaining("wc -c notes/result.txt"),
+            status: "done",
+          }),
+        ]);
     } finally {
       try {
         await stop?.();

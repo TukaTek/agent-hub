@@ -104,7 +104,7 @@ import {
   VoiceInfoSchema,
   VoiceStatusSchema,
 } from "./domain.js";
-import { ComputerCommandSchema, ProductEventSchema } from "./events.js";
+import { ComputerCommandSchema, ProductEventSchema, RunToolSchema } from "./events.js";
 import { Id, IsoDate } from "./ids.js";
 import {
   IntegrationProviderConfigSchema,
@@ -1020,6 +1020,8 @@ export const appContract = {
   },
   runs: {
     list: oc.input(z.object({ filter: z.enum(["active", "recent"]) })).output(RunsListOutputSchema),
+    /** Each tool call of one run in a readable thread, in start order. */
+    tools: oc.input(threadTarget.safeExtend({ runId: Id })).output(z.array(RunToolSchema)),
   },
   voice: {
     catalog: oc.output(z.array(VoiceCatalogEntrySchema)),
