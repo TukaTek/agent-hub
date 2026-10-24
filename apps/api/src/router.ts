@@ -316,12 +316,10 @@ import { withSerializableRetry } from "./serializable-retry.js";
 
 import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
 import {
-  isBackgroundRun,
-  isPeerRun,
+  forwardsThreadEvent,
   loadAllMessages,
   loadMessagePage,
-  shouldForwardBackgroundThreadEvent,
-  shouldForwardPeerThreadEvent,
+  runKindCaches,
 } from "./thread-message-pages.js";
 import {
   markThreadRead,
@@ -2463,8 +2461,7 @@ export function createRouter(deps: RouterDeps) {
       }),
       subscribe: authed.threads.subscribe.handler(async function* ({ context, input }) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
-        const peerRunCache = new Map<string, Promise<boolean>>();
-        const backgroundRunCache = new Map<string, Promise<boolean>>();
+        const runKinds = runKindCaches();
         const follow = deps.events.follow(target.threadId, input.cursor, context.signal);
         // A half-open stream looks identical to an idle one, so punctuate silence:
         // the client treats any frame as liveness and reconnects once they stop.
@@ -2508,11 +2505,7 @@ export function createRouter(deps: RouterDeps) {
             const event = next.value;
             // Filtered peer events also restart the heartbeat, so check before skipping them.
             await assertStillAuthorized();
-            if (await isPeerRun(deps.prisma, event.runId, peerRunCache)) {
-              if (!shouldForwardPeerThreadEvent(event)) continue;
-            } else if (await isBackgroundRun(deps.prisma, event.runId, backgroundRunCache)) {
-              if (!shouldForwardBackgroundThreadEvent(event)) continue;
-            }
+            if (!(await forwardsThreadEvent(deps.prisma, event, runKinds))) continue;
             yield event;
           }
         } finally {
@@ -6736,6 +6729,13 @@ export function createRouter(deps: RouterDeps) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
           includeArchived: true,
         });
+        // Hidden exactly where the live thread stream hides this run's tool events.
+        const visible = await forwardsThreadEvent(
+          deps.prisma,
+          { runId: input.runId, type: "run.tool", payload: {} },
+          runKindCaches(),
+        );
+        if (!visible) return [];
         const events = await deps.prisma.event.findMany({
           where: {
             spaceId: context.actor.spaceId,

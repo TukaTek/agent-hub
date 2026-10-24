@@ -83,6 +83,23 @@ function fixture() {
       seq: 5,
       payload: {},
     },
+    // A peer conversation and a ticket run in the same thread.
+    {
+      spaceId: "space-1",
+      threadId: "thread-1",
+      runId: "run-peer",
+      type: "run.tool",
+      seq: 6,
+      payload: entry("run-peer", "p", "done"),
+    },
+    {
+      spaceId: "space-1",
+      threadId: "thread-1",
+      runId: "run-ticket",
+      type: "run.tool",
+      seq: 7,
+      payload: entry("run-ticket", "t", "done"),
+    },
     // Another user's run in another thread of the same space.
     {
       spaceId: "space-1",
@@ -100,8 +117,19 @@ function fixture() {
       )
       .sort((left, right) => left.seq - right.seq),
   );
+  const triggers: Record<string, string> = {
+    "run-1": "user",
+    "run-2": "user",
+    "run-peer": "bot_message",
+    "run-ticket": "tickets",
+  };
   const prisma = {
     bot: { findFirst: findBot },
+    run: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+        triggers[where.id] ? { trigger: triggers[where.id] } : null,
+      ),
+    },
     chatGroup: { findFirst: vi.fn(async () => null) },
     event: { findMany: findEvents },
   };
@@ -142,6 +170,18 @@ describe("runs/tools", () => {
     const result = await call({ botId: "bot-1", runId: "run-2" });
     expect(result.status).toBe(200);
     expect(result.body.json).toEqual([]);
+  });
+
+  // The live thread stream drops these runs' tool events; replay must not reveal them either.
+  it.each([
+    ["a peer conversation", "run-peer"],
+    ["a background ticket run", "run-ticket"],
+  ])("hides %s like the live stream does", async (_label, runId) => {
+    const { call, findEvents } = fixture();
+    const result = await call({ botId: "bot-1", runId });
+    expect(result.status).toBe(200);
+    expect(result.body.json).toEqual([]);
+    expect(findEvents).not.toHaveBeenCalled();
   });
 
   // IsolationError is opaque at the RPC boundary; access is denied before any event read.
