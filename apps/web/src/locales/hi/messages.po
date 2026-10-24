@@ -192,6 +192,10 @@ msgstr "{name} विफल रहा"
 msgid "{name} finished"
 msgstr "{name} पूरा हुआ"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — {key} sends this into the running turn"
+msgstr "{name} काम कर रहा है — {key} इसे चालू बारी में भेजता है"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"
@@ -319,6 +323,10 @@ msgstr ""
 #: src/pages/shell/composer.tsx
 msgid "@{0}"
 msgstr "@{0}"
+
+#: src/pages/shell/composer.tsx
+msgid "⌘ Enter"
+msgstr "⌘ Enter"
 
 #. placeholder {0}: amount / 100
 #: src/components/ModelCredits.tsx
@@ -2056,6 +2064,10 @@ msgstr "Cron"
 msgid "Cron expression"
 msgstr "Cron एक्सप्रेशन"
 
+#: src/pages/shell/composer.tsx
+msgid "Ctrl+Enter"
+msgstr "Ctrl+Enter"
+
 #: src/components/AccountAccess.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Current password"
@@ -2391,6 +2403,10 @@ msgstr ""
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Engage when... Ignore..."
 msgstr ""
+
+#: src/pages/shell/composer.tsx
+msgid "Enter"
+msgstr "Enter"
 
 #: src/lib/user-error.ts
 msgid "Enter a password"
@@ -3929,6 +3945,7 @@ msgid "Pull request"
 msgstr "पुल अनुरोध"
 
 #: src/pages/ActivityList.tsx
+#: src/pages/shell/composer-queued.tsx
 msgid "Queued"
 msgstr "कतार में"
 
