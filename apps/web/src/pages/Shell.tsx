@@ -184,6 +184,7 @@ import {
   settleSteerQueue,
   steeringClaimWatermark,
   visibleSteers,
+  withoutQueuedSteers,
 } from "../lib/steering-queue";
 import {
   activeThreadRuns,
@@ -2013,17 +2014,13 @@ function SpaceShell() {
   const handleRunErrorPresented = useCallback((runId: string) => {
     rememberSeenRunErrorId(runId);
   }, []);
-  const transcript = useMemo(() => {
-    const messages = activeSnapshot?.messages ?? [];
-    // A queued send shows above the composer until the run takes it.
-    const queued = new Set(queuedSteers.map((item) => item.seq));
-    return foldPeerReplies(
-      queued.size
-        ? messages.filter((message) => message.role !== "user" || !queued.has(message.seq))
-        : messages,
-      { includePeerReceipts: true },
-    );
-  }, [activeSnapshot?.messages, queuedSteers]);
+  const transcript = useMemo(
+    () =>
+      foldPeerReplies(withoutQueuedSteers(activeSnapshot?.messages ?? [], queuedSteers), {
+        includePeerReceipts: true,
+      }),
+    [activeSnapshot?.messages, queuedSteers],
+  );
   const transcriptRef = useRef(transcript);
   useLayoutEffect(() => {
     transcriptRef.current = transcript;
@@ -2429,14 +2426,11 @@ function SpaceShell() {
             replyQuote: activeReplyQuote ?? undefined,
           });
           accepted = true;
-          if (steering) {
+          if (steering && sent.messageId) {
             const text = trimmed || attachments.map((pending) => pending.file.name).join(", ");
+            const entry = { threadKey: botTarget, messageId: sent.messageId, seq: sent.seq, text };
             setSteerQueue((queue) =>
-              queueSteer(
-                queue,
-                { threadKey: botTarget, seq: sent.seq, text },
-                steeringClaims.current.get(botTarget),
-              ),
+              queueSteer(queue, entry, steeringClaims.current.get(botTarget)),
             );
           }
           if (activeBotId.current === botTarget) {

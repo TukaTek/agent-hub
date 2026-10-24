@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { clearSteerQueue, queueSteer, settleSteerQueue, visibleSteers } from "./steering-queue";
+import {
+  clearSteerQueue,
+  queueSteer,
+  settleSteerQueue,
+  visibleSteers,
+  withoutQueuedSteers,
+} from "./steering-queue";
 
-const first = { threadKey: "bot-1", seq: 4, text: "Use the newer report" };
-const second = { threadKey: "bot-1", seq: 6, text: "Keep it short" };
-const other = { threadKey: "bot-2", seq: 5, text: "Elsewhere" };
+const first = { threadKey: "bot-1", messageId: "msg-4", seq: 4, text: "Use the newer report" };
+const second = { threadKey: "bot-1", messageId: "msg-6", seq: 6, text: "Keep it short" };
+const other = { threadKey: "bot-2", messageId: "msg-5", seq: 5, text: "Elsewhere" };
 
 describe("steering queue", () => {
   it("adds each sent message once", () => {
@@ -61,5 +67,16 @@ describe("steering queue", () => {
     expect(visibleSteers([first, other], "bot-1", true)).toEqual([first]);
     expect(visibleSteers([first, other], "bot-1", false)).toEqual([]);
     expect(visibleSteers([first], undefined, true)).toEqual([]);
+  });
+
+  it("hides queued sends from the transcript by message id", () => {
+    // Live messages carry the event cursor as their seq, not the message sequence the send returned.
+    const messages = [
+      { id: "msg-3", role: "user", seq: 3 },
+      { id: "msg-4", role: "user", seq: 58 },
+      { id: "msg-7", role: "bot", seq: 61 },
+    ];
+    expect(withoutQueuedSteers(messages, [first])).toEqual([messages[0], messages[2]]);
+    expect(withoutQueuedSteers(messages, [])).toBe(messages);
   });
 });

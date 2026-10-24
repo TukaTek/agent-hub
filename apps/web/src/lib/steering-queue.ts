@@ -1,7 +1,7 @@
 import type { ProductEvent } from "@cortexai-agent-hub/contracts";
 
 /** A message this tab sent into a running turn that the run has not claimed yet. */
-export type QueuedSteer = { threadKey: string; seq: number; text: string };
+export type QueuedSteer = { threadKey: string; messageId: string; seq: number; text: string };
 type SteerQueue = readonly QueuedSteer[];
 
 /** `claimedThrough` is the thread's latest claim watermark, which can beat the send's reply. */
@@ -53,4 +53,17 @@ export function visibleSteers(
 ): QueuedSteer[] {
   if (!threadKey || !active) return [];
   return queue.filter((item) => item.threadKey === threadKey);
+}
+
+/**
+ * A queued send shows above the composer until the run takes it. Match by id: a message the
+ * live stream added carries the event cursor as its seq, not the message sequence.
+ */
+export function withoutQueuedSteers<T extends { id: string }>(
+  messages: readonly T[],
+  queued: readonly QueuedSteer[],
+): readonly T[] {
+  if (!queued.length) return messages;
+  const hidden = new Set(queued.map((item) => item.messageId));
+  return messages.filter((message) => !hidden.has(message.id));
 }
