@@ -11,17 +11,24 @@ export type QueuedSteer = {
 type SteerQueue = readonly QueuedSteer[];
 
 /**
- * What the thread already settled before the send replied: `claimedThrough` is its latest claim
- * watermark and `endedRunIds` the runs that finished, failed or were cancelled.
+ * A send steers only when the server put it into a run that was working when it was sent; a
+ * reply naming any other run means the turn ended first and the server started a new one.
+ * `claimedThrough` is the thread's latest claim watermark and `endedRunIds` the runs that
+ * finished, failed or were cancelled before the reply arrived.
  */
-type SteerReceipt = { endedRunIds: ReadonlySet<string>; claimedThrough?: number };
+type SteerReceipt = {
+  steerableRunIds: ReadonlySet<string>;
+  endedRunIds: ReadonlySet<string>;
+  claimedThrough?: number;
+};
 
 export function queueSteer(
   queue: SteerQueue,
   entry: QueuedSteer,
-  { endedRunIds, claimedThrough = 0 }: SteerReceipt,
+  { steerableRunIds, endedRunIds, claimedThrough = 0 }: SteerReceipt,
 ): SteerQueue {
   return entry.seq < claimedThrough ||
+    !steerableRunIds.has(entry.runId) ||
     endedRunIds.has(entry.runId) ||
     queue.some((item) => item.messageId === entry.messageId)
     ? queue

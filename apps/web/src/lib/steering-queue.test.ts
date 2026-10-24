@@ -16,7 +16,7 @@ const first = {
 };
 const second = { ...first, messageId: "msg-6", seq: 6, text: "Keep it short" };
 const other = { threadKey: "bot-2", runId: "run-2", messageId: "msg-5", seq: 5, text: "Elsewhere" };
-const receipt = { endedRunIds: new Set<string>() };
+const receipt = { steerableRunIds: new Set(["run-1"]), endedRunIds: new Set<string>() };
 
 describe("steering queue", () => {
   it("adds each sent message once", () => {
@@ -31,7 +31,14 @@ describe("steering queue", () => {
 
   it("skips a send whose run ended or was cancelled before the send returned", () => {
     const queue = [other];
-    expect(queueSteer(queue, first, { endedRunIds: new Set(["run-1"]) })).toBe(queue);
+    expect(queueSteer(queue, first, { ...receipt, endedRunIds: new Set(["run-1"]) })).toBe(queue);
+  });
+
+  it("skips a send the server started a new run for", () => {
+    // The turn finished during the upload, so the reply names a run that was not working at send.
+    const queue = [other];
+    const fresh = { ...first, runId: "run-3" };
+    expect(queueSteer(queue, fresh, receipt)).toBe(queue);
   });
 
   it("clears messages the run claimed, by the claim's sequence watermark", () => {

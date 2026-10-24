@@ -399,7 +399,7 @@ function SpaceShell() {
   const sendingRef = useRef(false);
   const [steerQueue, setSteerQueue] = useState<readonly QueuedSteer[]>([]);
   const steeringClaims = useRef(new Map<string, number>());
-  const steerableRef = useRef(false);
+  const steerableRunIdsRef = useRef<ReadonlySet<string>>(new Set());
   const [sendError, setSendError] = useState<string | null>(null);
   const [logOutError, setLogOutError] = useState<string | null>(null);
   const { signingOut, logOut } = useSignOut(() => {
@@ -2002,8 +2002,13 @@ function SpaceShell() {
   const workingRuns = currentRuns.filter((run) => isRunWorking(run.status));
   const transcriptRunning = workingRuns.length > 0;
   const composerRunning = currentRuns.some((run) => isActive(run.status));
-  const composerSteerable = !inGroup && workingRuns.some((run) => isConversationalRun(run.trigger));
-  steerableRef.current = composerSteerable;
+  const steerableRunIds = new Set(
+    inGroup
+      ? []
+      : workingRuns.filter((run) => isConversationalRun(run.trigger)).map((run) => run.id),
+  );
+  steerableRunIdsRef.current = steerableRunIds;
+  const composerSteerable = steerableRunIds.size > 0;
   const queuedSteers = useMemo(
     () => visibleSteers(steerQueue, inGroup ? undefined : active?.id, composerRunning),
     [steerQueue, inGroup, active?.id, composerRunning],
@@ -2344,7 +2349,8 @@ function SpaceShell() {
         if (permissionRequest) void permissionRequest.then(flushPendingBrowserNotifications);
       }
       const trimmed = plan.trimmed;
-      const steering = steerableRef.current && !groupTarget;
+      // Runs this send could steer; the reply's run decides, since one may end during the upload.
+      const steerableRunIds = steerableRunIdsRef.current;
       sendingRef.current = true;
       setSending(true);
       setSendError(null);
@@ -2426,7 +2432,7 @@ function SpaceShell() {
             replyQuote: activeReplyQuote ?? undefined,
           });
           accepted = true;
-          if (steering && sent.messageId) {
+          if (sent.messageId) {
             const text = trimmed || attachments.map((pending) => pending.file.name).join(", ");
             const entry = {
               threadKey: botTarget,
@@ -2437,6 +2443,7 @@ function SpaceShell() {
             };
             setSteerQueue((queue) =>
               queueSteer(queue, entry, {
+                steerableRunIds,
                 endedRunIds: terminalRunReceipts.current,
                 claimedThrough: steeringClaims.current.get(botTarget),
               }),
