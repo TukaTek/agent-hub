@@ -20,6 +20,7 @@ import {
   HoldToTalkStrip,
   useHoldToTalk,
 } from "../../components/composer/HoldToTalk";
+import { isApplePlatform } from "../../lib/apple-platform";
 import type { ArtifactTarget } from "../../lib/artifact-open";
 import { useCallSession } from "../../lib/call-session";
 import { newClientId } from "../../lib/client-id";
@@ -35,6 +36,7 @@ import { ComposerReplyPreview } from "./chat-context";
 import type { PendingAttachment } from "./chat-shared";
 import { previewMessageText } from "./chat-shared";
 import { ComposerError } from "./composer-error";
+import { ComposerQueued } from "./composer-queued";
 import { MentionChipIcon, MentionOptionIcon, slashActionLabel } from "./composer-mentions";
 import { useComposerLayout } from "./use-composer-layout";
 
@@ -42,6 +44,8 @@ export const Composer = memo(function Composer({
   artifactTarget,
   activeName,
   running,
+  steerable = false,
+  queued = [],
   disabled,
   pendingAttachments,
   attachmentNotice,
@@ -72,6 +76,9 @@ export const Composer = memo(function Composer({
 }: {
   activeName?: string;
   running: boolean;
+  /** A conversational turn is working, so a send goes into it. */
+  steerable?: boolean;
+  queued?: readonly { seq: number; text: string }[];
   disabled?: boolean;
   pendingAttachments: PendingAttachment[];
   attachmentNotice: string | null;
@@ -382,6 +389,14 @@ export const Composer = memo(function Composer({
 
   const showComposerPlaceholder =
     draft.length === 0 && selectedSkill === null && selectedMentions.length === 0;
+  const name = activeName;
+  const key = enterToSend ? t`Enter` : isApplePlatform() ? t`⌘ Enter` : t`Ctrl+Enter`;
+  const placeholder =
+    steerable && name
+      ? t`${name} is working — ${key} sends this into the running turn`
+      : activeName
+        ? t`Message ${activeName}`
+        : t`Message…`;
 
   const replyName = replyTarget ? (replyTargetName ?? previewMessageText(replyTarget)) : "";
   const replyNameRef = useRef(replyName);
@@ -463,6 +478,7 @@ export const Composer = memo(function Composer({
           }}
         />
       ) : null}
+      <ComposerQueued items={queued} />
       {attachmentNotice ? (
         <div className="mb-3 rounded-[14px] border border-warning/40 bg-warning/10 px-4 py-2 text-[13px] text-warning">
           {attachmentNotice}
@@ -722,13 +738,7 @@ export const Composer = memo(function Composer({
               }
             }}
             disabled={disabled}
-            placeholder={
-              showComposerPlaceholder
-                ? activeName
-                  ? t`Message ${activeName}`
-                  : t`Message…`
-                : undefined
-            }
+            placeholder={showComposerPlaceholder ? placeholder : undefined}
             aria-label={activeName ? t`Message ${activeName}` : t`Message`}
             role="combobox"
             aria-autocomplete="list"
@@ -751,45 +761,35 @@ export const Composer = memo(function Composer({
         >
           {talk.recording?.locked ? (
             <HoldToTalkControls talk={talk} />
-          ) : running ? (
-            <>
-              {phoneCallsEnabled && draft.trim().length === 0 ? (
-                <HoldToTalkControls talk={talk} disabled={disabled || onCall} />
-              ) : null}
-              <Button
-                size="icon"
-                aria-label={t`Send`}
-                disabled={sending || !canSend || disabled}
-                onClick={send}
-                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground transition-transform hover:bg-brand/90 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/30"
-              >
-                <ArrowUp size={16} strokeWidth={2.2} />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label={t`Stop`}
-                disabled={sending}
-                onClick={() => void onStop()}
-                className="size-8 rounded-full border border-border bg-muted text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Square size={11} strokeWidth={0} fill="currentColor" />
-              </Button>
-            </>
           ) : (
             <>
               {phoneCallsEnabled && draft.trim().length === 0 ? (
                 <HoldToTalkControls talk={talk} disabled={disabled || onCall} />
               ) : null}
-              <Button
-                size="icon"
-                aria-label={t`Send`}
-                disabled={sending || !canSend || disabled}
-                onClick={send}
-                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground transition-transform hover:bg-brand/90 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/30"
-              >
-                <ArrowUp size={16} strokeWidth={2.2} />
-              </Button>
+              {/* While a turn runs, Stop holds the send slot until there is something to send. */}
+              {running && !canSend ? null : (
+                <Button
+                  size="icon"
+                  aria-label={t`Send`}
+                  disabled={sending || !canSend || disabled}
+                  onClick={send}
+                  className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground transition-transform hover:bg-brand/90 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/30"
+                >
+                  <ArrowUp size={16} strokeWidth={2.2} />
+                </Button>
+              )}
+              {running ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label={t`Stop`}
+                  disabled={sending}
+                  onClick={() => void onStop()}
+                  className="size-8 rounded-full border border-border bg-muted text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Square size={11} strokeWidth={0} fill="currentColor" />
+                </Button>
+              ) : null}
             </>
           )}
         </div>
