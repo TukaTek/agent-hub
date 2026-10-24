@@ -4694,8 +4694,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const runToolLog = createRunToolLog({
           runId,
           redact: (text) => redactSecrets(text, runSecrets),
-          record: (payload) =>
-            deps.events
+          record: async (payload) => {
+            await deps.events
               .append({
                 spaceId: run.spaceId,
                 threadId: thread.id,
@@ -4709,7 +4709,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 if (!(error instanceof RunHistoryWriteError)) {
                   getLogger().error("run tool event", error);
                 }
-              }),
+              });
+          },
         });
         const completeToolCall = async (completion: AgentToolCompletion) => {
           const target = { spaceId: run.spaceId, threadId: thread.id, botId: bot.id, runId };

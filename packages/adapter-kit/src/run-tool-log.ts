@@ -37,7 +37,11 @@ export function summarizeToolArgs(
 
 export interface RunToolLog {
   /** The runtime reported a tool call. */
-  started(call: { name: string; args: Record<string, unknown>; executionId: string }): Promise<void>;
+  started(call: {
+    name: string;
+    args: Record<string, unknown>;
+    executionId: string;
+  }): Promise<void>;
   /** The call returned. A paused call stays running until a resumed attempt finishes it. */
   finished(completion: {
     name: string;
