@@ -27,6 +27,8 @@ const entry = (
   endedAt: status === "running" ? null : "2026-10-24T10:00:01.000Z",
 });
 
+const LONG_RUN_CALLS = 150;
+
 function fixture() {
   const bot = {
     id: "bot-1",
@@ -109,15 +111,48 @@ function fixture() {
       seq: 1,
       payload: entry("run-2", "x", "done"),
     },
+    // A long run: call i starts at seq 100 + 2i and finishes right after, except call 49,
+    // which finishes after every other call.
+    ...Array.from({ length: LONG_RUN_CALLS }, (_, index) => [
+      {
+        spaceId: "space-1",
+        threadId: "thread-1",
+        runId: "run-long",
+        type: "run.tool",
+        seq: 100 + 2 * index,
+        payload: entry("run-long", `call-${index}`, "running"),
+      },
+      {
+        spaceId: "space-1",
+        threadId: "thread-1",
+        runId: "run-long",
+        type: "run.tool",
+        seq: index === 49 ? 1_000 : 101 + 2 * index,
+        payload: entry("run-long", `call-${index}`, "done"),
+      },
+    ]).flat(),
   ];
-  const findEvents = vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
-    rows
-      .filter((row) =>
-        Object.entries(where).every(([key, value]) => row[key as keyof typeof row] === value),
-      )
-      .sort((left, right) => left.seq - right.seq),
+  const findEvents = vi.fn(
+    async ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where: Record<string, unknown>;
+      orderBy: { seq: "asc" | "desc" };
+      take?: number;
+    }) =>
+      rows
+        .filter((row) =>
+          Object.entries(where).every(([key, value]) => row[key as keyof typeof row] === value),
+        )
+        .sort((left, right) =>
+          orderBy.seq === "asc" ? left.seq - right.seq : right.seq - left.seq,
+        )
+        .slice(0, take),
   );
   const triggers: Record<string, string> = {
+    "run-long": "user",
     "run-1": "user",
     "run-2": "user",
     "run-peer": "bot_message",
@@ -157,7 +192,10 @@ describe("runs/tools", () => {
     const { call, findEvents } = fixture();
     const result = await call({ botId: "bot-1", runId: "run-1" });
     expect(result.status).toBe(200);
-    expect(result.body.json).toEqual([entry("run-1", "a", "done"), entry("run-1", "b", "running")]);
+    expect(result.body.json).toEqual({
+      tools: [entry("run-1", "a", "done"), entry("run-1", "b", "running")],
+      olderCursor: null,
+    });
     expect(findEvents).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { spaceId: "space-1", threadId: "thread-1", runId: "run-1", type: "run.tool" },
@@ -169,7 +207,31 @@ describe("runs/tools", () => {
     const { call } = fixture();
     const result = await call({ botId: "bot-1", runId: "run-2" });
     expect(result.status).toBe(200);
-    expect(result.body.json).toEqual([]);
+    expect(result.body.json).toEqual({ tools: [], olderCursor: null });
+  });
+
+  it("pages a long run from its newest calls back, with each call on one page", async () => {
+    const { call } = fixture();
+    const ids = (page: { tools: RunTool[] }) => page.tools.map((tool) => tool.callId);
+    const range = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, index) => `call-${from + index}`);
+
+    const newest = await call({ botId: "bot-1", runId: "run-long" });
+    expect(newest.status).toBe(200);
+    expect(ids(newest.body.json)).toEqual(range(50, LONG_RUN_CALLS));
+    expect(newest.body.json.tools.every((tool: RunTool) => tool.status === "done")).toBe(true);
+    // The cursor is the first event of the oldest call shown.
+    expect(newest.body.json.olderCursor).toBe(100 + 2 * 50);
+
+    const older = await call({
+      botId: "bot-1",
+      runId: "run-long",
+      before: newest.body.json.olderCursor,
+    });
+    expect(ids(older.body.json)).toEqual(range(0, 50));
+    // Finished after every newer call started, yet listed once, where it started, as done.
+    expect(older.body.json.tools.at(-1)).toMatchObject({ callId: "call-49", status: "done" });
+    expect(older.body.json.olderCursor).toBeNull();
   });
 
   // The live thread stream drops these runs' tool events; replay must not reveal them either.
@@ -180,7 +242,7 @@ describe("runs/tools", () => {
     const { call, findEvents } = fixture();
     const result = await call({ botId: "bot-1", runId });
     expect(result.status).toBe(200);
-    expect(result.body.json).toEqual([]);
+    expect(result.body.json).toEqual({ tools: [], olderCursor: null });
     expect(findEvents).not.toHaveBeenCalled();
   });
 

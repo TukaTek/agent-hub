@@ -350,8 +350,9 @@ import {
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
-/** A running and a finished event per call: about a thousand calls for one run. */
-const RUN_TOOL_HISTORY_EVENTS = 2_000;
+/** A running and a finished event per call: the newest few thousand calls of one run. */
+const RUN_TOOL_HISTORY_EVENTS = 10_000;
+const RUN_TOOL_PAGE_SIZE = 100;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 /** Silence longer than this on a thread stream is indistinguishable from a dead socket. */
 export const HEARTBEAT_MS = 20_000;
@@ -6735,7 +6736,7 @@ export function createRouter(deps: RouterDeps) {
           { runId: input.runId, type: "run.tool", payload: {} },
           runKindCaches(),
         );
-        if (!visible) return [];
+        if (!visible) return { tools: [], olderCursor: null };
         const events = await deps.prisma.event.findMany({
           where: {
             spaceId: context.actor.spaceId,
@@ -6743,16 +6744,30 @@ export function createRouter(deps: RouterDeps) {
             runId: input.runId,
             type: "run.tool",
           },
-          orderBy: { seq: "asc" },
+          orderBy: { seq: "desc" },
           take: RUN_TOOL_HISTORY_EVENTS,
-          select: { payload: true },
+          select: { seq: true, payload: true },
         });
-        return foldRunTools(
-          events.flatMap((event) => {
+        // A call pages by its first event, so it shows on one page and new calls never shift it.
+        const firstSeq = new Map<string, number>();
+        const calls = foldRunTools(
+          events.reverse().flatMap((event) => {
             const parsed = RunToolSchema.safeParse(event.payload);
-            return parsed.success ? [parsed.data] : [];
+            if (!parsed.success) return [];
+            if (!firstSeq.has(parsed.data.callId)) firstSeq.set(parsed.data.callId, event.seq);
+            return [parsed.data];
           }),
+        ).filter(
+          (call) => input.before === undefined || (firstSeq.get(call.callId) ?? 0) < input.before,
         );
+        const tools = calls.slice(-RUN_TOOL_PAGE_SIZE);
+        return {
+          tools,
+          olderCursor:
+            calls.length > tools.length && tools[0]
+              ? (firstSeq.get(tools[0].callId) ?? null)
+              : null,
+        };
       }),
     },
     voice: {

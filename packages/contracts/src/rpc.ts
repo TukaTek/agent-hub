@@ -1020,8 +1020,20 @@ export const appContract = {
   },
   runs: {
     list: oc.input(z.object({ filter: z.enum(["active", "recent"]) })).output(RunsListOutputSchema),
-    /** Each tool call of one run in a readable thread, in start order. */
-    tools: oc.input(threadTarget.safeExtend({ runId: Id })).output(z.array(RunToolSchema)),
+    /**
+     * The newest tool calls of one run in a readable thread, in start order. `olderCursor`, passed
+     * back as `before`, reads the calls that started earlier; null when there are none.
+     */
+    tools: oc
+      .input(
+        threadTarget.safeExtend({ runId: Id, before: z.number().int().nonnegative().optional() }),
+      )
+      .output(
+        z.object({
+          tools: z.array(RunToolSchema),
+          olderCursor: z.number().int().nonnegative().nullable(),
+        }),
+      ),
   },
   voice: {
     catalog: oc.output(z.array(VoiceCatalogEntrySchema)),

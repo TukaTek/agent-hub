@@ -173,12 +173,15 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
       ]);
       // Pi reports completions without blocking the turn, so the last one may land just after.
       await expect
-        .poll(() =>
-          rpc<Array<Record<string, unknown>>>(handles.app, cookie, "runs/tools", {
-            botId: bot.id,
-            runId: sent.runId,
-          }),
-        )
+        .poll(async () => {
+          const page = await rpc<{ tools: Array<Record<string, unknown>> }>(
+            handles.app,
+            cookie,
+            "runs/tools",
+            { botId: bot.id, runId: sent.runId },
+          );
+          return page.tools;
+        })
         .toEqual([
           expect.objectContaining({
             runId: sent.runId,
