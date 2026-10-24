@@ -1,5 +1,5 @@
 import type { Bot } from "@cortexai-agent-hub/contracts";
-import { Button, Popover, PopoverContent, PopoverTrigger } from "@cortexai-agent-hub/ui-web";
+import { Button, Icon, Popover, PopoverContent, PopoverTrigger } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { Bell, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useState } from "react";
@@ -74,12 +74,7 @@ export function SidebarHeader({
                 : "text-muted-foreground/70 hover:text-foreground/75"
             }`}
           >
-            <Bell
-              size={15}
-              strokeWidth={1.8}
-              fill={activityMode ? "currentColor" : "none"}
-              aria-hidden="true"
-            />
+            <Icon icon={Bell} fill={activityMode ? "currentColor" : "none"} />
           </Button>
         </IconTooltip>
         <IconTooltip label={toggleLabel}>
@@ -91,11 +86,7 @@ export function SidebarHeader({
             data-testid={mini ? "restore-bots-sidebar" : "minimize-bots-sidebar"}
             onClick={() => setBotsSidebarCollapsedPref(!mini)}
           >
-            {mini ? (
-              <PanelLeftOpen size={15} strokeWidth={1.8} aria-hidden="true" />
-            ) : (
-              <PanelLeftClose size={15} strokeWidth={1.8} aria-hidden="true" />
-            )}
+            {mini ? <Icon icon={PanelLeftOpen} /> : <Icon icon={PanelLeftClose} />}
           </Button>
         </IconTooltip>
         <Popover open={createMenuOpen} onOpenChange={setCreateMenuOpen}>
