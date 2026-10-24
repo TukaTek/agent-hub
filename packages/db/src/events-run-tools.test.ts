@@ -83,32 +83,35 @@ describe("run end closes open run tool calls", () => {
     ["run.completed", "completed"],
     ["run.failed", "failed"],
     ["run.cancelled", "cancelled"],
-  ] as const)("%s interrupts every call still running, just before itself", async (type, runStatus) => {
-    const { tx, appended } = fakeTx(runStatus, [
-      call("a", "running"),
-      call("b", "running"),
-      { malformed: true },
-      call("b", "done"),
-      call("c", "running"),
-      { ...call("c", "running"), summary: "command: c updated" },
-    ]);
+  ] as const)(
+    "%s interrupts every call still running, just before itself",
+    async (type, runStatus) => {
+      const { tx, appended } = fakeTx(runStatus, [
+        call("a", "running"),
+        call("b", "running"),
+        { malformed: true },
+        call("b", "done"),
+        call("c", "running"),
+        { ...call("c", "running"), summary: "command: c updated" },
+      ]);
 
-    await appendEventInTransaction(tx, terminal(type));
+      await appendEventInTransaction(tx, terminal(type));
 
-    expect(appended().map((row) => [row.seq, row.type, row.payload])).toEqual([
-      [6, "run.tool", { ...call("a", "interrupted"), endedAt: endedAt.toISOString() }],
-      [
-        7,
-        "run.tool",
-        {
-          ...call("c", "interrupted"),
-          summary: "command: c updated",
-          endedAt: endedAt.toISOString(),
-        },
-      ],
-      [8, type, {}],
-    ]);
-  });
+      expect(appended().map((row) => [row.seq, row.type, row.payload])).toEqual([
+        [6, "run.tool", { ...call("a", "interrupted"), endedAt: endedAt.toISOString() }],
+        [
+          7,
+          "run.tool",
+          {
+            ...call("c", "interrupted"),
+            summary: "command: c updated",
+            endedAt: endedAt.toISOString(),
+          },
+        ],
+        [8, type, {}],
+      ]);
+    },
+  );
 
   it("writes only the terminal event when no call is open", async () => {
     const { tx, fake, appended } = fakeTx("completed", [call("a", "running"), call("a", "done")]);
