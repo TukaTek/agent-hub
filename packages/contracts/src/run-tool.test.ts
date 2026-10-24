@@ -51,6 +51,15 @@ describe("run tool log", () => {
     ).toEqual(["done"]);
   });
 
+  it("treats an interrupted call as finished", () => {
+    expect(RunToolSchema.parse(call("a", "interrupted")).status).toBe("interrupted");
+    expect(
+      foldRunTools([call("a", "running"), call("a", "interrupted"), call("a", "running")]).map(
+        (entry) => entry.status,
+      ),
+    ).toEqual(["interrupted"]);
+  });
+
   it("keeps the earliest start when a resumed attempt finishes the call", () => {
     const [entry] = foldRunTools([
       call("a", "running", "2026-10-24T10:00:00.000Z"),

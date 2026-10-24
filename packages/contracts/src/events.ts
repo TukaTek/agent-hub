@@ -360,7 +360,8 @@ export function foldComputerCommands<T extends ComputerCommand>(events: T[]): T[
 /**
  * One tool call in a run, for the "This run" panel. `summary` is the redacted, one-line
  * argument summary; `error` the redacted failure reason. A paused call stays running until
- * the resumed attempt finishes it under the same `callId`.
+ * the resumed attempt finishes it under the same `callId`; a call still running when its run
+ * ends is closed as `interrupted`.
  */
 export const RUN_TOOL_SUMMARY_MAX_CHARS = 200;
 export const RunToolSchema = z.object({
@@ -368,7 +369,7 @@ export const RunToolSchema = z.object({
   callId: z.string(),
   tool: z.string(),
   summary: z.string().max(RUN_TOOL_SUMMARY_MAX_CHARS),
-  status: z.enum(["running", "done", "failed"]),
+  status: z.enum(["running", "done", "failed", "interrupted"]),
   startedAt: z.string(),
   endedAt: z.string().nullable(),
   error: z.string().max(RUN_TOOL_SUMMARY_MAX_CHARS).optional(),
