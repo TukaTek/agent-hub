@@ -93,8 +93,8 @@
 
 /* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek.
    Not inline, so each `animate-*` utility reads its variable and reduced motion can
-   switch every one off, variants included; `.glass-surface` reads `--shadow-popover`. `rise` is one-time onboarding motion and
-   may run past the 240ms UI ceiling. */
+   switch every one off, variants included; `.glass-surface` reads `--shadow-popover`. All UI motion,
+   including `rise`, is capped at 240ms. */
 @theme {
   --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-pop-in: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
@@ -102,7 +102,7 @@
   --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-shimmer: shimmer 2s linear infinite;
   --animate-status-pulse: status-pulse 1.6s steps(2, jump-none) infinite;
-  --animate-rise: rise 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-rise: rise 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-spot-in: spot-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
   --shadow-popover:
     0 24px 64px -12px color-mix(in srgb, black 45%, transparent),

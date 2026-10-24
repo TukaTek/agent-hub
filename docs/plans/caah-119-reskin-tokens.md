@@ -30,8 +30,7 @@ gains new token keys.
   overrides without screenshot evidence of parity issues.
 - **Motion.** `@theme` animation tokens panel-in, pop-in, pop-out, msg-in,
   shimmer, status-pulse, rise, spot-in with keyframes copied verbatim.
-  `rise` keeps upstream's 320ms because it is one-time onboarding arrival motion,
-  not UI chrome; everything else is <=240ms. Reduced motion sets every token to
+  `rise` is capped at 240ms (upstream uses 320ms); every token is <=240ms. Reduced motion sets every token to
   `none`, so variants (`data-open:animate-pop-in`) are covered too.
 - **Glass.** `--shadow-popover` + `.glass-surface` (inset highlight, 24/64 drop,
   28px backdrop blur); solid `--menu` fill under
