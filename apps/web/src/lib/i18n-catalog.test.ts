@@ -80,6 +80,24 @@ describe("lingui catalogs", () => {
     }
   });
 
+  it("translates the touch running-turn composer hint and retains its placeholder", () => {
+    const message = "{name} is working — send to add this to the running turn";
+    for (const locale of UI_LOCALES) {
+      const catalog = readFileSync(
+        fileURLToPath(new URL(`../locales/${locale}/messages.po`, import.meta.url)),
+        "utf8",
+      );
+      const entry = catalog
+        .split("\n\n")
+        .find((block) => block.includes(`msgid ${JSON.stringify(message)}\n`));
+      const translated = entry?.split("msgstr ")[1];
+      expect(translated, locale).toBeTruthy();
+      expect(translated, locale).not.toBe('""');
+      if (locale !== "en") expect(translated, locale).not.toBe(JSON.stringify(message));
+      expect(translated, locale).toContain("{name}");
+    }
+  });
+
   it("translates bot settings labels and retains placeholders in every locale", () => {
     for (const locale of UI_LOCALES) {
       const catalog = readFileSync(

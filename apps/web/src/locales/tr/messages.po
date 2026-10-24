@@ -196,6 +196,10 @@ msgstr "{name} çalışmasını tamamladı"
 msgid "{name} is working — {key} sends this into the running turn"
 msgstr "{name} çalışıyor — {key} bunu devam eden tura gönderir"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — send to add this to the running turn"
+msgstr "{name} çalışıyor — bunu devam eden tura eklemek için gönderin"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"

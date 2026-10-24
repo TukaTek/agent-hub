@@ -196,6 +196,10 @@ msgstr "{name} 완료"
 msgid "{name} is working — {key} sends this into the running turn"
 msgstr "{name}이(가) 작업 중입니다 — {key}를 누르면 진행 중인 차례에 보냅니다"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — send to add this to the running turn"
+msgstr "{name}이(가) 작업 중입니다 — 보내면 진행 중인 차례에 추가됩니다"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"

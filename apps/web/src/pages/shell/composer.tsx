@@ -31,6 +31,7 @@ import {
   subscribeComposerDraftAccepted,
   writeComposerDraft,
 } from "../../lib/composer-draft";
+import { detectCoarsePointer } from "../../lib/composer-enter-to-send-pref";
 import { isFileDrag, isFilePaste } from "../../lib/pending-attachments";
 import { ComposerReplyPreview } from "./chat-context";
 import type { PendingAttachment } from "./chat-shared";
@@ -393,7 +394,9 @@ export const Composer = memo(function Composer({
   const key = enterToSend ? t`Enter` : isApplePlatform() ? t`⌘ Enter` : t`Ctrl+Enter`;
   const placeholder =
     steerable && name
-      ? t`${name} is working — ${key} sends this into the running turn`
+      ? detectCoarsePointer()
+        ? t`${name} is working — send to add this to the running turn`
+        : t`${name} is working — ${key} sends this into the running turn`
       : activeName
         ? t`Message ${activeName}`
         : t`Message…`;

@@ -196,6 +196,10 @@ msgstr "{name} पूरा हुआ"
 msgid "{name} is working — {key} sends this into the running turn"
 msgstr "{name} काम कर रहा है — {key} इसे चालू बारी में भेजता है"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — send to add this to the running turn"
+msgstr "{name} काम कर रहा है — इसे चालू बारी में जोड़ने के लिए भेजें"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"

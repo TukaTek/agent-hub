@@ -56,9 +56,10 @@ function renderComposer(
     disconnect() {}
   };
   // Reduced motion skips the chip-row resize animation, which jsdom cannot run.
-  window.matchMedia ??= () =>
+  // Every other query (e.g. a coarse pointer) stays false, like a desktop browser.
+  window.matchMedia ??= (query: string) =>
     ({
-      matches: true,
+      matches: query === "(prefers-reduced-motion: reduce)",
       addEventListener() {},
       removeEventListener() {},
     }) as unknown as MediaQueryList;
@@ -632,6 +633,26 @@ describe("while a turn is running", () => {
     expect(textarea.placeholder).toBe(
       "Ada is working — Ctrl+Enter sends this into the running turn",
     );
+  });
+
+  it("drops the keyboard shortcut on a touch device", () => {
+    const matchMedia = window.matchMedia;
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query === "(pointer: coarse)" || query === "(prefers-reduced-motion: reduce)",
+        addEventListener() {},
+        removeEventListener() {},
+      }) as unknown as MediaQueryList;
+    try {
+      const textarea = renderComposer(vi.fn(), {
+        running: true,
+        steerable: true,
+        enterToSend: false,
+      });
+      expect(textarea.placeholder).toBe("Ada is working — send to add this to the running turn");
+    } finally {
+      window.matchMedia = matchMedia;
+    }
   });
 
   it("keeps the usual placeholder when the run cannot take steering", () => {

@@ -196,6 +196,10 @@ msgstr "{name} terminou"
 msgid "{name} is working — {key} sends this into the running turn"
 msgstr "{name} está trabalhando — {key} envia isto para o turno em andamento"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — send to add this to the running turn"
+msgstr "{name} está trabalhando — envie para adicionar isto ao turno em andamento"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"
