@@ -31,6 +31,7 @@ import type {
   WebProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
+  createRunToolLog,
   DEFAULT_CONTEXT_STRATEGY,
   historyCompactJob,
   MEMORY_REVISION_CONFLICT_ERROR,
@@ -2900,6 +2901,19 @@ export function toolCompletionFromResult(
   return { ...base, result, paused };
 }
 
+/** How a tool call ended, with its failure text sanitized for persistence. */
+export function toolCompletionOutcome(
+  completion: AgentToolCompletion,
+  secrets: string[] = [],
+): { outcome: "succeeded" | "error" | "paused"; error?: string } {
+  const error =
+    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  return {
+    outcome: completion.paused ? "paused" : error === undefined ? "succeeded" : "error",
+    ...(error === undefined ? {} : { error: sanitizeConnectorError(error, secrets) }),
+  };
+}
+
 export function toolCompletionAuditPayload(
   completion: AgentToolCompletion,
   secrets: string[] = [],
@@ -2907,16 +2921,15 @@ export function toolCompletionAuditPayload(
   const durationMs = Number.isFinite(completion.durationMs)
     ? Math.max(0, Math.round(completion.durationMs))
     : 0;
-  const error =
-    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  const { outcome, error } = toolCompletionOutcome(completion, secrets);
   const payload: Record<string, unknown> = {
     name: redactSecrets(completion.name, secrets),
     executionId: redactSecrets(completion.executionId, secrets),
     durationMs,
-    outcome: completion.paused ? "paused" : error === undefined ? "succeeded" : "error",
+    outcome,
   };
   if (error !== undefined) {
-    payload.error = sanitizeConnectorError(error, secrets);
+    payload.error = error;
   }
   const memoryResult =
     error === undefined ? memoryToolAuditSummary(completion.name, completion.result) : undefined;
@@ -4677,6 +4690,37 @@ export function createRunExecutor(deps: ExecutorDeps) {
         };
         let handedOff = false;
         let progressRedactor = createStreamingRedactor(runSecrets);
+        // Same redaction as computer.command; runSecrets grows as the run registers more.
+        const runToolLog = createRunToolLog({
+          runId,
+          redact: (text) => redactSecrets(text, runSecrets),
+          record: (payload) =>
+            deps.events
+              .append({
+                spaceId: run.spaceId,
+                threadId: thread.id,
+                botId: bot.id,
+                runId,
+                type: "run.tool",
+                payload,
+              })
+              // The run log is a view; losing an entry must not fail the tool.
+              .catch((error: unknown) => {
+                if (!(error instanceof RunHistoryWriteError)) {
+                  getLogger().error("run tool event", error);
+                }
+              }),
+        });
+        const completeToolCall = async (completion: AgentToolCompletion) => {
+          const target = { spaceId: run.spaceId, threadId: thread.id, botId: bot.id, runId };
+          await appendToolCompletionAudit(deps, target, completion, runSecrets);
+          await runToolLog.finished({
+            name: completion.name,
+            executionId: completion.executionId,
+            durationMs: completion.durationMs,
+            ...toolCompletionOutcome(completion, runSecrets),
+          });
+        };
         const scripted = deps.runtime.describe().capabilities.scripted;
         const script = scripted ? inferScript(task.prompt, takeoverResume?.checkpoint) : undefined;
         const flushProgress = async () => {
@@ -8125,17 +8169,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 if (restoredPendingEffect?.executionId === completion.executionId)
                   restoredPendingEffect = undefined;
                 if (!completion.paused) pendingTurnCheckpoints.delete(completion.executionId);
-                return appendToolCompletionAudit(
-                  deps,
-                  {
-                    spaceId: run.spaceId,
-                    threadId: thread.id,
-                    botId: bot.id,
-                    runId,
-                  },
-                  completion,
-                  runSecrets,
-                );
+                return completeToolCall(completion);
               },
               claimSteering: async (seenIds) => {
                 const steering = await deps.events.claimSteering({
@@ -8391,6 +8425,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 runId,
                 payload: { name: event.name, executionId: event.executionId },
               });
+              await runToolLog.started({
+                name: event.name,
+                args: redactToolArgsForReview(event.args, runSecrets),
+                executionId: event.executionId,
+              });
               pendingToolNames.push(event.name);
               tryFlushPendingTools();
               const loopGuard = advanceToolCallLoopGuard(toolCallStreak, event.name, event.args);
@@ -8447,14 +8486,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 const startedAt = Date.now();
                 try {
                   const result = await applyTool(event.name, event.args, event.executionId);
-                  await appendToolCompletionAudit(
-                    deps,
-                    {
-                      spaceId: run.spaceId,
-                      threadId: thread.id,
-                      botId: bot.id,
-                      runId,
-                    },
+                  await completeToolCall(
                     toolCompletionFromResult(
                       {
                         name: event.name,
@@ -8463,26 +8495,15 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       },
                       result,
                     ),
-                    runSecrets,
                   );
                   if (isToolPauseResult(result)) return;
                 } catch (error) {
-                  await appendToolCompletionAudit(
-                    deps,
-                    {
-                      spaceId: run.spaceId,
-                      threadId: thread.id,
-                      botId: bot.id,
-                      runId,
-                    },
-                    {
-                      name: event.name,
-                      executionId: event.executionId,
-                      durationMs: Date.now() - startedAt,
-                      error,
-                    },
-                    runSecrets,
-                  );
+                  await completeToolCall({
+                    name: event.name,
+                    executionId: event.executionId,
+                    durationMs: Date.now() - startedAt,
+                    error,
+                  });
                   throw error;
                 }
               }
