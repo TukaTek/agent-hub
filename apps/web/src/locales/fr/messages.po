@@ -192,6 +192,10 @@ msgstr "{name} échoué"
 msgid "{name} finished"
 msgstr "{name} terminé"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — {key} sends this into the running turn"
+msgstr "{name} travaille — {key} envoie ceci dans le tour en cours"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"
@@ -319,6 +323,10 @@ msgstr "{toolCount, plural, one {# outil} other {# outils}}"
 #: src/pages/shell/composer.tsx
 msgid "@{0}"
 msgstr "@{0}"
+
+#: src/pages/shell/composer.tsx
+msgid "⌘ Enter"
+msgstr "⌘ Entrée"
 
 #. placeholder {0}: amount / 100
 #: src/components/ModelCredits.tsx
@@ -2056,6 +2064,10 @@ msgstr "Cron"
 msgid "Cron expression"
 msgstr "Expression Cron"
 
+#: src/pages/shell/composer.tsx
+msgid "Ctrl+Enter"
+msgstr "Ctrl+Entrée"
+
 #: src/components/AccountAccess.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Current password"
@@ -2391,6 +2403,10 @@ msgstr ""
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Engage when... Ignore..."
 msgstr "Répondre quand... Ignorer..."
+
+#: src/pages/shell/composer.tsx
+msgid "Enter"
+msgstr "Entrée"
 
 #: src/lib/user-error.ts
 msgid "Enter a password"
@@ -3929,6 +3945,7 @@ msgid "Pull request"
 msgstr "Demande de fusion"
 
 #: src/pages/ActivityList.tsx
+#: src/pages/shell/composer-queued.tsx
 msgid "Queued"
 msgstr "En file d'attente"
 
