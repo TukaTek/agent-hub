@@ -15,6 +15,7 @@ import {
 import { ATTACHMENT_MAX_BYTES, type MessageBlock } from "@cortexai-agent-hub/contracts";
 import {
   answerRunInput,
+  contentEncryptionOf,
   parseComputerMode,
   runAsSystem,
   runAsTenant,
@@ -591,7 +592,10 @@ describeIntegration("reusable credential lifecycle", () => {
       const artifact = await db.artifact.findUniqueOrThrow({
         where: { id: (results[2] as { artifactId: string }).artifactId },
       });
-      const attached = await new LocalArtifactStore(dataDir).get(artifact.storageKey, {
+      const attached = await new LocalArtifactStore(
+        dataDir,
+        contentEncryptionOf(handles.prisma)?.ring,
+      ).get(artifact.storageKey, {
         operationId: "test",
         traceId: "test",
         spaceId: artifact.spaceId,
