@@ -24,14 +24,16 @@ vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
 const RUN_SECRET = "fake-run-token-0123456789abcdef";
 const MODEL_TOKEN = "fake-model-token-9876543210";
 
-const calls = [
+type ToolCall = { name: string; executionId: string; args: Record<string, unknown> };
+
+const calls: ToolCall[] = [
   {
     name: "save_memory",
     executionId: "call-save",
     args: { content: `Deploy key is ${RUN_SECRET}`, token: MODEL_TOKEN },
   },
   { name: "recall_memory", executionId: "call-recall", args: { query: "deploy key" } },
-] as const;
+];
 
 const memory = {
   describe: () => ({
@@ -48,8 +50,11 @@ const memory = {
 } as unknown as SemanticMemoryProvider;
 
 /** Pi runs each tool through executeTool and reports it back through onToolCompleted. */
-async function* piLikeRun(request: AgentRunRequest): AsyncGenerator<AgentRuntimeEvent> {
-  for (const call of calls) {
+async function* piLikeRun(
+  request: AgentRunRequest,
+  toolCalls: ToolCall[],
+): AsyncGenerator<AgentRuntimeEvent> {
+  for (const call of toolCalls) {
     yield { type: "tool", name: call.name, args: { ...call.args }, executionId: call.executionId };
     const result = await request.executeTool!(call.name, { ...call.args }, call.executionId);
     await request.onToolCompleted?.({
@@ -63,14 +68,14 @@ async function* piLikeRun(request: AgentRunRequest): AsyncGenerator<AgentRuntime
 }
 
 /** The scripted runtime only reports calls; the executor runs and audits them. */
-async function* scriptedRun(): AsyncGenerator<AgentRuntimeEvent> {
-  for (const call of calls) {
+async function* scriptedRun(toolCalls: ToolCall[]): AsyncGenerator<AgentRuntimeEvent> {
+  for (const call of toolCalls) {
     yield { type: "tool", name: call.name, args: { ...call.args }, executionId: call.executionId };
   }
   yield { type: "done", text: "Done" };
 }
 
-async function runWith(scripted: boolean) {
+async function runWith(scripted: boolean, toolCalls = calls) {
   const sandbox = new FakeSandboxProvider();
   lifecycle.computer = await sandbox.provision({ botId: "bot-1", homePath: "home" }, {
     operationId: "provision",
@@ -187,7 +192,8 @@ async function runWith(scripted: boolean) {
     deploymentModelKey: "fake-deployment-key",
     runtime: {
       describe: () => ({ capabilities: { scripted } }),
-      run: scripted ? scriptedRun : piLikeRun,
+      run: (request: AgentRunRequest) =>
+        scripted ? scriptedRun(toolCalls) : piLikeRun(request, toolCalls),
     },
     sandbox,
     home: { commit: vi.fn(async () => "fixture-revision") },
@@ -257,5 +263,22 @@ describe.each([
     expect(logged).not.toContain(RUN_SECRET);
     expect(logged).not.toContain(MODEL_TOKEN);
     expect(entries[0]!.summary).toBe("content: Deploy key is [redacted], token: [redacted]");
+  });
+
+  it("never logs a credential the run has not registered yet", async () => {
+    const pat = "fake-unregistered-pat-0123456789";
+    const { entries } = await runWith(scripted, [
+      {
+        name: "add_mcp_server",
+        executionId: "call-mcp",
+        args: { name: "github", command: "npx", env: { GITHUB_PAT: pat } },
+      },
+    ]);
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(JSON.stringify(entries)).not.toContain(pat);
+    expect(entries[0]!.summary).toBe(
+      'name: github, command: npx, env: {"GITHUB_PAT":"[redacted]"}',
+    );
   });
 });

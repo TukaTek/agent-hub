@@ -1,5 +1,66 @@
 import { RUN_TOOL_SUMMARY_MAX_CHARS, type RunTool } from "@cortexai-agent-hub/contracts";
 
+const MASK = "[redacted]";
+/** Key text that names a credential anywhere in it, as in `accessToken` or `client_secret`. */
+const CREDENTIAL_KEY = /passw(or)?d|passphrase|secret|token|apikey|credential|authorization|cookie/;
+/** Key words that name a credential only as a whole word, so `path` is not `pat`. */
+const CREDENTIAL_KEY_WORDS = new Set(["auth", "key", "pat", "pin", "otp", "pwd", "session", "jwt"]);
+/** Maps whose every value is masked, whatever its key: environments and request headers. */
+const CREDENTIAL_MAPS = new Set(["env", "environment", "headers"]);
+/** Credential shapes in free text: bearer values, known token prefixes, URL passwords, assignments. */
+const CREDENTIAL_TEXT: Array<[RegExp, string]> = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, MASK],
+  [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${MASK}`],
+  [
+    /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|sk-[\w-]{16,}|sk_(?:live|test)_\w{16,}|xox[abposr]-[\w-]{10,}|AKIA[0-9A-Z]{16}|AIza[\w-]{35}|eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,})/g,
+    MASK,
+  ],
+  [/(\/\/[^/\s:@]+:)[^/\s@]+@/g, `$1${MASK}@`],
+  [
+    /\b([\w.-]*(?:passw(?:or)?d|passphrase|secret|token|api[_-]?key|credential|authorization)[\w.-]*|(?:[A-Za-z0-9]+[_.-])*(?:auth|key|pat|pin|otp|pwd|session|jwt)(?:[_.-][A-Za-z0-9]+)*)(["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',;&]+)/gi,
+    `$1$2${MASK}`,
+  ],
+  // Long random-looking runs that mix upper case, lower case and digits.
+  [/\b(?=[\w-]*[A-Z])(?=[\w-]*[a-z])(?=[\w-]*\d)[\w-]{32,}/g, MASK],
+];
+
+function isCredentialKey(key: string): boolean {
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  return (
+    CREDENTIAL_KEY.test(words.join("")) || words.some((word) => CREDENTIAL_KEY_WORDS.has(word))
+  );
+}
+
+function maskCredentialText(text: string): string {
+  return CREDENTIAL_TEXT.reduce((masked, [pattern, mask]) => masked.replace(pattern, mask), text);
+}
+
+/**
+ * Masks credentials the run never registered: values under credential-shaped keys, every value
+ * of an environment or header map, and credential-shaped text anywhere else.
+ */
+function maskCredentials(value: unknown, key?: string): unknown {
+  if (key !== undefined && isCredentialKey(key)) return MASK;
+  const everyValue = key !== undefined && CREDENTIAL_MAPS.has(key.toLowerCase());
+  if (typeof value === "string") return everyValue ? MASK : maskCredentialText(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => (everyValue ? MASK : maskCredentials(item)));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [
+        name,
+        everyValue ? MASK : maskCredentials(item, name),
+      ]),
+    );
+  }
+  return everyValue && value !== null && value !== undefined ? MASK : value;
+}
+
 /** Text is redacted whole before it is clipped, so a clip never exposes part of a secret. */
 function clipRedacted(text: string, redact: (text: string) => string): string {
   const line = redact(text).replace(/\s+/g, " ").trim();
@@ -10,26 +71,30 @@ function clipRedacted(text: string, redact: (text: string) => string): string {
   return `${line.slice(0, end)}…`;
 }
 
-function argumentText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === null || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
+function argumentText(key: string, value: unknown): string {
   try {
-    return JSON.stringify(value) ?? "";
+    const masked = maskCredentials(value, key);
+    if (typeof masked === "string") return masked;
+    if (masked === null || typeof masked === "number" || typeof masked === "boolean") {
+      return String(masked);
+    }
+    return JSON.stringify(masked) ?? "";
   } catch {
     return "[unserializable]";
   }
 }
 
-/** One redacted line of `key: value` pairs, at most RUN_TOOL_SUMMARY_MAX_CHARS long. */
+/**
+ * One redacted line of `key: value` pairs, at most RUN_TOOL_SUMMARY_MAX_CHARS long. Credentials
+ * are masked by key and shape, then by the run's registered secrets, before the line is clipped.
+ */
 export function summarizeToolArgs(
   args: Record<string, unknown>,
   redact: (text: string) => string,
 ): string {
   return clipRedacted(
     Object.entries(args)
-      .map(([key, value]) => `${key}: ${argumentText(value)}`)
+      .map(([key, value]) => `${key}: ${argumentText(key, value)}`)
       .join(", "),
     redact,
   );
@@ -108,7 +173,7 @@ export function createRunToolLog(options: {
         status: completion.outcome === "error" ? "failed" : "done",
         endedAt: endedAt.toISOString(),
         ...(completion.outcome === "error" && completion.error
-          ? { error: clipRedacted(completion.error, options.redact) }
+          ? { error: clipRedacted(maskCredentialText(completion.error), options.redact) }
           : {}),
       });
     },

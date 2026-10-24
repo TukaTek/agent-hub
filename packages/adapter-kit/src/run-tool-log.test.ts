@@ -63,6 +63,73 @@ describe("summarizeToolArgs", () => {
     const clipped = summarizeToolArgs({ text: `${"x".repeat(185)}${FAKE_TOKEN}` }, redact);
     expect(clipped).not.toContain(FAKE_TOKEN.slice(0, 8));
   });
+
+  // None of these markers is a registered run secret, so only the summary's own masking hides them.
+  it("masks credentials the run never registered, by key and by shape", () => {
+    const keyed = {
+      env: { GITHUB_PAT: "fake-unregistered-pat-001", LOG_LEVEL: "fake-env-value-002" },
+      headers: { "X-Custom": "fake-header-value-003" },
+      apiKey: "fake-api-key-004",
+      client_secret: "fake-client-secret-005",
+      password: "fake-password-006",
+      accessToken: "fake-access-token-007",
+      private_key: "fake-private-key-008",
+      auth: { user: "fixture", pass: "fake-nested-auth-009" },
+    };
+    const shaped = {
+      note: `use ghp_${"F".repeat(36)} or github_pat_${"A1b2".repeat(6)}`,
+      command: "GITHUB_TOKEN=fake-inline-token-010 gh api user",
+      url: "https://fixture:fake-url-password-011@git.example.test/repo.git",
+      header: `Authorization: Bearer ${"Zx9".repeat(8)}`,
+      blob: "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8",
+    };
+    const markers = [
+      ...Object.values(keyed).flatMap((value) =>
+        typeof value === "string" ? [value] : Object.values(value),
+      ),
+      "fake-inline-token-010",
+      "fake-url-password-011",
+      "F".repeat(36),
+      "A1b2A1b2",
+      "Zx9Zx9",
+      "a1B2c3D4e5F6",
+    ].filter((marker) => marker !== "fixture");
+    // One argument per summary, so no marker hides past the clip.
+    for (const [key, value] of Object.entries({ ...keyed, ...shaped })) {
+      const summary = summarizeToolArgs({ [key]: value }, (text) => text);
+      expect(summary.length).toBeLessThan(RUN_TOOL_SUMMARY_MAX_CHARS);
+      for (const marker of markers) expect(summary).not.toContain(marker);
+    }
+    // Ordinary arguments, and the names of masked keys, stay readable.
+    const summary = summarizeToolArgs(
+      { name: "github", path: "notes/pat.txt", env: keyed.env },
+      (text) => text,
+    );
+    expect(summary).toMatch(/^name: github, path: notes\/pat\.txt, env: .*GITHUB_PAT/);
+  });
+
+  it("keeps ordinary values readable", () => {
+    const args = {
+      commit: "0123456789abcdef0123456789abcdef01234567",
+      id: "123e4567-e89b-12d3-a456-426614174000",
+      path: "src/key-value/PathResolver.ts",
+      query: "which key opens the deploy settings?",
+      max_results: 5,
+    };
+    expect(summarizeToolArgs(args, (text) => text)).toBe(
+      Object.entries(args)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(", "),
+    );
+  });
+
+  it("masks a credential that straddles the clip before clipping", () => {
+    const summary = summarizeToolArgs(
+      { text: "x".repeat(160), env: { GITHUB_PAT: "fake-unregistered-pat-001" } },
+      (text) => text,
+    );
+    expect(summary).not.toContain("fake-unr");
+  });
 });
 
 describe("createRunToolLog", () => {
@@ -106,6 +173,17 @@ describe("createRunToolLog", () => {
     expect(failed.status).toBe("failed");
     expect(failed.error!.length).toBeLessThanOrEqual(RUN_TOOL_SUMMARY_MAX_CHARS);
     expect(JSON.stringify(records)).not.toContain(FAKE_TOKEN);
+  });
+
+  it("masks an unregistered credential in failure text", async () => {
+    const { log, records } = fixture();
+    await log.finished({
+      name: "add_mcp_server",
+      executionId: "call-1",
+      outcome: "error",
+      error: "spawn failed: GITHUB_PAT=fake-unregistered-pat-001 rejected",
+    });
+    expect(records.at(-1)!.error).toBe("spawn failed: GITHUB_PAT=[redacted] rejected");
   });
 
   it("keeps a paused call running", async () => {
