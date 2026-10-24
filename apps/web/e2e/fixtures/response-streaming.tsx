@@ -116,7 +116,7 @@ function MessageRow({ message }: { message: ThreadMessage }) {
       <div className="relative flex justify-end" data-message-id={message.id}>
         <div
           data-testid="message-user-bubble"
-          className="max-w-full whitespace-pre-wrap wrap-anywhere rounded-[20px] bg-chat-user px-[18px] py-3 text-[15.5px] leading-[1.45] text-chat-user-foreground"
+          className="max-w-full whitespace-pre-wrap wrap-anywhere rounded-[20px] bg-chat-user px-[18px] py-3 chat-copy text-chat-user-foreground"
           dir="auto"
         >
           {text}
@@ -145,7 +145,7 @@ function MessageRow({ message }: { message: ThreadMessage }) {
       {narration.length > 0 ? (
         <div
           data-testid="message-bot-bubble"
-          className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
+          className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 chat-copy text-foreground/90"
           dir="auto"
         >
           {narration.map((block, i) => (
