@@ -756,6 +756,7 @@ export class PiAgentRuntime implements AgentRuntime {
                   call.id === restored.pendingToolCallId &&
                   (call.name === "ask_user" || call.name === "request_takeover");
                 let result: AgentToolResult<JsonValue | undefined>;
+                let failure: unknown;
                 try {
                   signal.throwIfAborted();
                   const args = validateToolArguments(tool, {
@@ -774,6 +775,7 @@ export class PiAgentRuntime implements AgentRuntime {
                     : await tool.execute(call.id, args, signal);
                 } catch (error) {
                   signal.throwIfAborted();
+                  failure = error;
                   result = {
                     content: [
                       {
@@ -784,6 +786,22 @@ export class PiAgentRuntime implements AgentRuntime {
                     details: {},
                     isError: true,
                   };
+                }
+                if (interaction) {
+                  // The answer completes the paused call without running it, so report it here.
+                  await Promise.resolve(
+                    request.onToolCompleted?.({
+                      name: call.name,
+                      executionId: JSON.stringify([
+                        "pi-tool",
+                        host.agentNamespace ?? "main",
+                        call.id,
+                      ]),
+                      durationMs: 0,
+                      result,
+                      ...(failure === undefined ? {} : { error: failure }),
+                    }),
+                  ).catch(() => undefined);
                 }
                 agent.state.messages.push({
                   role: "toolResult",

@@ -59,6 +59,7 @@ import {
   HistorySearchInputSchema,
   isAttachmentImageMimeType,
   OPENAI_COMPATIBLE_PROVIDER_ID,
+  RunToolSchema,
 } from "@cortexai-agent-hub/contracts";
 import type { ActionApprovalRule, ToolCallStreak } from "@cortexai-agent-hub/core";
 import {
@@ -4680,11 +4681,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
         let terminalCheckpointComplete = false;
         let approvalPausePending = false;
         const pendingTurnCheckpoints = new Map<string, () => string>();
-        const persistTurnCheckpoint = async (executionId?: string) => {
+        const persistTurnCheckpoint = async (executionId: string | undefined, name: string) => {
           const capture = executionId ? pendingTurnCheckpoints.get(executionId) : undefined;
           if (capture) {
             const saved = JSON.parse(capture());
             saved.effectOccurrences = effectOccurrences;
+            // The resumed attempt finishes this call's log entry instead of starting another.
+            saved.runTool = await runToolLog.pending(executionId!, name);
             await saveRunTurnCheckpoint(deps.prisma, run, workerId, fence, JSON.stringify(saved));
           }
         };
@@ -5616,7 +5619,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return pauseForApproval();
             }
             await workspaceCheckpoint.flush();
-            await persistTurnCheckpoint(executionId);
+            await persistTurnCheckpoint(executionId, name);
             await settleRunningHelpers();
             const paused = await deps.events.pauseRunForInput({
               spaceId: run.spaceId,
@@ -7238,7 +7241,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return pauseForSecret();
             }
             await workspaceCheckpoint.flush();
-            await persistTurnCheckpoint(executionId);
+            await persistTurnCheckpoint(executionId, name);
             await settleRunningHelpers();
             const paused = await deps.events.pauseRunForInput({
               spaceId: run.spaceId,
@@ -7855,6 +7858,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
               restoredPendingEffect = saved.effectOccurrences.findLast(
                 (entry) => entry.executionId === pendingExecutionId,
               );
+              const pendingRunTool = RunToolSchema.safeParse(saved.runTool?.entry);
+              if (
+                saved.runTool?.executionId === pendingExecutionId &&
+                pendingRunTool.success &&
+                pendingRunTool.data.runId === runId
+              ) {
+                runToolLog.resume({ executionId: pendingExecutionId, entry: pendingRunTool.data });
+              }
               for (const { fingerprint, occurrence } of saved.effectOccurrences) {
                 mutatingEffectOccurrences.set(
                   fingerprint,
@@ -8310,7 +8321,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 label: redactSecrets(action.label, runSecrets),
               }));
               await workspaceCheckpoint.flush();
-              await persistTurnCheckpoint(event.executionId);
+              await persistTurnCheckpoint(event.executionId, "ask_user");
               await settleRunningHelpers();
               const paused = await deps.events.pauseRunForInput({
                 spaceId: run.spaceId,
@@ -8386,7 +8397,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               if (!(await holdComputerExecutionLeaseForTakeover(deps.prisma, computerLease))) {
                 throw new Error("Computer lease expired before takeover");
               }
-              await persistTurnCheckpoint(event.executionId);
+              await persistTurnCheckpoint(event.executionId, "request_takeover");
               await settleRunningHelpers();
               const paused = await deps.events.pauseRunForTakeover({
                 spaceId: run.spaceId,

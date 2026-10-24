@@ -244,6 +244,44 @@ describe("createRunToolLog", () => {
     ]);
   });
 
+  it("lets the resumed attempt finish a paused call's own entry", async () => {
+    const first = fixture();
+    await first.log.started({ name: "ask_user", args: { question: "Which?" }, executionId: "q" });
+    await first.log.finished({ name: "ask_user", executionId: "q", outcome: "paused" });
+    const pending = await first.log.pending("q", "ask_user");
+
+    const records: RunTool[] = [];
+    const resumed = createRunToolLog({
+      runId: "run-1",
+      attemptId: "attempt-2",
+      redact,
+      record: (entry) => {
+        records.push(entry);
+      },
+    });
+    resumed.resume(pending);
+    // An interaction's answer completes it without a start report.
+    await resumed.finished({ name: "ask_user", executionId: "q", outcome: "succeeded" });
+    // The provider reuses the id for a new question, which gets its own entry.
+    await resumed.started({ name: "ask_user", args: { question: "Then?" }, executionId: "q" });
+    expect(foldRunTools([...first.records, ...records]).map((entry) => entry.status)).toEqual([
+      "done",
+      "running",
+    ]);
+    expect(records[0]).toMatchObject({ callId: "attempt-1:1", summary: "question: Which?" });
+  });
+
+  it("logs a pausing call whose start has not been reported yet", async () => {
+    const { log, records } = fixture();
+    const pending = await log.pending("call-1", "request_secret");
+    await log.started({ name: "request_secret", args: { label: "Code" }, executionId: "call-1" });
+    expect(records.map((entry) => [entry.callId, entry.status, entry.summary])).toEqual([
+      ["attempt-1:1", "running", ""],
+      ["attempt-1:1", "running", "label: Code"],
+    ]);
+    expect(pending.entry.callId).toBe("attempt-1:1");
+  });
+
   it("keeps calls separate by call id", async () => {
     const { log, records } = fixture();
     await log.started({ name: "web_search", args: { q: "a" }, executionId: "call-1" });

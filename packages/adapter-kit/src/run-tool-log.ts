@@ -115,12 +115,22 @@ export interface RunToolLog {
     durationMs?: number;
     error?: string;
   }): Promise<void>;
+  /**
+   * The entry of a call that is pausing the run, to save with the paused turn. Logs a running
+   * entry when the call's start has not been reported yet.
+   */
+  pending(executionId: string, name: string): Promise<PendingRunTool>;
+  /** Continue a call paused by an earlier attempt, so this attempt finishes the same entry. */
+  resume(call: PendingRunTool): void;
 }
 
-interface TrackedCall {
+/** A tool call and its log entry, saved with a paused turn so the resumed attempt can finish it. */
+export interface PendingRunTool {
   executionId: string;
   entry: RunTool;
 }
+
+type TrackedCall = PendingRunTool;
 
 /**
  * Tracks one attempt's tool calls as `run.tool` entries. Providers may reuse a call id (often
@@ -193,6 +203,9 @@ export function createRunToolLog(options: {
         return;
       }
       if (known) unfinished.splice(index, 1);
+      // A resumed interaction finishes without a start report; it must not absorb a later call.
+      const unstartedIndex = unstarted.indexOf(tracked);
+      if (known && unstartedIndex >= 0) unstarted.splice(unstartedIndex, 1);
       await record(tracked, {
         ...tracked.entry,
         status: completion.outcome === "error" ? "failed" : "done",
@@ -201,6 +214,28 @@ export function createRunToolLog(options: {
           ? { error: clipRedacted(maskCredentialText(completion.error), options.redact) }
           : {}),
       });
+    },
+    async pending(executionId, name) {
+      const index = unfinished.findLastIndex(
+        (call) => call.executionId === executionId && call.entry.tool === name,
+      );
+      if (index >= 0) return { ...unfinished[index]! };
+      const tracked = track(executionId, {
+        tool: name,
+        summary: "",
+        status: "running",
+        startedAt: now().toISOString(),
+        endedAt: null,
+      });
+      unstarted.push(tracked);
+      unfinished.push(tracked);
+      await record(tracked, tracked.entry);
+      return { ...tracked };
+    },
+    resume(call) {
+      const tracked = { ...call };
+      unstarted.push(tracked);
+      unfinished.push(tracked);
     },
   };
 }
