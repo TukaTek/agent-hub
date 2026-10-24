@@ -1,0 +1,9 @@
+# Optional drop-in: /etc/systemd/system/cortexai-agent-hub-backup.service.d/alerts.conf
+[Unit]
+OnFailure=cortexai-agent-hub-backup-alert.service
+
+[Service]
+ExecStartPost=-/usr/local/sbin/cortexai-agent-hub-host-alert backup-failure ""
+ReadWritePaths=/var/lib/cortexai-agent-hub/alerts
+StateDirectory=cortexai-agent-hub/alerts
+StateDirectoryMode=0700

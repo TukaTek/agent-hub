@@ -44,12 +44,14 @@ import {
   teachRecordingTtlMs,
 } from "@cortexai-agent-hub/core";
 import {
+  clearRunTurnCheckpoints,
   type createRepos,
   expireComputerExecutionLeases,
   IsolationError,
   type PrismaClient,
   type ThreadEvents,
 } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
 
 type TaughtSkillRow = {
@@ -119,14 +121,15 @@ async function cancelActiveRuns(
   _actor: Actor,
   botId: string,
 ): Promise<void> {
-  const activeRuns = await deps.prisma.run.findMany({
-    where: { botId, status: { in: [...ACTIVE_RUN_STATUSES] } },
-    select: { id: true },
-  });
-  await deps.prisma.run.updateMany({
+  const activeRuns = await deps.prisma.run.updateManyAndReturn({
     where: { botId, status: { in: [...ACTIVE_RUN_STATUSES] } },
     data: { status: "cancelled", completedAt: new Date() },
+    select: { id: true },
   });
+  await clearRunTurnCheckpoints(
+    deps.prisma,
+    activeRuns.map((run) => run.id),
+  );
   await expireComputerExecutionLeases(deps.prisma, { botId });
   await deps.prisma.computer.updateMany({
     where: { executionBotId: botId },
@@ -164,11 +167,14 @@ async function ensureGraphicalComputer(
       }
       throw error;
     }
+    const computerId = bot.computer.id;
     try {
-      await provisionComputer(deps, bot.computer.id, {
-        ...ctx,
-        screenLeaseId: screenLeaseIdForRun(lease, manualRunId),
-      });
+      await getLogger().withContext({ reason: "teaching" }, () =>
+        provisionComputer(deps, computerId, {
+          ...ctx,
+          screenLeaseId: screenLeaseIdForRun(lease, manualRunId),
+        }),
+      );
     } catch (error) {
       if (error instanceof ComputerBusyError) {
         throw new ORPCError("CONFLICT", { message: "Computer is busy" });

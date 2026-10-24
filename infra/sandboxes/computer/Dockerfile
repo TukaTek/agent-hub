@@ -28,6 +28,8 @@ FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2
 # Dev tools let bots clone repos and fetch artifacts; containers run uid 1000
 # with no privilege escalation, so nothing can be installed at runtime.
 # Compilers stay in the builder stage; heavier toolchains are a separate call.
+# The bot browser: chromium by default, or BROWSER=brave (installed below).
+ARG BROWSER=chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
@@ -52,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     procps \
     bash \
-    chromium \
+    $([ "$BROWSER" = chromium ] && echo chromium) \
     fonts-liberation \
     fonts-dejavu-core \
     fonts-noto-cjk \
@@ -80,6 +82,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && useradd --uid 1000 --gid cortexai-agent-hub --create-home --shell /bin/bash cortexai-agent-hub \
   && install -d -m 755 /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0 \
   && ln -sfn /bin/true /usr/bin/xmessage
+# Brave replaces Chromium only when built with BROWSER=brave. The default
+# build installs Chromium above, so this step does nothing for it.
+RUN set -eux; \
+    case "$BROWSER" in \
+      chromium) ;; \
+      brave) \
+        keyring=/usr/share/keyrings/brave-browser-archive-keyring.gpg; \
+        curl -fsSLo "$keyring" https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg; \
+        echo "deb [signed-by=$keyring arch=$(dpkg --print-architecture)] https://brave-browser-apt-release.s3.brave.com/ stable main" \
+          > /etc/apt/sources.list.d/brave-browser-release.list; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends brave-browser; \
+        rm -rf /var/lib/apt/lists/*; \
+        mkdir -p /etc/brave/policies/managed; \
+        printf '%s\n' '{' \
+          '  "BraveRewardsDisabled": true,' \
+          '  "BraveWalletDisabled": true,' \
+          '  "BraveAIChatEnabled": false,' \
+          '  "BraveVPNDisabled": true,' \
+          '  "BraveNewsDisabled": true,' \
+          '  "BraveTalkDisabled": true' \
+          '}' > /etc/brave/policies/managed/cortexai-agent-hub.json ;; \
+      *) echo "unsupported BROWSER: $BROWSER (use chromium or brave)" >&2; exit 1 ;; \
+    esac
 RUN ln -s "$(dpkg -L libnss-wrapper | grep '/libnss_wrapper.so$')" /usr/local/lib/libnss_wrapper.so
 ARG TARGETARCH
 ARG UV_VERSION=0.12.19
@@ -163,6 +189,9 @@ RUN ldconfig \
     /usr/local/share/cortexai-agent-hub/desktop/Xresources /usr/local/share/cortexai-agent-hub/desktop/browser.desktop.in \
     /usr/local/share/cortexai-agent-hub/desktop/terminal.desktop /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0/settings.ini \
     /etc/profile.d/cortexai-agent-hub-local-bin.sh /usr/local/share/cortexai-agent-hub-desktop-smoke.py
+# Agent-authored scripts often use the unversioned name. Keep it on the installed Python 3.
+RUN ln -s /usr/bin/python3 /usr/local/bin/python \
+  && python -c 'import sys; assert sys.version_info.major == 3'
 EXPOSE 7070 6080 6081 6082 6083 6084 6085 6086 6087 6088 6089 6090 6091 6092 6093 6094 6095
 # Docker exec does not inherit PID 1's exports, so every process gets the same
 # identity lookup. Startup creates these private files for the effective UID/GID.

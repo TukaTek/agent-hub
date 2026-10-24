@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { runJobKey } from "@cortexai-agent-hub/adapter-kit";
 import {
-  ComposioEmulator,
+  ComposioConnector,
   createScheduleFromTool,
   DesktopSandboxProvider,
+  DestinationEmulator,
+  FakeComposioClient,
   FakeSandboxProvider,
   handoffToGroupBot,
-  ManagedSandboxEmulator,
+  listPiCatalog,
   organizeBot,
   toComputerRef,
 } from "@cortexai-agent-hub/adapters";
@@ -19,12 +21,15 @@ import {
   createThreadEvents,
   createThreadMessage,
   RunHistoryWriteError,
+  runAsSystem,
 } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
 import { sessionCookieHeader } from "./index.js";
+import { createModelConnectionFixtureFetch } from "./model-connection-fixture.js";
+import { asSystem } from "./system-db.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 process.env.WAKEUP_DRIVER = "memory";
@@ -39,7 +44,8 @@ describeJourneys("required product journeys", () => {
   let app: App;
   let stop: () => Promise<void>;
   let prisma: Awaited<ReturnType<typeof createApp>>["prisma"];
-  let connector: Awaited<ReturnType<typeof createApp>>["connector"];
+  let appPrisma: Awaited<ReturnType<typeof createApp>>["prisma"];
+  const connector = new DestinationEmulator();
   let executor: Awaited<ReturnType<typeof createApp>>["executor"];
   let jobs: Awaited<ReturnType<typeof createApp>>["jobs"];
   let sandbox: Awaited<ReturnType<typeof createApp>>["sandbox"];
@@ -117,16 +123,18 @@ describeJourneys("required product journeys", () => {
   beforeAll(async () => {
     const { createApp } = await import("../../../apps/api/src/app.ts");
     const handles = await createApp({
+      modelConnectionFetch: createModelConnectionFixtureFetch(listPiCatalog()),
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,
       sandboxProvider: "fake",
       agentRuntime: "scripted",
-      composio: new ComposioEmulator(),
+      composio: new ComposioConnector({ client: new FakeComposioClient() }),
+      connectors: [connector],
     });
     app = handles.app;
     stop = handles.stop;
-    prisma = handles.prisma;
-    connector = handles.connector;
+    prisma = asSystem(handles.prisma);
+    appPrisma = handles.prisma;
     executor = handles.executor;
     jobs = handles.jobs;
     sandbox = handles.sandbox;
@@ -568,6 +576,51 @@ describeJourneys("required product journeys", () => {
     expect(bobBot.id).not.toBe(chief.id);
   });
 
+  it("guards memory edits by revision while preserving legacy clients", async () => {
+    const cookie = await signup(
+      app,
+      `memory-revision-${stamp}@cortexai-agent-hub.test`,
+      "Memory revisions",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Keeper",
+      title: "Memory",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    const [doc] = await rpc<Array<{ id: string; revision: number }>>(app, cookie, "memory/list", {
+      botId: bot.id,
+    });
+    if (!doc) throw new Error("Missing seeded memory");
+    await rpc(app, cookie, "memory/update", { documentId: doc.id, content: "A\nB" });
+    const revisionCount = await prisma.memoryRevision.count({ where: { documentId: doc.id } });
+    const stale = await raw(app, cookie, "memory/update", {
+      documentId: doc.id,
+      content: "A'",
+      expectedRevision: doc.revision,
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ json: { code: "CONFLICT" } });
+    expect(await prisma.memoryRevision.count({ where: { documentId: doc.id } })).toBe(
+      revisionCount,
+    );
+    expect(await prisma.memoryDocument.findUniqueOrThrow({ where: { id: doc.id } })).toMatchObject({
+      content: "A\nB",
+      revision: doc.revision + 1,
+    });
+    expect(
+      await rpc(app, cookie, "memory/update", {
+        documentId: doc.id,
+        content: "current",
+        expectedRevision: doc.revision + 1,
+      }),
+    ).toMatchObject({ content: "current", revision: doc.revision + 2 });
+    expect(
+      await rpc(app, cookie, "memory/update", { documentId: doc.id, content: "legacy" }),
+    ).toMatchObject({ content: "legacy", revision: doc.revision + 3 });
+  });
+
   it("clears a conversation without removing the bot, computer, memory, or routines", async () => {
     const cookie = await signup(app, `clear-j-${stamp}@cortexai-agent-hub.test`, "Clear Journey");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
@@ -670,22 +723,26 @@ describeJourneys("required product journeys", () => {
     );
 
     await expect(
-      appendEvent(prisma, {
-        spaceId: thread.spaceId,
-        threadId: thread.id,
-        botId: bot.id,
-        type: "thread.progress",
-        runId: run.id,
-        payload: { text: "stale output after clear" },
-      }),
+      runAsSystem("background job run.continue", () =>
+        appendEvent(appPrisma, {
+          spaceId: thread.spaceId,
+          threadId: thread.id,
+          botId: bot.id,
+          type: "thread.progress",
+          runId: run.id,
+          payload: { text: "stale output after clear" },
+        }),
+      ),
     ).rejects.toThrow(RunHistoryWriteError);
     await expect(
-      createThreadMessage(prisma, {
-        threadId: thread.id,
-        role: "bot",
-        blocks: [{ kind: "text", text: "stale output after clear" }],
-        runId: run.id,
-      }),
+      runAsSystem("background job run.continue", () =>
+        createThreadMessage(appPrisma, {
+          threadId: thread.id,
+          role: "bot",
+          blocks: [{ kind: "text", text: "stale output after clear" }],
+          runId: run.id,
+        }),
+      ),
     ).rejects.toThrow(RunHistoryWriteError);
     expect(await prisma.message.count({ where: { threadId: thread.id } })).toBe(0);
     expect(await prisma.event.findMany({ where: { threadId: thread.id } })).toMatchObject([
@@ -1322,18 +1379,19 @@ describeJourneys("required product journeys", () => {
       name: "Schedule room",
       botIds: [bot.id, peer.id],
     });
-    const events = createThreadEvents(prisma);
-    const scheduleDeps = { prisma, events, jobs };
+    const scheduleDeps = { prisma: appPrisma, events: createThreadEvents(appPrisma), jobs };
 
-    const groupCreated = await createScheduleFromTool(scheduleDeps, {
-      spaceId: me.spaceId,
-      botId: bot.id,
-      userId: me.userId,
-      threadId: group.threadId,
-      name: "Group ping",
-      prompt: "say group-reminder-ok",
-      schedule: { delaySeconds: 30 },
-    });
+    const groupCreated = await runAsSystem("background job run.continue", () =>
+      createScheduleFromTool(scheduleDeps, {
+        spaceId: me.spaceId,
+        botId: bot.id,
+        userId: me.userId,
+        threadId: group.threadId,
+        name: "Group ping",
+        prompt: "say group-reminder-ok",
+        schedule: { delaySeconds: 30 },
+      }),
+    );
     expect(groupCreated).toMatchObject({ ok: true });
     if (!("ok" in groupCreated) || !groupCreated.ok)
       throw new Error("group schedule create failed");
@@ -1348,7 +1406,9 @@ describeJourneys("required product journeys", () => {
       where: { id: groupRoutine.id },
       data: { nextRunAt: groupDueAt },
     });
-    await executor.wakeRoutine(groupRoutine.id, groupDueAt.toISOString());
+    await runAsSystem("background job routine.wakeup", () =>
+      executor.wakeRoutine(groupRoutine.id, groupDueAt.toISOString()),
+    );
     await waitForDatabase(async () => {
       const run = await prisma.run.findFirst({
         where: { routineId: groupRoutine.id, trigger: "routine" },
@@ -1379,15 +1439,17 @@ describeJourneys("required product journeys", () => {
       }),
     ).toBe(0);
 
-    const dmCreated = await createScheduleFromTool(scheduleDeps, {
-      spaceId: me.spaceId,
-      botId: bot.id,
-      userId: me.userId,
-      threadId: dmThread.id,
-      name: "DM ping",
-      prompt: "say dm-reminder-ok",
-      schedule: { delaySeconds: 30 },
-    });
+    const dmCreated = await runAsSystem("background job run.continue", () =>
+      createScheduleFromTool(scheduleDeps, {
+        spaceId: me.spaceId,
+        botId: bot.id,
+        userId: me.userId,
+        threadId: dmThread.id,
+        name: "DM ping",
+        prompt: "say dm-reminder-ok",
+        schedule: { delaySeconds: 30 },
+      }),
+    );
     expect(dmCreated).toMatchObject({ ok: true });
     if (!("ok" in dmCreated) || !dmCreated.ok) throw new Error("dm schedule create failed");
     const dmRoutine = await prisma.routine.findUniqueOrThrow({
@@ -1400,7 +1462,9 @@ describeJourneys("required product journeys", () => {
       where: { id: dmRoutine.id },
       data: { nextRunAt: dmDueAt },
     });
-    await executor.wakeRoutine(dmRoutine.id, dmDueAt.toISOString());
+    await runAsSystem("background job routine.wakeup", () =>
+      executor.wakeRoutine(dmRoutine.id, dmDueAt.toISOString()),
+    );
     await waitForDatabase(async () => {
       const run = await prisma.run.findFirst({
         where: { routineId: dmRoutine.id, trigger: "routine" },
@@ -1434,24 +1498,28 @@ describeJourneys("required product journeys", () => {
     });
     const thread = await prisma.thread.findUniqueOrThrow({ where: { botId: bot.id } });
 
-    await Promise.all(
-      Array.from({ length: 40 }, (_, index) =>
-        appendEvent(prisma, {
-          spaceId: actor.spaceId,
-          threadId: thread.id,
-          botId: bot.id,
-          type: "thread.progress",
-          payload: { delta: String(index) },
-        }),
+    await runAsSystem("background job run.continue", () =>
+      Promise.all(
+        Array.from({ length: 40 }, (_, index) =>
+          appendEvent(appPrisma, {
+            spaceId: actor.spaceId,
+            threadId: thread.id,
+            botId: bot.id,
+            type: "thread.progress",
+            payload: { delta: String(index) },
+          }),
+        ),
       ),
     );
-    await Promise.all(
-      Array.from({ length: 40 }, (_, index) =>
-        createThreadMessage(prisma, {
-          threadId: thread.id,
-          role: "system",
-          blocks: [{ kind: "meta", text: String(index) }],
-        }),
+    await runAsSystem("background job run.continue", () =>
+      Promise.all(
+        Array.from({ length: 40 }, (_, index) =>
+          createThreadMessage(appPrisma, {
+            threadId: thread.id,
+            role: "system",
+            blocks: [{ kind: "meta", text: String(index) }],
+          }),
+        ),
       ),
     );
 
@@ -1463,7 +1531,7 @@ describeJourneys("required product journeys", () => {
     expect(messages.map((row) => row.seq)).toEqual(Array.from({ length: 40 }, (_, i) => i));
   });
 
-  it("6: fake, managed-sandbox emulator, and desktop executor run the same graphical task", async () => {
+  it("6: fake and desktop executor run the same graphical task", async () => {
     const ctx = {
       operationId: "1",
       traceId: "1",
@@ -1472,22 +1540,17 @@ describeJourneys("required product journeys", () => {
       signal: new AbortController().signal,
     };
     const fake = new FakeSandboxProvider();
-    const managed = new ManagedSandboxEmulator();
     const desktop = new DesktopSandboxProvider();
     const a = await fake.provision({ botId: "ja", homePath: "/tmp/ja" }, ctx);
-    const b = await managed.provision({ botId: "jb", homePath: "/tmp/jb" }, ctx);
     const c = await desktop.provision({ botId: "jc", homePath: "/tmp/jc" }, ctx);
     let out = "";
     for await (const event of fake.execute(a, { argv: ["echo", "same-task"] }, ctx)) {
       if (event.type === "stdout") out += event.data;
     }
-    for await (const event of managed.execute(b, { argv: ["echo", "same-task"] }, ctx)) {
-      if (event.type === "stdout") out += event.data;
-    }
     for await (const event of desktop.execute(c, { argv: ["echo", "same-task"] }, ctx)) {
       if (event.type === "stdout") out += event.data;
     }
-    expect(out.match(/same-task/g)?.length).toBe(3);
+    expect(out.match(/same-task/g)?.length).toBe(2);
     await desktop.destroy(c, ctx);
   });
 
@@ -1512,9 +1575,6 @@ describeJourneys("required product journeys", () => {
     expect(connector.records.length).toBeGreaterThan(before);
     const snap = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
     expect(JSON.stringify(snap)).not.toContain(secret);
-    const inspect = await fetch(`http://127.0.0.1:${connector.port}/records`);
-    const records = (await inspect.json()) as unknown[];
-    expect(records.length).toBeGreaterThan(0);
   });
 
   it("8: retrying a completed effect does not duplicate the destination write", async () => {
@@ -1543,7 +1603,9 @@ describeJourneys("required product journeys", () => {
       where: { id: sent.runId },
       data: { status: "running", completedAt: null },
     });
-    await executor.continueRun(sent.runId, "retry");
+    await runAsSystem("background job run.continue", () =>
+      executor.continueRun(sent.runId, "retry"),
+    );
     expect(connector.records.length).toBe(afterFirst);
   });
 
@@ -1772,7 +1834,7 @@ describeJourneys("required product journeys", () => {
 
     await sendAndWait(app, cookie, parent.id, "delete the bot named Nested");
     expect((await rpc<Bot[]>(app, cookie, "bots/list")).some((bot) => bot.id === nested!.id)).toBe(
-      true,
+      false,
     );
 
     await sendAndWait(app, cookie, parent.id, "delete the bot named WrongName");
@@ -1783,14 +1845,18 @@ describeJourneys("required product journeys", () => {
     await sendAndWait(app, cookie, parent.id, "delete the bot named Scout");
     const afterScout = await rpc<Bot[]>(app, cookie, "bots/list");
     expect(afterScout.some((bot) => bot.id === scout!.id)).toBe(false);
-    expect(afterScout.some((bot) => bot.id === nested!.id)).toBe(true);
+    expect(afterScout.some((bot) => bot.id === nested!.id)).toBe(false);
 
     await rpc(app, cookie, "bots/remove", { botId: parent.id });
-    expect((await rpc<Bot[]>(app, cookie, "bots/list")).map((bot) => bot.name)).toEqual(["Nested"]);
+    expect((await rpc<Bot[]>(app, cookie, "bots/list")).map((bot) => bot.name)).toEqual([]);
   });
 
-  it("duplicating a fleet-managing bot does not copy fleet management", async () => {
-    const cookie = await signup(app, `fleet-dup-j-${stamp}@cortexai-agent-hub.test`, "Fleet");
+  it("duplicating a bot uses the new-bot management default", async () => {
+    const cookie = await signup(
+      app,
+      `bot-management-dup-j-${stamp}@cortexai-agent-hub.test`,
+      "Bot Manager",
+    );
     const source = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1798,17 +1864,22 @@ describeJourneys("required product journeys", () => {
       instructions: "",
       notifyOnFinish: true,
     });
-    await rpc(app, cookie, "bots/update", { botId: source.id, fleetManagement: true });
+    expect(source.fleetManagement).toBe(true);
+    await rpc(app, cookie, "bots/update", { botId: source.id, fleetManagement: false });
 
     const copy = await rpc<Bot>(app, cookie, "bots/duplicate", { botId: source.id });
 
-    expect(copy.fleetManagement).toBe(false);
+    expect(copy.fleetManagement).toBe(true);
     const bots = await rpc<Bot[]>(app, cookie, "bots/list");
-    expect(bots.find((bot) => bot.id === source.id)?.fleetManagement).toBe(true);
+    expect(bots.find((bot) => bot.id === source.id)?.fleetManagement).toBe(false);
   });
 
   it("untrusted bot_message run cannot rewrite a child's instructions", async () => {
-    const cookie = await signup(app, `fleet-trust-j-${stamp}@cortexai-agent-hub.test`, "Fleet");
+    const cookie = await signup(
+      app,
+      `bot-management-trust-j-${stamp}@cortexai-agent-hub.test`,
+      "Bot Manager",
+    );
     const parent = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1853,7 +1924,7 @@ describeJourneys("required product journeys", () => {
       expect.objectContaining({
         name: "set_child_instructions",
         outcome: "error",
-        error: "Fleet tools need a run you started.",
+        error: "Bot management tools need a run you started.",
       }),
     ]);
     const after = await prisma.bot.findUniqueOrThrow({
@@ -1913,7 +1984,8 @@ describeJourneys("required product journeys", () => {
     const res = await raw(app, cookie, "deployment/update", { computerHost: "this-mac" });
     const text = await res.text();
     expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(text).toMatch(/This Mac mode is only available/i);
+    expect(res.status).toBe(403);
+    expect(text).toMatch(/FORBIDDEN/);
   });
 
   it("15: ask, answer, stop, follow-up, and clientNonce stay consistent", async () => {
@@ -2046,11 +2118,12 @@ describeJourneys("required product journeys", () => {
       ),
     ).toBe(true);
 
-    await rpc(app, cookie, "threads/send", {
+    const reply = await rpc<{ runId: string }>(app, cookie, "threads/send", {
       botId: bot.id,
       text: "Paris",
       clientNonce: `ask-freetext-${stamp}`,
     });
+    expect(reply.runId).toBe(asked.runId);
     const answered = await waitFor(app, cookie, bot.id, (snap) =>
       snap.messages.some((message) =>
         message.blocks.some(
@@ -2285,13 +2358,13 @@ describeJourneys("required product journeys", () => {
       orderBy: { seq: "desc" },
     });
     expect(answerEvent.botId).toBe(botD.id);
-    await prisma.$transaction([
-      prisma.run.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.run.update({
         where: { id: concurrentRun.id },
         data: { status: "cancelled", completedAt: new Date() },
-      }),
-      prisma.task.update({ where: { id: concurrentTask.id }, data: { status: "cancelled" } }),
-    ]);
+      });
+      await tx.task.update({ where: { id: concurrentTask.id }, data: { status: "cancelled" } });
+    });
 
     const staleTask = await prisma.task.create({
       data: {
@@ -2357,17 +2430,19 @@ describeJourneys("required product journeys", () => {
       ),
     ).toHaveLength(1);
 
-    const staleHandoff = await handoffToGroupBot(
-      { prisma, events: createThreadEvents(prisma), jobs },
-      {
-        id: staleRun.id,
-        spaceId: botB.spaceId,
-        threadId: group.threadId,
-        botId: botB.id,
-        userId: staleTask.userId,
-      },
-      group.id,
-      { bot_id: botC.id, message: "should be rejected" },
+    const staleHandoff = await runAsSystem("background job run.continue", () =>
+      handoffToGroupBot(
+        { prisma: appPrisma, events: createThreadEvents(appPrisma), jobs },
+        {
+          id: staleRun.id,
+          spaceId: botB.spaceId,
+          threadId: group.threadId,
+          botId: botB.id,
+          userId: staleTask.userId,
+        },
+        group.id,
+        { bot_id: botC.id, message: "should be rejected" },
+      ),
     );
     expect(staleHandoff).toEqual({ error: "source run is no longer active" });
 
@@ -2896,6 +2971,66 @@ describeJourneys("required product journeys", () => {
     expect(mixedOneShot.status).toBeGreaterThanOrEqual(400);
   });
 
+  it("routine timezone writes reject invalid zones without changing persisted schedules", async () => {
+    const cookie = await signup(
+      app,
+      `routine-zones-j-${stamp}@cortexai-agent-hub.test`,
+      "Routine Zones",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", { name: "Scheduler" });
+    const input = {
+      botId: bot.id,
+      name: "Daily",
+      prompt: "Check",
+      crons: ["0 9 * * *"],
+      active: false,
+    };
+    for (const timezone of ["Mars/Olympus_Mons", "", "+01:00"]) {
+      const response = await raw(app, cookie, "routines/create", { ...input, timezone });
+      expect.soft(response.status).toBe(400);
+    }
+    expect.soft(await prisma.routine.count({ where: { botId: bot.id } })).toBe(0);
+    const routine = await rpc<{ id: string; timezone: string }>(
+      app,
+      cookie,
+      "routines/create",
+      input,
+    );
+    expect(routine.timezone).toBe("UTC");
+    const before = await prisma.routine.findUniqueOrThrow({ where: { id: routine.id } });
+    for (const timezone of ["Mars/Olympus_Mons", "", "+01:00"]) {
+      const response = await raw(app, cookie, "routines/update", {
+        routineId: routine.id,
+        timezone,
+        name: "Changed",
+      });
+      expect.soft(response.status).toBe(400);
+      expect
+        .soft(await prisma.routine.findUniqueOrThrow({ where: { id: routine.id } }))
+        .toEqual(before);
+    }
+    for (const timezone of ["Pacific/Auckland", "UTC"]) {
+      const created = await rpc<{ id: string; timezone: string }>(app, cookie, "routines/create", {
+        ...input,
+        timezone,
+      });
+      expect(created.timezone).toBe(timezone);
+      const updated = await rpc<{ timezone: string }>(app, cookie, "routines/update", {
+        routineId: routine.id,
+        timezone,
+      });
+      expect(updated.timezone).toBe(timezone);
+      expect((await prisma.routine.findUniqueOrThrow({ where: { id: routine.id } })).timezone).toBe(
+        timezone,
+      );
+    }
+    const renamed = await rpc<{ timezone: string }>(app, cookie, "routines/update", {
+      routineId: routine.id,
+      name: "Renamed",
+    });
+    expect(renamed.timezone).toBe("UTC");
+  });
+
   it("23: never-run one-shot templates can be armed with a future runAt", async () => {
     const cookie = await signup(app, `once-arm-j-${stamp}@cortexai-agent-hub.test`, "Once Arm");
     const me = await rpc<Me>(app, cookie, "me");
@@ -2973,7 +3108,9 @@ describeJourneys("required product journeys", () => {
       where: { id: routine.id },
       data: { active: true, nextRunAt: dueAt },
     });
-    await executor.wakeRoutine(routine.id, dueAt.toISOString());
+    await runAsSystem("background job routine.wakeup", () =>
+      executor.wakeRoutine(routine.id, dueAt.toISOString()),
+    );
     await expect(
       prisma.routine.findUniqueOrThrow({ where: { id: routine.id } }),
     ).resolves.toMatchObject({ active: false, nextRunAt: null, lastRunAt: null });
@@ -3045,9 +3182,13 @@ describeJourneys("required product journeys", () => {
     );
   });
 
-  describe("fleet management", () => {
+  describe("bot management", () => {
     async function fleetOwner(label: string) {
-      const cookie = await signup(app, `fleet-${label}-${stamp}@cortexai-agent-hub.test`, "Fleet");
+      const cookie = await signup(
+        app,
+        `bot-management-${label}-${stamp}@cortexai-agent-hub.test`,
+        "Bot Manager",
+      );
       const me = await rpc<Me>(app, cookie, "me");
       const chief = await createBot(cookie, "Chief");
       await rpc(app, cookie, "bots/update", { botId: chief.id, fleetManagement: true });
@@ -3344,7 +3485,7 @@ describeJourneys("required product journeys", () => {
       const { cookie, me, chief } = await fleetOwner("organize");
       const outsider = await signup(
         app,
-        `fleet-organize-other-${stamp}@cortexai-agent-hub.test`,
+        `bot-management-organize-other-${stamp}@cortexai-agent-hub.test`,
         "Other",
       );
       const outsiderMe = await rpc<Me>(app, outsider, "me");
@@ -3389,17 +3530,24 @@ describeJourneys("required product journeys", () => {
       // A provider that pads omitted fields with null must not clear the section on a pin.
       const chiefThread = await prisma.thread.findFirstOrThrow({ where: { botId: chief.id } });
       expect(
-        await organizeBot(
-          { prisma, events: createThreadEvents(prisma), jobs, runSecrets: [] },
-          {
-            spaceId: me.spaceId,
-            userId: me.userId,
-            botId: chief.id,
-            groupId: null,
-            threadId: chiefThread.id,
-            runId: "no-run",
-          },
-          { bot_name: "Alpha", pinned: true, section: null, group_id: null, group_name: null },
+        await runAsSystem("background job run.continue", () =>
+          organizeBot(
+            {
+              prisma: appPrisma,
+              events: createThreadEvents(appPrisma),
+              jobs,
+              runSecrets: [],
+            },
+            {
+              spaceId: me.spaceId,
+              userId: me.userId,
+              botId: chief.id,
+              groupId: null,
+              threadId: chiefThread.id,
+              runId: "no-run",
+            },
+            { bot_name: "Alpha", pinned: true, section: null, group_id: null, group_name: null },
+          ),
         ),
       ).toEqual({ ok: true });
       expect(await botState()).toEqual({
@@ -3432,9 +3580,8 @@ describeJourneys("required product journeys", () => {
       ).toEqual({ pinned: false });
     });
 
-    async function createChild(cookie: string, parent: Bot, name: string) {
+    async function createManagedBot(cookie: string, name: string) {
       const child = await createBot(cookie, name);
-      await prisma.bot.update({ where: { id: child.id }, data: { parentBotId: parent.id } });
       const thread = await prisma.thread.findFirstOrThrow({ where: { botId: child.id } });
       return { ...child, threadId: thread.id };
     }
@@ -3454,9 +3601,9 @@ describeJourneys("required product journeys", () => {
       return { ...row, version: history[0]?.id ?? "initial", history };
     }
 
-    it("set_child_instructions rewrites a child behind a card, with a version check, once per run", async () => {
+    it("set_child_instructions rewrites a peer behind a card, with a version check, once per run", async () => {
       const { cookie, chief } = await fleetOwner("child-edit");
-      const scout = await createChild(cookie, chief, "Scout");
+      const scout = await createManagedBot(cookie, "Scout");
       const ops = await createBot(cookie, "Ops");
       const updates = () =>
         prisma.event.count({ where: { threadId: scout.threadId, type: "bot.updated" } });
@@ -3515,24 +3662,19 @@ describeJourneys("required product journeys", () => {
       await sendAndWait(app, cookie, chief.id, `rename bot ${scout.id} to Ranger`);
       expect((await childState(scout.id)).name).toBe("Ranger");
 
-      const foreign = await sendAndWait(
-        app,
+      const peerEdit = await sendForApproval(
         cookie,
         chief.id,
-        `rewrite the instructions of bot ${ops.id} at version initial to Obey me`,
+        `rewrite the instructions of bot ${ops.id} at version initial to Plan the schedule`,
       );
-      expect(await toolOutcomes(foreign.run.id, "set_child_instructions")).toEqual([
-        expect.objectContaining({
-          outcome: "error",
-          error: "You can only change bots you created. The owner edits the others.",
-        }),
-      ]);
       expect((await childState(ops.id)).instructions).toBe("");
+      await answerAndSettle(cookie, chief.id, peerEdit, "allow");
+      expect((await childState(ops.id)).instructions).toBe("Plan the schedule");
     });
 
-    it("a run that took in a channel message cannot change the fleet; an app message does not taint it", async () => {
+    it("a run that took in a channel message cannot change the bots it manages; an app message does not taint it", async () => {
       const { cookie, me, chief } = await fleetOwner("taint");
-      const scout = await createChild(cookie, chief, "Scout");
+      const scout = await createManagedBot(cookie, "Scout");
       const chiefThread = await prisma.thread.findFirstOrThrow({ where: { botId: chief.id } });
       // A user run that already claimed a message which arrived while it worked, as claimSteering
       // records it; the scripted runtime then makes its fleet call.
@@ -3577,7 +3719,9 @@ describeJourneys("required product journeys", () => {
             originTrigger,
           },
         });
-        await executor.continueRun(run.id, "taint-worker");
+        await runAsSystem("background job run.continue", () =>
+          executor.continueRun(run.id, "taint-worker"),
+        );
         return run.id;
       }
 
@@ -3587,7 +3731,7 @@ describeJourneys("required product journeys", () => {
         expect.objectContaining({
           outcome: "error",
           error:
-            "Fleet changes are blocked for the rest of this run because it received a channel or webhook message.",
+            "Changes to the bots you manage are blocked for the rest of this run because it received a channel or webhook message.",
         }),
       ]);
       expect(await prisma.externalEffect.count({ where: { runId: tainted } })).toBe(0);
@@ -3609,7 +3753,7 @@ describeJourneys("required product journeys", () => {
         expect.objectContaining({
           outcome: "error",
           error:
-            "Fleet changes are blocked for the rest of this run because it received a channel or webhook message.",
+            "Changes to the bots you manage are blocked for the rest of this run because it received a channel or webhook message.",
         }),
       ]);
       expect((await childState(scout.id)).instructions).toBe("");
@@ -3630,7 +3774,7 @@ describeJourneys("required product journeys", () => {
 
     it("set_child_bot_model applies the approved model and re-checks it at execution", async () => {
       const { cookie, chief } = await fleetOwner("child-model");
-      const scout = await createChild(cookie, chief, "Scout");
+      const scout = await createManagedBot(cookie, "Scout");
       await rpc(app, cookie, "models/connect", {
         provider: "openrouter",
         apiKey: "test-openrouter-key-not-a-real-secret",
@@ -3685,7 +3829,7 @@ describeJourneys("required product journeys", () => {
       ]);
       expect(await childState(scout.id)).toMatchObject({ modelProvider: null, modelId: null });
 
-      const scribe = await createChild(cookie, chief, "Scribe");
+      const scribe = await createManagedBot(cookie, "Scribe");
       await prisma.bot.update({
         where: { id: scribe.id },
         data: { modelProvider: "x", modelId: "y" },
@@ -3728,9 +3872,9 @@ describeJourneys("required product journeys", () => {
       });
     });
 
-    it("create_child_routine schedules the child in its own thread once", async () => {
+    it("create_child_routine schedules a peer in its own thread once", async () => {
       const { cookie, chief } = await fleetOwner("child-routine");
-      const scout = await createChild(cookie, chief, "Scout");
+      const scout = await createManagedBot(cookie, "Scout");
       const prompt = `schedule bot ${scout.id} routine Brief every 1 days saying Summarize the news`;
 
       const pending = await sendForApproval(cookie, chief.id, prompt);
@@ -3767,7 +3911,7 @@ describeJourneys("required product journeys", () => {
       ]);
     });
 
-    it("update_bot on itself ignores blank fleet fields, with the switch off or on", async () => {
+    it("update_bot on itself ignores blank bot management fields, with the switch off or on", async () => {
       const { cookie, chief } = await fleetOwner("blank-fields");
       const plain = await createBot(cookie, "Plain");
       for (const [bot, name] of [
@@ -3778,7 +3922,7 @@ describeJourneys("required product journeys", () => {
           app,
           cookie,
           bot.id,
-          `rename yourself to ${name} with blank fleet fields`,
+          `rename yourself to ${name} with blank bot management fields`,
         );
         expect(await toolOutcomes(done.run.id, "update_bot")).toEqual([
           expect.objectContaining({ outcome: "succeeded" }),
@@ -3789,7 +3933,7 @@ describeJourneys("required product journeys", () => {
 
     it("turning the switch off during the pause refuses the approved child change", async () => {
       const { cookie, chief } = await fleetOwner("switch-pause");
-      const scout = await createChild(cookie, chief, "Scout");
+      const scout = await createManagedBot(cookie, "Scout");
       await prisma.bot.update({
         where: { id: scout.id },
         data: { modelProvider: "x", modelId: "y" },

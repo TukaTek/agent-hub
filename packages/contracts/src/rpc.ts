@@ -1,6 +1,7 @@
 import { eventIterator, oc } from "@orpc/contract";
 import * as z from "zod";
 import { AiConsentQuerySchema, AiConsentStatusSchema } from "./ai-consent.js";
+import { AnalyticsScreenInput } from "./analytics.js";
 import {
   ARTIFACT_DESCRIPTION_MAX_LENGTH,
   ARTIFACT_NAME_MAX_LENGTH,
@@ -70,6 +71,7 @@ import {
   ModelCatalogEntrySchema,
   ModelConnectInputSchema,
   ModelCredentialSchema,
+  ModelCreditAmountSchema,
   ModelOAuthBeginSchema,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   REPLY_QUOTE_MAX_LENGTH,
@@ -81,6 +83,7 @@ import {
   ServerUpdateRequestSchema,
   ServerUpdateRunSchema,
   ServerUpdateStatusSchema,
+  SignupSurveySchema,
   SkillPlaybookSchema,
   SpaceMemoryConfigSchema,
   SpaceNavigationSchema,
@@ -107,10 +110,12 @@ import {
   IntegrationProviderConfigSchema,
   IntegrationSetupStateSchema,
 } from "./integration-settings.js";
+import { ModelHeadersSchema } from "./model-headers.js";
 import { MessageReactionSchema } from "./reactions.js";
 import { RoutineWatchSchema } from "./routine-watch.js";
 import { RoutineHistorySchema, RoutineRunCursorSchema, RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
+import { SecurityEventListInputSchema, SecurityEventSchema } from "./security-events.js";
 
 const botId = z.object({ botId: Id });
 const groupId = z.object({ groupId: Id });
@@ -174,6 +179,7 @@ const threadSendInput = threadTarget
 const spaceName = z.string().trim().min(1).max(60);
 
 export const appContract = {
+  analytics: { screen: oc.input(AnalyticsScreenInput).output(z.object({ ok: z.literal(true) })) },
   aiConsent: {
     status: oc.input(AiConsentQuerySchema).output(AiConsentStatusSchema),
     allow: oc
@@ -191,6 +197,15 @@ export const appContract = {
   me: oc.output(MeSchema),
   billing: {
     status: oc.output(BillingStatusSchema),
+    selectFunding: oc
+      .input(z.object({ funding: z.enum(["byok", "credits"]) }))
+      .output(z.object({ ok: z.literal(true) })),
+    purchaseCredits: oc
+      .input(z.object({ amountCents: ModelCreditAmountSchema, monthly: z.boolean() }))
+      .output(z.object({ url: z.string().url() })),
+    setMonthlyCredits: oc
+      .input(z.object({ amountCents: ModelCreditAmountSchema }))
+      .output(z.object({ ok: z.literal(true) })),
     checkout: oc.output(z.object({ url: z.string().url() })),
     portal: oc.output(z.object({ url: z.string().url() })),
   },
@@ -233,6 +248,10 @@ export const appContract = {
       )
       .output(DeploymentSettingsSchema),
   },
+  /** Deployment-owner view of the append-only security event log, newest first. */
+  security: {
+    events: oc.input(SecurityEventListInputSchema).output(z.array(SecurityEventSchema)),
+  },
   /**
    * Deployment-owner product updates. When the Compose updater sidecar is reachable, these proxy
    * to its `/state` `/plan` `/apply` contract. Rollback stays on the sidecar for ops only and is
@@ -253,6 +272,8 @@ export const appContract = {
       .input(
         z.object({
           baseUrl: z.string(),
+          credentialId: z.string().optional(),
+          headers: ModelHeadersSchema.optional(),
           apiKey: z.string().optional(),
         }),
       )
@@ -460,19 +481,35 @@ export const appContract = {
     clear: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
     answer: oc
       .input(
-        threadTarget.safeExtend({
-          runId: Id,
-          messageId: Id,
-          answer: z.string().min(1),
-          /** Carries the call id for an answer spoken during a call. */
-          clientNonce: z.string().min(1).max(200).optional(),
-          /** Only for a login card; `answer` carries its password. */
-          username: z.string().min(1).max(512).optional(),
-        }),
+        threadTarget
+          .safeExtend({
+            runId: Id,
+            messageId: Id,
+            answer: z.string(),
+            /** Carries the call id for an answer spoken during a call. */
+            clientNonce: z.string().min(1).max(200).optional(),
+            /** Only for a login card; `answer` carries its password. */
+            username: z.string().min(1).max(512).optional(),
+            /** Turns down a pending secret request; `answer` is then empty. */
+            dismiss: z.literal(true).optional(),
+          })
+          .refine(
+            (input) =>
+              input.dismiss
+                ? input.answer === "" && !input.username && !input.clientNonce
+                : input.answer.length > 0,
+            "Send either an answer or a dismissal",
+          ),
       )
       .output(z.object({ ok: z.literal(true) })),
-    markRead: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
-    markUnread: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
+    /** `unreadAfterSeq`: the seq read up to before this call, null when nothing was unread. */
+    markRead: oc
+      .input(threadTarget)
+      .output(z.object({ ok: z.literal(true), unreadAfterSeq: z.number().int().nullable() })),
+    /** With `messageId`, the chat reads as unread from that message: the next open puts New above it. */
+    markUnread: oc
+      .input(threadTarget.and(z.object({ messageId: Id.optional() })))
+      .output(z.object({ ok: z.literal(true) })),
   },
   computer: {
     status: oc.input(botId).output(ComputerStatusSchema),
@@ -536,7 +573,13 @@ export const appContract = {
       .input(z.object({ botId: Id.optional(), scope: z.enum(["bot", "user"]).optional() }))
       .output(z.array(MemoryDocumentSchema)),
     update: oc
-      .input(z.object({ documentId: Id, content: z.string() }))
+      .input(
+        z.object({
+          documentId: Id,
+          content: z.string(),
+          expectedRevision: z.number().int().positive().optional(),
+        }),
+      )
       .output(MemoryDocumentSchema),
     remove: oc.input(z.object({ documentId: Id })).output(z.object({ ok: z.literal(true) })),
     exportMarkdown: oc.input(z.object({ botId: Id.optional() })).output(z.string()),
@@ -570,7 +613,7 @@ export const appContract = {
             name: z.string().optional(),
             prompt: z.string().optional(),
             crons: z.array(z.string().min(1)).optional(),
-            timezone: z.string().optional(),
+            timezone: TimeZoneSchema.optional(),
             active: z.boolean().optional(),
             notify: z.boolean().optional(),
             webhookEnabled: z.boolean().optional(),
@@ -748,6 +791,8 @@ export const appContract = {
         )
         .output(McpServerSchema),
       remove: oc.input(z.object({ id: Id })).output(z.object({ ok: z.literal(true) })),
+      /** Launch the server once (installing a stdio package if needed), list its tools, close it. */
+      test: oc.input(z.object({ id: Id })).output(McpServerSchema),
     },
     assignments: {
       list: oc.input(botId).output(z.array(BotMcpServerSchema)),
@@ -793,6 +838,8 @@ export const appContract = {
     },
   },
   onboarding: {
+    /** Record the optional signup survey; an empty submission marks it skipped. */
+    signupSurvey: oc.input(SignupSurveySchema).output(z.object({ ok: z.literal(true) })),
     /** Seed the first-run greeting into the bot's thread (focus card is separate). */
     start: oc.input(z.object({ botId: Id })).output(z.object({ ok: z.literal(true) })),
     /** Post the focus choice card when the thread is still idle. */
@@ -806,7 +853,14 @@ export const appContract = {
     /** Flip an app_connect card to connected after authorization completes. */
     appConnected: oc
       .input(
-        z.object({ botId: Id, provider: z.string(), connectorId: z.string().default("composio") }),
+        z.object({
+          botId: Id,
+          threadId: Id.optional(),
+          /** The card's own message, so it is found however far back it is. */
+          messageId: Id.optional(),
+          provider: z.string(),
+          connectorId: z.string().default("composio"),
+        }),
       )
       .output(z.object({ ok: z.literal(true) })),
   },

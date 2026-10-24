@@ -18,6 +18,7 @@ import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 
 import {
   cancelRunsInTransaction,
+  clearRunTurnCheckpoints,
   computerScopeKey,
   createRepos,
   createThreadMessageInTransaction,
@@ -90,6 +91,7 @@ export async function spawnBot(
       description: (input.description ?? "").trim().slice(0, BOT_DESCRIPTION_MAX_LENGTH),
       instructions: (input.instructions ?? "").trim().slice(0, BOT_INSTRUCTIONS_MAX_LENGTH),
       notifyOnFinish: true,
+      // Creation provenance only; bots remain peers in the roster.
       parentBotId: input.spawnedBy.id,
       spawnKey: input.spawnKey,
       computerMode: input.computerMode,
@@ -219,13 +221,21 @@ type LifecycleBot = {
   id: string;
   spaceId: string;
   name: string;
-  userId?: string;
+  userId: string;
   archivedAt: Date | null;
   computerId?: string | null;
   webhookSecretId?: string | null;
 };
 
-/** Bots the caller created. No `archivedAt` filter: a retry on an archived child must still reconcile. */
+/** Management stays within the current user's space, regardless of who created the bot. */
+export function managedBotsWhere(caller: {
+  userId: string;
+  spaceId: string;
+}): Prisma.BotWhereInput {
+  return { userId: caller.userId, spaceId: caller.spaceId };
+}
+
+/** Creation provenance for the roster metadata; this does not grant management permissions. */
 export function createdByWhere(caller: {
   botId: string;
   userId: string;
@@ -250,22 +260,20 @@ export async function archiveSpawnedBot(
     return { error: "confirm_name is required. Refusing to archive." };
   }
 
-  const spawned = await deps.prisma.bot.findMany({
-    where: createdByWhere({
-      botId: input.spawnedByBotId,
-      userId: input.userId,
-      spaceId: input.spaceId,
-    }),
+  // Archived bots stay eligible so retries can reconcile unfinished cleanup.
+  const matches = await deps.prisma.bot.findMany({
+    where: {
+      ...managedBotsWhere(input),
+      ...(input.botId ? { id: input.botId } : { name: confirmName }),
+    },
+    take: 2,
   });
-  const matches = input.botId
-    ? spawned.filter((bot) => bot.id === input.botId)
-    : spawned.filter((bot) => bot.name === confirmName);
 
   if (input.botId && matches.length === 0) {
-    return { error: "That bot was not created by this bot. Refusing to archive." };
+    return { error: "That bot is not in this space. Refusing to archive." };
   }
   if (!input.botId && matches.length === 0) {
-    return { error: `This bot did not create a bot named "${confirmName}". Refusing to archive.` };
+    return { error: `This space has no bot named "${confirmName}". Refusing to archive.` };
   }
   if (!input.botId && matches.length > 1) {
     return {
@@ -291,7 +299,14 @@ export async function archiveBot(
 ) {
   const [dedicated, activeRuns, activeRoutines] = await Promise.all([
     deps.prisma.computer.findUnique({
-      where: { scopeKey: computerScopeKey("dedicated", bot.spaceId, bot.id) },
+      where: {
+        scopeKey: computerScopeKey({
+          mode: "dedicated",
+          spaceId: bot.spaceId,
+          userId: bot.userId,
+          botId: bot.id,
+        }),
+      },
     }),
     deps.prisma.run.findMany({
       where: { botId: bot.id, status: { in: [...ACTIVE_RUN_STATUSES] } },
@@ -309,6 +324,7 @@ export async function archiveBot(
       where: { id: { in: runIds } },
       data: { status: "cancelled", completedAt: now },
     });
+    await clearRunTurnCheckpoints(tx, runIds);
     await tx.task.updateMany({
       where: { runs: { some: { id: { in: runIds } } } },
       data: { status: "cancelled" },
@@ -366,7 +382,14 @@ export async function destroyBot(
 ) {
   const [dedicated, activeRuns, routines] = await Promise.all([
     deps.prisma.computer.findUnique({
-      where: { scopeKey: computerScopeKey("dedicated", bot.spaceId, bot.id) },
+      where: {
+        scopeKey: computerScopeKey({
+          mode: "dedicated",
+          spaceId: bot.spaceId,
+          userId: bot.userId,
+          botId: bot.id,
+        }),
+      },
     }),
     deps.prisma.run.findMany({
       where: { botId: bot.id, status: { in: [...ACTIVE_RUN_STATUSES] } },
@@ -379,6 +402,7 @@ export async function destroyBot(
     where: { id: { in: runIds } },
     data: { status: "cancelled", completedAt: new Date() },
   });
+  await clearRunTurnCheckpoints(deps.prisma, runIds);
   await Promise.allSettled([
     ...activeRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
     ...routines.map((routine) => deps.jobs.cancel(routineJobKey(routine.id))),
@@ -699,9 +723,12 @@ async function removeTeamBotWorkspace(
   context: AdapterContext,
 ) {
   if (!isTeamBotFolderName(bot.id)) return;
-  // Look the computer up by space: a bot moved to its own computer can still have a folder here.
+  // Look the owner's Team Computer up by scope: a bot moved to its own computer can still have
+  // a folder there. Any other team computer in the space drops it on boot (botDeletion).
   const computer = await deps.prisma.computer.findUnique({
-    where: { scopeKey: computerScopeKey("team", bot.spaceId) },
+    where: {
+      scopeKey: computerScopeKey({ mode: "team", spaceId: bot.spaceId, userId: bot.userId }),
+    },
   });
   if (!computer) return;
   // Remote providers keep a stored copy that only the server writes, and replacement computers

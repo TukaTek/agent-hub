@@ -5,6 +5,7 @@ WORKDIR /app
 COPY --chmod=755 . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @cortexai-agent-hub/db generate
+RUN pnpm --filter @cortexai-agent-hub/api --filter @cortexai-agent-hub/worker build
 RUN CORTEXAI_AGENT_HUB_ALLOW_DEV_SECRETS=1 pnpm --filter @cortexai-agent-hub/web build
 RUN install -d -m 750 -o node -g node /data /app/apps/web/node_modules/.vite-temp
 ENV NODE_ENV=production

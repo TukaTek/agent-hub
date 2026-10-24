@@ -19,7 +19,9 @@ describe("authCapabilities", () => {
         passwordAuth: false,
         passwordReset: false,
         resetUrl: null,
+        emailCode: false,
         billing: false,
+        passkeyRpId: null,
       });
       expect(authCapabilitiesSchema.parse(reply)).toMatchObject({ hubSso: sso, sso: null });
     }
@@ -48,7 +50,9 @@ describe("authCapabilities", () => {
       passwordAuth: true,
       passwordReset: true,
       resetUrl: `${webOrigin}/reset-password`,
+      emailCode: false,
       billing: true,
+      passkeyRpId: null,
     });
   });
 

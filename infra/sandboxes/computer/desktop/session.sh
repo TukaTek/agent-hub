@@ -18,7 +18,7 @@ sed "s|@BROWSER@|$browser|" "$share/browser.desktop.in" >"$state/applications/br
 cp "$share/terminal.desktop" "$state/applications/terminal.desktop"
 sed "s|@STATE@|$state|g" "$share/tint2rc.in" >"$state/tint2rc"
 xrdb -merge "$share/Xresources"
-hsetroot -add "#141518" -add "#0B0C0E" -gradient 0 >/dev/null
+hsetroot -add "#202020" -add "#141414" -gradient 0 >/dev/null
 # Bus activation would start xfconfd with the bot's HOME, and it saves channels there.
 own_xfconf() {
   dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \

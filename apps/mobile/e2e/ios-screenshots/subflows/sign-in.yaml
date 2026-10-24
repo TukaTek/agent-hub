@@ -11,6 +11,9 @@ appId: com.tukatek.cortexai.agenthub
     timeout: 15000
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_ACTIVE_EMAIL}
+- tapOn:
+    text: "Use password"
+    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
 - hideKeyboard

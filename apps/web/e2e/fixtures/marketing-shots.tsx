@@ -133,8 +133,11 @@ function fill(element: HTMLInputElement | HTMLTextAreaElement | null, value: str
 function ModelShot() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
-    const details = document.querySelector("details");
-    if (details) details.open = true;
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-testid="bot-settings-advanced"] > button[aria-expanded="false"]',
+      )
+      ?.click();
     const timer = window.setTimeout(() => setReady(true), 400);
     return () => window.clearTimeout(timer);
   }, []);
@@ -230,7 +233,7 @@ const subscriptionMe: Me = {
   computerHost: "docker",
   canChooseHostComputer: true,
   sandboxProvider: "docker",
-  avatarStyle: "robot",
+  avatarStyle: "organic",
   billingEnabled: false,
 };
 
@@ -473,11 +476,7 @@ function SubscriptionShot() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       const text = document.body.textContent ?? "";
-      if (
-        text.includes("Sign in with Claude Pro/Max") &&
-        text.includes("Backup models") &&
-        text.includes("Claude Sonnet 5.5")
-      ) {
+      if (text.includes("Sign in with Claude Pro/Max") && text.includes("Claude Sonnet 5.5")) {
         setReady(true);
         window.clearInterval(timer);
       }
@@ -492,9 +491,8 @@ function SubscriptionShot() {
       <SettingsOverlay
         email="ada@example.test"
         name="Ada"
-        initialSection="models"
-        avatarStyle="robot"
-        onAvatarStyleChange={async () => undefined}
+        section="models"
+        onSectionChange={() => undefined}
         memoryConfig={null}
         onMemoryConfigChange={() => undefined}
         onUsageOpen={() => undefined}

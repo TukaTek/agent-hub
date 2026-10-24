@@ -1,8 +1,10 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
 import { ComposioConnector, IntegrationProviderSettings } from "@cortexai-agent-hub/adapters";
 import { createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
 import { phoneCallSettings } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
+import { startWorkerHealth } from "./health.js";
 import { createWorkerSecretStore } from "./secret-store.js";
 
 loadRootEnv();
@@ -10,12 +12,16 @@ loadRootEnv();
 import {
   ChatSdkMessagingSurface,
   CodexCatalogCache,
+  createAgentHomeStore,
   createBackgroundJobHandlers,
   createCloudAgentConnection,
   createIntegrationConnectorStack,
   createJobReconciler,
   createMessagingContextLoader,
+  createModelCreditReconciler,
   createPostgresReconciliationLeadership,
+  createProductAnalytics,
+  createReservedGraphileJobWorkerHost,
   createRoutineRetryNoticeReconciler,
   createRunExecutor,
   createRunSandbox,
@@ -23,24 +29,27 @@ import {
   createTicketChangeNotifier,
   createWebProvider,
   databaseCapacityBackoffMs,
+  deploymentModelUsageLookup,
   ExpoPushProvider,
   GraphileJobPublisher,
-  GraphileJobWorkerHost,
+  homeStorageSweeper,
   InMemoryJobQueue,
   InstalledConnectorProvider,
   isComposioEnabled,
   isMessagingSurfaceEnabled,
   isPipedreamEnabled,
-  LocalAgentHomeStore,
   LocalArtifactStore,
   McpConnector,
   McpOAuthBroker,
+  mcpStdioOptionsFromEnv,
   messagingEnvFromProcess,
   messagingPlatformsFromEnv,
   PiAgentRuntime,
   PipedreamConnector,
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
+  RunJobPublisher,
+  RunWorkerHost,
   reconcileCloudAgents,
   reconcileComputerUpdates,
   resolveDeploymentModel,
@@ -50,6 +59,7 @@ import {
   SpaceMemoryProviderResolver,
   sandboxProviderOptionsFromEnv,
   shutdownPiTelemetry,
+  withRunWorker,
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
 import {
@@ -58,12 +68,20 @@ import {
   uploadSizeFromEnv,
 } from "@cortexai-agent-hub/core";
 import {
+  contentEncryptionOf,
   createBoardEvents,
   createDb,
+  createSecurityEventPruner,
   createThreadEvents,
+  describeRowSecurity,
+  installSecurityEventStore,
   isTooManyDatabaseConnections,
   parsePositiveInteger,
   pushSessionExpiresAt,
+  rowSecurityWarning,
+  runAsSystem,
+  securityEventRetentionDays,
+  verifyContentKeys,
 } from "@cortexai-agent-hub/db";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
@@ -77,17 +95,22 @@ const HUB_POLICY_RESTART_EXIT_CODE = 75;
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
-  // Shared by Prisma, the reconciliation leadership lock, and both graphile-worker
-  // components (see GraphileJobPublisher/GraphileJobWorkerHost) — one pool instead
-  // of four separate ones. Keep this modest: graphile holds a LISTEN client and
-  // leadership holds an advisory-lock client for the process lifetime, and a
-  // larger max just competes for Postgres max_connections (53300).
+  const poolMax = parsePositiveInteger(process.env.DB_POOL_MAX, 8);
+  // Three queue listeners and reconciliation leadership hold connections. Leave
+  // room for job queries and transactions instead of starting a stalled worker.
+  if (process.env.WAKEUP_DRIVER !== "memory" && poolMax < 6)
+    throw new Error("DB_POOL_MAX must be at least 6 for the Graphile worker");
+  // Prisma, queue publishing, the three queue listeners and reconciliation
+  // leadership share one bounded pool rather than opening a pool per component.
+  // A larger max competes for Postgres max_connections (53300).
   const created = createDb(databaseUrl, {
-    poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 8),
+    poolMax,
     applicationName: "cortexai-agent-hub-worker",
   });
   const { pool } = created;
   let { prisma } = created;
+  const rowSecurity = rowSecurityWarning(await describeRowSecurity(prisma));
+  if (rowSecurity) logger.warn(rowSecurity);
   const realtime = new PostgresRealtimeFanout({
     connectionString: process.env.REALTIME_DATABASE_URL ?? databaseUrl,
     publisher: pool,
@@ -112,7 +135,15 @@ async function main() {
       },
     },
   );
+  installSecurityEventStore(prisma);
+  const unreadableMasterKeys = await verifyContentKeys(prisma);
+  if (unreadableMasterKeys.length)
+    logger.error("Stored space keys need master keys that are not configured", undefined, {
+      masterKeyIds: unreadableMasterKeys,
+    });
+  const analytics = createProductAnalytics();
   const events = createThreadEvents(prisma, realtime, {
+    analytics,
     runSecretWriter: createRunSecretWriter(secrets),
   });
   const ticketBoardEnabled = process.env.TICKET_BOARD_ENABLED === "true";
@@ -144,6 +175,7 @@ async function main() {
         .split(",")
         .map((v) => v.trim())
         .filter(Boolean),
+      ...mcpStdioOptionsFromEnv(process.env),
       events,
       allowPrivateEndpoint,
     },
@@ -171,7 +203,7 @@ async function main() {
     ? new ChatSdkMessagingSurface(messagingPlatforms)
     : undefined;
   const composio = isComposioEnabled(process.env.COMPOSIO_API_KEY)
-    ? new ComposioConnector(process.env.COMPOSIO_API_KEY)
+    ? new ComposioConnector({ apiKey: process.env.COMPOSIO_API_KEY })
     : undefined;
   const integrationSettings = new IntegrationProviderSettings(
     prisma,
@@ -185,14 +217,13 @@ async function main() {
     [new InstalledConnectorProvider(prisma, secrets, {}, allowPrivateEndpoint)],
     [mcp],
   );
-  const connector = stack.destination;
-  await connector.start();
   integrationSettings.warmDirectories();
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
-  const home = new LocalAgentHomeStore(dataDir);
-  const artifacts = new LocalArtifactStore(dataDir);
+  const home = createAgentHomeStore(dataDir, prisma);
+  const artifacts = new LocalArtifactStore(dataDir, contentEncryptionOf(prisma)?.ring);
   const inMemoryJobs = process.env.WAKEUP_DRIVER === "memory" ? new InMemoryJobQueue() : undefined;
-  const jobs: JobPublisher = inMemoryJobs ?? new GraphileJobPublisher(pool);
+  const jobs: JobPublisher =
+    inMemoryJobs ?? new RunJobPublisher(prisma, realtime, new GraphileJobPublisher(pool, prisma));
   const ticketChanges = createTicketChangeNotifier({
     boardEvents,
     jobs,
@@ -202,9 +233,11 @@ async function main() {
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
   // Shared with the reconciler so a stuck wait uses the same push path as a finish notice.
-  const notifications = new ExpoPushProvider(dataDir, (sessionId) =>
-    pushSessionExpiresAt(prisma, sessionId),
-  );
+  const notifications = new ExpoPushProvider(dataDir, {
+    sessionExpiresAt: (sessionId) => pushSessionExpiresAt(prisma, sessionId),
+    jobs,
+    accessToken: process.env.EXPO_ACCESS_TOKEN,
+  });
   const executor = createRunExecutor({
     authorizeUserWork: createUserWorkAuthorizer(
       prisma,
@@ -265,15 +298,19 @@ async function main() {
 
   const jobHost: JobWorkerHost =
     inMemoryJobs ??
-    new GraphileJobWorkerHost(pool, {
-      concurrency: parsePositiveInteger(process.env.GRAPHILE_WORKER_CONCURRENCY, 4),
-    });
+    withRunWorker(
+      new RunWorkerHost(prisma, realtime),
+      createReservedGraphileJobWorkerHost(pool, {
+        concurrency: parsePositiveInteger(process.env.GRAPHILE_WORKER_CONCURRENCY, 4),
+      }),
+    );
 
   const jobHandlers = createBackgroundJobHandlers({
     executor,
     prisma,
     sandbox,
     home,
+    artifacts,
     jobs,
     events,
     workerId: process.pid.toString(),
@@ -284,32 +321,18 @@ async function main() {
     deploymentModelConfigured,
     messaging,
     cloudAgent,
+    notifications,
   });
-  // graphile-worker run() connects through the shared pool. createPool already
-  // retries connect() on 53300 a finite number of times. Keep retrying start
-  // until Postgres has capacity: exhausting then returning from main().catch
-  // left a live process that held connections but never ran jobs or registered
-  // signal handlers, even after capacity returned. Do not exit(1) here; that
-  // crash-loops into the same saturated Postgres. GraphileJobWorkerHost also
-  // observes runner.promise after start and restarts with the same backoff if
-  // the runner dies later on 53300 (unhandledRejection still swallows that
-  // code so we do not Docker crash-loop on transient completeJob failures).
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await jobHost.start(jobHandlers);
-      break;
-    } catch (error) {
-      if (!isTooManyDatabaseConnections(error)) throw error;
-      logger.error("worker job host start waiting on database capacity", error);
-      await new Promise((resolve) => setTimeout(resolve, databaseCapacityBackoffMs(attempt)));
-    }
-  }
   const reconciler = createJobReconciler({
     prisma,
     jobs,
     events,
     notifications,
     leadership: createPostgresReconciliationLeadership(pool),
+    reconcileModelCredits: createModelCreditReconciler({
+      prisma,
+      lookup: deploymentModelUsageLookup(),
+    }),
     reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
     reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
     reconcileRoutineRetryNotices: inMemoryJobs
@@ -317,24 +340,31 @@ async function main() {
       : createRoutineRetryNoticeReconciler(pool, (runId) =>
           executor.notifyRoutineRetryAttemptsExhausted(runId),
         ),
+    reconcileSecurityEventRetention: createSecurityEventPruner(
+      prisma,
+      securityEventRetentionDays(),
+    ),
+    reconcileHomeStorage: homeStorageSweeper(home),
   });
-  reconciler.start();
-
+  let stopHealth: (() => Promise<void>) | undefined;
+  const shutdown = new AbortController();
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    shutdown.abort();
     try {
+      await stopHealth?.();
       await reconciler.stop();
       await jobHost.stop();
       await jobs.close();
       await secrets.close();
       await realtime.close();
-      await connector.stop();
       await mcp.close();
       await prisma.$disconnect().catch(() => undefined);
       await pool.end().catch(() => undefined);
     } finally {
+      await analytics?.flush();
       await shutdownPiTelemetry();
       await logger.flush({ timeoutMs: 2_000 });
     }
@@ -359,10 +389,35 @@ async function main() {
     void stop().finally(() => process.exit(1));
   });
 
+  // Direct runs may already be active while the scheduler waits for capacity.
+  // Keep retrying without exiting; the handlers above drain them on shutdown.
+  for (let attempt = 0; !stopping; attempt += 1) {
+    try {
+      await jobHost.start(jobHandlers);
+      break;
+    } catch (error) {
+      if (stopping) return;
+      if (!isTooManyDatabaseConnections(error)) {
+        await stop();
+        throw error;
+      }
+      logger.error("worker job host start waiting on database capacity", error);
+      await sleep(databaseCapacityBackoffMs(attempt), undefined, { signal: shutdown.signal }).catch(
+        () => undefined,
+      );
+    }
+  }
+  if (stopping) return;
+  reconciler.start();
+  stopHealth = startWorkerHealth(reconciler.lastCompletedAt);
+
   logger.info("worker ready", { degraded: secrets.describe().capabilities.degraded ?? false });
 }
 
-main().catch(async (error) => {
+// The worker only does cross-tenant work: job dispatch, reconcilers, leadership and
+// realtime, all keyed by ids rather than a signed-in user. This is its one
+// row-level security bypass; jobs re-enter it explicitly (see wakeup.ts).
+runAsSystem("worker process", main).catch(async (error) => {
   logger.error("worker startup failed", error);
   await logger.flush({ timeoutMs: 2_000 });
   // jobHost.start retries 53300 without bound above, so a saturated Postgres at

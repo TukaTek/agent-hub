@@ -1,4 +1,4 @@
-import { MemoryProviderDeploymentOwnerRequiredError } from "@cortexai-agent-hub/adapters";
+import { MemoryProviderPrivateEndpointRequiredError } from "@cortexai-agent-hub/adapters";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -95,6 +95,18 @@ function connectionInput(mode: "cloud" | "local", baseUrl?: string) {
 }
 
 describe("persistMemoryProviderConfig", () => {
+  it("does not trust a legacy owner flag for private-network access", async () => {
+    const { deps } = makeDeps();
+    await expect(
+      persistMemoryProviderConfig(
+        deps,
+        deploymentOwner,
+        connectionInput("local", "http://10.0.0.8:6767"),
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(deps.secrets.put).not.toHaveBeenCalled();
+  });
+
   it("rejects unknown providers as bad requests without probing or writing", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -114,7 +126,7 @@ describe("persistMemoryProviderConfig", () => {
   });
 
   it.each(["#", "?action=delete", "?"])(
-    "rejects ambiguous local URLs even for the deployment owner: %s",
+    "rejects ambiguous local URLs even with operator-configured private endpoints: %s",
     async (suffix) => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
@@ -122,7 +134,7 @@ describe("persistMemoryProviderConfig", () => {
       try {
         await expect(
           persistMemoryProviderConfig(
-            deps,
+            { ...deps, env: { mcpAllowPrivateEndpoint: true } },
             deploymentOwner,
             connectionInput("local", `http://127.0.0.1:8123/internal-action${suffix}`),
           ),
@@ -163,7 +175,7 @@ describe("persistMemoryProviderConfig", () => {
     try {
       await expect(
         persistMemoryProviderConfig(
-          deps,
+          { ...deps, env: { mcpAllowPrivateEndpoint: true } },
           deploymentOwner,
           connectionInput("local", "http://localhost:6767"),
         ),
@@ -192,7 +204,11 @@ describe("persistMemoryProviderConfig", () => {
   it("rejects local mode without a baseUrl, without touching the database", async () => {
     const { deps, upsert } = makeDeps();
     await expect(
-      persistMemoryProviderConfig(deps, deploymentOwner, connectionInput("local")),
+      persistMemoryProviderConfig(
+        { ...deps, env: { mcpAllowPrivateEndpoint: true } },
+        deploymentOwner,
+        connectionInput("local"),
+      ),
     ).rejects.toThrow(/baseUrl/);
     expect(upsert).not.toHaveBeenCalled();
   });
@@ -203,7 +219,7 @@ describe("persistMemoryProviderConfig", () => {
     const { deps, upsert } = makeDeps();
     await expect(
       persistMemoryProviderConfig(
-        deps,
+        { ...deps, env: { mcpAllowPrivateEndpoint: true } },
         deploymentOwner,
         connectionInput("local", "http://169.254.169.254/latest/meta-data/"),
       ),
@@ -219,7 +235,7 @@ describe("persistMemoryProviderConfig", () => {
     const { deps, upsert } = makeDeps();
     await expect(
       persistMemoryProviderConfig(
-        deps,
+        { ...deps, env: { mcpAllowPrivateEndpoint: true } },
         deploymentOwner,
         connectionInput("local", "http://203.0.113.10:6767"),
       ),
@@ -229,13 +245,13 @@ describe("persistMemoryProviderConfig", () => {
     vi.unstubAllGlobals();
   });
 
-  it("accepts a private-network base URL in local mode for the deployment owner", async () => {
+  it("accepts a private-network base URL in local mode with operator-configured private endpoints", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("[]", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { deps, upsert } = makeDeps();
 
     await persistMemoryProviderConfig(
-      deps,
+      { ...deps, env: { mcpAllowPrivateEndpoint: true } },
       deploymentOwner,
       connectionInput("local", "http://10.0.0.8:6767"),
     );
@@ -255,10 +271,14 @@ describe("persistMemoryProviderConfig", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 401 })));
     const { deps, upsert } = makeDeps();
     await expect(
-      persistMemoryProviderConfig(deps, deploymentOwner, {
-        ...connectionInput("local", "http://localhost:6767"),
-        credentials: { apiKey: "sm_bad_key" },
-      }),
+      persistMemoryProviderConfig(
+        { ...deps, env: { mcpAllowPrivateEndpoint: true } },
+        deploymentOwner,
+        {
+          ...connectionInput("local", "http://localhost:6767"),
+          credentials: { apiKey: "sm_bad_key" },
+        },
+      ),
     ).rejects.toThrow();
     expect(upsert).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
@@ -270,7 +290,7 @@ describe("persistMemoryProviderConfig", () => {
     const { deps, upsert } = makeDeps();
 
     await persistMemoryProviderConfig(
-      deps,
+      { ...deps, env: { mcpAllowPrivateEndpoint: true } },
       deploymentOwner,
       connectionInput("local", "http://[::1]:6767"),
     );
@@ -344,7 +364,7 @@ describe("persistMemoryProviderConfig", () => {
 
   it("rejects non-owners when prepare reclassifies a hostname as private before probing", async () => {
     const prepareConnection = vi.fn(async () => {
-      throw new MemoryProviderDeploymentOwnerRequiredError();
+      throw new MemoryProviderPrivateEndpointRequiredError();
     });
     const { deps, transaction } = makeDeps();
     await expect(

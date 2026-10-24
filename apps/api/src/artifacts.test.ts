@@ -1,5 +1,5 @@
 import type { ArtifactStore } from "@cortexai-agent-hub/adapter-kit";
-import { type Actor, ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
+import type { Actor } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {

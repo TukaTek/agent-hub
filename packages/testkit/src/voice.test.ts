@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
 import { sessionCookieHeader } from "./index.js";
+import { asSystem } from "./system-db.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 
@@ -38,7 +39,7 @@ describeVoice("voice credentials and speech HTTP", () => {
       agentRuntime: "scripted",
     });
     app = handles.app;
-    prisma = handles.prisma;
+    prisma = asSystem(handles.prisma);
     stop = handles.stop;
     botIntroHarness = handles;
   });

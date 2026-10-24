@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: cortexai-agent-hub
           POSTGRES_PASSWORD: cortexai-agent-hub
@@ -104,6 +104,11 @@ jobs:
             apps/mobile/android/app/src/main/AndroidManifest.xml
           sed -i 's/MaxMetaspaceSize=512m/MaxMetaspaceSize=1g/' \
             apps/mobile/android/gradle.properties
+
+      - name: Run notification native unit tests
+        if: steps.screenshot-apk.outputs.cache-hit != 'true'
+        working-directory: apps/mobile/android
+        run: ./gradlew :cortexai-agent-hub-notifications:testDebugUnitTest --no-daemon
 
       - name: Build screenshot APK
         if: steps.screenshot-apk.outputs.cache-hit != 'true'

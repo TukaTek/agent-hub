@@ -6,6 +6,17 @@ export class TransientModelError extends Error {
   }
 }
 
+/**
+ * The user's model provider rejected the key, hit a credit or usage limit, or no longer serves
+ * the model. The user fixes it in their provider account or connection settings; not a server fault.
+ */
+export class ModelAccountError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelAccountError";
+  }
+}
+
 function errorFacts(value: unknown) {
   const text: string[] = [];
   const statuses = new Set<number>();
@@ -41,7 +52,7 @@ function errorFacts(value: unknown) {
   return { text: text.join(" ").toLowerCase(), statuses };
 }
 
-/** A timed-out request already spent its full budget, so it is not worth an immediate retry. */
+/** Transport timeouts may expire before the model request's overall budget. */
 export function isProviderTimeout(error: unknown): boolean {
   return /timed? out|timeout/.test(errorFacts(error).text);
 }
@@ -59,6 +70,8 @@ export function isRetryableProviderUnavailable(error: unknown): boolean {
   ) {
     return true;
   }
+  // The ChatGPT subscription (Codex) runtime reports an exhausted usage window without a status.
+  if (/you have hit your chatgpt usage limit/.test(text)) return true;
   if (
     [400, 401, 403].some((status) => statuses.has(status)) ||
     /\b(?:http(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|error\s+code)\s*[:=]?\s*(?:400|401|403)\b/.test(
@@ -74,14 +87,20 @@ export function isRetryableProviderUnavailable(error: unknown): boolean {
   ) {
     return false;
   }
+  // Some providers label payment failures with a generic invalid_request_error code.
+  // Their explicit balance error still means a configured backup can serve the call.
+  const insufficientBalance = statuses.has(402) && /\binsufficient_balance_error\b/.test(text);
   if (
-    /context[ _-](?:length|window)|too many tokens|maximum context|token limit|request too large|invalid_api_key|authentication_error|permission_error|bad_request|invalid_request/.test(
+    /context[ _-](?:length|window)|too many tokens|maximum context|token limit|request too large|invalid_api_key|authentication_error|permission_error|bad_request/.test(
       text,
-    )
+    ) ||
+    (!insufficientBalance && /invalid_request/.test(text))
   )
     return false;
   if (statuses.has(402)) {
-    return /quota|billing|credit|payment limit|insufficient funds/.test(text);
+    return /quota|billing|credit|payment limit|insufficient (?:funds|balance)|insufficient_balance_error/.test(
+      text,
+    );
   }
   if (
     [408, 429].some((status) => statuses.has(status)) ||
@@ -89,7 +108,7 @@ export function isRetryableProviderUnavailable(error: unknown): boolean {
   )
     return true;
   if ([...statuses].some((status) => status >= 400 && status < 600)) return false;
-  return /rate.?limit|too many requests|quota|overload|capacity|temporarily unavailable|service unavailable|retry[- ](?:after|delay)|server error|upstream error|gateway timeout|timed? out|timeout|connection reset|connection refused|network error|max retries exceeded|stream ended without finish_reason|\bterminated\b|fetch failed|socket hang up|econnreset|econnrefused|etimedout|websocket closed/.test(
+  return /rate.?limit|too many requests|quota|overload|capacity|temporarily unavailable|service unavailable|retry[- ](?:after|delay)|server error|upstream error|gateway timeout|timed? out|timeout|connection (?:error|reset|refused)|network error|max retries exceeded|stream ended without finish_reason|\bterminated\b|fetch failed|socket hang up|econnreset|econnrefused|etimedout|websocket closed/.test(
     text,
   );
 }
@@ -100,10 +119,19 @@ export function isRetryableProviderUnavailable(error: unknown): boolean {
  * structured status fields.
  */
 export function isTransientModelError(error: unknown): boolean {
+  const { text, statuses } = errorFacts(error);
+  // Payment required never clears during a retry.
+  if (statuses.has(402)) return false;
+  // Short rate windows can reset during a retry; subscription and billing limits cannot.
+  const shortWindow =
+    /\bper[- ](?:second|minute)\b|\b(?:rpm|tpm)\b|retry[- ]after[: ]+\d+(?:\.\d+)?\s*(?:seconds?|secs?|s)\b/.test(
+      text,
+    );
   return (
     isRetryableProviderUnavailable(error) &&
-    !/insufficient_quota|exceeded your current quota|quota exhausted|usage limit|billing|credit balance|insufficient (?:funds|balance|credits)|payment|out of budget/.test(
-      errorFacts(error).text,
-    )
+    !/insufficient_quota|exceeded your current quota|quota exhausted|(?:chatgpt|5-hour|weekly(?: \(7-day\))?|monthly) usage limit|billing|credit balance|insufficient (?:funds|balance|credits)|payment|out of budget/.test(
+      text,
+    ) &&
+    !(text.includes("usage limit") && !shortWindow)
   );
 }

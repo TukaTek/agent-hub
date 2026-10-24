@@ -1,9 +1,20 @@
 import type { ComputerUpdate } from "@cortexai-agent-hub/contracts";
-import { createComputerUpdates } from "@cortexai-agent-hub/core";
-import { rpc } from "./api";
+import { createComputerUpdates, isUnauthorizedError } from "@cortexai-agent-hub/core";
+import { rpc, spaceSelectionSeq } from "./api";
 export const computerUpdates = createComputerUpdates({
-  list: () => rpc<ComputerUpdate[]>("computer/updates"),
+  list: async () => {
+    const selection = spaceSelectionSeq();
+    try {
+      return await rpc<ComputerUpdate[]>("computer/updates");
+    } catch (error) {
+      // A 401 sent before a Space switch belongs to the old Space, not a lost session, and the
+      // poller outlives the switch: report it as transient so polling continues.
+      if (isUnauthorizedError(error) && selection !== spaceSelectionSeq()) {
+        throw new Error("Space changed", { cause: error });
+      }
+      throw error;
+    }
+  },
   start: (botId, action) => rpc<ComputerUpdate>(`computer/${action}`, { botId }),
-  releaseInterrupted: (id) => rpc("computer/releaseInterrupted", { id, workersStopped: true }),
   dismiss: (id) => rpc("computer/dismissUpdate", { id }),
 });

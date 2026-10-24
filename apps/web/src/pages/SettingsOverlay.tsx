@@ -1,14 +1,17 @@
-import type { AvatarStyle, SpaceMemoryConfig } from "@cortexai-agent-hub/contracts";
+import type { SpaceMemoryConfig } from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,
   DialogClose,
   DialogContent,
   DialogTitle,
+  OptionSelect,
 } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import {
   Brain,
+  ChevronLeft,
+  ChevronRight,
   CloudDownload,
   Cpu,
   CreditCard,
@@ -23,7 +26,7 @@ import type { ComponentType } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApprovalRulesSettings } from "../components/ApprovalRulesSettings";
 import { computersAreUnavailable } from "../components/ComputersUnavailableHint";
-import { ListboxSelect } from "../components/ListboxSelect";
+import { desktopBridge } from "../lib/desktop";
 import { rpcForSpace } from "../lib/rpc";
 import { SpaceRpcProvider } from "../lib/space-rpc";
 import { errorText } from "../lib/user-error";
@@ -36,18 +39,8 @@ import {
 import { BillingSettingsPanel } from "./BillingSettingsPanel";
 import { MemorySettingsOverlay } from "./MemorySettingsOverlay";
 import { ModelSettingsOverlay } from "./ModelSettingsOverlay";
+import type { SettingsSection } from "./shell-overlay";
 import { VoiceSettingsOverlay } from "./VoiceSettingsOverlay";
-
-export type SettingsSection =
-  | "general"
-  | "models"
-  | "memory"
-  | "voice"
-  | "confirmations"
-  | "usage"
-  | "computer"
-  | "billing"
-  | "updates";
 
 /** Sections whose settings belong to a space; only these show the space picker. */
 const SPACE_SECTIONS: ReadonlySet<SettingsSection> = new Set([
@@ -72,12 +65,10 @@ export function SettingsOverlay({
   name,
   usage,
   onUsageOpen,
-  initialSection = "general",
-  avatarStyle,
-  onAvatarStyleChange,
+  section: requestedSection,
+  onSectionChange,
   timezone,
   onTimezoneChange,
-  isDeploymentOwner = false,
   billingEnabled = false,
   sandboxProvider,
   onSandboxProviderChange,
@@ -103,12 +94,10 @@ export function SettingsOverlay({
     totalTokens?: number | null;
   } | null;
   onUsageOpen: () => void;
-  initialSection?: SettingsSection;
-  avatarStyle: AvatarStyle;
-  onAvatarStyleChange: (style: AvatarStyle) => Promise<void>;
+  section: SettingsSection;
+  onSectionChange: (section: SettingsSection) => void;
   timezone: string | null;
   onTimezoneChange: (timezone: string) => Promise<void>;
-  isDeploymentOwner?: boolean;
   billingEnabled?: boolean;
   sandboxProvider?: string | null;
   onSandboxProviderChange?: (sandboxProvider: string) => void;
@@ -119,16 +108,24 @@ export function SettingsOverlay({
   onClose: () => void;
   onVoiceStatusMaybeChanged?: () => void | Promise<void>;
 }) {
-  const { t } = useLingui();
+  const { t, i18n } = useLingui();
   const panelRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const [navOverflow, setNavOverflow] = useState({ previous: false, next: false });
   const usageRef = useRef<HTMLDivElement>(null);
-  const [section, setSection] = useState<SettingsSection>(initialSection);
   const [memoryBusy, setMemoryBusy] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [keepComputerRecovery, setKeepComputerRecovery] = useState(false);
   const recoveryHoldTimer = useRef<number | undefined>(undefined);
-  const showComputer =
-    keepComputerRecovery || (isDeploymentOwner && computersAreUnavailable(sandboxProvider));
+  const showComputer = keepComputerRecovery || computersAreUnavailable(sandboxProvider);
+  const showUpdates = Boolean(desktopBridge()?.update);
+  // A section that isn't available yet (billing before its flag loads) shows General until it is.
+  const section =
+    (requestedSection === "computer" && !showComputer) ||
+    (requestedSection === "billing" && !billingEnabled) ||
+    (requestedSection === "updates" && !showUpdates)
+      ? "general"
+      : requestedSection;
   const panelBusy = memoryBusy || voiceBusy;
   const spaceScoped = SPACE_SECTIONS.has(section);
   const spaceId = spaceScoped ? (space?.id ?? null) : null;
@@ -181,18 +178,6 @@ export function SettingsOverlay({
   }, []);
 
   useEffect(() => {
-    setSection(initialSection);
-  }, [initialSection]);
-
-  useEffect(() => {
-    if (!showComputer && section === "computer") setSection("general");
-  }, [showComputer, section]);
-
-  useEffect(() => {
-    if (!billingEnabled && section === "billing") setSection("general");
-  }, [billingEnabled, section]);
-
-  useEffect(() => {
     if (section !== "computer") releaseComputerRecovery();
   }, [section, releaseComputerRecovery]);
   useEffect(() => () => window.clearTimeout(recoveryHoldTimer.current), []);
@@ -213,8 +198,45 @@ export function SettingsOverlay({
     { id: "usage", label: t`Usage`, icon: Gauge },
     ...(showComputer ? [{ id: "computer" as const, label: t`Computer`, icon: Monitor }] : []),
     ...(billingEnabled ? [{ id: "billing" as const, label: t`Billing`, icon: CreditCard }] : []),
-    { id: "updates", label: t`Updates`, icon: CloudDownload },
+    ...(showUpdates ? [{ id: "updates" as const, label: t`Updates`, icon: CloudDownload }] : []),
   ];
+
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const measure = () => {
+      const offset = Math.abs(nav.scrollLeft);
+      setNavOverflow({
+        previous: offset > 1,
+        next: nav.scrollWidth - nav.clientWidth - offset > 1,
+      });
+    };
+    const revealSection = () => {
+      if (nav.scrollWidth > nav.clientWidth) {
+        nav.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView?.({
+          block: "nearest",
+          inline: "nearest",
+        });
+      }
+      measure();
+    };
+    revealSection();
+    nav.addEventListener("scroll", measure);
+    const observer =
+      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(revealSection);
+    observer?.observe(nav);
+    return () => {
+      nav.removeEventListener("scroll", measure);
+      observer?.disconnect();
+    };
+  }, [section, showComputer, billingEnabled, showUpdates, i18n.locale]);
+
+  function scrollSections(direction: number) {
+    const nav = navRef.current;
+    if (!nav) return;
+    const rtl = getComputedStyle(nav).direction === "rtl";
+    nav.scrollBy({ left: nav.clientWidth * 0.75 * direction * (rtl ? -1 : 1), behavior: "smooth" });
+  }
 
   const sectionTitle =
     navItems.find((item) => item.id === section)?.label ??
@@ -233,16 +255,16 @@ export function SettingsOverlay({
     await onVoiceStatusMaybeChanged?.();
   }
 
+  // Leaving is immediate, so the URL updates in the same tick; voice readiness refreshes behind it.
   function leaveSettings(next: () => void) {
     if (panelBusy) return;
-    void refreshVoiceStatus().finally(next);
+    void refreshVoiceStatus();
+    next();
   }
 
   function requestClose() {
     leaveSettings(onClose);
   }
-
-  const widePane = section === "models" || section === "voice";
 
   return (
     <Dialog
@@ -264,57 +286,80 @@ export function SettingsOverlay({
         initialFocus={() =>
           section === "usage" ? (usageRef.current ?? panelRef.current) : panelRef.current
         }
-        className={`flex max-h-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100%-5rem)] ${
-          widePane
-            ? "h-[min(760px,calc(100%-2rem))] w-[min(1080px,calc(100%-2rem))] sm:max-w-[1080px]"
-            : "h-[min(720px,calc(100%-2rem))] w-[min(920px,calc(100%-2rem))] sm:max-w-[920px]"
-        }`}
+        className="flex h-[min(760px,calc(100%-2rem))] max-h-[calc(100%-2rem)] w-[min(1080px,calc(100%-2rem))] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100%-5rem)] sm:max-w-[1080px]"
       >
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <nav
-            data-testid="settings-nav"
-            aria-label={t`Settings`}
-            className="flex shrink-0 flex-row gap-1 overflow-x-auto border-b border-border px-3 py-3 md:w-[200px] md:flex-col md:overflow-y-auto md:border-b-0 md:border-e md:px-3 md:py-4"
-          >
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = item.id === section;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-testid={`settings-nav-${item.id}`}
-                  aria-current={active ? "page" : undefined}
-                  disabled={panelBusy}
-                  onClick={() => setSection(item.id)}
-                  className={`flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-start text-[13.5px] transition-colors disabled:pointer-events-none disabled:opacity-50 ${
-                    active
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                  }`}
-                >
-                  <Icon className="size-4 shrink-0" strokeWidth={1.75} />
-                  <span className="whitespace-nowrap">{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
+          <div className="flex shrink-0 items-center gap-1 border-b border-border px-3 md:contents">
+            {/* Reserve arrow space so showing controls does not change the overflow measurement. */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={`shrink-0 md:hidden ${navOverflow.previous || navOverflow.next ? "" : "invisible"}`}
+              aria-label={t`Previous settings sections`}
+              disabled={!navOverflow.previous || panelBusy}
+              onClick={() => scrollSections(-1)}
+            >
+              <ChevronLeft className="rtl:rotate-180" />
+            </Button>
+            <nav
+              ref={navRef}
+              data-testid="settings-nav"
+              aria-label={t`Settings`}
+              className="flex min-w-0 flex-1 flex-row gap-1 overflow-x-auto py-3 md:w-[200px] md:shrink-0 md:flex-none md:flex-col md:overflow-y-auto md:border-e md:border-border md:px-3 md:py-4"
+            >
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const active = item.id === section;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    data-testid={`settings-nav-${item.id}`}
+                    aria-current={active ? "page" : undefined}
+                    disabled={panelBusy}
+                    onClick={() => onSectionChange(item.id)}
+                    className={`flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-start text-[13.5px] transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+                      active
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="size-4 shrink-0" strokeWidth={1.75} />
+                    <span className="whitespace-nowrap">{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={`shrink-0 md:hidden ${navOverflow.previous || navOverflow.next ? "" : "invisible"}`}
+              aria-label={t`Next settings sections`}
+              disabled={!navOverflow.next || panelBusy}
+              onClick={() => scrollSections(1)}
+            >
+              <ChevronRight className="rtl:rotate-180" />
+            </Button>
+          </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-start justify-between gap-4 px-6 pt-6 sm:px-8 sm:pt-7">
+            <div
+              data-testid="settings-header"
+              className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 pb-5 pt-6 sm:px-8 sm:pt-7"
+            >
               <div className="flex min-w-0 flex-col gap-2">
                 <DialogTitle className="text-2xl font-medium text-foreground">
                   {sectionTitle}
                 </DialogTitle>
                 {!spaceScoped ? null : space && spaces.length > 1 && onSpaceChange ? (
-                  <ListboxSelect
+                  <OptionSelect
                     className="w-56"
-                    testId="settings-space"
-                    label={t`Space`}
+                    data-testid="settings-space"
+                    aria-label={t`Space`}
                     options={spaces.map((option) => ({ value: option.id, label: option.name }))}
                     value={space.id}
                     disabled={panelBusy}
-                    onChange={(next) => {
+                    onValueChange={(next) => {
                       if (next !== space.id) leaveSettings(() => onSpaceChange(next));
                     }}
                   />
@@ -336,25 +381,23 @@ export function SettingsOverlay({
             <SpaceRpcProvider spaceId={spaceId}>
               <div
                 key={spaceId ?? "selected"}
+                data-testid="settings-scroll"
                 className={`min-h-0 flex-1 ${
                   section === "models" || section === "voice" || section === "memory"
                     ? "flex flex-col overflow-hidden"
-                    : "cortexai-agent-hub-scroll overflow-y-auto overscroll-contain px-6 pb-6 pt-5 sm:px-8 sm:pb-8"
+                    : "cortexai-agent-hub-scroll overflow-y-auto overscroll-contain px-6 pb-6 pt-6 sm:px-8 sm:pb-8"
                 }`}
               >
                 {section === "general" ? (
                   <GeneralSettingsPanels
                     email={email}
                     name={name}
-                    avatarStyle={avatarStyle}
-                    onAvatarStyleChange={onAvatarStyleChange}
                     timezone={timezone}
                     onTimezoneChange={onTimezoneChange}
                     messagingEnabled={messagingEnabled}
                     onOpenMessaging={
                       onOpenMessaging ? () => leaveSettings(onOpenMessaging) : undefined
                     }
-                    isDeploymentOwner={isDeploymentOwner}
                   />
                 ) : null}
                 {section === "confirmations" ? <ApprovalRulesSettings /> : null}
@@ -372,9 +415,7 @@ export function SettingsOverlay({
                   />
                 ) : null}
                 {section === "billing" && billingEnabled ? <BillingSettingsPanel /> : null}
-                {section === "updates" ? (
-                  <UpdatesSettingsPanel isDeploymentOwner={isDeploymentOwner} />
-                ) : null}
+                {section === "updates" && showUpdates ? <UpdatesSettingsPanel /> : null}
                 {section === "models" ? (
                   <ModelSettingsOverlay embedded onClose={requestClose} />
                 ) : null}

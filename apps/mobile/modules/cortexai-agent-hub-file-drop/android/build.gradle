@@ -1,0 +1,14 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.tukatek.cortexai.agenthub.filedrop'
+version = '0.1.0'
+
+android {
+  namespace 'com.tukatek.cortexai.agenthub.filedrop'
+  defaultConfig {
+    versionName '0.1.0'
+  }
+}

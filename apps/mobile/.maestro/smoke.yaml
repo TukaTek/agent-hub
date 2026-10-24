@@ -14,6 +14,9 @@ name: CortexAI Agent Hub mobile smoke
 - assertVisible: "Sign in to CortexAI Agent Hub"
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_EMAIL}
+- tapOn:
+    text: "Use password"
+    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_PASSWORD}
 - hideKeyboard

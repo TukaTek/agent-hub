@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { RoutineRun } from "@cortexai-agent-hub/contracts";
+import type * as UiWeb from "@cortexai-agent-hub/ui-web";
 import { i18n } from "@lingui/core";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
@@ -17,7 +18,8 @@ vi.mock("@lingui/react/macro", () => ({
   useLingui: () => ({ i18n: { locale: "en" }, t: (parts: TemplateStringsArray) => parts.join("") }),
   Trans: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("@cortexai-agent-hub/ui-web", () => ({
+vi.mock("@cortexai-agent-hub/ui-web", async (importOriginal) => ({
+  ...(await importOriginal<typeof UiWeb>()),
   Button: ({
     size: _size,
     variant: _variant,
@@ -76,7 +78,8 @@ it("shows loading, then the real run and its exact message link", async () => {
   );
   const view = await mounted();
   try {
-    expect(view.container.textContent).toContain("Loading");
+    expect(view.container.querySelector('[role="status"][aria-label="Loading…"]')).not.toBeNull();
+    expect(view.container.textContent).not.toContain("Loading");
     expect(view.container.textContent).not.toContain("No runs yet");
     await act(async () => finish([run]));
     expect(view.container.querySelectorAll("li")).toHaveLength(1);
@@ -120,6 +123,26 @@ it("shows failures honestly, preserves previous results and recovers on the next
     await act(async () => vi.advanceTimersByTimeAsync(15_000));
     expect(view.container.querySelector('[role="alert"]')).toBeNull();
     expect(view.container.textContent).toContain("No runs yet");
+  } finally {
+    await view.close();
+  }
+});
+it.each([
+  [403, 2],
+  [404, 2],
+  [503, 5],
+])("after a %i poll, history requests total %i", async (status, requests) => {
+  vi.useFakeTimers();
+  api.history
+    .mockResolvedValueOnce(page([run]))
+    .mockRejectedValueOnce(Object.assign(new Error("Refused"), { status }))
+    .mockResolvedValue(page([run]));
+  const view = await mounted();
+  try {
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain("Could not load");
+    await act(async () => vi.advanceTimersByTimeAsync(45_000));
+    expect(api.history).toHaveBeenCalledTimes(requests);
   } finally {
     await view.close();
   }

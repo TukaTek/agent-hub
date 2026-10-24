@@ -1,5 +1,5 @@
 import type { ActionApprovalRule, ActionAutoReviewSettings } from "@cortexai-agent-hub/contracts";
-import { Button, Label, Switch } from "@cortexai-agent-hub/ui-web";
+import { Button, Label, Spinner, Switch } from "@cortexai-agent-hub/ui-web";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useId, useState } from "react";
@@ -149,7 +149,7 @@ export function ApprovalRulesSettings() {
       {error ? <p className="mt-3 text-[13px] text-destructive">{error}</p> : null}
       {loading ? (
         <p className="mt-4 text-[13px] text-muted-foreground">
-          <Trans>Loading rules…</Trans>
+          <Spinner aria-label={t`Loading rules…`} />
         </p>
       ) : rules.length > 0 ? (
         <ul className="mt-4 space-y-2">

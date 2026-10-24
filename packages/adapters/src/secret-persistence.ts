@@ -1,13 +1,24 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { Prisma } from "@cortexai-agent-hub/db";
+import { Prisma, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { deleteSecretBestEffort } from "./secret-store-factory.js";
 
 type Candidate = { id: string; ciphertext: string };
 type Cleanup = { old: Candidate[]; written: Candidate[]; client?: Prisma.TransactionClient };
-async function cleanupUnreferenced(
+// A ciphertext ref can be shared across tenants, so the reference count must see
+// every row: deleting from the store on a tenant-filtered count of zero would
+// destroy a secret another Space still uses.
+function cleanupUnreferenced(
+  prisma: PrismaClient,
+  store: SecretStore,
+  candidates: Candidate[],
+): Promise<void> {
+  return runAsSystem("secret reference count", () => deleteUnreferenced(prisma, store, candidates));
+}
+
+async function deleteUnreferenced(
   prisma: PrismaClient,
   store: SecretStore,
   candidates: Candidate[],

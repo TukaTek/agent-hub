@@ -133,7 +133,7 @@ describe("createIntegrationConnectorStack", () => {
     ["api", [stub("installed")], [stub("mcp")]],
     ["worker", [stub("installed")], [stub("mcp")]],
   ])("builds the %s stack with exactly one env Composio provider", (_, before, after) => {
-    const composio = new ComposioConnector("ck_fake");
+    const composio = new ComposioConnector({ apiKey: "ck_fake" });
     const stack = createIntegrationConnectorStack(composio, fixture().settings, before, after);
     expect(stack.composio).toBe(composio);
     expect(composioEntries(stack)).toEqual([composio]);
@@ -145,7 +145,12 @@ describe("createIntegrationConnectorStack", () => {
     const settings = fixture().settings;
     expect(settings.providers().map((provider) => provider.describe().id)).toContain("composio");
     expect(() =>
-      createIntegrationConnectorStack(new ComposioConnector("ck_fake"), settings, [], []),
+      createIntegrationConnectorStack(
+        new ComposioConnector({ apiKey: "ck_fake" }),
+        settings,
+        [],
+        [],
+      ),
     ).not.toThrow();
   });
 

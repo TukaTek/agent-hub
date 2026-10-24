@@ -4,11 +4,11 @@ import type {
   ThinkingLevel,
 } from "@cortexai-agent-hub/contracts";
 import {
-  CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
   OPENAI_COMPATIBLE_PROVIDER_ID as CONTRACT_OPENAI_COMPAT,
   canonicalPiProviderId,
-  cloudflareGatewayRouting,
-  isCloudflareAiGatewayProvider,
+  cloudflareModelConfigMessage,
+  cloudflareModelRouting,
+  isCloudflareModelProvider,
   MAX_ENABLED_MODEL_IDS,
   modelOutputLeavesInputRoom,
 } from "@cortexai-agent-hub/contracts";
@@ -32,7 +32,21 @@ import {
 export type BuildModelConnectOptions = {
   /** Skip writing visionModelIds when prior plaintext was unavailable during key replacement. */
   omitVisionModelIds?: boolean;
+  /** Private and loopback endpoints require explicit operator configuration. */
+  allowPrivateEndpoint?: boolean;
 };
+
+/** Reuse saved probe headers only for the endpoint they were saved for. */
+export function storedOpenAiCompatibleProbeHeaders(
+  baseUrl: string,
+  storedPlaintext?: string,
+): Record<string, string> | undefined {
+  const previous = tryParseModelSecret(storedPlaintext);
+  return previous?.kind === "openai_compatible" &&
+    previous.baseUrl === normalizeOpenAiCompatibleBaseUrl(baseUrl)
+    ? previous.headers
+    : undefined;
+}
 
 /** Reuse a saved probe key only for the endpoint it was saved for. */
 export function storedOpenAiCompatibleProbeKey(
@@ -64,17 +78,20 @@ export function buildModelConnectPlaintext(
     ...(contextWindow !== undefined ? { contextWindow } : {}),
   };
   if (input.provider === OPENAI_COMPATIBLE_PROVIDER_ID) {
-    const prepared = prepareOpenAiCompatibleConnect(input);
+    const policy = { allowPrivate: options?.allowPrivateEndpoint };
+    const prepared = prepareOpenAiCompatibleConnect(input, policy);
     const sameEndpoint =
       previous?.kind === "openai_compatible" && previous.baseUrl === prepared.baseUrl;
     const compatiblePrevious = sameEndpoint ? previous : undefined;
     if (input.apiKey === undefined && sameEndpoint) {
       // Revalidate the inherited key too: public endpoints must still use HTTPS.
-      prepared.apiKey = prepareOpenAiCompatibleConnect({
-        ...input,
-        apiKey: previous.apiKey,
-      }).apiKey;
+      prepared.apiKey = prepareOpenAiCompatibleConnect(
+        { ...input, apiKey: previous.apiKey },
+        policy,
+      ).apiKey;
     }
+    const headers = input.headers ?? compatiblePrevious?.headers;
+    prepareOpenAiCompatibleConnect({ ...input, apiKey: prepared.apiKey, headers }, policy);
     const previousVisionModelIds = sameEndpoint ? previous.visionModelIds : undefined;
     const maxImagesPerPrompt =
       input.maxImagesPerPrompt === null
@@ -120,6 +137,7 @@ export function buildModelConnectPlaintext(
     const secret: StoredModelSecret = {
       kind: "openai_compatible",
       baseUrl: prepared.baseUrl,
+      ...(headers !== undefined ? { headers } : {}),
       ...(compatibleCacheCapabilities !== undefined
         ? { cacheCapabilities: compatibleCacheCapabilities }
         : {}),
@@ -202,14 +220,14 @@ function tryParseModelSecret(plaintext?: string): StoredModelSecret | undefined 
 }
 
 /**
- * Cloudflare AI Gateway routing is part of the saved key. Omitted fields keep
+ * Cloudflare routing is part of the saved key. Omitted fields keep
  * the previous connection's ids; a blank or unsafe value is rejected.
  */
 function cloudflareRoutingForConnect(
   input: ModelConnectInput,
   previous: ReturnType<typeof tryParseModelSecret>,
-): { accountId: string; gatewayId: string } | undefined {
-  if (!isCloudflareAiGatewayProvider(input.provider)) return undefined;
+): { accountId: string; gatewayId?: string } | undefined {
+  if (!isCloudflareModelProvider(input.provider)) return undefined;
   const accountId =
     input.accountId !== undefined
       ? input.accountId
@@ -222,8 +240,8 @@ function cloudflareRoutingForConnect(
       : previous?.kind === "api_key"
         ? previous.gatewayId
         : undefined;
-  const routing = cloudflareGatewayRouting({ accountId, gatewayId });
-  if (!routing) throw new Error(CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE);
+  const routing = cloudflareModelRouting({ provider: input.provider, accountId, gatewayId });
+  if (!routing) throw new Error(cloudflareModelConfigMessage(input.provider));
   return routing;
 }
 
@@ -307,6 +325,7 @@ export function modelCredentialDto(
         ? modelIdSupportsImages(parsed.visionModelIds, row.defaultModel)
         : compatibleCredential.supportsImages,
     baseUrl: parsed.baseUrl,
+    ...(parsed.headers !== undefined ? { headerNames: Object.keys(parsed.headers) } : {}),
     reasoning: parsed.reasoning ?? false,
     ...(credential.thinkingLevel !== undefined || parsed.thinkingLevel !== undefined
       ? { thinkingLevel: credential.thinkingLevel ?? parsed.thinkingLevel }

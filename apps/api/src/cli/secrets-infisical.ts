@@ -8,7 +8,7 @@ import {
 } from "@cortexai-agent-hub/adapters";
 import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
-import { createDb } from "@cortexai-agent-hub/db";
+import { createDb, runAsSystem } from "@cortexai-agent-hub/db";
 import { createSecretMigrationRepository } from "../secret-migration.js";
 
 loadRootEnv();
@@ -42,22 +42,25 @@ const repository = createSecretMigrationRepository(prisma);
 try {
   await encrypted.start();
   await infisical.start();
-  const result = await migrateSecrets(
-    repository,
-    encrypted,
-    infisical,
-    {
-      operationId: "secret-migration",
-      traceId: "secret-migration",
-      userId: "migration",
-      spaceId: "migration",
-      signal: controller.signal,
-    },
-    {
-      direction: args.includes("--reverse") ? "reverse" : "forward",
-      dryRun: args.includes("--dry-run"),
-      report: (row, status) => process.stdout.write(`${row.label} ${row.id}: ${status}\n`),
-    },
+  // Migrates every tenant's secrets.
+  const result = await runAsSystem("secret store migration", () =>
+    migrateSecrets(
+      repository,
+      encrypted,
+      infisical,
+      {
+        operationId: "secret-migration",
+        traceId: "secret-migration",
+        userId: "migration",
+        spaceId: "migration",
+        signal: controller.signal,
+      },
+      {
+        direction: args.includes("--reverse") ? "reverse" : "forward",
+        dryRun: args.includes("--dry-run"),
+        report: (row, status) => process.stdout.write(`${row.label} ${row.id}: ${status}\n`),
+      },
+    ),
   );
   if (result.failed || controller.signal.aborted) process.exitCode = 1;
 } catch {

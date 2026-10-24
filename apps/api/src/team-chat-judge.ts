@@ -8,12 +8,15 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import {
   formatCurrentTimeInstruction,
+  hasHostedModelCredits,
+  hostedModelCreditObserver,
   matchesFailedOAuthSecret,
   resolveModelAuth,
+  secretValuesToRedact,
   serializeModelSecret,
   toOAuthCredential,
 } from "@cortexai-agent-hub/adapters";
-import { withHubModelDefaults } from "@cortexai-agent-hub/core";
+import { redactSecrets, withHubModelDefaults } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   findDefaultModelCredential,
@@ -123,6 +126,8 @@ interface ModelTeamChatEngagementJudgeDeps {
   deploymentModelKey?: string;
   providerOverride?: string;
   modelOverride?: string;
+  /** The instance flag (`MCP_ALLOW_PRIVATE_ENDPOINT`). */
+  allowPrivateEndpoint?: boolean;
   timeoutMs?: number;
 }
 
@@ -130,9 +135,16 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
   constructor(private readonly deps: ModelTeamChatEngagementJudgeDeps) {}
 
   async decide(input: TeamChatEngagementInput): Promise<TeamChatEngagementDecision> {
+    let secretsToRedact: string[] = [];
     try {
       const resolved = await this.resolveModel(input.bot);
       if (!resolved) return { act: false };
+      secretsToRedact = secretValuesToRedact({
+        kind: "openai_compatible",
+        baseUrl: resolved.model.baseUrl ?? "",
+        apiKey: resolved.model.apiKey,
+        headers: resolved.model.headers,
+      });
       // Standing rules can be time-based ("only during work hours"): judge them in the owner's zone.
       let ownerTimeZone: string | null | undefined;
       try {
@@ -203,7 +215,10 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
       }
       return parseTeamChatEngagementDecision(text);
     } catch (error) {
-      getLogger().error("team chat engagement judge failed", safeError(error));
+      getLogger().error(
+        "team chat engagement judge failed",
+        redactSecrets(safeError(error), secretsToRedact),
+      );
       return { act: false };
     }
   }
@@ -238,10 +253,16 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
       this.deps.deploymentModel;
     if (!provider || !modelId) return null;
 
-    if (!credential) {
+    const hosted =
+      settings?.modelCreditsEnabled &&
+      (await hasHostedModelCredits(this.deps.prisma, scope, provider));
+    if (!credential || hosted) {
       const apiKey =
         provider === this.deps.deploymentProvider ? this.deps.deploymentModelKey : undefined;
-      return { model: { provider, id: modelId, ...(apiKey ? { apiKey } : {}) } };
+      const callObserver = settings?.modelCreditsEnabled
+        ? await hostedModelCreditObserver(this.deps.prisma, scope)
+        : undefined;
+      return { model: { provider, id: modelId, ...(apiKey ? { apiKey } : {}), callObserver } };
     }
 
     const secret = await this.deps.prisma.secret.findFirst({
@@ -324,6 +345,9 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
           id: modelId,
           apiKey: parsed.apiKey,
           baseUrl: parsed.baseUrl,
+          headers: parsed.headers,
+          allowPrivateEndpoint: this.deps.allowPrivateEndpoint === true,
+
           ...limit,
           ...context,
         },
