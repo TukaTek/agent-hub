@@ -11,6 +11,11 @@ describe("steering queue", () => {
     expect(queueSteer([first], second)).toEqual([first, second]);
   });
 
+  it("skips a send the run claimed before the send returned", () => {
+    expect(queueSteer([], first, 5)).toEqual([]);
+    expect(queueSteer([], first, 4)).toEqual([first]);
+  });
+
   it("clears messages the run claimed, by the claim's sequence watermark", () => {
     const queue = [first, second, other];
     const claimed = settleSteerQueue(queue, "bot-1", {
@@ -28,20 +33,20 @@ describe("steering queue", () => {
 
   it("ignores a claim without a watermark", () => {
     const queue = [first];
-    expect(
-      settleSteerQueue(queue, "bot-1", { type: "run.steering.claimed", payload: {} }),
-    ).toBe(queue);
+    expect(settleSteerQueue(queue, "bot-1", { type: "run.steering.claimed", payload: {} })).toBe(
+      queue,
+    );
   });
 
   it("clears the thread when its run is cancelled or fails", () => {
-    for (const type of ["run.cancelled", "run.failed"]) {
+    for (const type of ["run.cancelled", "run.failed"] as const) {
       expect(settleSteerQueue([first, other], "bot-1", { type, payload: {} })).toEqual([other]);
     }
   });
 
   it("keeps the queue for unrelated events", () => {
     const queue = [first];
-    for (const type of ["run.completed", "run.started", "thread.message.created"]) {
+    for (const type of ["run.completed", "run.started", "thread.message.created"] as const) {
       expect(settleSteerQueue(queue, "bot-1", { type, payload: {} })).toBe(queue);
     }
   });

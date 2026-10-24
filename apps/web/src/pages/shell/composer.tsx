@@ -36,8 +36,8 @@ import { ComposerReplyPreview } from "./chat-context";
 import type { PendingAttachment } from "./chat-shared";
 import { previewMessageText } from "./chat-shared";
 import { ComposerError } from "./composer-error";
-import { ComposerQueued } from "./composer-queued";
 import { MentionChipIcon, MentionOptionIcon, slashActionLabel } from "./composer-mentions";
+import { ComposerQueued } from "./composer-queued";
 import { useComposerLayout } from "./use-composer-layout";
 
 export const Composer = memo(function Composer({
