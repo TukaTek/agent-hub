@@ -1,4 +1,4 @@
-import type { RunTool } from "@cortexai-agent-hub/contracts";
+import type { ProductEvent, RunTool } from "@cortexai-agent-hub/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "./client.js";
 import { appendEventInTransaction } from "./events.js";
@@ -61,7 +61,7 @@ function fakeTx(runStatus: string, payloads: unknown[]) {
   return { tx: tx as unknown as Prisma.TransactionClient, fake: tx, appended };
 }
 
-const terminal = (type: string) => ({
+const terminal = (type: ProductEvent["type"]) => ({
   spaceId: "space-1",
   threadId: "thread-1",
   botId: "bot-1",
@@ -83,7 +83,7 @@ describe("run end closes open run tool calls", () => {
     ["run.completed", "completed"],
     ["run.failed", "failed"],
     ["run.cancelled", "cancelled"],
-  ])("%s interrupts every call still running, just before itself", async (type, runStatus) => {
+  ] as const)("%s interrupts every call still running, just before itself", async (type, runStatus) => {
     const { tx, appended } = fakeTx(runStatus, [
       call("a", "running"),
       call("b", "running"),
