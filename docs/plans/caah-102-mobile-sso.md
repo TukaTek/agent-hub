@@ -45,9 +45,9 @@ The custom server entry ("Use a custom server") is shown only when `EXPO_PUBLIC_
 
 - `apps/mobile/package.json`, `pnpm-lock.yaml`: `expo-crypto` (SDK 57)
 - `apps/mobile/lib/hub-sso.ts`, `hub-sso.test.ts`
-- `apps/mobile/lib/custom-server.ts`, `custom-server.test.ts`
+- `apps/mobile/lib/endpoint.ts` (`customServerAllowed`), `endpoint.test.ts`, `api.ts` (re-export), `api.test.ts` (sign-out keeps the server)
 - `apps/mobile/app/sign-in.tsx`, `lib/sign-in.test.tsx`
-- `apps/mobile/app/+native-intent.tsx`, `lib/settings-sheet.test.ts`
+- `apps/mobile/app/+native-intent.tsx`, `lib/native-intent.test.ts`
 - `apps/mobile/lib/locales/{de,ru,zh}.ts`
 - `apps/mobile/.maestro/hub-sso.yaml`
 - `.github/workflows/mobile-android-screenshots.yml`
@@ -57,7 +57,15 @@ The custom server entry ("Use a custom server") is shown only when `EXPO_PUBLIC_
 
 - `hub-sso.test.ts` (expo-web-browser, expo-crypto, `./api`, `./session` mocked as in `sso.test.ts`): success stores the token through `replaceSessionTokenIfCurrent`; the start body carries the challenge and never the verifier, and the complete body carries the verifier; the challenge is the S256 of the verifier; wrong scheme, host, path, missing, wrong or duplicate state, missing or duplicate code store nothing; each `error=` value and an unknown one map as above; cancel and dismiss store nothing; `password` and `other_sso_unavailable` pass through; start and complete access refusals; concurrent calls start one attempt; a server or session change during start, the browser or complete stores nothing; no `console` call ever sees the token, code, verifier, state or callback URL.
 - `sign-in.test.tsx`: hub mode with `hubSsoNative` shows the email step and routes each result; without it the password form is unchanged; the custom server entry and "Switch organization".
-- `settings-sheet.test.ts`: `+native-intent` drops the handoff query.
-- `custom-server.test.ts`: the flag's defaults.
+- `native-intent.test.ts`: `+native-intent` drops the handoff query.
+- `endpoint.test.ts`: the flag's defaults. `api.test.ts`: sign-out never touches the saved server.
 
-Maestro `hub-sso.yaml` (not run here): against a Hub server with native SSO, Continue after an email opens the Microsoft sheet.
+Maestro `hub-sso.yaml` (not run here): against a Hub server with native SSO, the email step has no password field and Continue opens the system auth session.
+
+## Verification
+
+- The `hub-sso.test.ts` and `sign-in.test.tsx` cases were written first and failed (module missing, then eight UI cases), and pass with the implementation. Mutation checks (accepting a duplicate state, dropping the server check after the browser) made three cases fail.
+- `pnpm --filter @cortexai-agent-hub/mobile test`: 186 files, 2079 tests pass.
+- `tsc --noEmit -p tsconfig.json` in `apps/mobile`: clean. `expo install --check`: dependencies up to date.
+- `pnpm lint`: no errors; the six warnings are in files this change doesn't touch.
+- Not run: Maestro flows, a device or simulator build, and a real Hub/Entra sign-in. The Android deep-link rewrite and the ephemeral iOS session are covered only by unit tests.
