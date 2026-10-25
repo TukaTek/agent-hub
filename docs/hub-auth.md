@@ -117,7 +117,19 @@ When Hub returns `401 invalid_service_token`, the cached token is dropped. A sta
 
 Forcing re-authentication on every start is simpler and safer than forcing it only after a sign-out: a marker cookie could be cleared, it wouldn't cover sessions that simply expired, and sign-ins are rare anyway (sessions last up to 30 days). The parameters are only in the URL, so someone at the browser could remove them. Hub must enforce re-authentication itself for this to hold against a deliberate attacker. The start request to Hub is unchanged, because Hub's schema rejects unknown fields. Other authorize URLs are passed through untouched.
 
-**Desktop.** The Electron app does not support SSO yet because it hands off-origin navigation to the system browser, which cannot complete an app sign-in. Entra users see a message pointing them to this deployment in their browser. Always Native users sign in on desktop as before. Mobile keeps its password form.
+**Desktop.** The Electron app does not support SSO yet because it hands off-origin navigation to the system browser, which cannot complete an app sign-in. Entra users see a message pointing them to this deployment in their browser. Always Native users sign in on desktop as before. Mobile keeps its password form. The API side of native SSO is described below; the apps adopt it separately.
+
+### Native SSO (desktop and mobile)
+
+Desktop and mobile finish Entra SSO through the same Hub channel and callback as web (`agent-hub-web`, `<BETTER_AUTH_URL>/api/auth/hub/sso/callback`), so Hub needs no extra registration. The API stays the confidential client: the service credential, Hub's PKCE verifier, the code exchange, the policy check and session creation all stay on the server. The app only ever holds a one-time Agent Hub handoff code, bound to a PKCE pair the app generated. No Hub token reaches the device. Hub's `agent-hub-desktop` deep-link channel is not used. Auth capabilities report `hubSsoNative: true` when this is available (it's a sibling of `hubSso`, because older clients parse `hubSso` as a boolean). The endpoints exist only with `HUB_SSO_ENABLED=true`.
+
+1. The app sends `POST /api/auth/hub/sso/native/start` with `{ email, client, returnTo, appChallenge }` from a trusted origin (the instance origin for the desktop renderer, `cortexai-agent-hub://` for mobile). `client` is `desktop` or `mobile`. `returnTo` must be exactly `http://127.0.0.1:<port>/hub-sso` or `http://[::1]:<port>/hub-sso` for desktop (port 1024 to 65535, no leading zero), or exactly `cortexai-agent-hub://hub-sso` for mobile. It is matched against the raw string, so `localhost`, other loopback addresses, userinfo, queries, fragments, backslashes and trailing characters are all `400`. `appChallenge` is the app's S256 challenge, exactly 43 base64url characters. The same policy gate and lookup as Continue run next. Native, Always Native and unknown users get `{ "next": "password" }`, Google users `{ "next": "other_sso_unavailable" }`. For Entra users the API runs the same sso-start as web and stores the same hashed, encrypted `verification` row, plus a `hub_sso_native` row keyed by the same hash with the client, returnTo and app challenge. It sets no cookie and answers `{ "next": "redirect", "authorizeUrl", "state" }`. The app opens `authorizeUrl` in the system browser.
+2. Hub redirects the browser to the callback. A state with a live `hub_sso_native` row takes the native branch: the app's PKCE binding replaces the browser cookie check (web sign-ins keep the cookie check unchanged). The callback consumes the state, checks policy, exchanges once, and admits the grant, exactly as for web. It then generates a 32-byte handoff code, stores only its SHA-256 and the grant encrypted with the token encryption key on the native row for 60 seconds, and redirects to `returnTo?code=<handoff>&state=<state>`. No user or session exists yet.
+3. The app sends `POST /api/auth/hub/sso/native/complete` with `{ code, state, appVerifier }`. The API deletes the row before checking anything, so each code gets one try: an unknown, used or expired code, a different state, or a verifier whose S256 doesn't match the challenge (compared in constant time) answers `400` "Your sign-in expired", and the grant it held is revoked at Hub. Otherwise the policy gate runs again and the grant becomes a session with the same `hub_<tenant>_<user>` identity and encrypted `hub_session` as every other sign-in. Desktop gets the HTTP-only session cookie and `{ user }`. Mobile gets `{ token, user }`, where `token` is the signed bearer that mobile password sign-in returns.
+
+Failures in the callback go back to the app as `returnTo?error=<code>&state=<state>`, with the same `sso_expired`, `sso_failed` and policy refusal codes as web (an IdP error such as Hub's `access_denied` is `sso_failed`). A state with no live native row keeps the web error page. Refused exchanges and policy refusals create no user or session; an admitted-then-refused grant is revoked at Hub. Policy refusals at complete answer with the usual stable codes. Start and complete share the Hub sign-in rate limit. Handoff codes, app verifiers, state, tokens and emails are never logged; logs carry reason codes such as `complete:mismatch`. Expired native rows are deleted whenever a native sign-in starts, and grants nobody redeemed are revoked at Hub then. The Hub grant is stored nowhere else but the encrypted `hub_session` row once a session exists.
+
+During a rolling deploy the previous release has no native branch, so a native callback it serves lands on `/sign-in?error=sso_expired` in the browser; the user starts again.
 
 ### Staging check
 
@@ -143,6 +155,20 @@ Then, in a browser:
 4. Set the first user to Always Native in Hub and sign in with their password. Expect the same account and data as step 1.
 5. Remove the first user's assignment in Hub while signed in. Expect access to stop within the verification cache TTL.
 6. Sign in as another assigned Entra test user, sign out of Agent Hub, and continue with the same email. Expect Microsoft to ask for the password again, with the email already filled in.
+
+Native SSO uses the same configuration. Until the apps adopt it, drive it by hand from a terminal on the same machine. Generate an app verifier and its challenge:
+
+```bash
+VERIFIER=$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')
+CHALLENGE=$(printf %s "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 | tr '+/' '-_' | tr -d '=\n')
+```
+
+1. Listen on a loopback port (for example `nc -l 127.0.0.1 53682`) and start: `curl -s -X POST <origin>/api/auth/hub/sso/native/start -H "origin: <origin>" -H "content-type: application/json" -d "{\"email\":\"<test user>\",\"client\":\"desktop\",\"returnTo\":\"http://127.0.0.1:53682/hub-sso\",\"appChallenge\":\"$CHALLENGE\"}"`. Expect `next: "redirect"` and no `set-cookie`.
+2. Open `authorizeUrl` in a browser and sign in as an assigned Entra test user. Expect the listener to receive `GET /hub-sso?code=…&state=…`, and no Agent Hub session yet.
+3. Complete within 60 seconds with that code and state and `"appVerifier":"$VERIFIER"`. Expect `200`, a session cookie and `{ user }`. Repeat the same request and expect `400`.
+4. Repeat steps 1 to 3 with a wrong `appVerifier`; expect `400`, then `400` again with the right one.
+5. Repeat step 2 as an Entra test user without an assignment. Expect the listener to receive `?error=…&state=…`, and no session for that user.
+6. Repeat with `"client":"mobile"`, `"returnTo":"cortexai-agent-hub://hub-sso"` and `-H "origin: cortexai-agent-hub://"`. Copy the code from the browser's failed navigation to `cortexai-agent-hub://hub-sso?…`, complete with the mobile origin, and expect `{ token, user }`; `GET /api/auth/get-session` with `Authorization: Bearer <token>` returns the user.
 
 ## Hub policy
 

@@ -1,0 +1,53 @@
+{
+  "contractVersion": 1,
+  "synthetic": true,
+  "returnChannel": "agent-hub-web",
+  "callbackPath": "/api/auth/hub/sso/callback",
+  "handoffTtlSeconds": 60,
+  "startPath": "/api/auth/hub/sso/native/start",
+  "completePath": "/api/auth/hub/sso/native/complete",
+  "appVerifier": "synthetic-app-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "appChallenge": "_toYkoqWDHlXDW6R-KevR9wlzgpD2Hbd7JdwyFcahTo",
+  "clients": {
+    "desktop": {
+      "origin": "<instance origin>",
+      "startRequest": {
+        "email": "user@example.test",
+        "client": "desktop",
+        "returnTo": "http://127.0.0.1:53682/hub-sso",
+        "appChallenge": "_toYkoqWDHlXDW6R-KevR9wlzgpD2Hbd7JdwyFcahTo"
+      },
+      "completeResponseKeys": ["user"],
+      "sessionCookie": true
+    },
+    "mobile": {
+      "origin": "cortexai-agent-hub://",
+      "startRequest": {
+        "email": "user@example.test",
+        "client": "mobile",
+        "returnTo": "cortexai-agent-hub://hub-sso",
+        "appChallenge": "_toYkoqWDHlXDW6R-KevR9wlzgpD2Hbd7JdwyFcahTo"
+      },
+      "completeResponseKeys": ["token", "user"],
+      "sessionCookie": true
+    }
+  },
+  "startResponse": {
+    "next": "redirect",
+    "authorizeUrl": "<Hub authorizeUrl with prompt=login and login_hint>",
+    "state": "<43 base64url characters>"
+  },
+  "startPasswordResponse": { "next": "password" },
+  "handoffRedirect": "<returnTo>?code=<43 base64url characters>&state=<state>",
+  "errorRedirect": "<returnTo>?error=<SsoCallbackError>&state=<state>",
+  "completeRequest": {
+    "code": "<code from the handoff redirect>",
+    "state": "<state from the handoff redirect>",
+    "appVerifier": "synthetic-app-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "completeErrors": [
+    { "case": "unknown, used or expired code", "status": 400 },
+    { "case": "wrong state", "status": 400 },
+    { "case": "wrong appVerifier (burns the code)", "status": 400 }
+  ]
+}

@@ -13,6 +13,12 @@ export const authCapabilitiesSchema = z
   .object({
     mode: z.enum(["hub", "local"]).default("local"),
     hubSso: z.boolean().default(false),
+    /**
+     * Desktop and mobile can finish Hub SSO through `/hub/sso/native/*`. A sibling of
+     * `hubSso` rather than `hubSso.native`, because older clients parse `hubSso` as a
+     * boolean. Older servers omit it, which means unavailable.
+     */
+    hubSsoNative: z.boolean().optional(),
     sso: z.union([oidcSsoSchema, z.boolean()]).nullable(),
     passwordAuth: z.boolean(),
     passwordReset: z.boolean(),

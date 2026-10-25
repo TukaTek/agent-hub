@@ -1,8 +1,9 @@
 import { createHash, createHmac } from "node:crypto";
 import { HUB_SSO_ACCESS_DENIED } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";
-import { symmetricDecrypt } from "better-auth/crypto";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import nativeContract from "./fixtures/agent-hub-native-sso.v1.json" with { type: "json" };
 import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
 import {
   createHubClient,
@@ -54,6 +55,12 @@ const ssoConfig = {
 };
 const MOBILE_ORIGIN = "cortexai-agent-hub://";
 const authSecret = "offline-auth-secret-at-least-32-characters";
+const NATIVE_RETURN_TO = {
+  desktop: "http://127.0.0.1:53682/hub-sso",
+  mobile: "cortexai-agent-hub://hub-sso",
+} as const;
+const APP_VERIFIER = "synthetic-app-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const APP_CHALLENGE = createHash("sha256").update(APP_VERIFIER).digest("base64url");
 
 /** Signs a stored session token the way the session cookie and `set-auth-token` do. */
 function signedBearer(token: string) {
@@ -79,6 +86,15 @@ function fixture(
   const data: Record<string, any[]> = { user: [], account: [], session: [], verification: [] };
   const identities = new Map<string, any>();
   const grants = new Map<string, any>();
+  let native: any[] = [];
+  const nativeMatches = (row: any, where: Record<string, any>) =>
+    Object.entries(where).every(([key, value]) =>
+      key === "expiresAt"
+        ? row.expiresAt < value.lt
+        : key === "grantCipher"
+          ? row.grantCipher !== null
+          : row[key] === value,
+    );
   const grant = {
     subject: "subject-1",
     tenant: config.tenantId,
@@ -174,6 +190,24 @@ function fixture(
         return { count: before - data.verification.length };
       },
     },
+    hubSsoNative: {
+      create: async ({ data: row }: any) => {
+        native.push({ handoffHash: null, grantCipher: null, createdAt: new Date(), ...row });
+        return row;
+      },
+      findUnique: async ({ where }: any) => native.find((row) => nativeMatches(row, where)),
+      findMany: async ({ where }: any) => native.filter((row) => nativeMatches(row, where)),
+      updateMany: async ({ where, data: updates }: any) => {
+        const rows = native.filter((row) => nativeMatches(row, where));
+        for (const row of rows) Object.assign(row, updates);
+        return { count: rows.length };
+      },
+      deleteMany: async ({ where }: any) => {
+        const before = native.length;
+        native = native.filter((row) => !nativeMatches(row, where));
+        return { count: before - native.length };
+      },
+    },
   };
   const web = options.sso ? "https://web.example.test" : "http://web.example.test";
   const auth = createAuth(prisma, {
@@ -218,6 +252,24 @@ function fixture(
     return { response, setCookie, state, cookie: `__Host-ah_sso=${state}` };
   }
   const callback = (query: string, cookie = "") => request(`/hub/sso/callback?${query}`, cookie);
+  /** Native start as the desktop renderer (instance origin) or the mobile app would send it. */
+  function startNative(app: "desktop" | "mobile" = "desktop", body: Record<string, unknown> = {}) {
+    client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+    return request(
+      "/hub/sso/native/start",
+      "",
+      {
+        email: "entra@example.test",
+        client: app,
+        returnTo: NATIVE_RETURN_TO[app],
+        appChallenge: APP_CHALLENGE,
+        ...body,
+      },
+      app === "mobile" ? MOBILE_ORIGIN : web,
+    );
+  }
+  const completeNative = (body: unknown, app: "desktop" | "mobile" = "desktop") =>
+    request("/hub/sso/native/complete", "", body, app === "mobile" ? MOBILE_ORIGIN : web);
   const work = createUserWorkAuthorizer(prisma, options.hub ?? config, encryptionKey, { policy });
   return {
     auth,
@@ -225,6 +277,9 @@ function fixture(
     login,
     startSso,
     callback,
+    startNative,
+    completeNative,
+    native: () => native,
     data,
     identities,
     grants,
@@ -576,6 +631,21 @@ describe("Hub sign-in rate limits", () => {
   it.each([
     ["/hub/sign-in", { email: "user@example.test", password: "test-password" }, "203.0.113.1"],
     ["/hub/sign-in/continue", { email: "user@example.test" }, "203.0.113.3"],
+    [
+      "/hub/sso/native/start",
+      {
+        email: "user@example.test",
+        client: "desktop",
+        returnTo: NATIVE_RETURN_TO.desktop,
+        appChallenge: APP_CHALLENGE,
+      },
+      "203.0.113.5",
+    ],
+    [
+      "/hub/sso/native/complete",
+      { code: "c".repeat(43), state: "s".repeat(43), appVerifier: APP_VERIFIER },
+      "203.0.113.7",
+    ],
   ] as const)("limits %s per forwarded client address", async (path, body, client) => {
     const { post } = await limited();
     const { max } = HUB_SIGN_IN_RATE_LIMITS[path];
@@ -1157,6 +1227,623 @@ describe("Hub tenant Entra SSO", () => {
     const output = JSON.stringify([...logged.map(String), ...reasons]);
     for (const secret of [ssoConfig.sso.secret, ...tokens, code, state, email])
       expect(output).not.toContain(secret);
+  });
+});
+
+describe("Hub native SSO handoff for desktop and mobile (CAAH-136)", () => {
+  const code = "c".repeat(43);
+  const sha256Hex = (value: string) => createHash("sha256").update(value).digest("hex");
+  const clients = ["desktop", "mobile"] as const;
+
+  /** Starts natively and follows Hub back to the callback, as the system browser would. */
+  async function signInNative(f: ReturnType<typeof fixture>, client: "desktop" | "mobile") {
+    const start = await f.startNative(client);
+    expect(start.status).toBe(200);
+    const { state } = (await start.json()) as { state: string };
+    const callback = await f.callback(`code=${code}&state=${state}`);
+    const location = callback.headers.get("location") ?? "";
+    const handoff = new URL(location).searchParams.get("code") ?? "";
+    return { state, callback, location, handoff };
+  }
+
+  function expectNothingCreated(f: ReturnType<typeof fixture>) {
+    expect(f.data.session).toHaveLength(0);
+    expect(f.data.user).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
+  }
+
+  describe("start", () => {
+    it.each(clients)("sends a %s Entra user to Hub without a cookie", async (client) => {
+      const f = fixture(undefined, { sso: true });
+      const response = await f.startNative(client);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("set-cookie")).toBeNull();
+      const body = (await response.json()) as Record<string, string>;
+      expect(body).toEqual({ next: "redirect", authorizeUrl, state: expect.any(String) });
+      expect(body.state).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const [email, sentState, challenge] = f.client.ssoStart.mock.calls[0]!;
+      expect(email).toBe("entra@example.test");
+      expect(sentState).toBe(body.state);
+      const [row] = f.data.verification!;
+      expect(row.id).toBe(`hub-sso:${sha256Hex(body.state!)}`);
+      const verifier = await symmetricDecrypt({ key: encryptionKey, data: row.value });
+      // Hub's PKCE pair stays on the server; the app's challenge never reaches Hub.
+      expect(challenge).toBe(createHash("sha256").update(verifier).digest("base64url"));
+      expect(challenge).not.toBe(APP_CHALLENGE);
+      expect(JSON.stringify(body)).not.toContain(verifier);
+      expect(f.native()).toEqual([
+        expect.objectContaining({
+          stateKey: row.id,
+          client,
+          returnTo: NATIVE_RETURN_TO[client],
+          appChallenge: APP_CHALLENGE,
+          handoffHash: null,
+          grantCipher: null,
+        }),
+      ]);
+      expect(f.native()[0].expiresAt.getTime() - Date.now()).toBeGreaterThan(9 * 60_000);
+      expect(f.data.session).toHaveLength(0);
+    });
+
+    it.each([
+      ["desktop", "http://localhost:53682/hub-sso"],
+      ["desktop", "http://127.0.0.2:53682/hub-sso"],
+      ["desktop", "http://user@127.0.0.1:53682/hub-sso"],
+      ["desktop", "http://127.0.0.1:53682/hub-sso?next=/app"],
+      ["desktop", "http://127.0.0.1:53682/hub-sso#x"],
+      ["desktop", "http://127.0.0.1:53682\\@evil.example/hub-sso"],
+      ["desktop", "http://127.0.0.1:80/hub-sso"],
+      ["desktop", "https://evil.example/hub-sso"],
+      ["desktop", NATIVE_RETURN_TO.mobile],
+      ["mobile", NATIVE_RETURN_TO.desktop],
+      ["mobile", "cortexai-agent-hub://hub-sso/"],
+      ["mobile", "https://web.example.test/app"],
+    ] as const)("refuses a %s returnTo of %j before asking Hub", async (client, returnTo) => {
+      const f = fixture(undefined, { sso: true });
+      const response = await f.startNative(client, { returnTo });
+      expect(response.status).toBe(400);
+      expect(f.client.lookup).not.toHaveBeenCalled();
+      expect(f.client.ssoStart).not.toHaveBeenCalled();
+      expect(f.data.verification).toHaveLength(0);
+      expect(f.native()).toHaveLength(0);
+    });
+
+    it.each([
+      ["a short challenge", { appChallenge: APP_CHALLENGE.slice(1) }],
+      ["a long challenge", { appChallenge: `${APP_CHALLENGE}A` }],
+      ["a padded challenge", { appChallenge: `${APP_CHALLENGE.slice(1)}=` }],
+      ["a plain challenge", { appChallenge: "+".repeat(43) }],
+      ["no challenge", { appChallenge: undefined }],
+      ["an unknown client", { client: "web" }],
+      ["no email", { email: "" }],
+    ])("refuses %s", async (_case, body) => {
+      const f = fixture(undefined, { sso: true });
+      const response = await f.startNative("desktop", body);
+      expect(response.status).toBe(400);
+      expect(f.client.ssoStart).not.toHaveBeenCalled();
+      expect(f.native()).toHaveLength(0);
+    });
+
+    it("refuses an untrusted origin", async () => {
+      const f = fixture(undefined, { sso: true });
+      const response = await f.request(
+        "/hub/sso/native/start",
+        "",
+        {
+          email: "entra@example.test",
+          client: "desktop",
+          returnTo: NATIVE_RETURN_TO.desktop,
+          appChallenge: APP_CHALLENGE,
+        },
+        "https://evil.example",
+      );
+      expect(response.status).toBe(403);
+      expect(f.client.ssoStart).not.toHaveBeenCalled();
+    });
+
+    it("answers the password step for native, Always Native and unknown users", async () => {
+      const f = fixture(undefined, { sso: true });
+      const ask = async () => {
+        const response = await f.request(
+          "/hub/sso/native/start",
+          "",
+          {
+            email: "user@example.test",
+            client: "mobile",
+            returnTo: NATIVE_RETURN_TO.mobile,
+            appChallenge: APP_CHALLENGE,
+          },
+          MOBILE_ORIGIN,
+        );
+        expect(response.headers.get("set-cookie")).toBeNull();
+        return response.json();
+      };
+      expect(await ask()).toEqual({ next: "password" });
+      f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+      f.client.ssoStart.mockRejectedValueOnce(new HubRequestError(400, "user_always_native"));
+      expect(await ask()).toEqual({ next: "password" });
+      f.client.lookup.mockRejectedValueOnce(new Error("Hub access denied"));
+      expect(await ask()).toEqual({ next: "password" });
+      f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "google" });
+      expect(await ask()).toEqual({ next: "other_sso_unavailable" });
+      expect(f.data.verification).toHaveLength(0);
+      expect(f.native()).toHaveLength(0);
+    });
+
+    it.each(["access_denied", "product_not_enabled", "tenant_mismatch"])(
+      "refuses with an admin hint when Hub's start says %s",
+      async (hubCode) => {
+        const f = fixture(undefined, { sso: true });
+        f.client.ssoStart.mockRejectedValue(new HubRequestError(403, hubCode));
+        const response = await f.startNative();
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({ code: HUB_SSO_ACCESS_DENIED });
+        expect(f.native()).toHaveLength(0);
+      },
+    );
+
+    it("refuses before asking Hub about the email when Hub policy fails", async () => {
+      const f = fixture(undefined, { sso: true });
+      f.hub.reply = async () => Promise.reject(new HubRequestError(503, "unavailable"));
+      const response = await f.startNative();
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
+      expect(f.client.lookup).not.toHaveBeenCalled();
+      expect(f.native()).toHaveLength(0);
+    });
+
+    it("is not served while Hub SSO is off", async () => {
+      const f = fixture();
+      expect((await f.startNative()).status).toBe(404);
+      expect(
+        (await f.completeNative({ code, state: "s".repeat(43), appVerifier: APP_VERIFIER })).status,
+      ).toBe(404);
+    });
+
+    it("removes expired native rows and revokes grants nobody redeemed", async () => {
+      const f = fixture(undefined, { sso: true });
+      const past = new Date(Date.now() - 1000);
+      const grant = await symmetricEncrypt({
+        key: encryptionKey,
+        data: JSON.stringify({ refreshToken: "abandoned-refresh" }),
+      });
+      f.native().push(
+        { stateKey: "hub-sso:a", grantCipher: grant, handoffHash: "a", expiresAt: past },
+        { stateKey: "hub-sso:b", grantCipher: null, handoffHash: null, expiresAt: past },
+        {
+          stateKey: "hub-sso:c",
+          grantCipher: null,
+          handoffHash: null,
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      );
+      await f.startNative();
+      expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("abandoned-refresh");
+      expect(f.native().map((row) => row.stateKey)).toEqual([
+        "hub-sso:c",
+        expect.stringMatching(/^hub-sso:[0-9a-f]{64}$/),
+      ]);
+    });
+  });
+
+  describe("callback", () => {
+    it.each(clients)("hands a %s app a one-time code instead of a session", async (client) => {
+      const f = fixture(undefined, { sso: true });
+      const { state, callback, location, handoff } = await signInNative(f, client);
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("cache-control")).toBe("no-store");
+      expect(callback.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(location).toBe(`${NATIVE_RETURN_TO[client]}?code=${handoff}&state=${state}`);
+      expect(handoff).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(callback.headers.get("set-cookie") ?? "").not.toContain("session_token");
+      expect(f.client.ssoExchange).toHaveBeenCalledOnce();
+      expectNothingCreated(f);
+      expect(f.data.verification).toHaveLength(0);
+      const [row] = f.native();
+      expect(row.handoffHash).toBe(sha256Hex(handoff));
+      expect(JSON.stringify(row)).not.toContain(handoff);
+      expect(JSON.stringify(row)).not.toContain("secret-1");
+      const grant = JSON.parse(
+        await symmetricDecrypt({ key: encryptionKey, data: row.grantCipher }),
+      );
+      expect(grant).toMatchObject({ refreshToken: "refresh-secret-1", subject: "subject-1" });
+      expect(row.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(60_000);
+      expect(row.expiresAt.getTime() - Date.now()).toBeGreaterThan(55_000);
+    });
+
+    it("keeps the web flow's cookie check while a native sign-in is pending", async () => {
+      const f = fixture(undefined, { sso: true });
+      await f.startNative();
+      const web = await f.startSso();
+      const withoutCookie = await f.callback(`code=${code}&state=${web.state}`);
+      expect(withoutCookie.headers.get("location")).toBe(
+        "https://web.example.test/sign-in?error=sso_expired",
+      );
+      expect(f.client.ssoExchange).not.toHaveBeenCalled();
+      const signedIn = await f.callback(`code=${code}&state=${web.state}`, web.cookie);
+      expect(signedIn.headers.get("location")).toBe("https://web.example.test/app");
+      expect(f.native()).toEqual([expect.objectContaining({ handoffHash: null })]);
+    });
+
+    it("burns the sign-in and returns the IdP's refusal to the app", async () => {
+      const reasons: string[] = [];
+      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+      const start = await f.startNative("mobile");
+      const { state } = (await start.json()) as { state: string };
+      const response = await f.callback(`error=access_denied&state=${state}`);
+      expect(response.headers.get("location")).toBe(
+        `${NATIVE_RETURN_TO.mobile}?error=sso_failed&state=${state}`,
+      );
+      expect(reasons).toEqual(["callback:idp_error"]);
+      expect(f.client.ssoExchange).not.toHaveBeenCalled();
+      expect(f.data.verification).toHaveLength(0);
+      expect(f.native()).toHaveLength(0);
+      expectNothingCreated(f);
+    });
+
+    it.each([
+      [
+        "a rejected exchange",
+        { exchange: new HubRequestError(403, "access_denied") },
+        "sso_failed",
+      ],
+      [
+        "an exchange that cannot reach Hub",
+        { exchange: new HubRequestError(503, "unavailable") },
+        "hub_unavailable",
+      ],
+      ["a user Hub has not assigned", { assigned: ["subject-2"] }, "hub_access_denied"],
+    ] as const)("sends %s back to the app, creating nothing", async (_case, setup, error) => {
+      const f = fixture(undefined, {
+        sso: true,
+        ...("assigned" in setup ? { assigned: setup.assigned } : {}),
+      });
+      if ("exchange" in setup) f.client.ssoExchange.mockRejectedValue(setup.exchange);
+      const { state, location } = await signInNative(f, "desktop");
+      expect(location).toBe(`${NATIVE_RETURN_TO.desktop}?error=${error}&state=${state}`);
+      expectNothingCreated(f);
+      expect(f.native()[0]?.handoffHash ?? null).toBeNull();
+      if ("assigned" in setup)
+        expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+    });
+
+    it("sends a Hub policy refusal at the callback back to the app before exchanging", async () => {
+      const f = fixture(undefined, { sso: true });
+      const start = await f.startNative();
+      const { state } = (await start.json()) as { state: string };
+      f.hub.reply = async () => Promise.reject(new HubRequestError(403, "tenant_disabled"));
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6_000 });
+      const response = await f.callback(`code=${code}&state=${state}`);
+      vi.useRealTimers();
+      expect(response.headers.get("location")).toBe(
+        `${NATIVE_RETURN_TO.desktop}?error=tenant_disabled&state=${state}`,
+      );
+      expect(f.client.ssoExchange).not.toHaveBeenCalled();
+      expectNothingCreated(f);
+    });
+
+    it("answers a replayed callback without a second exchange or a second code", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, location } = await signInNative(f, "desktop");
+      const replay = await f.callback(`code=${code}&state=${state}`);
+      expect(replay.headers.get("location")).toBe(
+        `${NATIVE_RETURN_TO.desktop}?error=sso_expired&state=${state}`,
+      );
+      expect(f.client.ssoExchange).toHaveBeenCalledOnce();
+      expect(f.native()[0].handoffHash).toBe(
+        sha256Hex(new URL(location).searchParams.get("code")!),
+      );
+    });
+
+    it("keeps unknown and expired native states on the web error page", async () => {
+      const f = fixture(undefined, { sso: true });
+      const start = await f.startNative();
+      const { state } = (await start.json()) as { state: string };
+      f.native()[0].expiresAt = new Date(Date.now() - 1);
+      for (const value of [state, "f".repeat(43)]) {
+        const response = await f.callback(`code=${code}&state=${value}`);
+        expect(response.headers.get("location")).toBe(
+          "https://web.example.test/sign-in?error=sso_expired",
+        );
+      }
+      expect(f.client.ssoExchange).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("complete", () => {
+    it("signs the desktop renderer in with the HTTP-only session cookie", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "desktop");
+      const response = await f.completeNative({ code: handoff, state, appVerifier: APP_VERIFIER });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.text();
+      expect(Object.keys(JSON.parse(body))).toEqual(["user"]);
+      expect(JSON.parse(body).user.id).toBe(userId);
+      expect(body).not.toContain(f.data.session![0]!.token);
+      expect(body).not.toContain("secret-1");
+      const cookie = response.headers
+        .getSetCookie()
+        .find((value) => value.includes("better-auth.session_token="))!;
+      expect(cookie).toMatch(/HttpOnly/i);
+      const signed = decodeURIComponent(/session_token=([^;]+)/.exec(cookie)![1]!);
+      const session = await f.auth.api.getSession({
+        headers: new Headers({ authorization: `Bearer ${signed}` }),
+      });
+      expect(session?.user.id).toBe(userId);
+      expect(f.data.session).toHaveLength(1);
+      expect(f.grants.size).toBe(1);
+      expect(f.native()).toHaveLength(0);
+    });
+
+    it("gives the mobile app the same signed bearer as password sign-in", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "mobile");
+      const response = await f.completeNative(
+        { code: handoff, state, appVerifier: APP_VERIFIER },
+        "mobile",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { token: string; user: { id: string } };
+      expect(body.user.id).toBe(userId);
+      expect(body.token.startsWith(`${f.data.session![0]!.token}.`)).toBe(true);
+      const session = await f.auth.api.getSession({
+        headers: new Headers({ authorization: `Bearer ${body.token}` }),
+      });
+      expect(session?.user.id).toBe(userId);
+      expect(JSON.stringify(body)).not.toContain("secret-1");
+    });
+
+    it("signs the Entra user into the same hub_ row as password sign-in", async () => {
+      const f = fixture(undefined, { sso: true });
+      await f.login();
+      const passwordRow = { ...f.data.user![0] };
+      const { state, handoff } = await signInNative(f, "mobile");
+      await f.completeNative({ code: handoff, state, appVerifier: APP_VERIFIER }, "mobile");
+      expect(f.data.user).toEqual([passwordRow]);
+      expect(f.data.session).toHaveLength(2);
+    });
+
+    it("refuses a replayed handoff without a second session", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "desktop");
+      const body = { code: handoff, state, appVerifier: APP_VERIFIER };
+      expect((await f.completeNative(body)).status).toBe(200);
+      const replay = await f.completeNative(body);
+      expect(replay.status).toBe(400);
+      expect(replay.headers.get("set-cookie") ?? "").not.toContain("session_token");
+      expect(f.data.session).toHaveLength(1);
+    });
+
+    it("lets two concurrent redemptions create at most one session", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "desktop");
+      const body = { code: handoff, state, appVerifier: APP_VERIFIER };
+      const statuses = (await Promise.all([f.completeNative(body), f.completeNative(body)])).map(
+        (response) => response.status,
+      );
+      expect(statuses.sort()).toEqual([200, 400]);
+      expect(f.data.session).toHaveLength(1);
+    });
+
+    it.each([
+      ["a wrong appVerifier", (state: string) => ({ state, appVerifier: "b".repeat(43) })],
+      ["another sign-in's state", (_state: string) => ({ state: "s".repeat(43) })],
+    ])("burns the handoff on %s and revokes the grant", async (_case, wrong) => {
+      const reasons: string[] = [];
+      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+      const { state, handoff } = await signInNative(f, "desktop");
+      const attempt = await f.completeNative({
+        code: handoff,
+        appVerifier: APP_VERIFIER,
+        ...wrong(state),
+      });
+      expect(attempt.status).toBe(400);
+      expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+      const retry = await f.completeNative({ code: handoff, state, appVerifier: APP_VERIFIER });
+      expect(retry.status).toBe(400);
+      expectNothingCreated(f);
+      expect(f.native()).toHaveLength(0);
+      expect(reasons).toEqual(["complete:mismatch", "complete:unknown"]);
+    });
+
+    it("expires the handoff 60 seconds after the callback", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const f = fixture(undefined, { sso: true });
+        const early = await signInNative(f, "desktop");
+        const late = await signInNative(f, "desktop");
+        vi.setSystemTime(Date.now() + 59_999);
+        const inTime = await f.completeNative({
+          code: early.handoff,
+          state: early.state,
+          appVerifier: APP_VERIFIER,
+        });
+        expect(inTime.status).toBe(200);
+        vi.setSystemTime(Date.now() + 1);
+        const expired = await f.completeNative({
+          code: late.handoff,
+          state: late.state,
+          appVerifier: APP_VERIFIER,
+        });
+        expect(expired.status).toBe(400);
+        expect(f.data.session).toHaveLength(1);
+        expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each<[string, Record<string, unknown> | undefined]>([
+      ["an empty body", undefined],
+      ["a short code", { code: "c".repeat(42) }],
+      ["a non-base64url code", { code: `${"c".repeat(42)}+` }],
+      ["a short state", { state: "s".repeat(15) }],
+      ["a short verifier", { appVerifier: "v".repeat(42) }],
+      ["a non-string verifier", { appVerifier: 1 }],
+    ])("refuses %s without spending the handoff", async (_case, override) => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "desktop");
+      const response = await f.completeNative(
+        override ? { code: handoff, state, appVerifier: APP_VERIFIER, ...override } : {},
+      );
+      expect(response.status).toBe(400);
+      expect(f.native()).toHaveLength(1);
+      expect(f.data.session).toHaveLength(0);
+    });
+
+    it("refuses an untrusted origin without spending the handoff", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "desktop");
+      const response = await f.request(
+        "/hub/sso/native/complete",
+        "",
+        { code: handoff, state, appVerifier: APP_VERIFIER },
+        "https://evil.example",
+      );
+      expect(response.status).toBe(403);
+      expect(f.native()).toHaveLength(1);
+    });
+
+    it("refuses with the policy code when Hub stops the user before the app redeems", async () => {
+      const f = fixture(undefined, { sso: true });
+      const { state, handoff } = await signInNative(f, "mobile");
+      f.hub.reply = async () => Promise.reject(new HubRequestError(403, "tenant_disabled"));
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6_000 });
+      const response = await f.completeNative(
+        { code: handoff, state, appVerifier: APP_VERIFIER },
+        "mobile",
+      );
+      vi.useRealTimers();
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "TENANT_DISABLED" });
+      expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+      expectNothingCreated(f);
+    });
+
+    it("revokes the grant when the session cannot be created", async () => {
+      const f = fixture(undefined, { sso: true });
+      f.prisma.hubSession.create = async () => {
+        throw new Error("database unavailable");
+      };
+      const { state, handoff } = await signInNative(f, "desktop");
+      const response = await f.completeNative({ code: handoff, state, appVerifier: APP_VERIFIER });
+      expect(response.status).toBe(401);
+      expect(f.client.revoke).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+      expect(f.data.session).toHaveLength(0);
+    });
+  });
+
+  it("never logs or returns handoff codes, verifiers, state, tokens or email", async () => {
+    const reasons: string[] = [];
+    const logged: unknown[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args) => void logged.push(...args)),
+    );
+    const visible: string[] = [];
+    let secrets: string[] = [];
+    try {
+      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+      const keep = async (response: Response) => {
+        visible.push(await response.clone().text());
+        return response;
+      };
+      const start = await keep(await f.startNative("mobile", { email: "private@example.test" }));
+      const { state } = (await start.json()) as { state: string };
+      const verifier = await symmetricDecrypt({
+        key: encryptionKey,
+        data: f.data.verification![0].value,
+      });
+      const callback = await f.callback(`code=${code}&state=${state}`);
+      const location = callback.headers.get("location")!;
+      const handoff = new URL(location).searchParams.get("code")!;
+      await keep(await f.completeNative({ code: handoff, state, appVerifier: "w".repeat(43) }));
+      await keep(await f.completeNative({ code: handoff, state, appVerifier: APP_VERIFIER }));
+      const second = await signInNative(f, "mobile");
+      await keep(
+        await f.completeNative(
+          { code: second.handoff, state: second.state, appVerifier: APP_VERIFIER },
+          "mobile",
+        ),
+      );
+      f.client.ssoExchange.mockRejectedValueOnce(new HubRequestError(400, "invalid_verifier"));
+      const third = await signInNative(f, "mobile");
+      visible.push(third.location.replace(third.state, ""));
+      secrets = [
+        handoff,
+        second.handoff,
+        verifier,
+        APP_VERIFIER,
+        "private@example.test",
+        "access-secret-1",
+        "refresh-secret-1",
+        ssoConfig.sso.secret,
+      ];
+      expect(location).not.toContain("secret-1");
+      expect(second.location).not.toContain("secret-1");
+      // State only travels in the redirects; logs and bodies other than start's never carry it.
+      expect(
+        JSON.stringify([...logged.map(String), ...reasons, ...visible.slice(1)]),
+      ).not.toContain(state);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(reasons).toEqual([
+      "complete:mismatch",
+      "complete:unknown",
+      "callback:exchange:invalid_verifier",
+    ]);
+    const output = JSON.stringify([...logged.map(String), ...reasons]);
+    for (const secret of secrets) expect(output).not.toContain(secret);
+    for (const secret of secrets.slice(2)) expect(JSON.stringify(visible)).not.toContain(secret);
+  });
+
+  describe.each(clients)("contract fixture agent-hub-native-sso.v1 (%s)", (client) => {
+    const contract = nativeContract.clients[client];
+    it("accepts the documented start and complete requests and answers their shapes", async () => {
+      const f = fixture(undefined, { sso: true });
+      f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+      const origin = client === "mobile" ? contract.origin : "https://web.example.test";
+      const start = await f.request(
+        nativeContract.startPath.replace("/api/auth", ""),
+        "",
+        contract.startRequest,
+        origin,
+      );
+      expect(start.status).toBe(200);
+      const started = (await start.json()) as Record<string, string>;
+      expect(Object.keys(started).sort()).toEqual(Object.keys(nativeContract.startResponse).sort());
+      expect(started.next).toBe(nativeContract.startResponse.next);
+      expect(nativeContract.appChallenge).toBe(
+        createHash("sha256").update(nativeContract.appVerifier).digest("base64url"),
+      );
+      expect(nativeContract.callbackPath).toBe("/api/auth/hub/sso/callback");
+      const callback = await f.callback(`code=${code}&state=${started.state}`);
+      const location = new URL(callback.headers.get("location")!);
+      expect(`${location.protocol}//${location.host}${location.pathname}`).toBe(
+        contract.startRequest.returnTo,
+      );
+      expect([...location.searchParams.keys()]).toEqual(["code", "state"]);
+      expect(f.native()[0].expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(
+        nativeContract.handoffTtlSeconds * 1000,
+      );
+      const complete = await f.request(
+        nativeContract.completePath.replace("/api/auth", ""),
+        "",
+        {
+          code: location.searchParams.get("code"),
+          state: location.searchParams.get("state"),
+          appVerifier: nativeContract.completeRequest.appVerifier,
+        },
+        origin,
+      );
+      expect(complete.status).toBe(200);
+      expect(Object.keys((await complete.json()) as object).sort()).toEqual(
+        [...contract.completeResponseKeys].sort(),
+      );
+      expect(complete.headers.get("set-cookie") ?? "").toContain("session_token=");
+    });
   });
 });
 

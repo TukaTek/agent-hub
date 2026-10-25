@@ -5,6 +5,15 @@ export type SignInContinueResponse =
   | { next: "sso_unavailable" }
   | { next: "other_sso_unavailable" };
 
+/** The native apps that can finish Hub SSO through a one-time handoff code. */
+export type NativeSsoClient = "desktop" | "mobile";
+
+/** Answer of `POST /api/auth/hub/sso/native/start`; `state` comes back with the handoff. */
+export type NativeSsoStartResponse =
+  | { next: "password" }
+  | { next: "other_sso_unavailable" }
+  | { next: "redirect"; authorizeUrl: string; state: string };
+
 /** Error `code` of a 403 Continue when Hub refuses this user before Microsoft sign-in. */
 export const HUB_SSO_ACCESS_DENIED = "HUB_SSO_ACCESS_DENIED";
 

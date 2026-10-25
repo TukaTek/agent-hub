@@ -20,6 +20,7 @@ export function authCapabilities(
     return {
       mode: "hub",
       hubSso,
+      hubSsoNative: hubSso,
       sso: hubSso,
       passwordAuth: false,
       passwordReset: false,
