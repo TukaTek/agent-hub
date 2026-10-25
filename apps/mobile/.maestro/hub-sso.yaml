@@ -1,0 +1,35 @@
+appId: com.tukatek.cortexai.agenthub
+name: CortexAI Agent Hub mobile Hub SSO
+---
+# Needs a Hub-mode server with HUB_SSO_ENABLED=true (auth capabilities report hubSsoNative) and
+# a disposable Entra test user's email. It checks the email-first step and that Continue opens
+# the system auth session; it does not sign in to Microsoft. Setting the server needs a
+# development build or EXPO_PUBLIC_ALLOW_CUSTOM_SERVER=true. Pass values at invocation time:
+#   maestro test .maestro/hub-sso.yaml \
+#     -e CORTEXAI_AGENT_HUB_MOBILE_API_URL=https://agent-hub.example.test \
+#     -e CORTEXAI_AGENT_HUB_E2E_HUB_SSO_EMAIL=entra-user@example.test
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      true: ${typeof CORTEXAI_AGENT_HUB_MOBILE_API_URL !== "undefined" && CORTEXAI_AGENT_HUB_MOBILE_API_URL != null && CORTEXAI_AGENT_HUB_MOBILE_API_URL.trim() !== ""}
+    file: helpers/server.yaml
+- extendedWaitUntil:
+    visible: "Sign in to CortexAI Agent Hub"
+    timeout: 15000
+# Email first: no password field until the server picks the method.
+- assertVisible: "Email"
+- assertVisible: "Continue"
+- assertNotVisible: "Password"
+- tapOn: "Email"
+- inputText: ${CORTEXAI_AGENT_HUB_E2E_HUB_SSO_EMAIL}
+- hideKeyboard
+- tapOn: "Continue"
+# iOS asks before an app opens a sign-in session.
+- tapOn:
+    text: "Continue"
+    optional: true
+- extendedWaitUntil:
+    notVisible: "Sign in to CortexAI Agent Hub"
+    timeout: 15000
+- takeScreenshot: "hub-sso-auth-session"
