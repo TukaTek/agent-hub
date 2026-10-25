@@ -1577,6 +1577,7 @@ export function applyMobileThreadEvent(
 
 export {
   apiBaseWarning,
+  customServerAllowed,
   defaultApiBase,
   displayApiHost,
   normalizeApiBase,

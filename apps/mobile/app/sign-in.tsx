@@ -19,10 +19,12 @@ import { NativeActionButton } from "../components/native-action-button";
 import type { MobileMe, PasswordResetCapabilities } from "../lib/api";
 import {
   currentApiBase,
+  customServerAllowed,
   displayApiHost,
   loadSessionToken,
   passwordResetCapabilities,
   requestPasswordReset,
+  resetApiBase,
   rpc,
   sendSignInCode,
   signIn,
@@ -32,6 +34,7 @@ import {
 } from "../lib/api";
 import type { AuthMode } from "../lib/auth-routing";
 import { initialAuthMode } from "../lib/auth-routing";
+import { continueWithHubSso } from "../lib/hub-sso";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
 import { passkeysAvailable, signInWithPasskey } from "../lib/passkey";
@@ -59,6 +62,9 @@ export default function SignIn() {
   const hubMode = reset?.mode === "hub";
   const mode = hubMode ? "in" : formMode;
   const passwordForm = Boolean(reset?.passwordAuth || hubMode);
+  // Hub servers with native SSO ask for the email first; its lookup picks the sign-in method.
+  const [hubStep, setHubStep] = useState<"email" | "password" | "other_sso_unavailable">("email");
+  const hubEmailStep = Boolean(hubMode && reset?.hubSsoNative && hubStep !== "password");
   const [capabilityError, setCapabilityError] = useState(false);
   const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const [resetSent, setResetSent] = useState(false);
@@ -91,6 +97,7 @@ export default function SignIn() {
     // A code belongs to the server that sent it.
     setCodeSent(false);
     setCode("");
+    setHubStep("email");
     void passwordResetCapabilities()
       .then((capabilities) => {
         if (active) setReset(capabilities);
@@ -142,7 +149,7 @@ export default function SignIn() {
     if (pending || !passwordForm) return;
     const issue = credentialIssue({
       email,
-      password: mode === "forgot" || usingCode ? undefined : password,
+      password: mode === "forgot" || usingCode || hubEmailStep ? undefined : password,
     });
     if (issue) {
       setError(credentialIssueText(issue));
@@ -159,6 +166,12 @@ export default function SignIn() {
         }
         await requestPasswordReset(email.trim(), reset.resetUrl);
         setResetSent(true);
+        return;
+      }
+      if (hubEmailStep) {
+        const result = await continueWithHubSso(email.trim());
+        if (result === "signed_in") await openApp();
+        else if (result === "password" || result === "other_sso_unavailable") setHubStep(result);
         return;
       }
       if (usingCode && !codeSent) {
@@ -212,6 +225,20 @@ export default function SignIn() {
       if (await run()) await openApp();
     } catch (err) {
       setError(errorText(err, t("Could not continue")));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  // The only way to forget a saved server where the custom server entry is hidden; sign-out
+  // keeps it.
+  async function switchOrganization() {
+    setPending(true);
+    setError(null);
+    try {
+      const result = await resetApiBase();
+      if (!result.ok) setError(result.error);
+      setApiBase(currentApiBase());
     } finally {
       setPending(false);
     }
@@ -377,7 +404,12 @@ export default function SignIn() {
                         placeholder={t("Email")}
                         placeholderTextColor={tokens.mutedForeground}
                         value={email}
-                        onChangeText={setEmail}
+                        onChangeText={(value) => {
+                          setEmail(value);
+                          // A different email needs its own lookup.
+                          setHubStep("email");
+                        }}
+                        onSubmitEditing={hubEmailStep ? () => void submit() : undefined}
                         style={{
                           marginTop: mode === "up" ? 12 : 28,
                           backgroundColor: tokens.muted,
@@ -386,7 +418,14 @@ export default function SignIn() {
                           color: tokens.foreground,
                         }}
                       />
-                      {mode !== "forgot" && !usingCode ? (
+                      {hubEmailStep && hubStep === "other_sso_unavailable" ? (
+                        <Text style={{ color: tokens.mutedForeground, marginTop: 12 }}>
+                          {t(
+                            "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.",
+                          )}
+                        </Text>
+                      ) : null}
+                      {mode !== "forgot" && !usingCode && !hubEmailStep ? (
                         <View
                           style={{
                             marginTop: 12,
@@ -444,7 +483,7 @@ export default function SignIn() {
                         label={
                           pending
                             ? t("Working…")
-                            : usingCode
+                            : usingCode || hubEmailStep
                               ? t("Continue")
                               : mode === "in"
                                 ? t("Sign in")
@@ -544,37 +583,47 @@ export default function SignIn() {
                 </>
               )}
             </ScrollView>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                custom
-                  ? t("Custom server {host}", { host: displayApiHost(apiBase) })
-                  : t("Use a custom server")
-              }
-              hitSlop={12}
-              onPress={() => router.push("/server")}
-              style={{
-                alignItems: "center",
-                paddingHorizontal: 24,
-                paddingBottom: 12,
-                paddingTop: 8,
-              }}
-            >
-              {custom ? (
-                <>
-                  <Text style={{ color: tokens.mutedForeground, fontSize: 12 }}>
-                    {t("Custom server")}
+            {customServerAllowed() ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  custom
+                    ? t("Custom server {host}", { host: displayApiHost(apiBase) })
+                    : t("Use a custom server")
+                }
+                hitSlop={12}
+                onPress={() => router.push("/server")}
+                style={{
+                  alignItems: "center",
+                  paddingHorizontal: 24,
+                  paddingBottom: 12,
+                  paddingTop: 8,
+                }}
+              >
+                {custom ? (
+                  <>
+                    <Text style={{ color: tokens.mutedForeground, fontSize: 12 }}>
+                      {t("Custom server")}
+                    </Text>
+                    <Text style={{ color: tokens.mutedForeground, fontSize: 13, marginTop: 2 }}>
+                      {displayApiHost(apiBase)}
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={{ color: tokens.mutedForeground, fontSize: 13 }}>
+                    {t("Use a custom server")}
                   </Text>
-                  <Text style={{ color: tokens.mutedForeground, fontSize: 13, marginTop: 2 }}>
-                    {displayApiHost(apiBase)}
-                  </Text>
-                </>
-              ) : (
-                <Text style={{ color: tokens.mutedForeground, fontSize: 13 }}>
-                  {t("Use a custom server")}
-                </Text>
-              )}
-            </Pressable>
+                )}
+              </Pressable>
+            ) : custom ? (
+              <NativeActionButton
+                label={t("Switch organization")}
+                prominence="quiet"
+                disabled={pending}
+                onPress={() => void switchOrganization()}
+                style={{ alignSelf: "center", marginBottom: 12, marginTop: 8 }}
+              />
+            ) : null}
           </View>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>

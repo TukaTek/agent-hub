@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   API_PROBE_TIMEOUT_MS,
   apiBaseWarning,
+  customServerAllowed,
   defaultApiBase,
   displayApiHost,
   MAX_API_PROBE_RESPONSE_BYTES,
@@ -13,6 +14,21 @@ import {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("customServerAllowed", () => {
+  it.each([
+    ["true", false, true],
+    ["true", true, true],
+    ["false", true, false],
+    ["false", false, false],
+    [undefined, true, true],
+    [undefined, false, false],
+    ["", false, false],
+    ["yes", false, false],
+  ] as const)("flag %s in development %s allows %s", (flag, dev, allowed) => {
+    expect(customServerAllowed(flag, dev)).toBe(allowed);
+  });
 });
 
 describe("normalizeApiBase", () => {
