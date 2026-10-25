@@ -39,7 +39,12 @@
   },
   "startPasswordResponse": { "next": "password" },
   "handoffRedirect": "<returnTo>?code=<43 base64url characters>&state=<state>",
-  "errorRedirect": "<returnTo>?error=<SsoCallbackError>&state=<state>",
+  "errorRedirect": "<returnTo>?error=<NativeSsoCallbackError>&state=<state>",
+  "hubCallbackErrors": {
+    "access_denied": "hub_access_denied",
+    "login_cancelled": "sso_cancelled",
+    "unrecognised_reason": "sso_failed"
+  },
   "completeRequest": {
     "code": "<code from the handoff redirect>",
     "state": "<state from the handoff redirect>",

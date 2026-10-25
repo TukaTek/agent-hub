@@ -927,6 +927,30 @@ describe("Hub tenant Entra SSO", () => {
     expect(f.client.ssoExchange).not.toHaveBeenCalled();
   });
 
+  it.each(["access_denied", "login_cancelled", "server_error"])(
+    "keeps a web callback with Hub's error=%s on the generic SSO failure",
+    async (hubError) => {
+      const reasons: string[] = [];
+      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
+      const { state, cookie } = await f.startSso();
+      await expectRejected(
+        f,
+        await f.callback(`error=${hubError}&state=${state}`, cookie),
+        "sso_failed",
+      );
+      // Without the cookie too, and for a state nobody started.
+      for (const query of [
+        `error=${hubError}&state=${state}`,
+        `error=${hubError}&state=${"f".repeat(43)}`,
+      ])
+        expect((await f.callback(query)).headers.get("location")).toBe(
+          "https://web.example.test/sign-in?error=sso_failed",
+        );
+      expect(reasons).toEqual(Array(3).fill("callback:idp_error"));
+      expect(f.client.ssoExchange).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["revoke succeeds", undefined],
     ["revoke fails", new Error("Hub unavailable")],
@@ -1466,21 +1490,48 @@ describe("Hub native SSO handoff for desktop and mobile (CAAH-136)", () => {
       expect(f.native()).toEqual([expect.objectContaining({ handoffHash: null })]);
     });
 
-    it("burns the sign-in and returns the IdP's refusal to the app", async () => {
-      const reasons: string[] = [];
-      const f = fixture(undefined, { sso: true, onHubSsoError: (reason) => reasons.push(reason) });
-      const start = await f.startNative("mobile");
-      const { state } = (await start.json()) as { state: string };
-      const response = await f.callback(`error=access_denied&state=${state}`);
-      expect(response.headers.get("location")).toBe(
-        `${NATIVE_RETURN_TO.mobile}?error=sso_failed&state=${state}`,
-      );
-      expect(reasons).toEqual(["callback:idp_error"]);
-      expect(f.client.ssoExchange).not.toHaveBeenCalled();
-      expect(f.data.verification).toHaveLength(0);
-      expect(f.native()).toHaveLength(0);
-      expectNothingCreated(f);
-    });
+    it.each(
+      clients.flatMap((client) =>
+        [
+          // Hub found no Agent Hub assignment for the user.
+          ["access_denied", "hub_access_denied"],
+          // The user cancelled Microsoft sign-in.
+          ["login_cancelled", "sso_cancelled"],
+          ["server_error", "sso_failed"],
+          ["", "sso_failed"],
+        ].map(([hubError, error]) => [client, hubError, error] as const),
+      ),
+    )(
+      "burns the sign-in and returns Hub's %s error=%j to the app as %s",
+      async (client, hubError, error) => {
+        const reasons: string[] = [];
+        const f = fixture(undefined, {
+          sso: true,
+          onHubSsoError: (reason) => reasons.push(reason),
+        });
+        const start = await f.startNative(client);
+        const { state } = (await start.json()) as { state: string };
+        const response = await f.callback(
+          `error=${hubError}&error_description=private%40example.test&state=${state}`,
+        );
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(
+          `${NATIVE_RETURN_TO[client]}?error=${error}&state=${state}`,
+        );
+        expect(reasons).toEqual([`callback:idp_error:${error}`]);
+        expect(f.client.ssoExchange).not.toHaveBeenCalled();
+        expect(f.data.verification).toHaveLength(0);
+        expect(f.native()).toHaveLength(0);
+        expectNothingCreated(f);
+        // The state is burned, so a later success for it can't be finished.
+        const late = await f.callback(`code=${code}&state=${state}`);
+        expect(late.headers.get("location")).toBe(
+          "https://web.example.test/sign-in?error=sso_expired",
+        );
+        expect(f.client.ssoExchange).not.toHaveBeenCalled();
+        expectNothingCreated(f);
+      },
+    );
 
     it.each([
       [
@@ -1844,6 +1895,26 @@ describe("Hub native SSO handoff for desktop and mobile (CAAH-136)", () => {
       );
       expect(complete.headers.get("set-cookie") ?? "").toContain("session_token=");
     });
+
+    it.each(Object.entries(nativeContract.hubCallbackErrors))(
+      "returns Hub's callback error=%s to the app as %s",
+      async (hubError, error) => {
+        const f = fixture(undefined, { sso: true });
+        f.client.lookup.mockResolvedValue({ tenant: config.tenantId, idpType: "entra" });
+        const origin = client === "mobile" ? contract.origin : "https://web.example.test";
+        const start = await f.request(
+          nativeContract.startPath.replace("/api/auth", ""),
+          "",
+          contract.startRequest,
+          origin,
+        );
+        const { state } = (await start.json()) as { state: string };
+        const callback = await f.callback(`error=${hubError}&state=${state}`);
+        expect(callback.headers.get("location")).toBe(
+          `${contract.startRequest.returnTo}?error=${error}&state=${state}`,
+        );
+      },
+    );
   });
 });
 

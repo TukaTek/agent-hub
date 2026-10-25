@@ -21,6 +21,12 @@ export const HUB_SSO_ACCESS_DENIED = "HUB_SSO_ACCESS_DENIED";
 export type SsoCallbackError = "sso_expired" | "sso_failed" | Lowercase<HubSignInRefusalCode>;
 
 /**
+ * The `?error=` values the SSO callback sends to a native app's returnTo: the web
+ * ones plus `sso_cancelled`, when the user cancelled Microsoft sign-in at Hub.
+ */
+export type NativeSsoCallbackError = SsoCallbackError | "sso_cancelled";
+
+/**
  * Stable `code`s for a sign-in that CortexAI Hub policy refuses (CAAH-36). Hub is
  * the source of truth, so a missing, invalid, disabled or not-yet-applied policy
  * stops every new sign-in; there is no local bypass.

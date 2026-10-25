@@ -5,10 +5,10 @@ import {
   HUB_SSO_ACCESS_DENIED,
   HUB_UNAVAILABLE,
   hubRefusalCallbackError,
+  type NativeSsoCallbackError,
   type NativeSsoClient,
   type NativeSsoStartResponse,
   type SignInContinueResponse,
-  type SsoCallbackError,
   TENANT_DISABLED,
 } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace, type PrismaClient } from "@cortexai-agent-hub/db";
@@ -49,6 +49,12 @@ const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const SSO_STATE_PREFIX = "hub-sso:";
 /** Hub sso-start codes that mean this user may not use Agent Hub, not that Hub is down. */
 const HUB_START_DENIALS = new Set(["access_denied", "product_not_enabled", "tenant_mismatch"]);
+/** Hub callback `?error=` reasons a native app tells apart; any other is `sso_failed`. */
+const HUB_CALLBACK_ERRORS = new Map<string, NativeSsoCallbackError>([
+  // The user has no Agent Hub assignment.
+  ["access_denied", hubRefusalCallbackError(HUB_ACCESS_DENIED)],
+  ["login_cancelled", "sso_cancelled"],
+]);
 
 /**
  * Per client address, as resolved from the reverse proxy's single X-Forwarded-For value.
@@ -478,7 +484,7 @@ export function createHubAuth(
                   url.searchParams.set("state", state!);
                   return url.href;
                 };
-                const fail = (error: SsoCallbackError, reason: string) => {
+                const fail = (error: NativeSsoCallbackError, reason: string) => {
                   env.onHubSsoError?.(`callback:${reason}`);
                   return ctx.redirect(
                     native
@@ -487,12 +493,13 @@ export function createHubAuth(
                   );
                 };
                 if (query.has("error")) {
-                  if (native) {
-                    // The app learns of the refusal, so this state can't be finished later.
-                    await consumeSsoState(state!);
-                    await prisma.hubSsoNative.deleteMany({ where: { stateKey: native.stateKey } });
-                  }
-                  throw fail("sso_failed", "idp_error");
+                  // The web keeps one generic failure; only native apps tell the reasons apart.
+                  if (!native) throw fail("sso_failed", "idp_error");
+                  // The app learns of the refusal, so this state can't be finished later.
+                  await consumeSsoState(state!);
+                  await prisma.hubSsoNative.deleteMany({ where: { stateKey: native.stateKey } });
+                  const error = HUB_CALLBACK_ERRORS.get(query.get("error")!) ?? "sso_failed";
+                  throw fail(error, `idp_error:${error}`);
                 }
                 if (!code || !isState(state) || code.length > 256 || !BASE64URL.test(code))
                   throw fail("sso_expired", "invalid_request");
