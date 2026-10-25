@@ -894,6 +894,24 @@ describe("mobile API authentication", () => {
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith("cortexai-agent-hub.session_token");
   });
 
+  it("keeps the saved server on sign-out; only switching organization forgets it", async () => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({})),
+    );
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+    vi.mocked(SecureStore.setItemAsync).mockClear();
+
+    await signOut();
+
+    const touched = [
+      ...vi.mocked(SecureStore.deleteItemAsync).mock.calls,
+      ...vi.mocked(SecureStore.setItemAsync).mock.calls,
+    ].map(([key]) => key);
+    expect(touched).not.toContain("cortexai-agent-hub.api_base");
+  });
+
   it("unregisters push delivery before invalidating the session", async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");
     const fetchMock = vi
