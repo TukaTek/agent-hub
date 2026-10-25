@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CORTEXAI_AGENT_HUB_CLOUD_URL,
   DEFAULT_LOCAL_WEB_URL,
+  DESKTOP_EDITION,
   desktopStackImageTag,
   isCortexAiAgentHubHealth,
   managedLocalOpenUrl,
@@ -17,6 +18,7 @@ import {
   serializeSetup,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  showsServerEntry,
 } from "./setup-config.js";
 
 describe("server address normalization", () => {
@@ -290,5 +292,19 @@ describe("probe failures", () => {
     ["something else entirely", "Could not reach that address."],
   ])("explains %s", (message, expected) => {
     expect(probeFailureMessage(new Error(message))).toBe(expected);
+  });
+});
+
+describe("server entry by edition", () => {
+  it("shows the self-hosted server entry in self-host builds", () => {
+    expect(showsServerEntry("self-host")).toBe(true);
+  });
+
+  it("hides the self-hosted server entry in managed builds", () => {
+    expect(showsServerEntry("managed")).toBe(false);
+  });
+
+  it("defaults to self-host when no edition was baked in", () => {
+    expect(DESKTOP_EDITION).toBe("self-host");
   });
 });

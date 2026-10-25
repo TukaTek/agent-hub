@@ -45,6 +45,7 @@ import { installSessionPermissions } from "./session-permissions.js";
 import {
   CORTEXAI_AGENT_HUB_CLOUD_URL,
   DEFAULT_LOCAL_WEB_URL,
+  DESKTOP_EDITION,
   desktopStackImageTag,
   isCortexAiAgentHubHealth,
   managedLocalOpenUrl,
@@ -57,6 +58,7 @@ import {
   safeExternalUrl,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  showsServerEntry,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
 import { oauthPopupSessionPreferences, shouldOpenInAppPopup } from "./window-open.js";
@@ -1234,6 +1236,7 @@ app.whenReady().then(async () => {
     return {
       defaultLocalUrl: localStack.webUrl(),
       cloudUrl: CORTEXAI_AGENT_HUB_CLOUD_URL,
+      showServerEntry: showsServerEntry(DESKTOP_EDITION),
       saved: currentSetup,
       error: setupError ?? undefined,
     };

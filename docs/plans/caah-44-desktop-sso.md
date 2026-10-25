@@ -42,7 +42,7 @@ renderer (instance origin)        main                          system browser /
 ## Locked product decisions
 
 - *Saved server resets only on an explicit switch.* Already true. Signing out of the web UI never touches `setup.json`. Only the "Change CortexAI Agent Hub Server…" menu action opens setup to pick another server. No change.
-- *Hide the advanced or self-hosted entry in managed builds.* There is no managed build yet: `CORTEXAI_AGENT_HUB_CLOUD_URL` is `null`, so every build is a dev or self-host build and setup must keep both entries. Adding the flag now would be an unused switch, so it lands with the managed build that sets the cloud URL. This needs confirming.
+- *Hide the advanced or self-hosted entry in managed builds.* A build-time flag, `CORTEXAI_AGENT_HUB_DESKTOP_EDITION`, does this. `apps/desktop/scripts/build.mjs` reads it at build and package time (`pnpm build`, `pack`, `release`) through `scripts/desktop-edition.mjs` and bakes it into `dist/main.js` with an esbuild `define`. The value is `self-host` (the default, also used when the flag is unset or empty) or `managed`. Any other value fails the build so a typo can't ship the wrong edition. Main reports `showServerEntry` in the setup state, and in `managed` builds setup hides the "Existing instance" entry (the typed server address). A saved typed server then opens setup on the default choice instead. Dev and self-host builds are unchanged. The hiding only applies to the setup UI. `CORTEXAI_AGENT_HUB_WEB_URL` and a saved `setup.json` still open the app. Server discovery isn't part of this.
 
 ## Sign-out
 
@@ -55,6 +55,8 @@ The web sign-out deletes the Agent Hub session, and that revokes the Hub refresh
 - `apps/desktop/src/hub-sso.ts`: attempt controller (PKCE, port, timeout, single attempt) and sender check
 - `apps/desktop/src/main.ts`, `apps/desktop/src/preload.cjs`: IPC wiring
 - `apps/web/src/pages/Auth.tsx`: Microsoft step, start, complete, error copy
+- `apps/desktop/scripts/desktop-edition.mjs`, `apps/desktop/scripts/build.mjs`: `CORTEXAI_AGENT_HUB_DESKTOP_EDITION` build flag
+- `apps/desktop/src/setup-config.ts`, `apps/desktop/src/setup.html`, `apps/desktop/src/setup.js`, `packages/contracts/src/desktop.ts`: `showServerEntry` in the setup state, which hides "Existing instance" in managed builds
 - `docs/hub-auth.md`: desktop paragraph
 
 ## Tests
@@ -64,6 +66,8 @@ Desktop (`apps/desktop/src/*.test.ts`, vitest, real loopback sockets):
 - `browser-auth.test.ts`: explicit callback URL used instead of `redirect_uri`; matching `error=` forwarded once; error and code together rejected; unsafe explicit callbacks rejected.
 - `hub-sso.test.ts`: start returns a valid `returnTo` and a challenge that is the S256 of the verifier later returned; the listener accepts only the active state once and rejects wrong host, path, method and duplicate; a stale attempt's callback is ignored after a new start; cancel, timeout (fake timers) and sender destruction or navigation close the listener and resolve `cancelled` or `sso_expired`; `open` and `cancel` from another sender are refused; the sender check rejects a non-main-frame, another window and another origin.
 - `preload.test.ts`: the bridge exposes `hubSso.start/open/cancel` on the right channels.
+- `desktop-edition.test.ts`: an unset or empty flag bakes `self-host`, `self-host` and `managed` bake themselves, and an unknown value throws.
+- `setup-config.test.ts`: `showsServerEntry` is true for `self-host` and false for `managed`, and the unbundled default edition is `self-host`.
 
 Web (`apps/web/src/pages/Auth.test.tsx`, jsdom):
 

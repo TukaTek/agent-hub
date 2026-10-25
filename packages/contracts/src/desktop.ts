@@ -106,6 +106,8 @@ export interface DesktopSetupState {
   defaultLocalUrl: string;
   /** Hosted CortexAI Agent Hub origin, saved as an `existing` server when chosen. */
   cloudUrl: string | null;
+  /** False in managed builds, which hide the typed self-hosted server address. */
+  showServerEntry: boolean;
   saved: DesktopSetup | null;
   /** Present when a saved or newly selected server could not be reopened. */
   error?: string;

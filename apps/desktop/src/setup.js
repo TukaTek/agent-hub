@@ -351,6 +351,9 @@
         document.getElementById("choice-cloud").hidden = false;
         document.getElementById("mode-cloud").checked = true;
       }
+      // Managed builds hide the typed server address; a saved one falls back to the default.
+      const serverEntry = state.showServerEntry !== false;
+      document.getElementById("choice-existing").hidden = !serverEntry;
       if (state.saved !== null) {
         const savedCloud =
           Boolean(cloudUrl) &&
@@ -358,8 +361,10 @@
           state.saved.serverUrl === cloudUrl;
         const mode = savedCloud ? "cloud" : state.saved.mode;
         const modeInput = document.querySelector(`input[name="mode"][value="${mode}"]`);
-        if (modeInput !== null) modeInput.checked = true;
-        if (mode === "existing") serverUrl.value = state.saved.serverUrl;
+        if (modeInput !== null && (mode !== "existing" || serverEntry)) {
+          modeInput.checked = true;
+          if (mode === "existing") serverUrl.value = state.saved.serverUrl;
+        }
       }
       // A relaunch with the stack down starts it before this window opens; show that
       // attempt instead of the saved mode, and follow it while it is still running.
