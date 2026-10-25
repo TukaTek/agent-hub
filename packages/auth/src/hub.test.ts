@@ -73,6 +73,7 @@ function fixture(
   options: {
     sso?: boolean;
     onHubSsoError?: (reason: string) => void;
+    logger?: Parameters<typeof createAuth>[1]["logger"];
     policy?: HubPolicy;
     assigned?: readonly string[];
     contract?: boolean;
@@ -219,6 +220,7 @@ function fixture(
     signupsEnabled: "true",
     signupAllowlist: "",
     onHubSsoError: options.onHubSsoError,
+    logger: options.logger,
     hubPolicy: policy,
     extraOrigins: [MOBILE_ORIGIN],
   });
@@ -1848,6 +1850,74 @@ describe("Hub native SSO handoff for desktop and mobile (CAAH-136)", () => {
     const output = JSON.stringify([...logged.map(String), ...reasons]);
     for (const secret of secrets) expect(output).not.toContain(secret);
     for (const secret of secrets.slice(2)) expect(JSON.stringify(visible)).not.toContain(secret);
+  });
+
+  it("never passes the handoff code, app verifier, Hub code or grant to the auth logger", async () => {
+    const logged: string[] = [];
+    const record = (value: unknown): string =>
+      value instanceof Error
+        ? `${value.message} ${value.stack} ${record(value.cause)}`
+        : typeof value === "string"
+          ? value
+          : (JSON.stringify(value) ?? String(value));
+    const f = fixture(undefined, {
+      sso: true,
+      onHubSsoError: (reason) => logged.push(reason),
+      logger: {
+        level: "debug",
+        log: (level, message, ...args) => void logged.push(level, message, ...args.map(record)),
+      },
+    });
+    const hubCode = "synthetic_hub_code_secret";
+    const handoffs: string[] = [];
+    const run = async (verifier: string) => {
+      const start = await f.startNative("mobile");
+      const { state } = (await start.json()) as { state: string };
+      const callback = await f.callback(`code=${hubCode}&state=${state}`);
+      const handoff = new URL(callback.headers.get("location")!).searchParams.get("code")!;
+      handoffs.push(handoff);
+      await f.completeNative({ code: handoff, state, appVerifier: verifier }, "mobile");
+      // Replay after the code is used or burned.
+      await f.completeNative({ code: handoff, state, appVerifier: verifier }, "mobile");
+    };
+    await run("w".repeat(43));
+    // Session storage fails while the grant is open, so Better Auth sees an unexpected error.
+    const create = f.prisma.hubSession.create;
+    f.prisma.hubSession.create = async () => {
+      throw new Error("database unavailable");
+    };
+    await run(APP_VERIFIER);
+    f.prisma.hubSession.create = create;
+    // Writing the handoff fails at the callback.
+    const updateMany = f.prisma.hubSsoNative.updateMany;
+    f.prisma.hubSsoNative.updateMany = async () => {
+      throw new Error("database unavailable");
+    };
+    const start = await f.startNative("desktop");
+    const { state } = (await start.json()) as { state: string };
+    await f.callback(`code=${hubCode}&state=${state}`);
+    f.prisma.hubSsoNative.updateMany = updateMany;
+    // Redeeming fails unexpectedly, so the error reaches Better Auth's logger.
+    const findUnique = f.prisma.hubSsoNative.findUnique;
+    f.prisma.hubSsoNative.findUnique = async () => {
+      throw new Error("database unavailable");
+    };
+    await f.completeNative({ code: handoffs[0], state, appVerifier: APP_VERIFIER }, "mobile");
+    f.prisma.hubSsoNative.findUnique = findUnique;
+    await run(APP_VERIFIER);
+    expect(handoffs.filter(Boolean)).toHaveLength(3);
+    expect(f.data.session).toHaveLength(1);
+    const output = logged.join("\n");
+    expect(output).toContain("database unavailable");
+    for (const secret of [
+      ...handoffs,
+      APP_VERIFIER,
+      hubCode,
+      "access-secret-1",
+      "refresh-secret-1",
+      ssoConfig.sso.secret,
+    ])
+      expect(output).not.toContain(secret);
   });
 
   describe.each(clients)("contract fixture agent-hub-native-sso.v1 (%s)", (client) => {
