@@ -181,6 +181,7 @@ import {
   clearSteerQueue,
   type QueuedSteer,
   queueSteer,
+  reconcileSteerQueue,
   settleSteerQueue,
   steeringClaimWatermark,
   visibleSteers,
@@ -1428,21 +1429,32 @@ function SpaceShell() {
     expandedHistoryThread.current = null;
     historyEpoch.current += 1;
     const abort = new AbortController();
+    // Claims and stops that happened while this thread was closed arrive only as a snapshot.
+    const reconcileSteers = (loaded: ThreadSnapshot) => {
+      setSteerQueue((queue) => reconcileSteerQueue(queue, active.id, loaded));
+      return loaded;
+    };
     void runThreadSubscription({
       signal: abort.signal,
       loadInitial: async () => {
         const primed = bootstrappedThread.current;
         bootstrappedThread.current = null;
         // Pending search jumps load the around-page separately; avoid replacing it with latest.
-        return primed?.botId === active.id
-          ? primed
-          : pendingJump
-            ? rpc.threads.get({ botId: active.id }, { signal: threadSnapshotSignal(abort.signal) })
-            : refreshThread(active.id, threadSnapshotSignal(abort.signal));
+        return reconcileSteers(
+          primed?.botId === active.id
+            ? primed
+            : pendingJump
+              ? await rpc.threads.get(
+                  { botId: active.id },
+                  { signal: threadSnapshotSignal(abort.signal) },
+                )
+              : await refreshThread(active.id, threadSnapshotSignal(abort.signal)),
+        );
       },
       loadHead: () =>
         rpc.threads.head({ botId: active.id }, { signal: threadSnapshotSignal(abort.signal) }),
-      refresh: () => refreshThread(active.id, threadSnapshotSignal(abort.signal)),
+      refresh: async () =>
+        reconcileSteers(await refreshThread(active.id, threadSnapshotSignal(abort.signal))),
       currentSnapshot: () => snapshotRef.current,
       subscribe: (cursor, signal) =>
         rpc.threads.subscribe({ botId: active.id, cursor }, { signal }),

@@ -1,7 +1,9 @@
+import type { ThreadSnapshot } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
 import {
   clearSteerQueue,
   queueSteer,
+  reconcileSteerQueue,
   settleSteerQueue,
   visibleSteers,
   withoutQueuedSteers,
@@ -92,6 +94,34 @@ describe("steering queue", () => {
     expect(visibleSteers([first, other], "bot-1", true)).toEqual([first]);
     expect(visibleSteers([first, other], "bot-1", false)).toEqual([]);
     expect(visibleSteers([first], undefined, true)).toEqual([]);
+  });
+
+  describe("on opening a thread", () => {
+    const running = { id: "run-1", status: "running" };
+    const snapshot = (messages: Array<{ id: string; role: string }>, runs = [running]) =>
+      ({ messages, run: runs[0] ?? null, activeRuns: runs }) as unknown as ThreadSnapshot;
+    const sent = { id: "msg-4", role: "user" };
+
+    it("keeps a send the running turn has not answered", () => {
+      const queue = [first, other];
+      const live = { id: "progress:run-1", role: "bot" };
+      expect(reconcileSteerQueue(queue, "bot-1", snapshot([sent, live]))).toBe(queue);
+    });
+
+    it("drops a send the bot has replied after, since the run took it while closed", () => {
+      const reply = { id: "msg-8", role: "bot" };
+      expect(reconcileSteerQueue([first, other], "bot-1", snapshot([sent, reply]))).toEqual([
+        other,
+      ]);
+    });
+
+    it("drops sends once the thread has no running turn", () => {
+      expect(reconcileSteerQueue([first, other], "bot-1", snapshot([sent], []))).toEqual([other]);
+    });
+
+    it("drops a send whose message is gone", () => {
+      expect(reconcileSteerQueue([first, other], "bot-1", snapshot([]))).toEqual([other]);
+    });
   });
 
   it("hides queued sends from the transcript by message id", () => {

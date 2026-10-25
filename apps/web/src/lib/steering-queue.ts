@@ -1,4 +1,6 @@
-import type { ProductEvent } from "@cortexai-agent-hub/contracts";
+import type { ProductEvent, RunStatus, ThreadSnapshot } from "@cortexai-agent-hub/contracts";
+import { isActive, isDurableMessage } from "@cortexai-agent-hub/core";
+import { activeThreadRuns } from "./thread-events";
 
 /** A message this tab sent into a running turn that the run has not claimed yet. */
 export type QueuedSteer = {
@@ -70,6 +72,32 @@ export function settleSteerQueue(
   if (watermark === undefined) return queue;
   return queue.some((item) => item.threadKey === threadKey && item.seq < watermark)
     ? queue.filter((item) => item.threadKey !== threadKey || item.seq >= watermark)
+    : queue;
+}
+
+/**
+ * A closed thread misses its claim and stop events, so on open a send stays queued only while
+ * the thread still has a running turn, its message is still there and the bot has not replied
+ * since. Anything else shows as a plain message.
+ */
+export function reconcileSteerQueue(
+  queue: SteerQueue,
+  threadKey: string,
+  snapshot: ThreadSnapshot,
+): SteerQueue {
+  const running = activeThreadRuns(snapshot).some((run) => isActive(run.status as RunStatus));
+  const pending = (item: QueuedSteer) => {
+    const index = snapshot.messages.findIndex((message) => message.id === item.messageId);
+    return (
+      running &&
+      index >= 0 &&
+      !snapshot.messages
+        .slice(index + 1)
+        .some((message) => message.role === "bot" && isDurableMessage(message))
+    );
+  };
+  return queue.some((item) => item.threadKey === threadKey && !pending(item))
+    ? queue.filter((item) => item.threadKey !== threadKey || pending(item))
     : queue;
 }
 

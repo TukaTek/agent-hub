@@ -262,6 +262,7 @@ export function upsertMessageById<T extends { id: string }>(messages: readonly T
   return updated;
 }
 
-function isDurableMessage(message: { id: string }): boolean {
+/** Live progress and subagent rows aren't stored messages. */
+export function isDurableMessage(message: { id: string }): boolean {
   return !message.id.startsWith("progress:") && !message.id.startsWith("subagent:");
 }
