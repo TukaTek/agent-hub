@@ -1,4 +1,5 @@
 // Adapted from OpenMausBot src/components/ComposerQueuedMessages.tsx (Apache-2.0). Modified by TukaTek.
+import { Icon } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { CornerDownRight } from "lucide-react";
 import { useId } from "react";
@@ -24,12 +25,7 @@ export function ComposerQueued({ items }: { items: readonly { seq: number; text:
             key={item.seq}
             className="flex min-w-0 items-center gap-2 text-[13.5px] text-foreground/80"
           >
-            <CornerDownRight
-              size={13}
-              strokeWidth={1.8}
-              aria-hidden="true"
-              className="shrink-0 text-muted-foreground"
-            />
+            <Icon icon={CornerDownRight} size={13} className="shrink-0 text-muted-foreground" />
             <span dir="auto" className="truncate" title={item.text}>
               {item.text}
             </span>
