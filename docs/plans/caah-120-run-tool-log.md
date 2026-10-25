@@ -17,19 +17,24 @@ redacted argument summary and outcome. Backend only; no UI in this change.
   as it honors the existing `AgentRuntime` contract.
 - **Redaction = computer.command rules.** Summaries go through `redactSecrets(text, runSecrets)`,
   the same function and secret list that redact `computer.command` commands and output. Before
-  that, argument keys that look like credentials (`password|secret|token|api_key|...`) are
-  masked with the existing `redactToolArgsForReview`, so a token the model typed but the run
-  never registered still never reaches the log. Redaction runs on the full text before
+  that, the summary masks credentials the run never registered: values under credential-shaped
+  keys (`*token*`, `*secret*`, `key`, `pat`, `auth`, ...), every value of `env` and `headers`
+  maps, and credential-shaped text (bearer values, known token prefixes, URL passwords,
+  `KEY=value` assignments, long random strings). Redaction runs on the full text before
   clipping, so a clip can never expose part of a secret. Failure text (the only tool output we
   log) gets the same treatment through `sanitizeConnectorError`, then is clipped.
 - **Summary** is one line, `key: value` pairs, whitespace collapsed, at most 200 chars
   (`RUN_TOOL_SUMMARY_MAX_CHARS`), ending in `…` when clipped.
 - **Status:** `running` on the tool event; `done`/`failed` on completion; `interrupted` when the
   run ended while the call was still running. A paused call
-  (approval, secret, takeover) stays `running`; the resumed attempt finishes it with the same
-  `callId`. Completion can arrive before the start event is processed (Pi runs tools while the
-  executor loop drains events), so the tracker and the fold both keep a finished call finished
-  and derive `startedAt` from `durationMs` when the start was not seen.
+  (approval, secret, takeover, question) stays `running`; its entry is saved with the turn
+  checkpoint and the resumed attempt finishes it with the same `callId`, including restored
+  questions and takeovers that the runtime answers without running them.
+- **Call ids are the log's own.** Providers reuse their call ids (often `call_0` per
+  response), so each call gets `<attemptId>:<n>`, and a start or finish pairs with the oldest
+  call of that tool and provider id still waiting for it. Completion can arrive before the
+  start event is processed (Pi runs tools while the executor loop drains events); the tracker
+  then logs a running entry first and derives `startedAt` from `durationMs`.
 - **Run end closes open calls.** When a run ends (`run.completed`, `run.failed` or
   `run.cancelled`), the transaction that appends the terminal event first appends an
   `interrupted` entry (with `endedAt`) for every call the run's `run.tool` events still fold to
@@ -45,12 +50,12 @@ redacted argument summary and outcome. Backend only; no UI in this change.
   (`bot_message`) and background runs. `runs.tools` reuses that filter (`isPeerRun` /
   `isBackgroundRun` + `shouldForward*ThreadEvent`, extracted into one `forwardsThreadEvent`
   helper used by both) and returns an empty page for those runs without reading their events.
-- **Newest calls first, with a cursor.** `runs.tools` reads the run's newest `run.tool` events
-  (raised cap, newest first), folds them, and returns the newest `RUN_TOOL_PAGE_SIZE` (100) calls
-  in start order with `olderCursor`: the first-event seq of the oldest call returned, or null.
-  Passing it back as `before` returns the next older page. Calls are keyed by the seq of their
-  first event, so the cursor stays stable while a live run appends calls and no call appears on
-  two pages.
+- **Newest calls first, with a cursor.** Every call's first entry is `running`. A page reads the
+  newest `RUN_TOOL_PAGE_SIZE + 1` running entries below `before`, then only those calls' events,
+  and returns the newest 100 calls in start order with `olderCursor`: the seq of the oldest start
+  on the page, or null when no older start exists. A call is listed on the page holding its
+  earliest running entry, so the cursor stays stable while a live run appends calls, no call
+  appears on two pages, and paging reaches the run's first call however long the run is.
 
 ## Steps (TDD)
 
