@@ -12,7 +12,12 @@ const RETURN_TO = "cortexai-agent-hub://hub-sso";
 const ORIGIN = "cortexai-agent-hub://";
 
 /** `cancelled` covers the user closing Microsoft and a server or session change meanwhile. */
-export type HubSsoResult = "signed_in" | "password" | "other_sso_unavailable" | "cancelled" | "busy";
+export type HubSsoResult =
+  | "signed_in"
+  | "password"
+  | "other_sso_unavailable"
+  | "cancelled"
+  | "busy";
 
 let inFlight = false;
 
@@ -26,8 +31,7 @@ export async function continueWithHubSso(email: string): Promise<HubSsoResult> {
   try {
     const apiBase = currentApiBase();
     const generation = currentSessionGeneration();
-    const changed = () =>
-      apiBase !== currentApiBase() || generation !== currentSessionGeneration();
+    const changed = () => apiBase !== currentApiBase() || generation !== currentSessionGeneration();
     const failed = () => new Error(t("Sign-in failed. Try again."));
 
     const { verifier, challenge } = await pkcePair();

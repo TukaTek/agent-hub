@@ -1,11 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
-import { openAuthSessionAsync } from "expo-web-browser";
+import {
+  openAuthSessionAsync,
+  type WebBrowserAuthSessionResult,
+  WebBrowserResultType,
+} from "expo-web-browser";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearSpace, currentApiBase, fetchMobileJson } from "./api";
 import { continueWithHubSso } from "./hub-sso";
 import { currentSessionGeneration, replaceSessionTokenIfCurrent } from "./session";
 
-vi.mock("expo-web-browser", () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock("expo-web-browser", () => ({
+  openAuthSessionAsync: vi.fn(),
+  WebBrowserResultType: {
+    CANCEL: "cancel",
+    DISMISS: "dismiss",
+    LOCKED: "locked",
+    OPENED: "opened",
+  },
+}));
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: { SHA256: "SHA-256" },
   CryptoEncoding: { BASE64: "base64" },
@@ -98,7 +110,9 @@ it("starts, opens Microsoft in an ephemeral session, completes and stores the se
 it("uses a fresh verifier for every attempt", async () => {
   await continueWithHubSso("user@example.test");
   vi.mocked(fetchMobileJson)
-    .mockResolvedValueOnce(startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }))
+    .mockResolvedValueOnce(
+      startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }),
+    )
     .mockResolvedValueOnce(startAnswers({ token: TOKEN, user: { id: "user-1" } }));
   await continueWithHubSso("user@example.test");
   expect(body(0).appChallenge).not.toBe(body(2).appChallenge);
@@ -155,15 +169,17 @@ it("keeps the server's own refusal message at start", async () => {
   );
 });
 
-it.each(["cancel", "dismiss", "locked", "opened"] as const)(
-  "stores nothing when the browser result is %s",
-  async (type) => {
-    vi.mocked(openAuthSessionAsync).mockResolvedValue({ type });
-    await expect(continueWithHubSso("user@example.test")).resolves.toBe("cancelled");
-    expect(fetchMobileJson).toHaveBeenCalledOnce();
-    expect(replaceSessionTokenIfCurrent).not.toHaveBeenCalled();
-  },
-);
+it.each([
+  WebBrowserResultType.CANCEL,
+  WebBrowserResultType.DISMISS,
+  WebBrowserResultType.LOCKED,
+  WebBrowserResultType.OPENED,
+])("stores nothing when the browser result is %s", async (type) => {
+  vi.mocked(openAuthSessionAsync).mockResolvedValue({ type });
+  await expect(continueWithHubSso("user@example.test")).resolves.toBe("cancelled");
+  expect(fetchMobileJson).toHaveBeenCalledOnce();
+  expect(replaceSessionTokenIfCurrent).not.toHaveBeenCalled();
+});
 
 it.each([
   ["wrong scheme", `https://hub-sso/?code=${CODE}&state=${STATE}`],
@@ -233,7 +249,9 @@ it.each([
 ])("maps a %i complete answer", async (status, answer, message) => {
   vi.mocked(fetchMobileJson).mockReset();
   vi.mocked(fetchMobileJson)
-    .mockResolvedValueOnce(startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }))
+    .mockResolvedValueOnce(
+      startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }),
+    )
     .mockResolvedValueOnce(startAnswers(answer, status));
   await expect(continueWithHubSso("user@example.test")).rejects.toThrow(message);
   expect(replaceSessionTokenIfCurrent).not.toHaveBeenCalled();
@@ -242,14 +260,16 @@ it.each([
 it("maps a complete request that cannot reach the server", async () => {
   vi.mocked(fetchMobileJson).mockReset();
   vi.mocked(fetchMobileJson)
-    .mockResolvedValueOnce(startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }))
+    .mockResolvedValueOnce(
+      startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }),
+    )
     .mockRejectedValueOnce(new TypeError("Network request failed"));
   await expect(continueWithHubSso("user@example.test")).rejects.toThrow(FAILED);
   expect(replaceSessionTokenIfCurrent).not.toHaveBeenCalled();
 });
 
 it("starts one attempt for concurrent taps", async () => {
-  let finish: (value: { type: "cancel" }) => void = () => {};
+  let finish: (value: WebBrowserAuthSessionResult) => void = () => {};
   vi.mocked(openAuthSessionAsync).mockReturnValueOnce(
     new Promise((resolve) => {
       finish = resolve;
@@ -258,7 +278,7 @@ it("starts one attempt for concurrent taps", async () => {
   const first = continueWithHubSso("user@example.test");
   await expect(continueWithHubSso("user@example.test")).resolves.toBe("busy");
   await vi.waitFor(() => expect(openAuthSessionAsync).toHaveBeenCalledOnce());
-  finish({ type: "cancel" });
+  finish({ type: WebBrowserResultType.CANCEL });
   await expect(first).resolves.toBe("cancelled");
   expect(fetchMobileJson).toHaveBeenCalledOnce();
   // The next tap after the attempt ends starts again.
@@ -280,12 +300,15 @@ it.each([
   ["browser", 1],
   ["complete", 2],
 ] as const)("stores nothing when the server changes during %s", async (_phase, step) => {
-  const switchServer = () => vi.mocked(currentApiBase).mockReturnValue("https://other.example.test");
+  const switchServer = () =>
+    vi.mocked(currentApiBase).mockReturnValue("https://other.example.test");
   if (step === 0)
-    vi.mocked(fetchMobileJson).mockReset().mockImplementationOnce(async () => {
-      switchServer();
-      return startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE });
-    });
+    vi.mocked(fetchMobileJson)
+      .mockReset()
+      .mockImplementationOnce(async () => {
+        switchServer();
+        return startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE });
+      });
   if (step === 1)
     vi.mocked(openAuthSessionAsync).mockImplementationOnce(async () => {
       switchServer();
@@ -343,7 +366,9 @@ it("never logs the token, handoff code, verifier, state or callback URL", async 
     await continueWithHubSso("user@example.test").catch(() => undefined);
   }
   vi.mocked(fetchMobileJson)
-    .mockResolvedValueOnce(startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }))
+    .mockResolvedValueOnce(
+      startAnswers({ next: "redirect", authorizeUrl: AUTHORIZE, state: STATE }),
+    )
     .mockResolvedValueOnce(startAnswers({ message: `bad ${CODE}` }, 400));
   await continueWithHubSso("user@example.test").catch(() => undefined);
   const text = JSON.stringify(logged.map(String));
