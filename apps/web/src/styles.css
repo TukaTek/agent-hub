@@ -15,6 +15,26 @@ body,
   font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek.
+   Chat copy: 15px on a 1.75 line box so Arabic and Latin both get air. Arabic and
+   Hebrew use a local face when the machine has one; Geist does not carry them. */
+@font-face {
+  font-family: "cah-chat";
+  src:
+    local("Noto Naskh Arabic"), local("Noto Sans Arabic"), local("Geeza Pro"), local("SF Arabic");
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+@font-face {
+  font-family: "cah-chat";
+  src: local("Noto Sans Hebrew"), local("Arial Hebrew"), local("SF Hebrew");
+  unicode-range: U+0590-05FF, U+FB1D-FB4F;
+}
+@utility chat-copy {
+  font-size: 15px;
+  line-height: 1.75;
+  font-family: "cah-chat", "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
 /* viewport-fit=cover lets the shell reach the screen edges; keep it clear of notches and the home indicator. */
 #root {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)

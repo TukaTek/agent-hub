@@ -10,7 +10,7 @@ import {
   serializeComposerPrompt,
   truncateSlashDescription,
 } from "@cortexai-agent-hub/core";
-import { Button } from "@cortexai-agent-hub/ui-web";
+import { Button, Icon } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowUp, Box, Paperclip, Plus, Settings, Square, X } from "lucide-react";
 import type { ClipboardEvent, DragEvent, RefObject } from "react";
@@ -501,7 +501,7 @@ export const Composer = memo(function Composer({
                   className="h-8 w-8 rounded object-cover"
                 />
               ) : (
-                <Paperclip size={14} strokeWidth={1.8} />
+                <Icon icon={Paperclip} size={14} />
               )}
               <span className="max-w-[180px] truncate" dir="auto">
                 {attachment.file.name}
@@ -515,7 +515,7 @@ export const Composer = memo(function Composer({
                 }}
                 className="text-muted-foreground hover:text-foreground"
               >
-                <X size={13} strokeWidth={2} />
+                <Icon icon={X} size={13} />
               </button>
             </div>
           ))}
@@ -577,7 +577,7 @@ export const Composer = memo(function Composer({
               onClick={() => insertSkill(skill)}
               className="flex w-full items-start gap-3 px-4 py-2.5 text-start hover:bg-accent"
             >
-              <Box size={16} strokeWidth={1.7} className="mt-0.5 shrink-0 text-muted-foreground" />
+              <Icon icon={Box} className="mt-0.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0">
                 <span dir="auto" className="block text-[14px] text-foreground">
                   {skill.name}
@@ -598,7 +598,7 @@ export const Composer = memo(function Composer({
                 onClick={() => runSlashAction(action.id)}
                 className="flex w-full items-center gap-3 px-4 py-2.5 text-start hover:bg-accent"
               >
-                <Settings size={16} strokeWidth={1.7} className="shrink-0 text-muted-foreground" />
+                <Icon icon={Settings} className="shrink-0 text-muted-foreground" />
                 <span className="text-[14px] text-foreground">{label}</span>
               </button>
             );
@@ -632,7 +632,7 @@ export const Composer = memo(function Composer({
             expanded ? "row-start-2" : ""
           }`}
         >
-          <Plus size={16} strokeWidth={2} />
+          <Icon icon={Plus} />
         </Button>
         <div
           ref={composerFieldRef}
@@ -645,7 +645,7 @@ export const Composer = memo(function Composer({
               data-testid="skill-chip"
               className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-accent px-2.5 py-1 text-[13px] text-foreground"
             >
-              <Box size={13} strokeWidth={1.7} className="shrink-0 text-muted-foreground/70" />
+              <Icon icon={Box} size={13} className="shrink-0 text-muted-foreground/70" />
               <span dir="auto" className="truncate">
                 {selectedSkill.name}
               </span>
@@ -658,7 +658,7 @@ export const Composer = memo(function Composer({
                 }}
                 className="text-muted-foreground hover:text-foreground"
               >
-                <X size={12} strokeWidth={2} />
+                <Icon icon={X} size={12} />
               </button>
             </span>
           ) : null}
@@ -686,7 +686,7 @@ export const Composer = memo(function Composer({
                 }}
                 className="text-muted-foreground hover:text-foreground"
               >
-                <X size={12} strokeWidth={2} />
+                <Icon icon={X} size={12} />
               </button>
             </span>
           ))}
@@ -778,7 +778,7 @@ export const Composer = memo(function Composer({
                   onClick={send}
                   className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground transition-transform hover:bg-brand/90 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/30"
                 >
-                  <ArrowUp size={16} strokeWidth={2.2} />
+                  <Icon icon={ArrowUp} />
                 </Button>
               )}
               {running ? (
@@ -790,7 +790,7 @@ export const Composer = memo(function Composer({
                   onClick={() => void onStop()}
                   className="size-8 rounded-full border border-border bg-muted text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground"
                 >
-                  <Square size={11} strokeWidth={0} fill="currentColor" />
+                  <Icon icon={Square} size={11} strokeWidth={0} fill="currentColor" />
                 </Button>
               ) : null}
             </>
