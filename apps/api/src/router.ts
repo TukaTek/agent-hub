@@ -350,8 +350,6 @@ import {
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
-/** A running and a finished event per call: the newest few thousand calls of one run. */
-const RUN_TOOL_HISTORY_EVENTS = 10_000;
 const RUN_TOOL_PAGE_SIZE = 100;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 /** Silence longer than this on a thread stream is indistinguishable from a dead socket. */
@@ -6737,36 +6735,54 @@ export function createRouter(deps: RouterDeps) {
           runKindCaches(),
         );
         if (!visible) return { tools: [], olderCursor: null };
-        const events = await deps.prisma.event.findMany({
+        const runTools = {
+          spaceId: context.actor.spaceId,
+          threadId: target.threadId,
+          runId: input.runId,
+          type: "run.tool",
+        };
+        // A call pages by its first running entry, so it shows on one page and new calls never
+        // shift it. Each page reads only the starts below the cursor, then those calls' events.
+        const starts = await deps.prisma.event.findMany({
           where: {
-            spaceId: context.actor.spaceId,
-            threadId: target.threadId,
-            runId: input.runId,
-            type: "run.tool",
+            ...runTools,
+            payload: { path: ["status"], equals: "running" },
+            ...(input.before === undefined ? {} : { seq: { lt: input.before } }),
           },
           orderBy: { seq: "desc" },
-          take: RUN_TOOL_HISTORY_EVENTS,
+          take: RUN_TOOL_PAGE_SIZE + 1,
           select: { seq: true, payload: true },
         });
-        // A call pages by its first event, so it shows on one page and new calls never shift it.
-        const firstSeq = new Map<string, number>();
+        const from = starts.slice(0, RUN_TOOL_PAGE_SIZE).at(-1)?.seq;
+        if (from === undefined) return { tools: [], olderCursor: null };
+        const callIds = new Set(
+          starts.slice(0, RUN_TOOL_PAGE_SIZE).flatMap((start) => {
+            const parsed = RunToolSchema.safeParse(start.payload);
+            return parsed.success ? [parsed.data.callId] : [];
+          }),
+        );
+        const events = await deps.prisma.event.findMany({
+          where: {
+            ...runTools,
+            OR: [...callIds].map((callId) => ({ payload: { path: ["callId"], equals: callId } })),
+          },
+          orderBy: { seq: "asc" },
+          select: { seq: true, payload: true },
+        });
+        const firstStart = new Map<string, number>();
         const calls = foldRunTools(
-          events.reverse().flatMap((event) => {
+          events.flatMap((event) => {
             const parsed = RunToolSchema.safeParse(event.payload);
             if (!parsed.success) return [];
-            if (!firstSeq.has(parsed.data.callId)) firstSeq.set(parsed.data.callId, event.seq);
+            const { callId, status } = parsed.data;
+            if (status === "running" && !firstStart.has(callId)) firstStart.set(callId, event.seq);
             return [parsed.data];
           }),
-        ).filter(
-          (call) => input.before === undefined || (firstSeq.get(call.callId) ?? 0) < input.before,
         );
-        const tools = calls.slice(-RUN_TOOL_PAGE_SIZE);
         return {
-          tools,
-          olderCursor:
-            calls.length > tools.length && tools[0]
-              ? (firstSeq.get(tools[0].callId) ?? null)
-              : null,
+          // A call that also started below this page belongs to the older one.
+          tools: calls.filter((call) => (firstStart.get(call.callId) ?? -1) >= from),
+          olderCursor: starts.length > RUN_TOOL_PAGE_SIZE ? from : null,
         };
       }),
     },

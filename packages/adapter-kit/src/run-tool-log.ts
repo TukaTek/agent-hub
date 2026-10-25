@@ -194,12 +194,13 @@ export function createRunToolLog(options: {
           startedAt: new Date(endedAt.getTime() - (completion.durationMs ?? 0)).toISOString(),
           endedAt: null,
         });
-      if (!known) unstarted.push(tracked);
+      if (!known) {
+        // Every call's first entry is running: the run log pages calls by that entry.
+        unstarted.push(tracked);
+        await record(tracked, tracked.entry);
+      }
       if (completion.outcome === "paused") {
-        if (!known) {
-          unfinished.push(tracked);
-          await record(tracked, tracked.entry);
-        }
+        if (!known) unfinished.push(tracked);
         return;
       }
       if (known) unfinished.splice(index, 1);

@@ -29,7 +29,36 @@ const entry = (
 
 const LONG_RUN_CALLS = 150;
 
-function fixture() {
+/** The Prisma `where` subset runs.tools uses: equality, `seq.lt`, JSON paths and `OR`. */
+function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    if (key === "OR") {
+      return (value as Record<string, unknown>[]).some((option) => matches(row, option));
+    }
+    if (key === "payload") {
+      const { path, equals } = value as { path: string[]; equals: unknown };
+      return (row.payload as Record<string, unknown>)[path[0]!] === equals;
+    }
+    if (key === "seq") return (row.seq as number) < (value as { lt: number }).lt;
+    return row[key] === value;
+  });
+}
+
+/** Rows for a run whose calls each log running, then done, one after the other. */
+function manyCalls(runId: string, count: number) {
+  return Array.from({ length: count }, (_, index) =>
+    (["running", "done"] as const).map((status, offset) => ({
+      spaceId: "space-1",
+      threadId: "thread-1",
+      runId,
+      type: "run.tool",
+      seq: 10_000 + 2 * index + offset,
+      payload: entry(runId, `many-${index}`, status),
+    })),
+  ).flat();
+}
+
+function fixture(extraRows: ReturnType<typeof manyCalls> = []) {
   const bot = {
     id: "bot-1",
     userId: actor.userId,
@@ -131,6 +160,7 @@ function fixture() {
         payload: entry("run-long", `call-${index}`, "done"),
       },
     ]).flat(),
+    ...extraRows,
   ];
   const findEvents = vi.fn(
     async ({
@@ -143,9 +173,7 @@ function fixture() {
       take?: number;
     }) =>
       rows
-        .filter((row) =>
-          Object.entries(where).every(([key, value]) => row[key as keyof typeof row] === value),
-        )
+        .filter((row) => matches(row, where))
         .sort((left, right) =>
           orderBy.seq === "asc" ? left.seq - right.seq : right.seq - left.seq,
         )
@@ -153,6 +181,7 @@ function fixture() {
   );
   const triggers: Record<string, string> = {
     "run-long": "user",
+    "run-many": "user",
     "run-1": "user",
     "run-2": "user",
     "run-peer": "bot_message",
@@ -196,11 +225,14 @@ describe("runs/tools", () => {
       tools: [entry("run-1", "a", "done"), entry("run-1", "b", "running")],
       olderCursor: null,
     });
-    expect(findEvents).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { spaceId: "space-1", threadId: "thread-1", runId: "run-1", type: "run.tool" },
-      }),
-    );
+    for (const [query] of findEvents.mock.calls) {
+      expect(query.where).toMatchObject({
+        spaceId: "space-1",
+        threadId: "thread-1",
+        runId: "run-1",
+        type: "run.tool",
+      });
+    }
   });
 
   it("does not read a run that belongs to another thread", async () => {
@@ -232,6 +264,44 @@ describe("runs/tools", () => {
     // Finished after every newer call started, yet listed once, where it started, as done.
     expect(older.body.json.tools.at(-1)).toMatchObject({ callId: "call-49", status: "done" });
     expect(older.body.json.olderCursor).toBeNull();
+  });
+
+  it("pages back through every call of a run with thousands of calls", async () => {
+    const count = 5_001;
+    const { call } = fixture(manyCalls("run-many", count));
+    const seen: string[] = [];
+    let before: number | undefined;
+    for (let page = 0; page < 100; page += 1) {
+      const result = await call({ botId: "bot-1", runId: "run-many", before });
+      expect(result.status).toBe(200);
+      const { tools, olderCursor } = result.body.json as {
+        tools: RunTool[];
+        olderCursor: number | null;
+      };
+      seen.unshift(...tools.map((tool) => tool.callId));
+      if (olderCursor === null) break;
+      before = olderCursor;
+    }
+    expect(seen).toHaveLength(count);
+    expect(seen).toEqual(Array.from({ length: count }, (_, index) => `many-${index}`));
+  });
+
+  it("lists a call once when it logs running again after newer calls", async () => {
+    const rows = manyCalls("run-many", 101);
+    // A summary update for the oldest call, logged after every other call.
+    rows.push({ ...rows[0]!, seq: 20_000, payload: { ...rows[0]!.payload, summary: "q: later" } });
+    const { call } = fixture(rows);
+    const newest = await call({ botId: "bot-1", runId: "run-many" });
+    const older = await call({
+      botId: "bot-1",
+      runId: "run-many",
+      before: newest.body.json.olderCursor,
+    });
+    const ids = [...older.body.json.tools, ...newest.body.json.tools].map(
+      (tool: RunTool) => tool.callId,
+    );
+    expect(ids).toEqual(Array.from({ length: 101 }, (_, index) => `many-${index}`));
+    expect(older.body.json.tools[0]).toMatchObject({ callId: "many-0", status: "done" });
   });
 
   // The live thread stream drops these runs' tool events; replay must not reveal them either.

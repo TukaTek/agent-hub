@@ -209,6 +209,7 @@ describe("createRunToolLog", () => {
     });
     await log.started({ name: "read_file", args: { path: "notes.txt" }, executionId: "call-1" });
     expect(records.map((entry) => [entry.status, entry.summary, entry.startedAt])).toEqual([
+      ["running", "", "2026-10-24T10:00:01.600Z"],
       ["done", "", "2026-10-24T10:00:01.600Z"],
       ["done", "path: notes.txt", "2026-10-24T10:00:01.600Z"],
     ]);
