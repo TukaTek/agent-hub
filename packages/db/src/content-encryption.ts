@@ -23,13 +23,15 @@ import { createRowId } from "./row-id.js";
  * including these values, is only authoritative inside the sealed copy.
  */
 const MESSAGE_BLOCK_PLAIN_KEYS = new Set(["kind", "status", "channelId", "serverId", "artifactId"]);
-/** Event payload keys that event queries filter on. */
+/** Event payload keys that event queries filter on; `status` and `callId` page `run.tool`. */
 const EVENT_PAYLOAD_PLAIN_KEYS = new Set([
   "messageId",
   "notice",
   "state",
   "updatedAt",
   "streaming",
+  "status",
+  "callId",
 ]);
 
 interface FieldSpec {

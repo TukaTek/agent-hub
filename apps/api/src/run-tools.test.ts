@@ -1,5 +1,6 @@
+import { createRunToolLog } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor, RunTool } from "@cortexai-agent-hub/contracts";
-import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { ENCRYPTED_MODELS, type PrismaClient, sealJson } from "@cortexai-agent-hub/db";
 import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
@@ -28,6 +29,8 @@ const entry = (
 });
 
 const LONG_RUN_CALLS = 150;
+
+const EVENT_PLAIN_KEYS = ENCRYPTED_MODELS.Event!.fields.payload!.plainKeys!;
 
 /** The Prisma `where` subset runs.tools uses: equality, `seq.lt`, JSON paths and `OR`. */
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
@@ -162,6 +165,13 @@ function fixture(extraRows: ReturnType<typeof manyCalls> = []) {
     ]).flat(),
     ...extraRows,
   ];
+  // JSON paths see payloads as encrypted Postgres stores them: only plain keys beside the seal.
+  const stored = new Map(
+    rows.map((row) => [
+      row,
+      { ...row, payload: sealJson(row.payload, EVENT_PLAIN_KEYS, () => "sealed") },
+    ]),
+  );
   const findEvents = vi.fn(
     async ({
       where,
@@ -173,7 +183,7 @@ function fixture(extraRows: ReturnType<typeof manyCalls> = []) {
       take?: number;
     }) =>
       rows
-        .filter((row) => matches(row, where))
+        .filter((row) => matches(stored.get(row)!, where))
         .sort((left, right) =>
           orderBy.seq === "asc" ? left.seq - right.seq : right.seq - left.seq,
         )
@@ -284,6 +294,57 @@ describe("runs/tools", () => {
     }
     expect(seen).toHaveLength(count);
     expect(seen).toEqual(Array.from({ length: count }, (_, index) => `many-${index}`));
+  });
+
+  it("lists the calls the executor logs for a Pi run", async () => {
+    const rows: ReturnType<typeof manyCalls> = [];
+    const log = createRunToolLog({
+      runId: "run-many",
+      attemptId: "attempt-1",
+      redact: (text) => text,
+      record: (payload) => {
+        rows.push({
+          spaceId: "space-1",
+          threadId: "thread-1",
+          runId: "run-many",
+          type: "run.tool",
+          seq: 30_000 + rows.length,
+          payload,
+        });
+      },
+    });
+    const write = JSON.stringify(["pi-tool", "main", "product-write"]);
+    const shell = JSON.stringify(["pi-tool", "main", "product-shell"]);
+    await log.started({
+      name: "write_file",
+      executionId: write,
+      args: { path: "notes/result.txt", content: "hello" },
+    });
+    await log.finished({ name: "write_file", executionId: write, outcome: "succeeded" });
+    // Pi reports completions without blocking the turn, so a finish can precede its start.
+    await log.finished({ name: "shell", executionId: shell, outcome: "succeeded" });
+    await log.started({
+      name: "shell",
+      executionId: shell,
+      args: { command: "wc -c notes/result.txt" },
+    });
+    const { call } = fixture(rows);
+    const result = await call({ botId: "bot-1", runId: "run-many" });
+    expect(result.body.json).toEqual({
+      tools: [
+        expect.objectContaining({
+          tool: "write_file",
+          summary: expect.stringContaining("notes/result.txt"),
+          status: "done",
+        }),
+        expect.objectContaining({
+          tool: "shell",
+          summary: expect.stringContaining("wc -c notes/result.txt"),
+          status: "done",
+        }),
+      ],
+      olderCursor: null,
+    });
   });
 
   it("lists a call once when it logs running again after newer calls", async () => {

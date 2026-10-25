@@ -56,6 +56,8 @@ redacted argument summary and outcome. Backend only; no UI in this change.
   on the page, or null when no older start exists. A call is listed on the page holding its
   earliest running entry, so the cursor stays stable while a live run appends calls, no call
   appears on two pages, and paging reaches the run's first call however long the run is.
+  Event payloads are sealed at rest, so `status` and `callId` are event plain keys that stay
+  queryable beside the sealed copy.
 
 ## Steps (TDD)
 
