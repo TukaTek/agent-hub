@@ -239,7 +239,9 @@ describe("system browser authentication", () => {
       const response = await fetch(`${hubSso}?code=x&state=app-state`);
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(await response.text()).toBe("You can close this tab and return to CortexAI Agent Hub.");
+      expect(await response.text()).toBe(
+        "You can close this tab and return to CortexAI Agent Hub.",
+      );
       expect(options.onCallback).toHaveBeenCalledExactlyOnceWith({ code: "x", state: "app-state" });
       await expect(fetch(`${hubSso}?code=x&state=app-state`)).rejects.toThrow();
       expect(options.onClose).toHaveBeenCalledOnce();
@@ -259,7 +261,9 @@ describe("system browser authentication", () => {
       expect(options.onError).not.toHaveBeenCalled();
       const response = await fetch(`${hubSso}?error=hub_access_denied&state=app-state`);
       expect(response.status).toBe(200);
-      expect(await response.text()).toBe("You can close this tab and return to CortexAI Agent Hub.");
+      expect(await response.text()).toBe(
+        "You can close this tab and return to CortexAI Agent Hub.",
+      );
       expect(options.onError).toHaveBeenCalledExactlyOnceWith("hub_access_denied");
       expect(options.onCallback).not.toHaveBeenCalled();
       await expect(fetch(`${hubSso}?code=x&state=app-state`)).rejects.toThrow();

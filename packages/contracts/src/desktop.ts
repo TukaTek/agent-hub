@@ -36,7 +36,27 @@ export interface CortexAiAgentHubDesktopOAuthCallback {
   state?: string;
 }
 
+/**
+ * How a desktop Hub SSO attempt ended. Only the renderer that started the attempt
+ * receives it. `error` is `cancelled` when the attempt was cancelled, `sso_expired`
+ * when it timed out, or the code the API's native callback sent.
+ */
+export type DesktopHubSsoResult =
+  | { code: string; state: string; appVerifier: string }
+  | { error: string };
+
+/** System-browser transport for `/api/auth/hub/sso/native/*`; the renderer calls the API. */
+export interface CortexAiAgentHubDesktopHubSso {
+  /** Starts the one active attempt (cancelling any other) with a fresh PKCE pair and loopback port. */
+  start: () => Promise<{ returnTo: string; appChallenge: string }>;
+  /** Listens on the attempt's returnTo, opens the system browser and waits for the callback. */
+  open: (authorizeUrl: string, state: string) => Promise<DesktopHubSsoResult>;
+  cancel: () => Promise<void>;
+}
+
 export interface CortexAiAgentHubDesktop {
+  /** Optional for compatibility with older desktop releases. */
+  hubSso?: CortexAiAgentHubDesktopHubSso;
   /** Optional for compatibility with older desktop releases. */
   badge?: {
     set: (count: number) => Promise<boolean>;
