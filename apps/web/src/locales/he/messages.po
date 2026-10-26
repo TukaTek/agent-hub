@@ -192,6 +192,14 @@ msgstr "{name} נכשל"
 msgid "{name} finished"
 msgstr "{name} סיים"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — {key} sends this into the running turn"
+msgstr "{name} עובד — {key} שולח את זה לתור הפעיל"
+
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — send to add this to the running turn"
+msgstr "{name} עובד — שלחו כדי להוסיף את זה לתור הפעיל"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"
@@ -319,6 +327,10 @@ msgstr "{toolCount, plural, one {# כלי} other {# כלים}}"
 #: src/pages/shell/composer.tsx
 msgid "@{0}"
 msgstr "@{0}"
+
+#: src/pages/shell/composer.tsx
+msgid "⌘ Enter"
+msgstr "⌘ Enter"
 
 #. placeholder {0}: amount / 100
 #: src/components/ModelCredits.tsx
@@ -2056,6 +2068,10 @@ msgstr "Cron"
 msgid "Cron expression"
 msgstr "ביטוי Cron"
 
+#: src/pages/shell/composer.tsx
+msgid "Ctrl+Enter"
+msgstr "Ctrl+Enter"
+
 #: src/components/AccountAccess.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Current password"
@@ -2391,6 +2407,10 @@ msgstr "מסתיים ב-{day}"
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Engage when... Ignore..."
 msgstr "להגיב כאשר... להתעלם מ..."
+
+#: src/pages/shell/composer.tsx
+msgid "Enter"
+msgstr "Enter"
 
 #: src/lib/user-error.ts
 msgid "Enter a password"
@@ -3929,6 +3949,7 @@ msgid "Pull request"
 msgstr "Pull request"
 
 #: src/pages/ActivityList.tsx
+#: src/pages/shell/composer-queued.tsx
 msgid "Queued"
 msgstr "בתור"
 

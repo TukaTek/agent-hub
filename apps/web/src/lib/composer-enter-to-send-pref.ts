@@ -15,7 +15,7 @@ function getLocalStorage(): EnterToSendStorage | null {
   }
 }
 
-function detectCoarsePointer(): boolean {
+export function detectCoarsePointer(): boolean {
   try {
     return (
       typeof window !== "undefined" &&

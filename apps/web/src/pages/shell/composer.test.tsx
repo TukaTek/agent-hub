@@ -56,9 +56,10 @@ function renderComposer(
     disconnect() {}
   };
   // Reduced motion skips the chip-row resize animation, which jsdom cannot run.
-  window.matchMedia ??= () =>
+  // Every other query (e.g. a coarse pointer) stays false, like a desktop browser.
+  window.matchMedia ??= (query: string) =>
     ({
-      matches: true,
+      matches: query === "(prefers-reduced-motion: reduce)",
       addEventListener() {},
       removeEventListener() {},
     }) as unknown as MediaQueryList;
@@ -611,4 +612,94 @@ it.each([false, true])(
 it("hides call dictation until the server enables it", () => {
   renderComposer(vi.fn().mockResolvedValue(true));
   expect(container?.querySelector('button[aria-label="Hold to talk"]')).toBeNull();
+});
+
+describe("while a turn is running", () => {
+  const button = (name: string) =>
+    container?.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`) ?? null;
+
+  it("says Enter sends into the running turn, keeping the accessible name", () => {
+    const textarea = renderComposer(vi.fn(), { running: true, steerable: true });
+    expect(textarea.placeholder).toBe("Ada is working — Enter sends this into the running turn");
+    expect(textarea.getAttribute("aria-label")).toBe("Message Ada");
+  });
+
+  it("names the modifier shortcut when Enter inserts a newline", () => {
+    const textarea = renderComposer(vi.fn(), {
+      running: true,
+      steerable: true,
+      enterToSend: false,
+    });
+    expect(textarea.placeholder).toBe(
+      "Ada is working — Ctrl+Enter sends this into the running turn",
+    );
+  });
+
+  it("drops the keyboard shortcut on a touch device", () => {
+    const matchMedia = window.matchMedia;
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query === "(pointer: coarse)" || query === "(prefers-reduced-motion: reduce)",
+        addEventListener() {},
+        removeEventListener() {},
+      }) as unknown as MediaQueryList;
+    try {
+      const textarea = renderComposer(vi.fn(), {
+        running: true,
+        steerable: true,
+        enterToSend: false,
+      });
+      expect(textarea.placeholder).toBe("Ada is working — send to add this to the running turn");
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
+  it("keeps the usual placeholder when the run cannot take steering", () => {
+    const textarea = renderComposer(vi.fn(), { running: true, steerable: false });
+    expect(textarea.placeholder).toBe("Message Ada");
+    rerenderComposer({ running: false, steerable: false });
+    expect(textarea.placeholder).toBe("Message Ada");
+  });
+
+  it("shows Stop in place of Send until there is something to send", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const onStop = vi.fn().mockResolvedValue(undefined);
+    const textarea = renderComposer(onSend, { running: true, steerable: true, onStop });
+    expect(button("Send")).toBeNull();
+    act(() => button("Stop")?.click());
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    type(textarea, "Use the newer report");
+    expect(button("Send")).not.toBeNull();
+    expect(button("Stop")).not.toBeNull();
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(onSend).toHaveBeenCalledWith("Use the newer report", [], expect.any(String));
+    expect(button("Send")).toBeNull();
+  });
+
+  it("keeps idle Send unchanged", () => {
+    renderComposer(vi.fn());
+    expect(button("Send")?.disabled).toBe(true);
+    expect(button("Stop")).toBeNull();
+  });
+
+  it("marks sends the run has not taken yet as queued", () => {
+    renderComposer(vi.fn(), {
+      running: true,
+      steerable: true,
+      queued: [
+        { seq: 4, text: "Use the newer report" },
+        { seq: 6, text: "Keep it short" },
+      ],
+    });
+    const queued = container?.querySelector('[data-testid="composer-queued"]');
+    expect(queued?.textContent).toContain("Queued");
+    const items = [...(queued?.querySelectorAll("li") ?? [])].map((item) => item.textContent);
+    expect(items).toEqual(["Use the newer report", "Keep it short"]);
+
+    rerenderComposer({ queued: [] });
+    expect(container?.querySelector('[data-testid="composer-queued"]')).toBeNull();
+  });
 });

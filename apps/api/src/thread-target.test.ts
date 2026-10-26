@@ -2617,6 +2617,7 @@ describe("sendThreadMessage", () => {
     ).resolves.toMatchObject({
       runId: "run-user",
       taskId: "task-user",
+      messageId: "msg-1",
       runIds: ["run-user"],
     });
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
