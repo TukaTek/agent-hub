@@ -11,6 +11,21 @@ export const DEFAULT_LOCAL_WEB_URL = "http://127.0.0.1:45173";
 export const CORTEXAI_AGENT_HUB_CLOUD_URL: string | null = null;
 export const PROBE_RESPONSE_LIMIT_BYTES = 64 * 1024;
 
+export type DesktopEdition = "self-host" | "managed";
+
+/** Replaced at build time from `CORTEXAI_AGENT_HUB_DESKTOP_EDITION` (`scripts/desktop-edition.mjs`). */
+declare const __CORTEXAI_AGENT_HUB_DESKTOP_EDITION__: DesktopEdition | undefined;
+
+export const DESKTOP_EDITION: DesktopEdition =
+  typeof __CORTEXAI_AGENT_HUB_DESKTOP_EDITION__ === "undefined"
+    ? "self-host"
+    : __CORTEXAI_AGENT_HUB_DESKTOP_EDITION__;
+
+/** Managed builds connect only to their own servers, so setup hides the typed server address. */
+export function showsServerEntry(edition: DesktopEdition): boolean {
+  return edition !== "managed";
+}
+
 export const SETUP_FILE_NAME = "setup.json";
 
 export type StartupTarget =

@@ -1016,6 +1016,7 @@ msgstr "तस्वीरें नहीं पढ़ सकता"
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/TeachComputerOverlay.tsx
 #: src/pages/Artifacts.tsx
+#: src/pages/Auth.tsx
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/model-settings/connection-controls.tsx
 #: src/pages/model-settings/space-bots-model.tsx
@@ -1483,6 +1484,10 @@ msgstr "जारी रखें"
 msgid "Continue in Background"
 msgstr ""
 
+#: src/pages/Auth.tsx
+msgid "Continue in your browser"
+msgstr ""
+
 #: src/components/ModelCredits.tsx
 msgid "Continue to checkout"
 msgstr ""
@@ -1494,6 +1499,10 @@ msgstr "{0} के साथ जारी रखें"
 
 #: src/components/ModelCredits.tsx
 msgid "Continue with credits"
+msgstr ""
+
+#: src/pages/Auth.tsx
+msgid "Continue with Microsoft"
 msgstr ""
 
 #: src/components/ComputersUnavailableHint.tsx
@@ -3223,6 +3232,10 @@ msgstr ""
 
 #: src/pages/Auth.tsx
 msgid "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser."
+msgstr ""
+
+#: src/pages/Auth.tsx
+msgid "Microsoft sign-in was cancelled."
 msgstr ""
 
 #: src/pages/model-settings/compatible-model-fields.tsx
@@ -5504,6 +5517,10 @@ msgstr "आप यह विंडो बंद कर सकते हैं।
 #: src/components/call/VoiceChatCard.tsx
 msgid "You declined"
 msgstr "आपने कॉल अस्वीकार की"
+
+#: src/pages/Auth.tsx
+msgid "You don't have access to Agent Hub — ask your admin"
+msgstr ""
 
 #: src/pages/shell/computer-overlay.tsx
 msgid "You have control"

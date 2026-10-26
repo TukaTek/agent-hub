@@ -210,6 +210,95 @@ describe("system browser authentication", () => {
     await expect(fetch(retry.callback)).rejects.toThrow();
   });
 
+  describe("with an explicit loopback callback", () => {
+    async function explicit() {
+      const value = await setup();
+      const hubSso = value.callback.replace("/callback", "/hub-sso");
+      // The authorize URL redirects to the API, never to this app.
+      const authorization = new URL("https://hub.example.test/authorize");
+      authorization.searchParams.set("redirect_uri", "https://api.example.test/callback");
+      authorization.searchParams.set("state", "provider-state");
+      const onError = vi.fn();
+      return {
+        ...value,
+        hubSso,
+        authorization,
+        options: {
+          ...value.options,
+          callback: { url: hubSso, state: "app-state" },
+          onError,
+        },
+      };
+    }
+
+    it("listens on the given URL and state instead of redirect_uri", async () => {
+      const { authorization, hubSso, options } = await explicit();
+      await openBrowserAuth(authorization.href, options);
+      expect(options.openExternal).toHaveBeenCalledWith(authorization.href);
+      expect((await fetch(`${hubSso}?code=x&state=provider-state`)).status).toBe(400);
+      const response = await fetch(`${hubSso}?code=x&state=app-state`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.text()).toBe(
+        "You can close this tab and return to CortexAI Agent Hub.",
+      );
+      expect(options.onCallback).toHaveBeenCalledExactlyOnceWith({ code: "x", state: "app-state" });
+      await expect(fetch(`${hubSso}?code=x&state=app-state`)).rejects.toThrow();
+      expect(options.onClose).toHaveBeenCalledOnce();
+    });
+
+    it("forwards one matching error callback and then closes", async () => {
+      const { authorization, hubSso, options } = await explicit();
+      await openBrowserAuth(authorization.href, options);
+      for (const url of [
+        `${hubSso}?error=sso_failed&state=wrong`,
+        `${hubSso}?error=sso_failed&error=other&state=app-state`,
+        `${hubSso}?error=sso_failed&code=x&state=app-state`,
+        `${hubSso}?error=Not%20a%20code&state=app-state`,
+        `${hubSso}?error=&state=app-state`,
+      ])
+        expect((await fetch(url)).status).toBe(400);
+      expect(options.onError).not.toHaveBeenCalled();
+      const response = await fetch(`${hubSso}?error=hub_access_denied&state=app-state`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(
+        "You can close this tab and return to CortexAI Agent Hub.",
+      );
+      expect(options.onError).toHaveBeenCalledExactlyOnceWith("hub_access_denied");
+      expect(options.onCallback).not.toHaveBeenCalled();
+      await expect(fetch(`${hubSso}?code=x&state=app-state`)).rejects.toThrow();
+    });
+
+    it("rejects error callbacks when no error handler is given", async () => {
+      const { authorization, hubSso, options } = await explicit();
+      const { onError: _onError, ...withoutError } = options;
+      await openBrowserAuth(authorization.href, withoutError);
+      expect((await fetch(`${hubSso}?error=sso_failed&state=app-state`)).status).toBe(400);
+    });
+
+    it.each([
+      "http://localhost:54321/hub-sso",
+      "http://0.0.0.0:54321/hub-sso",
+      "https://127.0.0.1:54321/hub-sso",
+      "http://127.0.0.1:80/hub-sso",
+      "http://127.0.0.1:54321/hub-sso?x=1",
+    ])("rejects an unsafe explicit callback: %s", async (url) => {
+      const { authorization, options } = await explicit();
+      await expect(
+        openBrowserAuth(authorization.href, { ...options, callback: { url, state: "app-state" } }),
+      ).rejects.toThrow();
+      expect(options.openExternal).not.toHaveBeenCalled();
+    });
+
+    it("requires a state", async () => {
+      const { authorization, hubSso, options } = await explicit();
+      await expect(
+        openBrowserAuth(authorization.href, { ...options, callback: { url: hubSso, state: "" } }),
+      ).rejects.toThrow();
+      expect(options.openExternal).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not open a browser if the callback port is occupied", async () => {
     const { authorization, options } = await setup();
     await openBrowserAuth(authorization.href, options);

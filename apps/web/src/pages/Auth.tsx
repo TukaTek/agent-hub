@@ -6,6 +6,7 @@ import {
   hubRefusalCallbackError,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
+  type NativeSsoStartResponse,
   readBoundedJsonResponse,
   type SignInContinueResponse,
   type SsoCallbackError,
@@ -36,6 +37,7 @@ type AuthMode = "in" | "up" | "forgot";
 type SignInStep =
   | "email"
   | Exclude<SignInContinueResponse["next"], "redirect">
+  | "desktop_sso"
   | "desktop_sso_unavailable";
 
 const fieldClass =
@@ -69,6 +71,26 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     HUB_SIGN_IN_REFUSAL_CODES.includes(code as HubSignInRefusalCode)
       ? ssoErrors[hubRefusalCallbackError(code as HubSignInRefusalCode)]
       : undefined;
+  /** Copy for a 403 or 503 from Continue or native SSO start. */
+  const startRefusal = async (response: Response) => {
+    const refusal = await readBoundedJsonResponse<{ code?: unknown }>(
+      response,
+      MAX_AUTH_RESPONSE_BYTES,
+    ).catch(() => undefined);
+    return (
+      hubRefusal(refusal?.code) ??
+      (refusal?.code === HUB_SSO_ACCESS_DENIED ? ssoErrors.sso_failed : t`Could not continue`)
+    );
+  };
+  /** Copy for the `error=` a native SSO callback sent; unknown codes get the generic one. */
+  const nativeSsoError = (code: string) =>
+    code === "hub_access_denied"
+      ? t`You don't have access to Agent Hub — ask your admin`
+      : code === "sso_cancelled"
+        ? t`Microsoft sign-in was cancelled.`
+        : Object.hasOwn(ssoErrors, code)
+          ? ssoErrors[code as SsoCallbackError]
+          : ssoErrors.sso_failed;
   const [error, setError] = useState<string | null>(() => {
     const code = searchParams.get("error");
     if (!code) return null;
@@ -90,10 +112,13 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const [step, setStep] = useState<SignInStep>("email");
   const signInStep = mode === "in" ? step : null;
-  const signInUnavailable =
+  // Steps after the email that the form's submit button doesn't drive.
+  const submitHidden =
     signInStep === "sso_unavailable" ||
     signInStep === "other_sso_unavailable" ||
+    signInStep === "desktop_sso" ||
     signInStep === "desktop_sso_unavailable";
+  const [browserWaiting, setBrowserWaiting] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [method, setMethod] = useState<"code" | "password">("code");
@@ -139,7 +164,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     if (signInStep === "password") passwordRef.current?.focus();
   }, [signInStep]);
 
+  // An in-app route change doesn't navigate the window, so end any desktop attempt here.
+  useEffect(() => () => void desktopBridge()?.hubSso?.cancel(), []);
+
   function changeEmail() {
+    if (browserWaiting) void desktopBridge()?.hubSso?.cancel();
     setStep("email");
     setPassword("");
     setCodeSent(false);
@@ -150,7 +179,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (signInUnavailable || !passwordForm) return;
+    if (submitHidden || !passwordForm) return;
     if (codeStep) {
       // An unfinished code would spend one of the code's three attempts.
       if (code.length === CODE_LENGTH) await verifyCode(code);
@@ -175,16 +204,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           body: JSON.stringify({ email: email.trim() }),
         });
         if (response.status === 403 || response.status === 503) {
-          const refusal = await readBoundedJsonResponse<{ code?: unknown }>(
-            response,
-            MAX_AUTH_RESPONSE_BYTES,
-          ).catch(() => undefined);
-          setError(
-            hubRefusal(refusal?.code) ??
-              (refusal?.code === HUB_SSO_ACCESS_DENIED
-                ? ssoErrors.sso_failed
-                : t`Could not continue`),
-          );
+          setError(await startRefusal(response));
           return;
         }
         const result = response.ok
@@ -192,9 +212,13 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           : undefined;
         const next = result?.next;
         if (result?.next === "redirect") {
-          // Electron hands off-origin navigation to the system browser, which
-          // cannot complete an app sign-in, so desktop SSO waits for CAAH-44.
-          if (desktopBridge()) setStep("desktop_sso_unavailable");
+          // Electron hands off-origin navigation to the system browser, so
+          // desktop finishes through the native handoff when both sides have it.
+          const desktop = desktopBridge();
+          if (desktop)
+            setStep(
+              desktop.hubSso && reset?.hubSsoNative ? "desktop_sso" : "desktop_sso_unavailable",
+            );
           else if (URL.canParse(result.url) && new URL(result.url).protocol === "https:")
             window.location.assign(result.url);
           else setError(t`Could not continue`);
@@ -273,6 +297,74 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     } catch {
       setError(t`Could not reach the server`);
     } finally {
+      setPending(false);
+    }
+  }
+
+  /**
+   * Desktop Entra sign-in (CAAH-44): main holds the PKCE verifier and loopback
+   * listener; this page calls the API on its own origin, so the session cookie
+   * lands in the instance's partition.
+   */
+  async function signInWithDesktopSso() {
+    const hubSso = desktopBridge()?.hubSso;
+    if (!hubSso || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      const { returnTo, appChallenge } = await hubSso.start();
+      const response = await fetch("/api/auth/hub/sso/native/start", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), client: "desktop", returnTo, appChallenge }),
+      });
+      const result = response.ok
+        ? await readBoundedJsonResponse<NativeSsoStartResponse>(response, MAX_AUTH_RESPONSE_BYTES)
+        : undefined;
+      if (result?.next !== "redirect") {
+        await hubSso.cancel();
+        if (result?.next === "password" || result?.next === "other_sso_unavailable")
+          setStep(result.next);
+        else
+          setError(
+            response.status === 403 || response.status === 503
+              ? await startRefusal(response)
+              : t`Could not continue`,
+          );
+        return;
+      }
+      setBrowserWaiting(true);
+      const outcome = await hubSso.open(result.authorizeUrl, result.state);
+      setBrowserWaiting(false);
+      if ("error" in outcome) {
+        if (outcome.error !== "cancelled") setError(nativeSsoError(outcome.error));
+        return;
+      }
+      const complete = await fetch("/api/auth/hub/sso/native/complete", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          code: outcome.code,
+          state: outcome.state,
+          appVerifier: outcome.appVerifier,
+        }),
+      });
+      if (!complete.ok) {
+        const body = await readBoundedJsonResponse<{ code?: unknown }>(
+          complete,
+          MAX_AUTH_RESPONSE_BYTES,
+        ).catch(() => undefined);
+        setError(hubRefusal(body?.code) ?? ssoErrors.sso_expired);
+        return;
+      }
+      clearSpaceSelection();
+      window.location.assign("/app");
+    } catch {
+      setError(t`Could not continue`);
+    } finally {
+      setBrowserWaiting(false);
       setPending(false);
     }
   }
@@ -466,13 +558,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 type="email"
                 required
                 readOnly={
-                  signInUnavailable ||
-                  signInStep === "password" ||
-                  (signInStep === "email" && pending)
+                  submitHidden || signInStep === "password" || (signInStep === "email" && pending)
                 }
                 className={fieldClass}
               />
-              {signInStep === "password" || signInUnavailable ? (
+              {signInStep === "password" || submitHidden ? (
                 <div className="mt-2 text-right text-sm">
                   <Button
                     type="button"
@@ -546,7 +636,33 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
               {error}
             </p>
           ) : null}
-          {signInUnavailable ? null : (
+          {signInStep === "desktop_sso" ? (
+            browserWaiting ? (
+              <>
+                <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+                  <Trans>Continue in your browser</Trans>
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-3 h-12 w-full rounded-xl text-base"
+                  onClick={() => void desktopBridge()?.hubSso?.cancel()}
+                >
+                  <Trans>Cancel</Trans>
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="button"
+                disabled={pending}
+                className={submitClass}
+                onClick={() => void signInWithDesktopSso()}
+              >
+                {error ? <Trans>Retry</Trans> : <Trans>Continue with Microsoft</Trans>}
+              </Button>
+            )
+          ) : null}
+          {submitHidden ? null : (
             <Button
               type="submit"
               size="lg"

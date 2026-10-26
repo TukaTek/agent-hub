@@ -17,6 +17,7 @@ import { createBadgeHandler } from "./badge.js";
 import { openBrowserAuth } from "./browser-auth.js";
 import { DOCKER_INSTALL_LINKS, isDesktopSetupLink, runDocker } from "./docker-cli.js";
 import { prepareHostComputer } from "./host-computer.js";
+import { createHubSso, isTrustedAppFrame } from "./hub-sso.js";
 import { saveLocalComputerHost } from "./local-settings.js";
 import {
   LocalStackController,
@@ -44,6 +45,7 @@ import { installSessionPermissions } from "./session-permissions.js";
 import {
   CORTEXAI_AGENT_HUB_CLOUD_URL,
   DEFAULT_LOCAL_WEB_URL,
+  DESKTOP_EDITION,
   desktopStackImageTag,
   isCortexAiAgentHubHealth,
   managedLocalOpenUrl,
@@ -56,6 +58,7 @@ import {
   safeExternalUrl,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  showsServerEntry,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
 import { oauthPopupSessionPreferences, shouldOpenInAppPopup } from "./window-open.js";
@@ -1098,6 +1101,23 @@ app.whenReady().then(async () => {
       return;
     browserAuthAttempts.get(url)?.abort();
   });
+  // Hub SSO (CAAH-44): the renderer calls the API; main holds the app PKCE
+  // verifier and loopback listener and returns the outcome only to its sender.
+  const hubSso = createHubSso({ openExternal: (target) => shell.openExternal(target) });
+  app.on("before-quit", () => hubSso.dispose());
+  const isHubSsoRequest = (event: Electron.IpcMainInvokeEvent) =>
+    isTrustedAppFrame(event, fromMainWindow(event) ? appWindowTargets.get(mainWindow!) : undefined);
+  ipcMain.handle("desktop.hubSso.start", (event) => {
+    if (!isHubSsoRequest(event)) throw new Error("Invalid sign-in request.");
+    return hubSso.start(event.sender);
+  });
+  ipcMain.handle("desktop.hubSso.open", (event, authorizeUrl: unknown, state: unknown) => {
+    if (!isHubSsoRequest(event)) throw new Error("Invalid sign-in request.");
+    return hubSso.open(event.sender, authorizeUrl, state);
+  });
+  ipcMain.handle("desktop.hubSso.cancel", (event) => {
+    if (isHubSsoRequest(event)) hubSso.cancel(event.sender);
+  });
   const isManagedComputerRequest = (event: Electron.IpcMainInvokeEvent) =>
     fromMainWindow(event) &&
     event.senderFrame === event.sender.mainFrame &&
@@ -1216,6 +1236,7 @@ app.whenReady().then(async () => {
     return {
       defaultLocalUrl: localStack.webUrl(),
       cloudUrl: CORTEXAI_AGENT_HUB_CLOUD_URL,
+      showServerEntry: showsServerEntry(DESKTOP_EDITION),
       saved: currentSetup,
       error: setupError ?? undefined,
     };
