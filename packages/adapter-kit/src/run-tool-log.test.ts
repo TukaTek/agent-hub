@@ -128,6 +128,66 @@ describe("summarizeToolArgs", () => {
     );
   });
 
+  it("hides every argument of a command that passes a credential flag, assignment or header", () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [
+        { command: "npx", args: ["--api-key", "fake-cli-value-101"] },
+        "command: npx, args: [args redacted]",
+      ],
+      [{ command: "client --password 'fake cli value 102'" }, "command: client [args redacted]"],
+      [{ command: 'client --password "fake cli value 103"' }, "command: client [args redacted]"],
+      [{ command: "client --Client-Secret=fake-cli-value-104" }, "command: client [args redacted]"],
+      [
+        { command: "client --access-token='fake-cli-value-105'" },
+        "command: client [args redacted]",
+      ],
+      [{ args: ["--AUTH", "fake-cli-value-106", "serve"] }, "args: [args redacted]"],
+      [
+        { command: "API_KEY=fake-cli-value-107 /usr/bin/client run" },
+        "command: client [args redacted]",
+      ],
+      [
+        { command: 'curl -H "Authorization: Bearer fake-cli-value-108" https://api.example.test' },
+        "command: curl [args redacted]",
+      ],
+      [
+        {
+          command: "curl",
+          args: ["-H", "X-Api-Key: fake-cli-value-109", "https://api.example.test"],
+        },
+        "command: curl, args: [args redacted]",
+      ],
+      [
+        { command: "curl --header='Cookie: sid=fake-cli-value-110' https://api.example.test" },
+        "command: curl [args redacted]",
+      ],
+      [
+        { command: "curl -u fixture:fake-cli-value-111 https://api.example.test" },
+        "command: curl [args redacted]",
+      ],
+      [{ command: "mysql -pFake-cli-value-112 -h db" }, "command: mysql [args redacted]"],
+      [{ cmd: ["client", "--passwd", "fake-cli-value-113"] }, "cmd: client [args redacted]"],
+      [{ command: "client --bearer fake-cli-value-114" }, "command: client [args redacted]"],
+      [
+        { command: "client", args: "--credential fake-cli-value-115" },
+        "command: client, args: [args redacted]",
+      ],
+    ];
+    for (const [args, expected] of cases) {
+      expect(summarizeToolArgs(args, (text) => text)).toBe(expected);
+    }
+  });
+
+  it("keeps ordinary command arguments readable", () => {
+    const args = {
+      command: "mkdir -pv notes && ssh -p 22 host.example.test 'ls -la ~/keyboard'",
+      args: ["--port", "8080", "-H", "Accept: application/json"],
+    };
+    expect(summarizeToolArgs(args, (text) => text)).toBe(
+      `command: ${args.command}, args: ${JSON.stringify(args.args)}`,
+    );
+  });
+
   it("masks a credential that straddles the clip before clipping", () => {
     const summary = summarizeToolArgs(
       { text: "x".repeat(160), env: { GITHUB_PAT: "fake-unregistered-pat-001" } },
@@ -270,6 +330,38 @@ describe("createRunToolLog", () => {
       "running",
     ]);
     expect(records[0]).toMatchObject({ callId: "attempt-1:1", summary: "question: Which?" });
+  });
+
+  it("pairs a resumed call's late start with the call it already finished", async () => {
+    const first = fixture();
+    await first.log.started({
+      name: "send_email",
+      args: { to: "a@example.test" },
+      executionId: "e",
+    });
+    await first.log.finished({ name: "send_email", executionId: "e", outcome: "paused" });
+    const pending = await first.log.pending("e", "send_email");
+
+    const records: RunTool[] = [];
+    const resumed = createRunToolLog({
+      runId: "run-1",
+      attemptId: "attempt-2",
+      redact,
+      record: (entry) => {
+        records.push(entry);
+      },
+    });
+    resumed.resume(pending);
+    // The restored call runs again; its completion is handled before its queued start.
+    await resumed.finished({ name: "send_email", executionId: "e", outcome: "succeeded" });
+    await resumed.started({ name: "send_email", args: { to: "a@example.test" }, executionId: "e" });
+    expect(records.map((entry) => [entry.callId, entry.status])).toEqual([["attempt-1:1", "done"]]);
+    expect(foldRunTools([...first.records, ...records]).map((entry) => entry.status)).toEqual([
+      "done",
+    ]);
+    // A later call that reuses the id still gets its own entry.
+    await resumed.started({ name: "send_email", args: { to: "a@example.test" }, executionId: "e" });
+    expect(records.at(-1)).toMatchObject({ callId: "attempt-2:1", status: "running" });
   });
 
   it("logs a pausing call whose start has not been reported yet", async () => {

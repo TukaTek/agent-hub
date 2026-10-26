@@ -20,7 +20,12 @@ redacted argument summary and outcome. Backend only; no UI in this change.
   that, the summary masks credentials the run never registered: values under credential-shaped
   keys (`*token*`, `*secret*`, `key`, `pat`, `auth`, ...), every value of `env` and `headers`
   maps, and credential-shaped text (bearer values, known token prefixes, URL passwords,
-  `KEY=value` assignments, long random strings). Redaction runs on the full text before
+  `KEY=value` assignments, long random strings). A `command`/`cmd`/`args`/`argv` argument that
+  passes a credential (a credential-named flag as `--flag value` or `--flag=value`, an attached
+  `-p` password, `-u user:password`, a credential header such as `-H "Authorization: ..."`, a
+  credential-named `KEY=value` assignment, or credential-shaped text) keeps only the
+  executable's name and `[args redacted]`, because a flag and its value can sit in separate
+  words. Redaction runs on the full text before
   clipping, so a clip can never expose part of a secret. Failure text (the only tool output we
   log) gets the same treatment through `sanitizeConnectorError`, then is clipped.
 - **Summary** is one line, `key: value` pairs, whitespace collapsed, at most 200 chars
@@ -29,7 +34,9 @@ redacted argument summary and outcome. Backend only; no UI in this change.
   run ended while the call was still running. A paused call
   (approval, secret, takeover, question) stays `running`; its entry is saved with the turn
   checkpoint and the resumed attempt finishes it with the same `callId`, including restored
-  questions and takeovers that the runtime answers without running them.
+  questions and takeovers that the runtime answers without running them. A resumed call can
+  finish before its queued start is processed; that start then pairs with the finished entry
+  when its arguments match, so it neither reopens nor duplicates the call.
 - **Call ids are the log's own.** Providers reuse their call ids (often `call_0` per
   response), so each call gets `<attemptId>:<n>`, and a start or finish pairs with the oldest
   call of that tool and provider id still waiting for it. Completion can arrive before the

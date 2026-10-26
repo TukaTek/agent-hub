@@ -4,7 +4,17 @@ const MASK = "[redacted]";
 /** Key text that names a credential anywhere in it, as in `accessToken` or `client_secret`. */
 const CREDENTIAL_KEY = /passw(or)?d|passphrase|secret|token|apikey|credential|authorization|cookie/;
 /** Key words that name a credential only as a whole word, so `path` is not `pat`. */
-const CREDENTIAL_KEY_WORDS = new Set(["auth", "key", "pat", "pin", "otp", "pwd", "session", "jwt"]);
+const CREDENTIAL_KEY_WORDS = new Set([
+  "auth",
+  "bearer",
+  "key",
+  "pat",
+  "pin",
+  "otp",
+  "pwd",
+  "session",
+  "jwt",
+]);
 /** Maps whose every value is masked, whatever its key: environments and request headers. */
 const CREDENTIAL_MAPS = new Set(["env", "environment", "headers"]);
 /** Credential shapes in free text: bearer values, known token prefixes, URL passwords, assignments. */
@@ -61,6 +71,100 @@ function maskCredentials(value: unknown, key?: string): unknown {
   return everyValue && value !== null && value !== undefined ? MASK : value;
 }
 
+/** Arguments that hold a command line or its argument vector. */
+const COMMAND_KEYS = new Set(["command", "cmd", "args", "argv"]);
+const ARGS_REDACTED = "[args redacted]";
+
+/** Splits a command line into words, honoring single quotes, double quotes and backslashes. */
+function commandWords(line: string): string[] {
+  const words: string[] = [];
+  let word: string | undefined;
+  let quote: string | undefined;
+  for (let index = 0; index < line.length; index++) {
+    const char = line.charAt(index);
+    if (!quote && /\s/.test(char)) {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+      continue;
+    }
+    word ??= "";
+    if (char === quote) quote = undefined;
+    else if (!quote && (char === "'" || char === '"')) quote = char;
+    else if (char === "\\" && quote !== "'" && index + 1 < line.length) {
+      word += line.charAt(++index);
+    } else word += char;
+  }
+  if (word !== undefined) words.push(word);
+  return words;
+}
+
+/** A `Name: value` header whose name is a credential, as in `Authorization: Bearer x`. */
+function isCredentialHeader(text: string): boolean {
+  const header = /^\s*([A-Za-z][\w-]*)\s*:\s*\S/.exec(text);
+  return header !== null && (isCredentialKey(header[1]!) || /^cookie$/i.test(header[1]!));
+}
+
+/**
+ * Whether a command's words pass a credential: a credential-named flag (`--api-key x`,
+ * `--password=x`), an attached `-p` password, a `-u user:password`, a credential header,
+ * a `KEY=value` assignment with a credential name, or credential-shaped text.
+ */
+function passesCredential(words: string[]): boolean {
+  return words.some((word, index) => {
+    const next = words[index + 1] ?? "";
+    const flag = /^--?([A-Za-z][\w.-]*)(?:=(.*))?$/s.exec(word);
+    if (flag) {
+      const [, name, attached] = flag;
+      const value = attached ?? next;
+      if (name!.length > 1 && isCredentialKey(name!)) return true;
+      if (/^(?:H|header)$/.test(name!)) return isCredentialHeader(value);
+      if (/^(?:u|user)$/.test(name!)) return value.includes(":");
+    }
+    if (/^-H./s.test(word) && isCredentialHeader(word.slice(2))) return true;
+    // An attached password, as in `mysql -pS3cret`; letters alone are bundled flags like `-pv`.
+    if (/^-p(?=.*[^A-Za-z])(?!\d+$)./s.test(word)) return true;
+    const assignment = /^([A-Za-z_][\w.-]*)=/.exec(word);
+    if (assignment && isCredentialKey(assignment[1]!)) return true;
+    return isCredentialHeader(word) || maskCredentialText(word) !== word;
+  });
+}
+
+/**
+ * Hides every argument of a command that passes a credential, since a flag and its value may
+ * sit in separate words that are masked one at a time. Only the executable's name stays.
+ */
+function redactCommandArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const commands = Object.entries(args).filter(([key]) => COMMAND_KEYS.has(key.toLowerCase()));
+  const passes = commands.some(([, value]) => {
+    if (typeof value === "string") return passesCredential(commandWords(value));
+    if (!Array.isArray(value)) return false;
+    const items = value.filter((item): item is string => typeof item === "string");
+    // An item may hold a whole flag and value, or a nested command line such as `bash -c '...'`.
+    return passesCredential(items) || items.some((item) => passesCredential(commandWords(item)));
+  });
+  if (!passes) return args;
+  const redacted = { ...args };
+  for (const [key, value] of commands) {
+    const words =
+      typeof value === "string"
+        ? commandWords(value)
+        : Array.isArray(value)
+          ? value.filter((item): item is string => typeof item === "string")
+          : [];
+    const executable = /^(?:command|cmd)$/i.test(key)
+      ? words
+          .find((word) => !/^[A-Za-z_][\w.-]*=/.test(word))
+          ?.split("/")
+          .at(-1)
+      : undefined;
+    redacted[key] =
+      executable && !executable.startsWith("-")
+        ? `${maskCredentialText(executable)}${words.length > 1 ? ` ${ARGS_REDACTED}` : ""}`
+        : ARGS_REDACTED;
+  }
+  return redacted;
+}
+
 /** Text is redacted whole before it is clipped, so a clip never exposes part of a secret. */
 function clipRedacted(text: string, redact: (text: string) => string): string {
   const line = redact(text).replace(/\s+/g, " ").trim();
@@ -85,15 +189,16 @@ function argumentText(key: string, value: unknown): string {
 }
 
 /**
- * One redacted line of `key: value` pairs, at most RUN_TOOL_SUMMARY_MAX_CHARS long. Credentials
- * are masked by key and shape, then by the run's registered secrets, before the line is clipped.
+ * One redacted line of `key: value` pairs, at most RUN_TOOL_SUMMARY_MAX_CHARS long. A command
+ * that passes a credential keeps only its executable's name; other credentials are masked by key
+ * and shape, then by the run's registered secrets, before the line is clipped.
  */
 export function summarizeToolArgs(
   args: Record<string, unknown>,
   redact: (text: string) => string,
 ): string {
   return clipRedacted(
-    Object.entries(args)
+    Object.entries(redactCommandArgs(args))
       .map(([key, value]) => `${key}: ${argumentText(key, value)}`)
       .join(", "),
     redact,
@@ -152,6 +257,8 @@ export function createRunToolLog(options: {
   // Calls still waiting for their start or their finish to be reported, oldest first.
   const unstarted: TrackedCall[] = [];
   const unfinished: TrackedCall[] = [];
+  // Calls that finished before their start was reported, as a resumed call may.
+  const finishedUnstarted: TrackedCall[] = [];
   const find = (calls: TrackedCall[], executionId: string, tool: string) =>
     calls.findIndex((call) => call.executionId === executionId && call.entry.tool === tool);
   const track = (executionId: string, entry: Omit<RunTool, "runId" | "callId">) => ({
@@ -170,6 +277,13 @@ export function createRunToolLog(options: {
         const [known] = unstarted.splice(index, 1);
         if (known!.entry.summary !== summary) await record(known!, { ...known!.entry, summary });
         return;
+      }
+      // The first start after such a finish is either that call's queued start or a later call
+      // reusing the id; the call's own start repeats its arguments.
+      const finishedIndex = find(finishedUnstarted, call.executionId, call.name);
+      if (finishedIndex >= 0) {
+        const [finished] = finishedUnstarted.splice(finishedIndex, 1);
+        if (finished!.entry.summary === summary) return;
       }
       const tracked = track(call.executionId, {
         tool: call.name,
@@ -204,9 +318,13 @@ export function createRunToolLog(options: {
         return;
       }
       if (known) unfinished.splice(index, 1);
-      // A resumed interaction finishes without a start report; it must not absorb a later call.
+      // A resumed call may finish before its start is reported, and an answered interaction is
+      // never started, so the start that follows pairs only when its arguments match.
       const unstartedIndex = unstarted.indexOf(tracked);
-      if (known && unstartedIndex >= 0) unstarted.splice(unstartedIndex, 1);
+      if (known && unstartedIndex >= 0) {
+        unstarted.splice(unstartedIndex, 1);
+        finishedUnstarted.push(tracked);
+      }
       await record(tracked, {
         ...tracked.entry,
         status: completion.outcome === "error" ? "failed" : "done",
