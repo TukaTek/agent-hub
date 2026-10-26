@@ -50,7 +50,10 @@ test("a message sent into a running turn waits as queued until the run takes it"
   await captureBothThemes(page, testInfo, "composer-steering-queued");
 
   await expect(queued).toHaveCount(0, { timeout: 60_000 });
-  await expect(transcript.getByText(STEER)).toBeVisible();
+  // The scripted reply echoes the prompt, so look for the steering text in the user bubble.
+  await expect(
+    transcript.getByTestId("message-user-bubble").filter({ hasText: STEER }),
+  ).toBeVisible();
 });
 
 test("Stop cancels the running turn and returns the composer to idle", async ({
@@ -77,6 +80,11 @@ test("Stop cancels the running turn and returns the composer to idle", async ({
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
   await expect(page.getByTestId("composer-queued")).toHaveCount(0);
   // Stop drops pending steering, so the queued text stays as a plain message.
-  await expect(page.getByTestId("transcript").getByText("Also check the appendix.")).toBeVisible();
+  await expect(
+    page
+      .getByTestId("transcript")
+      .getByTestId("message-user-bubble")
+      .filter({ hasText: "Also check the appendix." }),
+  ).toBeVisible();
   await captureScreenshot(page, testInfo, "composer-steering-stopped");
 });
