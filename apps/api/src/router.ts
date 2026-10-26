@@ -168,11 +168,13 @@ import {
   ComputerCommandSchema,
   canonicalPiProviderId,
   foldComputerCommands,
+  foldRunTools,
   isDeletableMemoryDocument,
   isOllamaCloudBaseUrl,
   mcpOAuthEnvReferences,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   parseTicketRef,
+  RunToolSchema,
   signupSurveyAsksTeamSize,
   storedPiProviderIds,
   usableModelId,
@@ -314,12 +316,10 @@ import { withSerializableRetry } from "./serializable-retry.js";
 
 import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
 import {
-  isBackgroundRun,
-  isPeerRun,
+  forwardsThreadEvent,
   loadAllMessages,
   loadMessagePage,
-  shouldForwardBackgroundThreadEvent,
-  shouldForwardPeerThreadEvent,
+  runKindCaches,
 } from "./thread-message-pages.js";
 import {
   markThreadRead,
@@ -350,6 +350,7 @@ import {
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
+const RUN_TOOL_PAGE_SIZE = 100;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 /** Silence longer than this on a thread stream is indistinguishable from a dead socket. */
 export const HEARTBEAT_MS = 20_000;
@@ -2459,8 +2460,7 @@ export function createRouter(deps: RouterDeps) {
       }),
       subscribe: authed.threads.subscribe.handler(async function* ({ context, input }) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
-        const peerRunCache = new Map<string, Promise<boolean>>();
-        const backgroundRunCache = new Map<string, Promise<boolean>>();
+        const runKinds = runKindCaches();
         const follow = deps.events.follow(target.threadId, input.cursor, context.signal);
         // A half-open stream looks identical to an idle one, so punctuate silence:
         // the client treats any frame as liveness and reconnects once they stop.
@@ -2504,11 +2504,7 @@ export function createRouter(deps: RouterDeps) {
             const event = next.value;
             // Filtered peer events also restart the heartbeat, so check before skipping them.
             await assertStillAuthorized();
-            if (await isPeerRun(deps.prisma, event.runId, peerRunCache)) {
-              if (!shouldForwardPeerThreadEvent(event)) continue;
-            } else if (await isBackgroundRun(deps.prisma, event.runId, backgroundRunCache)) {
-              if (!shouldForwardBackgroundThreadEvent(event)) continue;
-            }
+            if (!(await forwardsThreadEvent(deps.prisma, event, runKinds))) continue;
             yield event;
           }
         } finally {
@@ -6727,6 +6723,68 @@ export function createRouter(deps: RouterDeps) {
       list: authed.runs.list.handler(async ({ context, input }) => ({
         runs: await listSpaceRuns(deps.prisma, context.actor, input.filter),
       })),
+      tools: authed.runs.tools.handler(async ({ context, input }) => {
+        // Same authorization as reading the thread's messages; the run must be in that thread.
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        // Hidden exactly where the live thread stream hides this run's tool events.
+        const visible = await forwardsThreadEvent(
+          deps.prisma,
+          { runId: input.runId, type: "run.tool", payload: {} },
+          runKindCaches(),
+        );
+        if (!visible) return { tools: [], olderCursor: null };
+        const runTools = {
+          spaceId: context.actor.spaceId,
+          threadId: target.threadId,
+          runId: input.runId,
+          type: "run.tool",
+        };
+        // A call pages by its first running entry, so it shows on one page and new calls never
+        // shift it. Each page reads only the starts below the cursor, then those calls' events.
+        const starts = await deps.prisma.event.findMany({
+          where: {
+            ...runTools,
+            payload: { path: ["status"], equals: "running" },
+            ...(input.before === undefined ? {} : { seq: { lt: input.before } }),
+          },
+          orderBy: { seq: "desc" },
+          take: RUN_TOOL_PAGE_SIZE + 1,
+          select: { seq: true, payload: true },
+        });
+        const from = starts.slice(0, RUN_TOOL_PAGE_SIZE).at(-1)?.seq;
+        if (from === undefined) return { tools: [], olderCursor: null };
+        const callIds = new Set(
+          starts.slice(0, RUN_TOOL_PAGE_SIZE).flatMap((start) => {
+            const parsed = RunToolSchema.safeParse(start.payload);
+            return parsed.success ? [parsed.data.callId] : [];
+          }),
+        );
+        const events = await deps.prisma.event.findMany({
+          where: {
+            ...runTools,
+            OR: [...callIds].map((callId) => ({ payload: { path: ["callId"], equals: callId } })),
+          },
+          orderBy: { seq: "asc" },
+          select: { seq: true, payload: true },
+        });
+        const firstStart = new Map<string, number>();
+        const calls = foldRunTools(
+          events.flatMap((event) => {
+            const parsed = RunToolSchema.safeParse(event.payload);
+            if (!parsed.success) return [];
+            const { callId, status } = parsed.data;
+            if (status === "running" && !firstStart.has(callId)) firstStart.set(callId, event.seq);
+            return [parsed.data];
+          }),
+        );
+        return {
+          // A call that also started below this page belongs to the older one.
+          tools: calls.filter((call) => (firstStart.get(call.callId) ?? -1) >= from),
+          olderCursor: starts.length > RUN_TOOL_PAGE_SIZE ? from : null,
+        };
+      }),
     },
     voice: {
       catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),

@@ -1,4 +1,5 @@
 import type { AgentRunModel } from "@cortexai-agent-hub/adapter-kit";
+import { foldRunTools, type RunTool } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycle from "../../adapters/src/computer-lifecycle.js";
 import { createRunExecutor } from "../../adapters/src/executor.js";
@@ -39,6 +40,7 @@ function fixture(
   };
   const task = { id: run.taskId, prompt: "Read evidence then complete the fixture." };
   const effects: Record<string, unknown>[] = [];
+  let attempts = 0;
   const empty = {
     findMany: async () => [],
     findFirst: async () => null,
@@ -110,7 +112,7 @@ function fixture(
       },
       attempt: {
         ...empty,
-        create: async () => ({ id: "fixture-attempt" }),
+        create: async () => ({ id: `fixture-attempt-${++attempts}` }),
         update: async () => ({}),
         updateMany: async () => ({ count: 1 }),
         count: async () => 2,
@@ -223,6 +225,7 @@ function fixture(
     run.status = "waiting_takeover";
     return { continuationRunId: null };
   });
+  const append = vi.fn(async (_event: { type: string; payload: unknown }) => undefined);
   const writes = vi.fn(async () => ({ ok: true }));
   const reads = vi.fn(async (_computer: unknown, _path: string) =>
     new TextEncoder().encode("unique-executor-evidence"),
@@ -272,7 +275,7 @@ function fixture(
     memoryProviders: { resolve: async () => null },
     events: {
       notify: vi.fn(async () => undefined),
-      append: vi.fn(async () => undefined),
+      append,
       claimSteering: async () => [],
       finalizeRun,
       pauseRunForInput,
@@ -292,6 +295,13 @@ function fixture(
     pauseRunForTakeover,
     writes,
     reads,
+    /** The run's tool log across every attempt so far, one entry per call. */
+    runTools: () =>
+      foldRunTools(
+        append.mock.calls.flatMap(([event]) =>
+          event.type === "run.tool" ? [event.payload as RunTool] : [],
+        ),
+      ),
   };
 }
 
@@ -676,6 +686,11 @@ describe("executor paused transcript", () => {
           JSON.stringify(state.finalizeRun.mock.calls),
         ).toHaveBeenCalledOnce();
         expect(state.effects.some((effect) => effect.kind === "runtime_checkpoint")).toBe(true);
+        const logged = approval ? toolName : name;
+        expect(state.runTools().map((entry) => [entry.tool, entry.status])).toEqual([
+          ["read_file", "done"],
+          [logged, "running"],
+        ]);
         for (const effect of state.effects)
           if (effect.status === "intended") effect.status = "approved";
         state.run.status = "queued";
@@ -683,6 +698,11 @@ describe("executor paused transcript", () => {
         state.task.prompt = "Two";
         await state.executor.continueRun(state.run.id, "fixture-worker");
         model.assertComplete();
+        // The resumed attempt finishes the paused call's own entry rather than adding one.
+        expect(state.runTools().map((entry) => [entry.tool, entry.status])).toEqual([
+          ["read_file", "done"],
+          [logged, "done"],
+        ]);
         expect(model.requests).toHaveLength(3);
         expect(state.finalizeRun).toHaveBeenCalledWith(
           expect.objectContaining({ outcome: "completed" }),

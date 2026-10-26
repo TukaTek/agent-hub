@@ -31,6 +31,7 @@ import type {
   WebProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
+  createRunToolLog,
   DEFAULT_CONTEXT_STRATEGY,
   historyCompactJob,
   MEMORY_REVISION_CONFLICT_ERROR,
@@ -58,6 +59,7 @@ import {
   HistorySearchInputSchema,
   isAttachmentImageMimeType,
   OPENAI_COMPATIBLE_PROVIDER_ID,
+  RunToolSchema,
 } from "@cortexai-agent-hub/contracts";
 import type { ActionApprovalRule, ToolCallStreak } from "@cortexai-agent-hub/core";
 import {
@@ -2900,6 +2902,19 @@ export function toolCompletionFromResult(
   return { ...base, result, paused };
 }
 
+/** How a tool call ended, with its failure text sanitized for persistence. */
+export function toolCompletionOutcome(
+  completion: AgentToolCompletion,
+  secrets: string[] = [],
+): { outcome: "succeeded" | "error" | "paused"; error?: string } {
+  const error =
+    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  return {
+    outcome: completion.paused ? "paused" : error === undefined ? "succeeded" : "error",
+    ...(error === undefined ? {} : { error: sanitizeConnectorError(error, secrets) }),
+  };
+}
+
 export function toolCompletionAuditPayload(
   completion: AgentToolCompletion,
   secrets: string[] = [],
@@ -2907,16 +2922,15 @@ export function toolCompletionAuditPayload(
   const durationMs = Number.isFinite(completion.durationMs)
     ? Math.max(0, Math.round(completion.durationMs))
     : 0;
-  const error =
-    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  const { outcome, error } = toolCompletionOutcome(completion, secrets);
   const payload: Record<string, unknown> = {
     name: redactSecrets(completion.name, secrets),
     executionId: redactSecrets(completion.executionId, secrets),
     durationMs,
-    outcome: completion.paused ? "paused" : error === undefined ? "succeeded" : "error",
+    outcome,
   };
   if (error !== undefined) {
-    payload.error = sanitizeConnectorError(error, secrets);
+    payload.error = error;
   }
   const memoryResult =
     error === undefined ? memoryToolAuditSummary(completion.name, completion.result) : undefined;
@@ -4667,16 +4681,51 @@ export function createRunExecutor(deps: ExecutorDeps) {
         let terminalCheckpointComplete = false;
         let approvalPausePending = false;
         const pendingTurnCheckpoints = new Map<string, () => string>();
-        const persistTurnCheckpoint = async (executionId?: string) => {
+        const persistTurnCheckpoint = async (executionId: string | undefined, name: string) => {
           const capture = executionId ? pendingTurnCheckpoints.get(executionId) : undefined;
           if (capture) {
             const saved = JSON.parse(capture());
             saved.effectOccurrences = effectOccurrences;
+            // The resumed attempt finishes this call's log entry instead of starting another.
+            saved.runTool = await runToolLog.pending(executionId!, name);
             await saveRunTurnCheckpoint(deps.prisma, run, workerId, fence, JSON.stringify(saved));
           }
         };
         let handedOff = false;
         let progressRedactor = createStreamingRedactor(runSecrets);
+        // Same redaction as computer.command; runSecrets grows as the run registers more.
+        const runToolLog = createRunToolLog({
+          runId,
+          attemptId: attempt.id,
+          redact: (text) => redactSecrets(text, runSecrets),
+          record: async (payload) => {
+            await deps.events
+              .append({
+                spaceId: run.spaceId,
+                threadId: thread.id,
+                botId: bot.id,
+                runId,
+                type: "run.tool",
+                payload,
+              })
+              // The run log is a view; losing an entry must not fail the tool.
+              .catch((error: unknown) => {
+                if (!(error instanceof RunHistoryWriteError)) {
+                  getLogger().error("run tool event", error);
+                }
+              });
+          },
+        });
+        const completeToolCall = async (completion: AgentToolCompletion) => {
+          const target = { spaceId: run.spaceId, threadId: thread.id, botId: bot.id, runId };
+          await appendToolCompletionAudit(deps, target, completion, runSecrets);
+          await runToolLog.finished({
+            name: completion.name,
+            executionId: completion.executionId,
+            durationMs: completion.durationMs,
+            ...toolCompletionOutcome(completion, runSecrets),
+          });
+        };
         const scripted = deps.runtime.describe().capabilities.scripted;
         const script = scripted ? inferScript(task.prompt, takeoverResume?.checkpoint) : undefined;
         const flushProgress = async () => {
@@ -5570,7 +5619,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return pauseForApproval();
             }
             await workspaceCheckpoint.flush();
-            await persistTurnCheckpoint(executionId);
+            await persistTurnCheckpoint(executionId, name);
             await settleRunningHelpers();
             const paused = await deps.events.pauseRunForInput({
               spaceId: run.spaceId,
@@ -7192,7 +7241,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return pauseForSecret();
             }
             await workspaceCheckpoint.flush();
-            await persistTurnCheckpoint(executionId);
+            await persistTurnCheckpoint(executionId, name);
             await settleRunningHelpers();
             const paused = await deps.events.pauseRunForInput({
               spaceId: run.spaceId,
@@ -7809,6 +7858,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
               restoredPendingEffect = saved.effectOccurrences.findLast(
                 (entry) => entry.executionId === pendingExecutionId,
               );
+              const pendingRunTool = RunToolSchema.safeParse(saved.runTool?.entry);
+              if (
+                saved.runTool?.executionId === pendingExecutionId &&
+                pendingRunTool.success &&
+                pendingRunTool.data.runId === runId
+              ) {
+                runToolLog.resume({ executionId: pendingExecutionId, entry: pendingRunTool.data });
+              }
               for (const { fingerprint, occurrence } of saved.effectOccurrences) {
                 mutatingEffectOccurrences.set(
                   fingerprint,
@@ -8125,17 +8182,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 if (restoredPendingEffect?.executionId === completion.executionId)
                   restoredPendingEffect = undefined;
                 if (!completion.paused) pendingTurnCheckpoints.delete(completion.executionId);
-                return appendToolCompletionAudit(
-                  deps,
-                  {
-                    spaceId: run.spaceId,
-                    threadId: thread.id,
-                    botId: bot.id,
-                    runId,
-                  },
-                  completion,
-                  runSecrets,
-                );
+                return completeToolCall(completion);
               },
               claimSteering: async (seenIds) => {
                 const steering = await deps.events.claimSteering({
@@ -8274,7 +8321,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 label: redactSecrets(action.label, runSecrets),
               }));
               await workspaceCheckpoint.flush();
-              await persistTurnCheckpoint(event.executionId);
+              await persistTurnCheckpoint(event.executionId, "ask_user");
               await settleRunningHelpers();
               const paused = await deps.events.pauseRunForInput({
                 spaceId: run.spaceId,
@@ -8350,7 +8397,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               if (!(await holdComputerExecutionLeaseForTakeover(deps.prisma, computerLease))) {
                 throw new Error("Computer lease expired before takeover");
               }
-              await persistTurnCheckpoint(event.executionId);
+              await persistTurnCheckpoint(event.executionId, "request_takeover");
               await settleRunningHelpers();
               const paused = await deps.events.pauseRunForTakeover({
                 spaceId: run.spaceId,
@@ -8390,6 +8437,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 type: "agent.tool.called",
                 runId,
                 payload: { name: event.name, executionId: event.executionId },
+              });
+              await runToolLog.started({
+                name: event.name,
+                args: redactToolArgsForReview(event.args, runSecrets),
+                executionId: event.executionId,
               });
               pendingToolNames.push(event.name);
               tryFlushPendingTools();
@@ -8447,14 +8499,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 const startedAt = Date.now();
                 try {
                   const result = await applyTool(event.name, event.args, event.executionId);
-                  await appendToolCompletionAudit(
-                    deps,
-                    {
-                      spaceId: run.spaceId,
-                      threadId: thread.id,
-                      botId: bot.id,
-                      runId,
-                    },
+                  await completeToolCall(
                     toolCompletionFromResult(
                       {
                         name: event.name,
@@ -8463,26 +8508,15 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       },
                       result,
                     ),
-                    runSecrets,
                   );
                   if (isToolPauseResult(result)) return;
                 } catch (error) {
-                  await appendToolCompletionAudit(
-                    deps,
-                    {
-                      spaceId: run.spaceId,
-                      threadId: thread.id,
-                      botId: bot.id,
-                      runId,
-                    },
-                    {
-                      name: event.name,
-                      executionId: event.executionId,
-                      durationMs: Date.now() - startedAt,
-                      error,
-                    },
-                    runSecrets,
-                  );
+                  await completeToolCall({
+                    name: event.name,
+                    executionId: event.executionId,
+                    durationMs: Date.now() - startedAt,
+                    error,
+                  });
                   throw error;
                 }
               }

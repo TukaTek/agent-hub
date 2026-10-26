@@ -1535,7 +1535,10 @@ describe("sendThreadMessage", () => {
         findUnique: vi.fn().mockResolvedValue({ status: "queued" }),
       },
       steeringMessage: { create: vi.fn() },
-      event: { create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }),
+        findMany: vi.fn(async () => []),
+      },
       task: { create: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const prisma = {
@@ -1638,7 +1641,10 @@ describe("sendThreadMessage", () => {
       },
       attempt: { updateMany: vi.fn() },
       steeringMessage: { create: vi.fn() },
-      event: { create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }),
+        findMany: vi.fn(async () => []),
+      },
       task: { create: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const prisma = {
@@ -1820,7 +1826,10 @@ describe("sendThreadMessage", () => {
       },
       attempt: { updateMany: vi.fn() },
       steeringMessage: { create: vi.fn() },
-      event: { create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }),
+        findMany: vi.fn(async () => []),
+      },
       task: { create: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       chatGroup: {
         findFirst: vi.fn().mockResolvedValue({
@@ -1946,7 +1955,7 @@ describe("sendThreadMessage", () => {
           attempt: { updateMany: vi.fn() },
           task: { create: vi.fn().mockResolvedValue({ id: "task-new" }), updateMany: vi.fn() },
           steeringMessage: { create: vi.fn() },
-          event: { create: vi.fn().mockResolvedValue({ seq: 4 }) },
+          event: { create: vi.fn().mockResolvedValue({ seq: 4 }), findMany: vi.fn(async () => []) },
           chatGroup: {
             findFirst: vi.fn().mockResolvedValue({
               id: "group-1",
@@ -2046,7 +2055,10 @@ describe("sendThreadMessage", () => {
       },
       task: { create: vi.fn(), updateMany: vi.fn() },
       steeringMessage: { create: vi.fn() },
-      event: { create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }),
+        findMany: vi.fn(async () => []),
+      },
     };
     const prisma = {
       message: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -2388,7 +2400,10 @@ describe("sendThreadMessage", () => {
         create: vi.fn(),
       },
       steeringMessage: { create: vi.fn() },
-      event: { create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }),
+        findMany: vi.fn(async () => []),
+      },
       task: { create: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const prisma = {
@@ -2481,7 +2496,10 @@ describe("sendThreadMessage", () => {
         create: vi.fn(),
       },
       steeringMessage: { create: vi.fn() },
-      event: { create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ seq: 2, threadId: "thread-1" }),
+        findMany: vi.fn(async () => []),
+      },
       task: { create: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       chatGroup: {
         findFirst: vi.fn().mockResolvedValue({
@@ -3722,6 +3740,7 @@ describe("stopThreadRuns", () => {
       event: {
         create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data),
         deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
+        findMany: vi.fn(async () => []),
       },
     };
     const prisma = {
@@ -3861,6 +3880,7 @@ describe("stopThreadRuns", () => {
       event: {
         create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data),
         deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findMany: vi.fn(async () => []),
       },
     };
     const prisma = {
@@ -3969,6 +3989,7 @@ describe("stopThreadRuns", () => {
           writes.push("event.deleteMany");
           return { count: 4 };
         }),
+        findMany: vi.fn(async () => []),
       },
     };
     const prisma = {

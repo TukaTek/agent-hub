@@ -248,6 +248,30 @@ export function shouldForwardBackgroundThreadEvent(event: {
   return Array.isArray(blocks) && blocks.some(isBackgroundInputBlock);
 }
 
+export interface RunKindCaches {
+  peer: Map<string, Promise<boolean>>;
+  background: Map<string, Promise<boolean>>;
+}
+
+export function runKindCaches(): RunKindCaches {
+  return { peer: new Map(), background: new Map() };
+}
+
+/** Whether an open thread receives this event; peer and background runs forward only some. */
+export async function forwardsThreadEvent(
+  prisma: MessageDb,
+  event: { runId?: string; type: string; payload: { blocks?: unknown } },
+  caches: RunKindCaches,
+): Promise<boolean> {
+  if (await isPeerRun(prisma, event.runId, caches.peer)) {
+    return shouldForwardPeerThreadEvent(event);
+  }
+  if (await isBackgroundRun(prisma, event.runId, caches.background)) {
+    return shouldForwardBackgroundThreadEvent(event);
+  }
+  return true;
+}
+
 function toThreadMessage(row: {
   id: string;
   threadId: string;

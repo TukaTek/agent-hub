@@ -13,6 +13,8 @@ export interface TurnCheckpoint {
   historyMessageIds?: string[];
   /** Executor-assigned occurrences include canonical arguments and the paused call. */
   effectOccurrences?: Array<{ executionId: string; fingerprint: string; occurrence: number }>;
+  /** The paused call's run tool log entry, which the resumed attempt finishes. */
+  runTool?: { executionId: string; entry: unknown };
   /** Only explicit sequential checkpoints guarantee an unstarted tail. */
   executionMode?: "parallel" | "sequential";
 }
