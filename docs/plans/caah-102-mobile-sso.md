@@ -39,7 +39,7 @@ Microsoft opens directly from Continue, as on web; there is no separate "Continu
 
 Sign-out already revokes the session and clears SecureStore without touching the saved server URL; a test pins that.
 
-The custom server entry ("Use a custom server") is shown only when `EXPO_PUBLIC_ALLOW_CUSTOM_SERVER` is `true`, or in development (`__DEV__`) unless it is `false`. Release builds (production, preview, OTA updates) hide it by default. The Android screenshot workflow sets it to `true`, because its Maestro flows open the server sheet. A build that hides the entry but still has a saved non-default server (from an earlier version) shows a quiet "Switch organization" action that resets to the build's default server (`resetApiBase`). That is the only path that clears a saved server besides the server sheet itself. Discovery (CAAH-101) is out of scope.
+The custom server entry ("Use a custom server") is shown only when `EXPO_PUBLIC_ALLOW_CUSTOM_SERVER` is exactly `true`. Every build, development included, hides it by default. The Android screenshot workflow sets it to `true`, because its Maestro flows open the server sheet. A build that hides the entry but still has a saved non-default server (from an earlier version) shows a quiet "Switch organization" action that resets to the build's default server (`resetApiBase`). That is the only path that clears a saved server besides the server sheet itself. Discovery (CAAH-101) is out of scope.
 
 ## Files
 
