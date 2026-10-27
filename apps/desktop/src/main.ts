@@ -7,6 +7,7 @@ import type { Session } from "electron";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, session, shell } from "electron";
 import type { AppDocumentState } from "./app-document-state.js";
 import { APP_DOCUMENT_STATE_SCRIPT } from "./app-document-state.js";
+import { serverMenuItems } from "./app-menu.js";
 import { createAppOpener } from "./app-opener.js";
 import {
   DesktopUpdateController,
@@ -588,6 +589,13 @@ function showSetupWindow(error: string | null = null) {
   return win;
 }
 
+/** The only path that forgets the saved server: an explicit organization switch. */
+async function switchOrganization() {
+  await clearSetup(app.getPath("userData")).catch(() => undefined);
+  currentSetup = null;
+  showSetupWindow();
+}
+
 function restoreAppWindowAfterSetup() {
   if (quitting) return;
   if (setupWindow !== null && !setupWindow.isDestroyed()) return;
@@ -613,15 +621,20 @@ function installApplicationMenu() {
         .catch(() => undefined);
     },
   };
+  const serverItems = serverMenuItems(DESKTOP_EDITION);
   const changeServer: Electron.MenuItemConstructorOptions = {
     id: "change-cortexai-agent-hub-server",
-    label: "Change CortexAI Agent Hub Server…",
-    accelerator: "CmdOrCtrl+Shift+K",
-    click: () => showSetupWindow(),
+    label: serverItems.changeServer.label,
+    accelerator: serverItems.changeServer.accelerator,
+    click: () => {
+      if (serverItems.changeServer.action === "switch-organization") void switchOrganization();
+      else showSetupWindow();
+    },
   };
   const stopStack: Electron.MenuItemConstructorOptions = {
     id: "stop-local-stack",
     label: "Stop Local Stack",
+    visible: serverItems.stopStackVisible,
     // The stack keeps running after quit (bots are always on); this is the explicit off switch.
     click: () => {
       if (currentSetup?.mode === "new") {
