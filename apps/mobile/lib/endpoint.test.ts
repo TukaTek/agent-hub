@@ -18,16 +18,14 @@ afterEach(() => {
 
 describe("customServerAllowed", () => {
   it.each([
-    ["true", false, true],
-    ["true", true, true],
-    ["false", true, false],
-    ["false", false, false],
-    [undefined, true, true],
-    [undefined, false, false],
-    ["", false, false],
-    ["yes", false, false],
-  ] as const)("flag %s in development %s allows %s", (flag, dev, allowed) => {
-    expect(customServerAllowed(flag, dev)).toBe(allowed);
+    ["true", true],
+    [undefined, false],
+    ["false", false],
+    ["", false],
+    ["TRUE", false],
+    ["yes", false],
+  ] as const)("flag %s allows %s", (flag, allowed) => {
+    expect(customServerAllowed(flag)).toBe(allowed);
   });
 });
 

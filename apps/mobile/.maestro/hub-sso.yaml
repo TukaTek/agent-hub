@@ -4,7 +4,7 @@ name: CortexAI Agent Hub mobile Hub SSO
 # Needs a Hub-mode server with HUB_SSO_ENABLED=true (auth capabilities report hubSsoNative) and
 # a disposable Entra test user's email. It checks the email-first step and that Continue opens
 # the system auth session; it does not sign in to Microsoft. Setting the server needs a
-# development build or EXPO_PUBLIC_ALLOW_CUSTOM_SERVER=true. Pass values at invocation time:
+# build with EXPO_PUBLIC_ALLOW_CUSTOM_SERVER=true. Pass values at invocation time:
 #   maestro test .maestro/hub-sso.yaml \
 #     -e CORTEXAI_AGENT_HUB_MOBILE_API_URL=https://agent-hub.example.test \
 #     -e CORTEXAI_AGENT_HUB_E2E_HUB_SSO_EMAIL=entra-user@example.test

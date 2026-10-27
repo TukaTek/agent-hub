@@ -14,14 +14,11 @@ export function defaultApiBase() {
 }
 
 /**
- * Whether sign-in offers the custom server entry. Release builds point at their own server and
- * hide it unless `EXPO_PUBLIC_ALLOW_CUSTOM_SERVER=true`; development shows it unless `false`.
+ * Whether sign-in offers the custom server entry. Every build, development included, points at
+ * its own server and hides it unless `EXPO_PUBLIC_ALLOW_CUSTOM_SERVER=true`.
  */
-export function customServerAllowed(
-  flag = process.env.EXPO_PUBLIC_ALLOW_CUSTOM_SERVER,
-  dev = typeof __DEV__ !== "undefined" && __DEV__,
-): boolean {
-  return flag === "true" || (flag === undefined && dev);
+export function customServerAllowed(flag = process.env.EXPO_PUBLIC_ALLOW_CUSTOM_SERVER): boolean {
+  return flag === "true";
 }
 
 export function normalizeApiBase(input: string): EndpointResult {
