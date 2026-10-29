@@ -309,6 +309,12 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Could not connect": "无法连接",
   "Could not connect this provider": "无法连接此提供商",
   "Could not continue": "无法继续",
+  "Sign-in failed. Try again.": "登录失败，请重试。",
+  "You don't have access to Agent Hub. Ask your admin.":
+    "你没有 Agent Hub 的访问权限，请联系管理员。",
+  "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.":
+    "Agent Hub 暂不支持你所在组织的单点登录。请让管理员为你的账户启用密码登录。",
+  "Switch organization": "切换组织",
   "Could not disconnect": "无法断开连接",
   "Could not create bot": "无法创建 Bot",
   "Could not create group": "无法创建群组",

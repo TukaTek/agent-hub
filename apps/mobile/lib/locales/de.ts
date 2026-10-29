@@ -434,6 +434,12 @@ export const DE_MESSAGES: Record<string, string> = {
   Tab: "Tab",
   Up: "Nach oben",
   "Could not continue": "Fortfahren fehlgeschlagen",
+  "Sign-in failed. Try again.": "Anmeldung fehlgeschlagen. Versuche es erneut.",
+  "You don't have access to Agent Hub. Ask your admin.":
+    "Du hast keinen Zugriff auf Agent Hub. Wende dich an deinen Admin.",
+  "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.":
+    "Single Sign-on für deine Organisation ist in Agent Hub noch nicht verfügbar. Bitte deinen Admin, die Anmeldung mit Passwort für dein Konto zu aktivieren.",
+  "Switch organization": "Organisation wechseln",
   "Could not load the desktop. This device cannot reach the screen URL.":
     "Der Desktop konnte nicht geladen werden. Dieses Gerät erreicht die Bildschirm-URL nicht.",
   "Could not open computer": "Computer konnte nicht geöffnet werden",

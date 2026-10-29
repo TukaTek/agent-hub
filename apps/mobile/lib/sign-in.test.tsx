@@ -6,9 +6,20 @@ import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SignIn from "../app/sign-in";
-import { passwordResetCapabilities, rpc, sendSignInCode, signInWithCode } from "./api";
+import {
+  customServerAllowed,
+  passwordResetCapabilities,
+  resetApiBase,
+  rpc,
+  sendSignInCode,
+  signIn,
+  signInWithCode,
+  usesCustomApiBase,
+} from "./api";
+import { continueWithHubSso } from "./hub-sso";
 import type { NativeActionButtonProps } from "./native-controls";
 import { passkeysAvailable, signInWithPasskey } from "./passkey";
+import { errorText } from "./user-error";
 
 const route = vi.hoisted(() => ({ mode: "in" }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
@@ -112,7 +123,9 @@ vi.mock("./i18n", () => ({
 vi.mock("./api", () => ({
   currentApiBase: () => server.base,
   displayApiHost: () => "example.invalid",
-  usesCustomApiBase: () => false,
+  usesCustomApiBase: vi.fn(() => false),
+  customServerAllowed: vi.fn(() => true),
+  resetApiBase: vi.fn(),
   loadSessionToken: vi.fn().mockResolvedValue(null),
   passwordResetCapabilities: vi.fn(),
   requestPasswordReset: vi.fn(),
@@ -123,6 +136,7 @@ vi.mock("./api", () => ({
   signUp: vi.fn(),
 }));
 vi.mock("./sso", () => ({ continueWithSso: vi.fn() }));
+vi.mock("./hub-sso", () => ({ continueWithHubSso: vi.fn() }));
 vi.mock("./passkey", () => ({ passkeysAvailable: vi.fn(), signInWithPasskey: vi.fn() }));
 vi.mock("./user-error", () => ({ credentialIssueText: vi.fn(), errorText: vi.fn() }));
 
@@ -145,6 +159,10 @@ beforeEach(() => {
   vi.mocked(passwordResetCapabilities).mockResolvedValue(capabilities);
   vi.mocked(passkeysAvailable).mockReset().mockResolvedValue(false);
   vi.mocked(signInWithPasskey).mockReset();
+  vi.mocked(customServerAllowed).mockReturnValue(true);
+  vi.mocked(usesCustomApiBase).mockReturnValue(false);
+  vi.mocked(continueWithHubSso).mockReset();
+  vi.mocked(errorText).mockImplementation((error) => (error as Error).message);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -473,4 +491,129 @@ it("hides a revealed password after switching servers", async () => {
   await act(async () => server.refocus());
   expect(input("Password")!.type).toBe("password");
   expect(input("Password")!.value).toBe("example-password");
+});
+
+const hub = {
+  mode: "hub" as const,
+  hubSso: true,
+  passwordAuth: false,
+  passwordReset: false,
+  resetUrl: null,
+  sso: null,
+};
+
+it("keeps the single email and password form on Hub servers without native SSO", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue(hub);
+  await render();
+  expect(input("Email")).not.toBeNull();
+  expect(input("Password")).not.toBeNull();
+  await type(input("Email")!, "user@example.test");
+  await type(input("Password")!, "example-password");
+  await press("Sign in");
+  expect(signIn).toHaveBeenCalledWith("user@example.test", "example-password", true);
+  expect(continueWithHubSso).not.toHaveBeenCalled();
+});
+
+it("asks for the email first and signs in through Hub SSO", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...hub, hubSsoNative: true });
+  vi.mocked(continueWithHubSso).mockResolvedValue("signed_in");
+  vi.mocked(rpc).mockResolvedValue({});
+  await render();
+  expect(input("Password")).toBeNull();
+  await type(input("Email")!, " user@example.test ");
+  await press("Continue");
+  expect(continueWithHubSso).toHaveBeenCalledWith("user@example.test");
+  expect(signIn).not.toHaveBeenCalled();
+  expect(router.replace).toHaveBeenCalledWith("/");
+});
+
+it("reveals the password step when Hub answers password, and returns on a new email", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...hub, hubSsoNative: true });
+  vi.mocked(continueWithHubSso).mockResolvedValue("password");
+  await render();
+  await type(input("Email")!, "user@example.test");
+  await press("Continue");
+  expect(input("Password")).not.toBeNull();
+  await type(input("Password")!, "example-password");
+  await press("Sign in");
+  expect(signIn).toHaveBeenCalledWith("user@example.test", "example-password", true);
+  expect(continueWithHubSso).toHaveBeenCalledOnce();
+
+  await type(input("Email")!, "other@example.test");
+  expect(input("Password")).toBeNull();
+  expect(button("Continue")).toBeDefined();
+});
+
+it("explains when the organization's single sign-on is unavailable", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...hub, hubSsoNative: true });
+  vi.mocked(continueWithHubSso).mockResolvedValue("other_sso_unavailable");
+  await render();
+  await type(input("Email")!, "user@example.test");
+  await press("Continue");
+  expect(host.textContent).toContain(
+    "Single sign-on for your organization isn't available in Agent Hub yet.",
+  );
+  expect(input("Password")).toBeNull();
+});
+
+it("returns quietly to the email step when Microsoft sign-in is cancelled", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...hub, hubSsoNative: true });
+  vi.mocked(continueWithHubSso).mockResolvedValue("cancelled");
+  await render();
+  await type(input("Email")!, "user@example.test");
+  await press("Continue");
+  expect(input("Email")!.value).toBe("user@example.test");
+  expect(input("Password")).toBeNull();
+  expect(button("Continue")!.disabled).toBe(false);
+  expect(errorText).not.toHaveBeenCalled();
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("shows a Hub SSO failure on the email step", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...hub, hubSsoNative: true });
+  vi.mocked(continueWithHubSso).mockRejectedValue(
+    new Error("You don't have access to Agent Hub. Ask your admin."),
+  );
+  await render();
+  await type(input("Email")!, "user@example.test");
+  await press("Continue");
+  expect(host.textContent).toContain("You don't have access to Agent Hub. Ask your admin.");
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("returns to the email step when the server changes", async () => {
+  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...hub, hubSsoNative: true });
+  vi.mocked(continueWithHubSso).mockResolvedValue("password");
+  await render();
+  await type(input("Email")!, "user@example.test");
+  await press("Continue");
+  expect(input("Password")).not.toBeNull();
+  server.base = "https://other.invalid";
+  await act(async () => server.refocus());
+  expect(input("Password")).toBeNull();
+});
+
+it("hides the custom server entry in builds that do not allow it", async () => {
+  await render();
+  expect(button("Use a custom server")).toBeDefined();
+  act(() => root.unmount());
+  root = createRoot(host);
+  vi.mocked(customServerAllowed).mockReturnValue(false);
+  await render();
+  expect(button("Use a custom server")).toBeUndefined();
+  expect(button("Switch organization")).toBeUndefined();
+});
+
+it("offers Switch organization for a saved server when the entry is hidden", async () => {
+  vi.mocked(customServerAllowed).mockReturnValue(false);
+  vi.mocked(usesCustomApiBase).mockReturnValue(true);
+  vi.mocked(resetApiBase).mockImplementation(async () => {
+    server.base = "https://default.invalid";
+    return { ok: true, url: server.base };
+  });
+  await render();
+  expect(passwordResetCapabilities).toHaveBeenCalledTimes(1);
+  await press("Switch organization");
+  expect(resetApiBase).toHaveBeenCalledOnce();
+  expect(passwordResetCapabilities).toHaveBeenCalledTimes(2);
 });

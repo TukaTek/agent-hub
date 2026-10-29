@@ -336,6 +336,12 @@ export const RU_MESSAGES: Record<string, string> = {
   "Could not connect": "Не удалось подключиться",
   "Could not connect this provider": "Не удалось подключить этого провайдера",
   "Could not continue": "Не удалось продолжить",
+  "Sign-in failed. Try again.": "Не удалось войти. Попробуйте ещё раз.",
+  "You don't have access to Agent Hub. Ask your admin.":
+    "У вас нет доступа к Agent Hub. Обратитесь к администратору.",
+  "Single sign-on for your organization isn't available in Agent Hub yet. Ask your admin to enable password sign-in for your account.":
+    "Единый вход для вашей организации пока недоступен в Agent Hub. Попросите администратора включить для вашей учётной записи вход по паролю.",
+  "Switch organization": "Сменить организацию",
   "Could not disconnect": "Не удалось отключить",
   "Could not create bot": "Не удалось создать бота",
   "Could not create group": "Не удалось создать группу",

@@ -13,6 +13,14 @@ export function defaultApiBase() {
   return originOnly(DEFAULT_API) ?? LOCAL_API;
 }
 
+/**
+ * Whether sign-in offers the custom server entry. Every build, development included, points at
+ * its own server and hides it unless `EXPO_PUBLIC_ALLOW_CUSTOM_SERVER=true`.
+ */
+export function customServerAllowed(flag = process.env.EXPO_PUBLIC_ALLOW_CUSTOM_SERVER): boolean {
+  return flag === "true";
+}
+
 export function normalizeApiBase(input: string): EndpointResult {
   const trimmed = input.trim();
   if (!trimmed) return { ok: false, error: t("Enter a server URL") };
