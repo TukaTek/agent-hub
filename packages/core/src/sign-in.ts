@@ -5,11 +5,26 @@ export type SignInContinueResponse =
   | { next: "sso_unavailable" }
   | { next: "other_sso_unavailable" };
 
+/** The native apps that can finish Hub SSO through a one-time handoff code. */
+export type NativeSsoClient = "desktop" | "mobile";
+
+/** Answer of `POST /api/auth/hub/sso/native/start`; `state` comes back with the handoff. */
+export type NativeSsoStartResponse =
+  | { next: "password" }
+  | { next: "other_sso_unavailable" }
+  | { next: "redirect"; authorizeUrl: string; state: string };
+
 /** Error `code` of a 403 Continue when Hub refuses this user before Microsoft sign-in. */
 export const HUB_SSO_ACCESS_DENIED = "HUB_SSO_ACCESS_DENIED";
 
 /** The only values the SSO callback sends back as `/sign-in?error=`. */
 export type SsoCallbackError = "sso_expired" | "sso_failed" | Lowercase<HubSignInRefusalCode>;
+
+/**
+ * The `?error=` values the SSO callback sends to a native app's returnTo: the web
+ * ones plus `sso_cancelled`, when the user cancelled Microsoft sign-in at Hub.
+ */
+export type NativeSsoCallbackError = SsoCallbackError | "sso_cancelled";
 
 /**
  * Stable `code`s for a sign-in that CortexAI Hub policy refuses (CAAH-36). Hub is

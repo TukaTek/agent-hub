@@ -15,6 +15,7 @@ describe("authCapabilities", () => {
       expect(reply).toEqual({
         mode: "hub",
         hubSso: sso,
+        hubSsoNative: sso,
         sso,
         passwordAuth: false,
         passwordReset: false,
@@ -23,7 +24,11 @@ describe("authCapabilities", () => {
         billing: false,
         passkeyRpId: null,
       });
-      expect(authCapabilitiesSchema.parse(reply)).toMatchObject({ hubSso: sso, sso: null });
+      expect(authCapabilitiesSchema.parse(reply)).toMatchObject({
+        hubSso: sso,
+        hubSsoNative: sso,
+        sso: null,
+      });
     }
   });
 

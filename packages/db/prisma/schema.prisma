@@ -132,6 +132,23 @@ model HubSession {
   @@map("hub_session")
 }
 
+/// A pending desktop or mobile Hub SSO sign-in (CAAH-136). Keyed like its
+/// `verification` row, which keeps the Hub PKCE verifier. After the callback it
+/// holds the encrypted Hub grant against the hash of a one-time handoff code.
+model HubSsoNative {
+  stateKey     String   @id
+  client       String
+  returnTo     String
+  appChallenge String
+  handoffHash  String?  @unique
+  grantCipher  String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("hub_sso_native")
+}
+
 model Account {
   id                    String    @id
   accountId             String

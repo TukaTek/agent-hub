@@ -25,3 +25,7 @@ Hub's shared bad-value fixture. Hub's save-time validation and this parser both 
 - Git blob SHA: `e50eea578635777240f708d1bcd14279651e8544` (`git hash-object` of this file must match)
 
 `../hub-policy-invalid-values.test.ts` applies each case to a copy of the sample above. A settings case must fail as `HUB_CONFIG_INVALID` with reason `setting:<path>`, a toolkit id must fail in either Composio tier, and every valid case must parse.
+
+## agent-hub-native-sso.v1.json
+
+Agent Hub's own contract for native SSO start and complete (CAAH-136), for the desktop and mobile apps. It is authored here, not mirrored from Hub, because Hub's side of the flow is the unchanged `agent-hub-web` channel. All values are synthetic. `../hub.test.ts` runs both clients' requests through the real endpoints and checks the response shapes; `../hub.postgres.test.ts` uses it against PostgreSQL.

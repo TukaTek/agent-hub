@@ -3,6 +3,7 @@ import { bootstrapUserSpace, createDb, runAsSystem } from "@cortexai-agent-hub/d
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { describe, expect, it, vi } from "vitest";
 import contract from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
+import native from "./fixtures/agent-hub-native-sso.v1.json" with { type: "json" };
 import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import { hubUserId } from "./hub-client.js";
 import { hubPolicyForTests } from "./hub-policy-testing.js";
@@ -252,6 +253,146 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
         expect(await db.prisma.session.count({ where: { userId: deniedId } })).toBe(0);
       } finally {
         vi.unstubAllGlobals();
+        await db.prisma.verification.deleteMany({ where: { id: { startsWith: "hub-sso:" } } });
+        await db.prisma.organization.deleteMany({ where: { slug: { in: [`user-${id}`] } } });
+        await db.prisma.user.deleteMany({ where: { id: { in: [id, deniedId] } } });
+        await db.prisma.$disconnect();
+        await db.pool.end();
+      }
+    }),
+  );
+
+  it(
+    "finishes native desktop and mobile SSO through a single-use handoff (CAAH-136)",
+    asAuth(async () => {
+      const db = createDb(process.env.DATABASE_URL!);
+      const config = {
+        origin: "https://hub.example.test",
+        tenantId: web.exchangeResponse.tenantId,
+        deploymentId: web.exchangeResponse.deploymentId,
+        sso: { apiId: "fixture-api-id", secret: "synthetic-service-secret" },
+      };
+      const subject = randomUUID();
+      const deniedSubject = randomUUID();
+      const id = hubUserId(config.origin, config.tenantId, subject);
+      const deniedId = hubUserId(config.origin, config.tenantId, deniedSubject);
+      const hub = { subject, exchange: undefined as Response | undefined, exchanges: 0 };
+      const grant = () => ({
+        ...web.exchangeResponse,
+        user: { ...web.exchangeResponse.user, id: hub.subject },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/lookup"))
+            return Response.json({ tenantId: config.tenantId, idpType: "entra" });
+          if (path.endsWith("/service-token"))
+            return Response.json({
+              token: "synthetic-service-token",
+              tokenType: "Bearer",
+              expiresIn: 300,
+            });
+          if (path.endsWith("/sso-start")) return Response.json(web.ssoStartResponse);
+          if (path.endsWith("/sso-exchange")) {
+            hub.exchanges++;
+            return hub.exchange?.clone() ?? Response.json(grant());
+          }
+          if (path.endsWith("/session"))
+            return Response.json({ valid: true, userId: hub.subject, tenantId: config.tenantId });
+          if (path.endsWith("/config"))
+            return Response.json({ product: "cortexai-agent-hub", products: grant().products });
+          return Response.json({});
+        }),
+      );
+      const origin = "https://web.example.test";
+      const auth = createAuth(db.prisma, {
+        secret: "offline-auth-secret-at-least-32-characters",
+        tokenEncryptionKey: "offline-test-encryption-key",
+        baseURL: origin,
+        webOrigin: origin,
+        hub: config,
+        hubPolicy: hubPolicyForTests(config.tenantId, []).policy,
+        signupsEnabled: "false",
+        signupAllowlist: "",
+        extraOrigins: [native.clients.mobile.origin],
+      });
+      const post = (path: string, body: unknown, from = origin) =>
+        auth.handler(
+          new Request(`${origin}${path}`, {
+            method: "POST",
+            headers: { origin: from, "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        );
+      const signIn = async (client: "desktop" | "mobile") => {
+        const contract = native.clients[client];
+        const from = client === "mobile" ? contract.origin : origin;
+        const start = await post(native.startPath, contract.startRequest, from);
+        expect(start.headers.get("set-cookie")).toBeNull();
+        const { state } = (await start.json()) as { state: string };
+        const callback = await auth.handler(
+          new Request(`${origin}${native.callbackPath}?code=${"c".repeat(43)}&state=${state}`),
+        );
+        const location = new URL(callback.headers.get("location")!);
+        const complete = (appVerifier = native.appVerifier) =>
+          post(
+            native.completePath,
+            { code: location.searchParams.get("code"), state, appVerifier },
+            from,
+          );
+        return { state, location, complete };
+      };
+      try {
+        const desktop = await signIn("desktop");
+        expect(desktop.location.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(await db.prisma.session.count({ where: { userId: id } })).toBe(0);
+        const pending = await db.prisma.hubSsoNative.findUniqueOrThrow({
+          where: {
+            stateKey: `hub-sso:${createHash("sha256").update(desktop.state).digest("hex")}`,
+          },
+        });
+        expect(JSON.stringify(pending)).not.toContain(web.exchangeResponse.refreshToken);
+        expect(JSON.stringify(pending)).not.toContain(desktop.location.searchParams.get("code"));
+        const signedIn = await desktop.complete();
+        expect(signedIn.status).toBe(200);
+        expect(signedIn.headers.get("set-cookie")).toContain("session_token=");
+        expect(await db.prisma.hubSsoNative.count({ where: { stateKey: pending.stateKey } })).toBe(
+          0,
+        );
+        expect((await desktop.complete()).status).toBe(400);
+        expect(await db.prisma.session.count({ where: { userId: id } })).toBe(1);
+
+        const mobile = await signIn("mobile");
+        expect((await mobile.complete("w".repeat(43))).status).toBe(400);
+        expect((await mobile.complete()).status).toBe(400);
+        expect(await db.prisma.session.count({ where: { userId: id } })).toBe(1);
+
+        const again = await signIn("mobile");
+        const bearer = await again.complete();
+        const { token } = (await bearer.json()) as { token: string };
+        expect(
+          await auth.api.getSession({ headers: new Headers({ authorization: `Bearer ${token}` }) }),
+        ).toMatchObject({ user: { id } });
+        expect(hub.exchanges).toBe(3);
+        const stored = await db.prisma.hubSession.findMany({ where: { session: { userId: id } } });
+        expect(stored).toHaveLength(2);
+        expect(JSON.stringify(stored)).not.toContain(web.exchangeResponse.refreshToken);
+        expect(JSON.stringify(stored)).not.toContain(web.exchangeResponse.accessToken);
+
+        hub.subject = deniedSubject;
+        hub.exchange = Response.json({ error: "access_denied" }, { status: 403 });
+        const denied = await signIn("desktop");
+        expect(denied.location.href).toBe(
+          `${native.clients.desktop.startRequest.returnTo}?error=sso_failed&state=${denied.state}`,
+        );
+        expect(await db.prisma.user.count({ where: { id: deniedId } })).toBe(0);
+        expect(await db.prisma.session.count({ where: { userId: deniedId } })).toBe(0);
+      } finally {
+        vi.unstubAllGlobals();
+        await db.prisma.hubSsoNative.deleteMany({
+          where: { stateKey: { startsWith: "hub-sso:" } },
+        });
         await db.prisma.verification.deleteMany({ where: { id: { startsWith: "hub-sso:" } } });
         await db.prisma.organization.deleteMany({ where: { slug: { in: [`user-${id}`] } } });
         await db.prisma.user.deleteMany({ where: { id: { in: [id, deniedId] } } });
