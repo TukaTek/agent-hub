@@ -37,11 +37,13 @@ describe("desktop preload bridge", () => {
     expect(Object.keys(bridge).sort()).toEqual([
       "badge",
       "computer",
+      "hubSso",
       "oauth",
       "platform",
       "update",
       "window",
     ]);
+    expect(Object.keys(bridge.hubSso!).sort()).toEqual(["cancel", "open", "start"]);
     expect(Object.keys(bridge.window).sort()).toEqual([
       "close",
       "minimize",
@@ -64,6 +66,14 @@ describe("desktop preload bridge", () => {
     await bridge.update.check();
     await bridge.update.download();
     await bridge.update.install();
+    await bridge.hubSso!.start();
+    await bridge.hubSso!.open("https://hub.example.test/authorize", "state");
+    await bridge.hubSso!.cancel();
+    expect(invoke).toHaveBeenCalledWith(
+      "desktop.hubSso.open",
+      "https://hub.example.test/authorize",
+      "state",
+    );
     expect(invoke.mock.calls.map(([channel]) => channel)).toEqual([
       "desktop.badge.set",
       "desktop.oauth.open",
@@ -76,6 +86,9 @@ describe("desktop preload bridge", () => {
       "desktop.update.check",
       "desktop.update.download",
       "desktop.update.install",
+      "desktop.hubSso.start",
+      "desktop.hubSso.open",
+      "desktop.hubSso.cancel",
     ]);
   });
 

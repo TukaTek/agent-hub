@@ -33,6 +33,7 @@ test("launches with a narrow preload bridge and an isolated renderer", async () 
         bridgeKeys: desktop ? Object.keys(desktop).sort() : [],
         windowKeys: desktop ? Object.keys(desktop.window).sort() : [],
         updateKeys: desktop ? Object.keys(desktop.update).sort() : [],
+        hubSsoKeys: desktop?.hubSso ? Object.keys(desktop.hubSso).sort() : [],
         badgeKeys: desktop?.badge ? Object.keys(desktop.badge) : [],
         platform: desktop?.platform,
         state: await desktop?.window.state(),
@@ -48,6 +49,7 @@ test("launches with a narrow preload bridge and an isolated renderer", async () 
     expect(renderer.bridgeKeys).toEqual([
       "badge",
       "computer",
+      "hubSso",
       "oauth",
       "platform",
       "update",
@@ -61,6 +63,7 @@ test("launches with a narrow preload bridge and an isolated renderer", async () 
     ]);
     expect(renderer.windowKeys).toEqual(["close", "minimize", "state", "toggleMaximize"]);
     expect(renderer.updateKeys).toEqual(["check", "download", "install", "state"]);
+    expect(renderer.hubSsoKeys).toEqual(["cancel", "open", "start"]);
     expect(renderer.badgeKeys).toEqual(["set"]);
     expect(renderer.platform).toBe(process.platform);
     expect(renderer.state).toEqual({ minimized: false, maximized: false, fullScreen: false });
