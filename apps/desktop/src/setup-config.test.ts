@@ -4,10 +4,12 @@ import {
   DEFAULT_LOCAL_WEB_URL,
   DESKTOP_EDITION,
   desktopStackImageTag,
+  discoversOrganization,
   isCortexAiAgentHubHealth,
   managedLocalOpenUrl,
   maySendDesktopStackToken,
   normalizeServerUrl,
+  ORG_DISCOVERY_URL,
   PROBE_RESPONSE_LIMIT_BYTES,
   parseSetupInput,
   parseStoredSetup,
@@ -306,5 +308,23 @@ describe("server entry by edition", () => {
 
   it("defaults to self-host when no edition was baked in", () => {
     expect(DESKTOP_EDITION).toBe("self-host");
+  });
+
+  it("keeps self-host setup on its server choices, without org discovery", () => {
+    expect(discoversOrganization("self-host")).toBe(false);
+  });
+
+  it("asks managed builds for a work email instead", () => {
+    expect(discoversOrganization("managed")).toBe(true);
+  });
+
+  it("has no discovery service unless one was baked in", () => {
+    expect(ORG_DISCOVERY_URL).toBeNull();
+  });
+
+  it("reconnects to a discovered organization on restart without asking again", () => {
+    expect(
+      resolveStartupTarget({ saved: { mode: "existing", serverUrl: "https://hub.acme.example" } }),
+    ).toEqual({ kind: "app", url: "https://hub.acme.example", source: "saved" });
   });
 });

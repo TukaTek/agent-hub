@@ -1,0 +1,79 @@
+{
+  "contract": "agent-hub-discovery",
+  "contractVersion": 1,
+  "ticket": "CAH-243",
+  "endpoint": {
+    "method": "POST",
+    "path": "/api/v1/agent-hub/discover",
+    "auth": "none",
+    "request": {
+      "email": "string (required)",
+      "client": "mobile | desktop | web (optional; anything else logs as unknown)"
+    }
+  },
+  "headers": { "Cache-Control": "no-store", "Pragma": "no-cache", "Vary": "*" },
+  "notes": [
+    "result is found | not_found | unsupported_email. not_found never says why (no enumeration oracle).",
+    "signIn.method reports how the tenant actually signs in: native when no SSO IdP is configured, otherwise entra | google. Inactive, ambiguous or broken SSO yields not_found.",
+    "Every 200 response is padded to the same minimum latency floor.",
+    "429 carries Retry-After (seconds). 503 server_error means the discovery key is not configured (fail-closed)."
+  ],
+  "fixtures": {
+    "found_entra": {
+      "status": 200,
+      "body": {
+        "contractVersion": 1,
+        "result": "found",
+        "tenant": { "id": "00000000-0000-4000-8000-000000000001", "slug": "acme" },
+        "agentHub": {
+          "deploymentId": "00000000-0000-4000-8000-000000000002",
+          "origin": "https://hub.acme.example"
+        },
+        "signIn": { "method": "entra", "loginHint": "alice@acme.example" }
+      }
+    },
+    "found_native": {
+      "status": 200,
+      "body": {
+        "contractVersion": 1,
+        "result": "found",
+        "tenant": { "id": "00000000-0000-4000-8000-000000000003", "slug": "beta" },
+        "agentHub": {
+          "deploymentId": "00000000-0000-4000-8000-000000000004",
+          "origin": "https://hub.beta.example"
+        },
+        "signIn": { "method": "native", "loginHint": "bob@beta.example" }
+      }
+    },
+    "not_found": {
+      "status": 200,
+      "body": {
+        "contractVersion": 1,
+        "result": "not_found",
+        "tenant": null,
+        "agentHub": null,
+        "signIn": null
+      }
+    },
+    "unsupported_email": {
+      "status": 200,
+      "body": {
+        "contractVersion": 1,
+        "result": "unsupported_email",
+        "tenant": null,
+        "agentHub": null,
+        "signIn": null
+      }
+    },
+    "invalid_request": {
+      "status": 400,
+      "body": { "error": "invalid_request", "message": "A valid email is required" }
+    },
+    "rate_limited": {
+      "status": 429,
+      "headers": { "Retry-After": "60" },
+      "body": { "error": "rate_limited", "message": "Too many requests. Try again later." }
+    },
+    "server_error": { "status": 500, "body": { "error": "server_error" } }
+  }
+}

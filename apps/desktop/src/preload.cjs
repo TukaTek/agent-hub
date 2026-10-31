@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld("cortexAiAgentHubDesktop", {
     open: (authorizeUrl, state) => ipcRenderer.invoke("desktop.hubSso.open", authorizeUrl, state),
     cancel: () => ipcRenderer.invoke("desktop.hubSso.cancel"),
   },
+  loginHint: () => ipcRenderer.invoke("desktop.loginHint.take"),
   oauth: {
     open: (url) => ipcRenderer.invoke("desktop.oauth.open", url),
     cancel: (url) => ipcRenderer.invoke("desktop.oauth.cancel", url),

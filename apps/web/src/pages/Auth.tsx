@@ -167,6 +167,29 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   // An in-app route change doesn't navigate the window, so end any desktop attempt here.
   useEffect(() => () => void desktopBridge()?.hubSso?.cancel(), []);
 
+  // Managed desktop setup already asked for the work email to find this server.
+  const [loginHint, setLoginHint] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void desktopBridge()
+      ?.loginHint?.()
+      .then((hint) => {
+        if (active && typeof hint === "string" && hint.trim() && !emailRef.current?.value) {
+          setEmail(hint.trim());
+          setLoginHint(hint.trim());
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (loginHint === null || !hubMode || !passwordForm || signInStep !== "email") return;
+    setLoginHint(null);
+    if (email === loginHint) void submit();
+  });
+
   function changeEmail() {
     if (browserWaiting) void desktopBridge()?.hubSso?.cancel();
     setStep("email");
@@ -177,8 +200,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     emailRef.current?.focus();
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit(e?: React.FormEvent) {
+    e?.preventDefault();
     if (submitHidden || !passwordForm) return;
     if (codeStep) {
       // An unfinished code would spend one of the code's three attempts.

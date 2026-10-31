@@ -38,6 +38,7 @@ describe("desktop preload bridge", () => {
       "badge",
       "computer",
       "hubSso",
+      "loginHint",
       "oauth",
       "platform",
       "update",
@@ -69,6 +70,7 @@ describe("desktop preload bridge", () => {
     await bridge.hubSso!.start();
     await bridge.hubSso!.open("https://hub.example.test/authorize", "state");
     await bridge.hubSso!.cancel();
+    await bridge.loginHint!();
     expect(invoke).toHaveBeenCalledWith(
       "desktop.hubSso.open",
       "https://hub.example.test/authorize",
@@ -89,6 +91,7 @@ describe("desktop preload bridge", () => {
       "desktop.hubSso.start",
       "desktop.hubSso.open",
       "desktop.hubSso.cancel",
+      "desktop.loginHint.take",
     ]);
   });
 
@@ -122,6 +125,7 @@ describe("setup preload bridge", () => {
     expect(globalName).toBe("cortexAiAgentHubSetup");
     expect(bridge.platform).toBe("linux");
     expect(Object.keys(bridge).sort()).toEqual([
+      "discover",
       "openLink",
       "platform",
       "quit",
@@ -133,6 +137,7 @@ describe("setup preload bridge", () => {
     expect(Object.keys(bridge.stack).sort()).toEqual(["onChange", "start", "state"]);
 
     await bridge.state();
+    await bridge.discover("alice@acme.example");
     await bridge.test("http://127.0.0.1:5173");
     await bridge.save({ mode: "new", serverUrl: "http://127.0.0.1:5173" });
     await bridge.quit();
@@ -141,6 +146,7 @@ describe("setup preload bridge", () => {
     await bridge.stack.start();
     expect(invoke.mock.calls.map(([channel]) => channel)).toEqual([
       "desktop.setup.state",
+      "desktop.setup.discover",
       "desktop.setup.test",
       "desktop.setup.save",
       "desktop.setup.quit",
@@ -149,6 +155,7 @@ describe("setup preload bridge", () => {
       "desktop.setup.stack.start",
     ]);
     expect(invoke).toHaveBeenCalledWith("desktop.setup.openLink", "orbstack");
+    expect(invoke).toHaveBeenCalledWith("desktop.setup.discover", "alice@acme.example");
 
     const listener = vi.fn();
     bridge.stack.onChange(listener);
@@ -156,5 +163,19 @@ describe("setup preload bridge", () => {
     expect(channel).toBe("desktop.setup.stack.changed");
     handler({}, { phase: "pulling" });
     expect(listener).toHaveBeenCalledWith({ phase: "pulling" });
+  });
+
+  it("sends only a bounded email string to discovery", async () => {
+    const { invoke, exposeInMainWorld } = runPreload("setup-preload.cjs");
+    const [, bridge] = exposeInMainWorld.mock.calls[0] as [string, CortexAiAgentHubSetup];
+
+    for (const email of [42, null, { email: "a@b.c" }, `${"x".repeat(400)}@acme.example`]) {
+      await expect(bridge.discover(email as string)).resolves.toEqual({
+        ok: false,
+        field: "email",
+        error: "Enter a valid email address.",
+      });
+    }
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
