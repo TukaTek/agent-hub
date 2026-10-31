@@ -53,6 +53,8 @@
   let orgDiscovery = false;
   /** Holds Continue while Hub's Retry-After runs. */
   let retryHold = null;
+  /** Set when discovery said retrying cannot help, e.g. the app must be updated. */
+  let discoveryStopped = false;
   let defaultLocalUrl = "";
   let cloudUrl = "";
   let stackPolling = false;
@@ -77,7 +79,7 @@
 
   function setBusy(busy) {
     checkButton.disabled = busy;
-    continueButton.disabled = busy || retryHold !== null;
+    continueButton.disabled = busy || retryHold !== null || discoveryStopped;
   }
 
   /** A save in flight cannot be cancelled, so the choice it commits must not change under it. */
@@ -264,7 +266,7 @@
     clearTimeout(retryHold);
     retryHold = setTimeout(() => {
       retryHold = null;
-      continueButton.disabled = false;
+      continueButton.disabled = discoveryStopped;
     }, seconds * 1000);
     continueButton.disabled = true;
   }
@@ -274,6 +276,8 @@
     setStatus(message, "error");
     workEmail.focus();
   }
+
+  const UNREACHABLE = "Couldn't reach your organization's Agent Hub. Try again.";
 
   async function discover() {
     const email = workEmail.value.trim();
@@ -288,14 +292,15 @@
     try {
       reply = await bridge.discover(email);
     } catch {
-      reply = { ok: false, error: "Can't reach the sign-in service. Try again." };
+      reply = { ok: false, error: UNREACHABLE };
     }
     // On success main closes this window once the organization's server opens.
     if (reply.ok) return;
-    if (reply.retryAfterSeconds) holdRetry(reply.retryAfterSeconds);
+    if (reply.terminal) discoveryStopped = true;
+    else if (reply.retryAfterSeconds) holdRetry(reply.retryAfterSeconds);
     setBusy(false);
     if (reply.field === "email") emailError(reply.error);
-    else setStatus(reply.error ?? "Can't reach the sign-in service. Try again.", "error");
+    else setStatus(reply.error ?? UNREACHABLE, "error");
   }
 
   async function check() {

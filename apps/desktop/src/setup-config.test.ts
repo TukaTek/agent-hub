@@ -6,6 +6,7 @@ import {
   desktopStackImageTag,
   discoversOrganization,
   isCortexAiAgentHubHealth,
+  MANAGED_UNREACHABLE_MESSAGE,
   managedLocalOpenUrl,
   maySendDesktopStackToken,
   normalizeServerUrl,
@@ -20,6 +21,7 @@ import {
   serializeSetup,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  setupFailureMessage,
   showsServerEntry,
 } from "./setup-config.js";
 
@@ -326,5 +328,26 @@ describe("server entry by edition", () => {
     expect(
       resolveStartupTarget({ saved: { mode: "existing", serverUrl: "https://hub.acme.example" } }),
     ).toEqual({ kind: "app", url: "https://hub.acme.example", source: "saved" });
+  });
+});
+
+describe("connection failure wording by edition", () => {
+  const detailed = [
+    "Could not reconnect to the saved server. Nothing is listening at that address yet.",
+    "Could not open that server. That host could not be found.",
+    "Could not open that server. Renderer stopped.",
+    "That address did not respond like a CortexAI Agent Hub server.",
+  ];
+
+  it("shows managed builds only the neutral organization message", () => {
+    expect(MANAGED_UNREACHABLE_MESSAGE).toBe(
+      "Couldn't reach your organization's Agent Hub. Try again.",
+    );
+    for (const message of detailed)
+      expect(setupFailureMessage("managed", message)).toBe(MANAGED_UNREACHABLE_MESSAGE);
+  });
+
+  it("keeps the self-host wording unchanged", () => {
+    for (const message of detailed) expect(setupFailureMessage("self-host", message)).toBe(message);
   });
 });

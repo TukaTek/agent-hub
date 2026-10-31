@@ -1,15 +1,19 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reportDesktopError } from "./monitoring.js";
 import {
   createLoginHintStore,
   DISCOVERY_MESSAGES,
   DISCOVERY_PATH,
+  discoverAndOpen,
   discoverOrganization,
   discoveryReply,
   LOGIN_HINT_TTL_MS,
   validateDiscoveredOrigin,
 } from "./org-discovery.js";
+
+vi.mock("./monitoring.js", () => ({ reportDesktopError: vi.fn() }));
 
 const HUB = "https://hub.cortexai.example";
 const EMAIL = "synthetic.person.7f3a@acme.example";
@@ -192,7 +196,7 @@ describe("org discovery outcomes", () => {
     expect(outcome).toEqual({ kind: "unavailable" });
     expect(discoveryReply(outcome)).toEqual({
       ok: false,
-      error: "Can't reach the sign-in service. Try again.",
+      error: "Couldn't reach your organization's Agent Hub. Try again.",
     });
   });
 
@@ -235,13 +239,28 @@ describe("org discovery outcomes", () => {
       "[]",
       "null",
       JSON.stringify({ result: "found" }),
-      JSON.stringify({ ...(fixtures.found_entra!.body as object), contractVersion: 2 }),
-      JSON.stringify({ ...(fixtures.not_found!.body as object), contractVersion: "1" }),
       JSON.stringify({ ...(fixtures.found_entra!.body as object), agentHub: null }),
       JSON.stringify({ ...(fixtures.found_entra!.body as object), signIn: { method: 1 } }),
       JSON.stringify({ ...(fixtures.found_entra!.body as object), padding: "x".repeat(70_000) }),
     ]) {
       expect(await discover(raw(body)).outcome, body.slice(0, 60)).toEqual({ kind: "unavailable" });
+    }
+  });
+
+  it.each([
+    ["a newer version", 2],
+    ["an older version", 0],
+    ["a string version", "1"],
+    ["a null version", null],
+  ])("asks for an app update, terminally, on %s of the contract", async (_name, version) => {
+    for (const base of [fixtures.found_entra!, fixtures.not_found!, fixtures.unsupported_email!]) {
+      const body = { ...(base.body as object), contractVersion: version };
+      const outcome = await discover(reply({ status: 200, body })).outcome;
+      expect(outcome).toEqual({ kind: "update_required" });
+      const answer = discoveryReply(outcome);
+      expect(answer).toEqual({ ok: false, error: "Please update the app.", terminal: true });
+      expect(answer).not.toHaveProperty("retryAfterSeconds");
+      expect(answer.error).not.toBe(DISCOVERY_MESSAGES.not_found);
     }
   });
 
@@ -350,6 +369,85 @@ describe("org discovery privacy", () => {
     // The renderer is told the outcome, never the hint or anything Hub echoed back.
     expect(JSON.stringify(replies)).not.toContain(EMAIL);
     expect(JSON.stringify(replies)).not.toContain("alice@acme.example");
+  });
+});
+
+describe("desktop discover and sign-in path privacy", () => {
+  it("never logs the email through found, not_found, an error, or a 429", async () => {
+    const written: string[] = [];
+    const capture = (...args: unknown[]) => {
+      written.push(
+        args
+          .map((arg) =>
+            arg instanceof Error ? `${arg.message} ${arg.stack}` : (JSON.stringify(arg) ?? ""),
+          )
+          .join(" "),
+      );
+    };
+    const spies = [
+      ...(["log", "info", "warn", "error", "debug", "trace", "dir", "table"] as const).map(
+        (level) => vi.spyOn(console, level).mockImplementation(capture),
+      ),
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        capture(String(chunk));
+        return true;
+      }),
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+        capture(String(chunk));
+        return true;
+      }),
+    ];
+    const reported = vi.mocked(reportDesktopError);
+    reported.mockImplementation(capture);
+    const replies: unknown[] = [];
+    const opened: string[] = [];
+    try {
+      const run = async (
+        response: Response | (() => Promise<Response>),
+        open: (origin: string) => Promise<{ ok: boolean; error?: string }> = async (origin) => {
+          opened.push(origin);
+          return { ok: true };
+        },
+      ) => {
+        const fetcher = typeof response === "function" ? response : async () => response;
+        replies.push(
+          await discoverAndOpen(EMAIL, {
+            hubUrl: HUB,
+            fetch: fetcher as unknown as typeof fetch,
+            loginHints: createLoginHintStore(),
+            open,
+          }),
+        );
+      };
+      await run(reply(fixtures.found_entra!));
+      await run(reply(fixtures.found_entra!), async () => {
+        throw new Error(`open failed for ${EMAIL}`);
+      });
+      await run(reply(fixtures.not_found!));
+      await run(() => Promise.reject(new TypeError(`fetch failed for ${EMAIL}`)));
+      await run(reply({ status: 503, body: { error: "server_error", email: EMAIL } }));
+      await run(reply(fixtures.rate_limited!));
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      reported.mockReset();
+    }
+    expect(opened).toEqual(["https://hub.acme.example"]);
+    expect(replies).toEqual([
+      { ok: true },
+      { ok: false, error: "Couldn't reach your organization's Agent Hub. Try again." },
+      { ok: false, error: DISCOVERY_MESSAGES.not_found },
+      { ok: false, error: "Couldn't reach your organization's Agent Hub. Try again." },
+      { ok: false, error: "Couldn't reach your organization's Agent Hub. Try again." },
+      {
+        ok: false,
+        error: "Too many attempts. Try again in 60 seconds.",
+        retryAfterSeconds: 60,
+      },
+    ]);
+    const log = written.join("\n");
+    for (const secret of [EMAIL, "alice@acme.example", "synthetic.person.7f3a"])
+      expect(log).not.toContain(secret);
+    expect(JSON.stringify(replies)).not.toContain(EMAIL);
   });
 });
 

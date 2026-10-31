@@ -128,6 +128,8 @@ export interface DesktopDiscoveryReply {
   field?: "email";
   /** Hub rate-limited discovery; retry is pointless before this many seconds. */
   retryAfterSeconds?: number;
+  /** Retrying cannot help (for example the app must be updated); setup stops here. */
+  terminal?: boolean;
 }
 
 export interface DesktopReachability {

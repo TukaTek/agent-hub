@@ -3,6 +3,7 @@ import type { DesktopDiscoveryReply } from "@cortexai-agent-hub/contracts";
 import {
   isLocalNetworkHost,
   isLoopbackHost,
+  MANAGED_UNREACHABLE_MESSAGE,
   normalizeServerUrl,
   readProbeJson,
 } from "./setup-config.js";
@@ -21,14 +22,18 @@ export type DiscoveryOutcome =
   | { kind: "unsupported_email" }
   | { kind: "invalid_email" }
   | { kind: "rate_limited"; retryAfterSeconds: number }
-  | { kind: "unavailable" };
+  | { kind: "unavailable" }
+  /** Hub speaks a contract version this release does not; retrying cannot help. */
+  | { kind: "update_required" };
 
 export const DISCOVERY_MESSAGES = {
   // Identical for "no organization" and "no such user": Hub never says which.
   not_found: "We couldn't find an Agent Hub for that email. Check with your admin.",
   unsupported_email: "Use your work email address.",
   invalid_email: "Enter a valid email address.",
-  unavailable: "Can't reach the sign-in service. Try again.",
+  // Discovery runs only in managed builds, which never show self-host wording.
+  unavailable: MANAGED_UNREACHABLE_MESSAGE,
+  update_required: "Please update the app.",
 } as const;
 
 /**
@@ -85,8 +90,9 @@ export async function discoverOrganization(
 }
 
 function parseDiscoveryBody(body: unknown): DiscoveryOutcome {
-  if (!isRecord(body) || body.contractVersion !== 1 || typeof body.result !== "string")
-    return { kind: "unavailable" };
+  if (!isRecord(body)) return { kind: "unavailable" };
+  if ("contractVersion" in body && body.contractVersion !== 1) return { kind: "update_required" };
+  if (body.contractVersion !== 1 || typeof body.result !== "string") return { kind: "unavailable" };
   if (body.result === "unsupported_email") return { kind: "unsupported_email" };
   // Any result this release does not know is reported exactly like not_found.
   if (body.result !== "found") return { kind: "not_found" };
@@ -123,6 +129,8 @@ export function discoveryReply(outcome: DiscoveryOutcome): DesktopDiscoveryReply
     case "unsupported_email":
     case "unavailable":
       return { ok: false, error: DISCOVERY_MESSAGES[outcome.kind] };
+    case "update_required":
+      return { ok: false, error: DISCOVERY_MESSAGES.update_required, terminal: true };
     case "invalid_email":
       return { ok: false, field: "email", error: DISCOVERY_MESSAGES.invalid_email };
     case "rate_limited":
@@ -132,6 +140,35 @@ export function discoveryReply(outcome: DiscoveryOutcome): DesktopDiscoveryReply
         retryAfterSeconds: outcome.retryAfterSeconds,
       };
   }
+}
+
+/**
+ * The whole desktop discover-and-sign-in step behind the setup IPC: discover,
+ * hand the login hint to the found origin, and open it. Never logs, and never
+ * returns the email, the hint, or self-host failure details.
+ */
+export async function discoverAndOpen(
+  email: unknown,
+  options: {
+    hubUrl: string | null;
+    fetch?: typeof fetch;
+    loginHints: ReturnType<typeof createLoginHintStore>;
+    open: (origin: string) => Promise<{ ok: boolean; error?: string }>;
+  },
+): Promise<DesktopDiscoveryReply> {
+  const outcome = await discoverOrganization(email, options);
+  if (outcome.kind !== "found") return discoveryReply(outcome);
+  // Set before opening: the sign-in page asks for it as soon as it loads.
+  options.loginHints.set(outcome.origin, outcome.loginHint);
+  let opened: { ok: boolean };
+  try {
+    opened = await options.open(outcome.origin);
+  } catch {
+    opened = { ok: false };
+  }
+  if (opened.ok) return { ok: true };
+  options.loginHints.clear();
+  return { ok: false, error: MANAGED_UNREACHABLE_MESSAGE };
 }
 
 /**

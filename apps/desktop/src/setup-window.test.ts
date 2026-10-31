@@ -148,10 +148,60 @@ describe("managed setup", () => {
       },
     );
     await submitEmail("alice@acme.example");
-    expect(byId("status").textContent).toBe("Can't reach the sign-in service. Try again.");
+    expect(byId("status").textContent).toBe(
+      "Couldn't reach your organization's Agent Hub. Try again.",
+    );
     expect(byId<HTMLButtonElement>("continue").disabled).toBe(false);
     await submitEmail("alice@acme.example");
     expect(bridge.discover).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops on a terminal update-required answer instead of offering a retry", async () => {
+    const bridge = await openSetup(
+      state({ showServerEntry: false, orgDiscovery: true }),
+      async () => ({ ok: false, error: "Please update the app.", terminal: true }),
+    );
+    await submitEmail("alice@acme.example");
+    expect(byId("status").textContent).toBe("Please update the app.");
+    expect(byId("work-email").getAttribute("aria-invalid")).toBeNull();
+    expect(byId<HTMLButtonElement>("continue").disabled).toBe(true);
+    vi.advanceTimersByTime(3_600_000);
+    expect(byId<HTMLButtonElement>("continue").disabled).toBe(true);
+    await submitEmail("alice@acme.example");
+    expect(bridge.discover).toHaveBeenCalledTimes(1);
+  });
+
+  it("never writes the email to the console, whatever discovery answers", async () => {
+    const email = "synthetic.person.7f3a@acme.example";
+    const written: string[] = [];
+    const spies = (["log", "info", "warn", "error", "debug", "trace"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        written.push(args.map(String).join(" "));
+      }),
+    );
+    try {
+      for (const answer of [
+        async () => ({ ok: true }),
+        async () => ({
+          ok: false,
+          error: "We couldn't find an Agent Hub for that email. Check with your admin.",
+        }),
+        async () => {
+          throw new Error(`ipc failed for ${email}`);
+        },
+        async () => ({
+          ok: false,
+          error: "Too many attempts. Try again in 30 seconds.",
+          retryAfterSeconds: 30,
+        }),
+      ]) {
+        await openSetup(state({ showServerEntry: false, orgDiscovery: true }), answer);
+        await submitEmail(email);
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(written.join("\n")).not.toContain(email);
   });
 
   it("shows why a saved organization could not be reopened", async () => {

@@ -36,12 +36,7 @@ import {
   reportDesktopError,
 } from "./monitoring.js";
 import { oauthCallbackFrom } from "./oauth-callback.js";
-import {
-  createLoginHintStore,
-  type DiscoveryOutcome,
-  discoverOrganization,
-  discoveryReply,
-} from "./org-discovery.js";
+import { createLoginHintStore, discoverAndOpen } from "./org-discovery.js";
 import {
   bundledRendererCandidates,
   bundledRendererHeaders,
@@ -67,6 +62,7 @@ import {
   safeExternalUrl,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  setupFailureMessage,
   showsServerEntry,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
@@ -584,7 +580,7 @@ function createSetupWindow() {
 
 /** Hide the app while setup is open; do not clear the saved target until a new one opens. */
 function showSetupWindow(error: string | null = null) {
-  setupError = error;
+  setupError = error === null ? null : setupFailureMessage(DESKTOP_EDITION, error);
 
   let win: BrowserWindow;
   if (setupWindow !== null && !setupWindow.isDestroyed()) {
@@ -1292,18 +1288,15 @@ app.whenReady().then(async () => {
     if (discoverInProgress || setupSaveInProgress || appOpener.busy())
       return { ok: false, error: "A connection attempt is already running." };
     discoverInProgress = true;
-    let outcome: DiscoveryOutcome;
     try {
-      outcome = await discoverOrganization(email, { hubUrl: ORG_DISCOVERY_URL });
+      return await discoverAndOpen(email, {
+        hubUrl: ORG_DISCOVERY_URL,
+        loginHints,
+        open: (origin) => saveSetup({ mode: "existing", serverUrl: origin }),
+      });
     } finally {
       discoverInProgress = false;
     }
-    if (outcome.kind !== "found") return discoveryReply(outcome);
-    // Set before opening: the sign-in page asks for it as soon as it loads.
-    loginHints.set(outcome.origin, outcome.loginHint);
-    const saved = await saveSetup({ mode: "existing", serverUrl: outcome.origin });
-    if (!saved.ok) loginHints.clear();
-    return saved;
   });
 
   async function saveSetup(payload: unknown): Promise<{ ok: boolean; error?: string }> {
