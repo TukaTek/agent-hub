@@ -57,6 +57,12 @@ export interface CortexAiAgentHubDesktopHubSso {
 export interface CortexAiAgentHubDesktop {
   /** Optional for compatibility with older desktop releases. */
   hubSso?: CortexAiAgentHubDesktopHubSso;
+  /**
+   * The work email managed setup discovered this server with, handed out once to
+   * this server's sign-in page so the person does not type it again.
+   * Optional for compatibility with older desktop releases.
+   */
+  loginHint?: () => Promise<string | null>;
   /** Optional for compatibility with older desktop releases. */
   badge?: {
     set: (count: number) => Promise<boolean>;
@@ -108,9 +114,22 @@ export interface DesktopSetupState {
   cloudUrl: string | null;
   /** False in managed builds, which hide the typed self-hosted server address. */
   showServerEntry: boolean;
+  /** True in managed builds: setup asks for a work email and Hub picks the server. */
+  orgDiscovery: boolean;
   saved: DesktopSetup | null;
   /** Present when a saved or newly selected server could not be reopened. */
   error?: string;
+}
+
+export interface DesktopDiscoveryReply {
+  ok: boolean;
+  error?: string;
+  /** Set when the email itself was rejected. */
+  field?: "email";
+  /** Hub rate-limited discovery; retry is pointless before this many seconds. */
+  retryAfterSeconds?: number;
+  /** Retrying cannot help (for example the app must be updated); setup stops here. */
+  terminal?: boolean;
 }
 
 export interface DesktopReachability {
@@ -166,6 +185,8 @@ export interface CortexAiAgentHubSetup {
   /** Used only to reserve space for native window controls in the local setup UI. */
   platform: string;
   state: () => Promise<DesktopSetupState>;
+  /** Managed setup: finds, saves and opens the email's organization server in main. */
+  discover: (email: string) => Promise<DesktopDiscoveryReply>;
   test: (url: string) => Promise<DesktopReachability>;
   save: (setup: DesktopSetup) => Promise<{ ok: boolean; error?: string }>;
   quit: () => Promise<void>;

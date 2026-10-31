@@ -4,10 +4,13 @@ import {
   DEFAULT_LOCAL_WEB_URL,
   DESKTOP_EDITION,
   desktopStackImageTag,
+  discoversOrganization,
   isCortexAiAgentHubHealth,
+  MANAGED_UNREACHABLE_MESSAGE,
   managedLocalOpenUrl,
   maySendDesktopStackToken,
   normalizeServerUrl,
+  ORG_DISCOVERY_URL,
   PROBE_RESPONSE_LIMIT_BYTES,
   parseSetupInput,
   parseStoredSetup,
@@ -18,6 +21,7 @@ import {
   serializeSetup,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  setupFailureMessage,
   showsServerEntry,
 } from "./setup-config.js";
 
@@ -306,5 +310,44 @@ describe("server entry by edition", () => {
 
   it("defaults to self-host when no edition was baked in", () => {
     expect(DESKTOP_EDITION).toBe("self-host");
+  });
+
+  it("keeps self-host setup on its server choices, without org discovery", () => {
+    expect(discoversOrganization("self-host")).toBe(false);
+  });
+
+  it("asks managed builds for a work email instead", () => {
+    expect(discoversOrganization("managed")).toBe(true);
+  });
+
+  it("has no discovery service unless one was baked in", () => {
+    expect(ORG_DISCOVERY_URL).toBeNull();
+  });
+
+  it("reconnects to a discovered organization on restart without asking again", () => {
+    expect(
+      resolveStartupTarget({ saved: { mode: "existing", serverUrl: "https://hub.acme.example" } }),
+    ).toEqual({ kind: "app", url: "https://hub.acme.example", source: "saved" });
+  });
+});
+
+describe("connection failure wording by edition", () => {
+  const detailed = [
+    "Could not reconnect to the saved server. Nothing is listening at that address yet.",
+    "Could not open that server. That host could not be found.",
+    "Could not open that server. Renderer stopped.",
+    "That address did not respond like a CortexAI Agent Hub server.",
+  ];
+
+  it("shows managed builds only the neutral organization message", () => {
+    expect(MANAGED_UNREACHABLE_MESSAGE).toBe(
+      "Couldn't reach your organization's Agent Hub. Try again.",
+    );
+    for (const message of detailed)
+      expect(setupFailureMessage("managed", message)).toBe(MANAGED_UNREACHABLE_MESSAGE);
+  });
+
+  it("keeps the self-host wording unchanged", () => {
+    for (const message of detailed) expect(setupFailureMessage("self-host", message)).toBe(message);
   });
 });

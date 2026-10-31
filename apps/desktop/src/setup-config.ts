@@ -26,6 +26,29 @@ export function showsServerEntry(edition: DesktopEdition): boolean {
   return edition !== "managed";
 }
 
+/** Managed builds never show self-host connection details when their organization's server fails. */
+export const MANAGED_UNREACHABLE_MESSAGE =
+  "Couldn't reach your organization's Agent Hub. Try again.";
+
+/** What setup shows after a server check, open, or discovery failure in this edition. */
+export function setupFailureMessage(edition: DesktopEdition, selfHostMessage: string): string {
+  return edition === "managed" ? MANAGED_UNREACHABLE_MESSAGE : selfHostMessage;
+}
+
+/** Managed setup asks for a work email and lets Hub say which server to open. */
+export function discoversOrganization(edition: DesktopEdition): boolean {
+  return edition === "managed";
+}
+
+/** Replaced at build time from `CORTEXAI_AGENT_HUB_DISCOVERY_URL`; HTTPS-validated there. */
+declare const __CORTEXAI_AGENT_HUB_DISCOVERY_URL__: string | null | undefined;
+
+/** Central Hub that org discovery asks; null when the build has none. */
+export const ORG_DISCOVERY_URL: string | null =
+  typeof __CORTEXAI_AGENT_HUB_DISCOVERY_URL__ === "undefined"
+    ? null
+    : __CORTEXAI_AGENT_HUB_DISCOVERY_URL__;
+
 export const SETUP_FILE_NAME = "setup.json";
 
 export type StartupTarget =
@@ -302,7 +325,7 @@ function isLinkLocalHost(hostname: string) {
   return false;
 }
 
-function isLocalNetworkHost(hostname: string) {
+export function isLocalNetworkHost(hostname: string) {
   const host = unbracketedHost(hostname);
   if (isLoopbackHost(host) || host.endsWith(".local")) return true;
   if (isLinkLocalHost(host)) return false;

@@ -431,6 +431,41 @@ describe("desktop Microsoft sign-in", () => {
   });
 });
 
+describe("email found by desktop org discovery", () => {
+  it("continues with the discovered email without asking again", async () => {
+    const loginHint = vi.fn(async () => email);
+    vi.stubGlobal("cortexAiAgentHubDesktop", { loginHint });
+    stubServer("hub");
+    await render();
+    await until(passwordInput);
+    expect(loginHint).toHaveBeenCalledOnce();
+    expect(requestsTo("/api/auth/hub/sign-in/continue")).toEqual([{ email }]);
+    expect(emailInput().value).toBe(email);
+  });
+
+  it("asks for the email when the desktop has no hint", async () => {
+    vi.stubGlobal("cortexAiAgentHubDesktop", { loginHint: vi.fn(async () => null) });
+    stubServer("hub");
+    await render();
+    await until(() => !container.querySelector('[aria-busy="true"]'));
+    expect(emailInput().value).toBe("");
+    expect(requestsTo("/api/auth/hub/sign-in/continue")).toEqual([]);
+  });
+
+  it("never replaces an email the person already typed", async () => {
+    let answer!: (hint: string) => void;
+    vi.stubGlobal("cortexAiAgentHubDesktop", {
+      loginHint: () => new Promise<string>((resolve) => (answer = resolve)),
+    });
+    stubServer("hub");
+    await render();
+    await type(emailInput(), "typed@example.test");
+    await act(async () => answer(email));
+    expect(emailInput().value).toBe("typed@example.test");
+    expect(requestsTo("/api/auth/hub/sign-in/continue")).toEqual([]);
+  });
+});
+
 it("keeps desktop password users on the password step", async () => {
   vi.stubGlobal("cortexAiAgentHubDesktop", {});
   stubServer("hub");

@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { desktopEditionDefine } from "./desktop-edition.mjs";
+import { desktopDiscoveryDefine, desktopEditionDefine } from "./desktop-edition.mjs";
 
 await build({
   entryPoints: ["src/main.ts"],
@@ -9,7 +9,7 @@ await build({
   format: "esm",
   target: "node22",
   sourcemap: true,
-  define: desktopEditionDefine(process.env),
+  define: { ...desktopEditionDefine(process.env), ...desktopDiscoveryDefine(process.env) },
   banner: {
     js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
   },

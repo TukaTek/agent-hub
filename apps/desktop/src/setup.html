@@ -18,10 +18,10 @@
 
     <main class="shell">
       <h1 class="heading">Welcome to CortexAI Agent Hub</h1>
-      <p class="subheading">Choose which server this app should use.</p>
+      <p id="subheading" class="subheading">Choose which server this app should use.</p>
 
       <form id="setup" novalidate>
-        <fieldset class="choices">
+        <fieldset id="choices" class="choices">
           <legend class="sr-only">Instance</legend>
 
           <label id="choice-cloud" class="choice" for="mode-cloud" hidden>
@@ -89,6 +89,18 @@
             spellcheck="false"
             autocomplete="off"
             placeholder="https://cortexai-agent-hub.example.com"
+          />
+        </section>
+
+        <section id="panel-email" class="panel" hidden>
+          <label class="field-label" for="work-email">Work email</label>
+          <input
+            id="work-email"
+            class="field"
+            type="email"
+            spellcheck="false"
+            autocomplete="email"
+            aria-describedby="status"
           />
         </section>
 

@@ -36,6 +36,7 @@ import {
   reportDesktopError,
 } from "./monitoring.js";
 import { oauthCallbackFrom } from "./oauth-callback.js";
+import { createLoginHintStore, discoverAndOpen } from "./org-discovery.js";
 import {
   bundledRendererCandidates,
   bundledRendererHeaders,
@@ -48,10 +49,12 @@ import {
   DEFAULT_LOCAL_WEB_URL,
   DESKTOP_EDITION,
   desktopStackImageTag,
+  discoversOrganization,
   isCortexAiAgentHubHealth,
   managedLocalOpenUrl,
   maySendDesktopStackToken,
   normalizeServerUrl,
+  ORG_DISCOVERY_URL,
   parseSetupInput,
   probeFailureMessage,
   readProbeJson,
@@ -59,6 +62,7 @@ import {
   safeExternalUrl,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
+  setupFailureMessage,
   showsServerEntry,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
@@ -85,6 +89,8 @@ const appWindowTargets = new WeakMap<BrowserWindow, string>();
 let setupWindow: BrowserWindow | null = null;
 const bundledRendererInstallations = new Set<string>();
 let currentSetup: DesktopSetup | null = null;
+/** The work email managed setup discovered the current server with; never persisted. */
+const loginHints = createLoginHintStore();
 let currentTargetUrl: string | null = null;
 let monitoringSession: Session | undefined;
 let monitoringTargetUrl: string | undefined;
@@ -574,7 +580,7 @@ function createSetupWindow() {
 
 /** Hide the app while setup is open; do not clear the saved target until a new one opens. */
 function showSetupWindow(error: string | null = null) {
-  setupError = error;
+  setupError = error === null ? null : setupFailureMessage(DESKTOP_EDITION, error);
 
   let win: BrowserWindow;
   if (setupWindow !== null && !setupWindow.isDestroyed()) {
@@ -591,6 +597,7 @@ function showSetupWindow(error: string | null = null) {
 
 /** The only path that forgets the saved server: an explicit organization switch. */
 async function switchOrganization() {
+  loginHints.clear();
   await clearSetup(app.getPath("userData")).catch(() => undefined);
   currentSetup = null;
   showSetupWindow();
@@ -1131,6 +1138,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("desktop.hubSso.cancel", (event) => {
     if (isHubSsoRequest(event)) hubSso.cancel(event.sender);
   });
+  ipcMain.handle("desktop.loginHint.take", (event) => {
+    if (!isHubSsoRequest(event)) return null;
+    const origin = safeOrigin(appWindowTargets.get(mainWindow!) ?? "");
+    return origin === null ? null : loginHints.take(origin);
+  });
   const isManagedComputerRequest = (event: Electron.IpcMainInvokeEvent) =>
     fromMainWindow(event) &&
     event.senderFrame === event.sender.mainFrame &&
@@ -1250,6 +1262,7 @@ app.whenReady().then(async () => {
       defaultLocalUrl: localStack.webUrl(),
       cloudUrl: CORTEXAI_AGENT_HUB_CLOUD_URL,
       showServerEntry: showsServerEntry(DESKTOP_EDITION),
+      orgDiscovery: discoversOrganization(DESKTOP_EDITION),
       saved: currentSetup,
       error: setupError ?? undefined,
     };
@@ -1263,6 +1276,30 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("desktop.setup.save", async (event, payload: unknown) => {
     if (!fromSetupWindow(event)) return { ok: false, error: "Setup is not active." };
+    // Managed builds open only the server Hub discovery names, never one the renderer picks.
+    if (discoversOrganization(DESKTOP_EDITION)) return { ok: false, error: "Setup is not active." };
+    return saveSetup(payload);
+  });
+
+  let discoverInProgress = false;
+  ipcMain.handle("desktop.setup.discover", async (event, email: unknown) => {
+    if (!fromSetupWindow(event) || !discoversOrganization(DESKTOP_EDITION))
+      return { ok: false, error: "Setup is not active." };
+    if (discoverInProgress || setupSaveInProgress || appOpener.busy())
+      return { ok: false, error: "A connection attempt is already running." };
+    discoverInProgress = true;
+    try {
+      return await discoverAndOpen(email, {
+        hubUrl: ORG_DISCOVERY_URL,
+        loginHints,
+        open: (origin) => saveSetup({ mode: "existing", serverUrl: origin }),
+      });
+    } finally {
+      discoverInProgress = false;
+    }
+  });
+
+  async function saveSetup(payload: unknown): Promise<{ ok: boolean; error?: string }> {
     // A launch still loading counts too: the switch must open and check its own server.
     if (setupSaveInProgress || appOpener.busy())
       return { ok: false, error: "A connection attempt is already running." };
@@ -1346,7 +1383,7 @@ app.whenReady().then(async () => {
     } finally {
       setupSaveInProgress = false;
     }
-  });
+  }
 
   ipcMain.handle("desktop.setup.quit", (event) => {
     if (fromSetupWindow(event)) app.quit();

@@ -6,6 +6,8 @@
   const serverUrl = document.getElementById("server-url");
   const panelNew = document.getElementById("panel-new");
   const panelExisting = document.getElementById("panel-existing");
+  const panelEmail = document.getElementById("panel-email");
+  const workEmail = document.getElementById("work-email");
   const stackSection = document.getElementById("stack");
   const stackPhase = document.getElementById("stack-phase");
   const stackOutput = document.getElementById("stack-output");
@@ -47,6 +49,12 @@
   const PULL_SPAN = 0.6;
   const PULL_SCALE_BYTES = 1.2e9;
 
+  /** Managed builds ask for a work email; main finds and opens that organization's server. */
+  let orgDiscovery = false;
+  /** Holds Continue while Hub's Retry-After runs. */
+  let retryHold = null;
+  /** Set when discovery said retrying cannot help, e.g. the app must be updated. */
+  let discoveryStopped = false;
   let defaultLocalUrl = "";
   let cloudUrl = "";
   let stackPolling = false;
@@ -71,7 +79,7 @@
 
   function setBusy(busy) {
     checkButton.disabled = busy;
-    continueButton.disabled = busy;
+    continueButton.disabled = busy || retryHold !== null || discoveryStopped;
   }
 
   /** A save in flight cannot be cancelled, so the choice it commits must not change under it. */
@@ -254,6 +262,47 @@
     await followStack();
   }
 
+  function holdRetry(seconds) {
+    clearTimeout(retryHold);
+    retryHold = setTimeout(() => {
+      retryHold = null;
+      continueButton.disabled = discoveryStopped;
+    }, seconds * 1000);
+    continueButton.disabled = true;
+  }
+
+  function emailError(message) {
+    workEmail.setAttribute("aria-invalid", "true");
+    setStatus(message, "error");
+    workEmail.focus();
+  }
+
+  const UNREACHABLE = "Couldn't reach your organization's Agent Hub. Try again.";
+
+  async function discover() {
+    const email = workEmail.value.trim();
+    if (email === "") {
+      emailError("Enter a valid email address.");
+      return;
+    }
+    workEmail.removeAttribute("aria-invalid");
+    setBusy(true);
+    setStatus("Connecting…");
+    let reply;
+    try {
+      reply = await bridge.discover(email);
+    } catch {
+      reply = { ok: false, error: UNREACHABLE };
+    }
+    // On success main closes this window once the organization's server opens.
+    if (reply.ok) return;
+    if (reply.terminal) discoveryStopped = true;
+    else if (reply.retryAfterSeconds) holdRetry(reply.retryAfterSeconds);
+    setBusy(false);
+    if (reply.field === "email") emailError(reply.error);
+    else setStatus(reply.error ?? UNREACHABLE, "error");
+  }
+
   async function check() {
     const value = serverUrl.value;
     if (value.trim() === "") {
@@ -313,6 +362,10 @@
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (orgDiscovery) {
+      if (!continueButton.disabled) void discover();
+      return;
+    }
     const mode = selectedMode();
     if (mode === "new") void runStack();
     // Cloud is an existing server at a fixed address.
@@ -325,11 +378,21 @@
       wakePoll?.();
       // A follow that ended on an error restarts here instead of leaving the panel frozen;
       // hold the controls until it has rendered the state it is restarting on.
-      if (!stackPolling && selectedMode() === "new") {
+      if (!orgDiscovery && !stackPolling && selectedMode() === "new") {
         setBusy(true);
         void followStack();
       }
     });
+  }
+
+  function showEmailStep(error) {
+    orgDiscovery = true;
+    for (const id of ["subheading", "choices", "panel-new", "panel-existing", "check"])
+      document.getElementById(id).hidden = true;
+    panelEmail.hidden = false;
+    setBusy(false);
+    if (error) setStatus(error, "error");
+    workEmail.focus();
   }
 
   async function init() {
@@ -345,6 +408,10 @@
     try {
       const state = await bridge.state();
       if (state === null) throw new Error("Setup is not active");
+      if (state.orgDiscovery) {
+        showEmailStep(state.error);
+        return;
+      }
       defaultLocalUrl = state.defaultLocalUrl;
       cloudUrl = state.cloudUrl;
       if (cloudUrl) {
