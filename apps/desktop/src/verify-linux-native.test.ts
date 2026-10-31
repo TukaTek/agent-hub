@@ -24,7 +24,9 @@ describe("verify-linux-native (CAAH-144)", () => {
 
   it("fails when app.asar.unpacked has no koffi-linux-x64 koffi.node", () => {
     const dir = fixture();
-    mkdirSync(path.join(dir, "resources/app.asar.unpacked/node_modules/koffi"), { recursive: true });
+    mkdirSync(path.join(dir, "resources/app.asar.unpacked/node_modules/koffi"), {
+      recursive: true,
+    });
     expect(() => findLinuxKoffiNative(dir)).toThrow(/koffi-linux-x64/);
   });
 

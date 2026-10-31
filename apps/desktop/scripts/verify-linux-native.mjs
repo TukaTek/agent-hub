@@ -27,7 +27,9 @@ export function findLinuxKoffiNative(packageRoot) {
       file.split(path.sep).includes("@koromix"),
   );
   if (!match) {
-    throw new Error(`app.asar.unpacked has no @koromix/koffi-linux-x64/**/koffi.node under ${unpacked}`);
+    throw new Error(
+      `app.asar.unpacked has no @koromix/koffi-linux-x64/**/koffi.node under ${unpacked}`,
+    );
   }
   return match;
 }
