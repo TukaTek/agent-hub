@@ -264,6 +264,17 @@ jobs:
         run: >-
           pnpm --filter @cortexai-agent-hub/desktop exec electron-builder
           --linux --x64 --publish never
+      - name: Verify Linux package bundles the Koffi native module
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/verify-linux-native.mjs apps/desktop/out/linux-unpacked
+          appimage="$(find apps/desktop/out -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          extract="$(mktemp -d)"
+          (cd "$extract" && "$OLDPWD/$appimage" --appimage-extract >/dev/null)
+          node apps/desktop/scripts/verify-linux-native.mjs "$extract/squashfs-root"
       - name: Verify Linux update feed is pinned to the official GitHub channel
         if: runner.os == 'Linux'
         shell: bash
