@@ -92,6 +92,30 @@ describe("routine history", () => {
       actor.userId,
     ]);
   });
+  it("lists a webhook-triggered run attributed to the routine, without filtering by trigger", async () => {
+    const { prisma, runs, messages } = fixture();
+    runs.mockResolvedValue([
+      {
+        id: "webhook-run",
+        botId: "bot-1",
+        threadId: "thread-1",
+        thread: { groupId: null },
+        status: "completed",
+        error: null,
+        createdAt: at,
+        startedAt: at,
+        completedAt: at,
+      },
+    ]);
+    messages.mockResolvedValue([{ id: "reply-1", runId: "webhook-run", threadId: "thread-1" }]);
+    const history = await listRoutineRuns(prisma, actor, "routine-1");
+    expect(history.runs.map((row) => [row.id, row.messageId])).toEqual([
+      ["webhook-run", "reply-1"],
+    ]);
+    const where = runs.mock.calls[0]?.[0].where;
+    expect(where).toMatchObject({ routineId: "routine-1" });
+    expect(where).not.toHaveProperty("trigger");
+  });
   it("bounds stored errors like thread failures", async () => {
     const { prisma, runs } = fixture();
     const error = "x".repeat(400);

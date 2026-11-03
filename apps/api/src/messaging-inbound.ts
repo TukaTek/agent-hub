@@ -208,6 +208,7 @@ export async function wakeMessageRoutines(
     },
     select: {
       id: true,
+      createdAt: true,
       name: true,
       prompt: true,
       modelProvider: true,

@@ -15,6 +15,7 @@ import {
   claimSteering,
   clearThread,
   completedRunBlocks,
+  continuationRoutineId,
   createPendingSteeringRun,
   discardAnsweredSteering,
   finalizeComputerControlRelease,
@@ -869,6 +870,7 @@ describe("pauseRunForInput", () => {
                     id: "steering-1",
                     userId: "user-1",
                     originTrigger: "webhook",
+                    routineId: "routine-1",
                     message: {
                       id: "webhook-message",
                       seq: 3,
@@ -928,6 +930,7 @@ describe("pauseRunForInput", () => {
           data: expect.objectContaining({
             status: "queued",
             trigger: "webhook",
+            routineId: "routine-1",
             sourceMessageId: "webhook-message",
           }),
         });
@@ -2993,6 +2996,7 @@ describe("sendUserMessage", () => {
       blocks: [{ kind: "text", text: "ping" }],
       prompt: "ping",
       trigger: "webhook",
+      routineId: "routine-1",
       modelPin: {
         modelProvider: "openai-compatible",
         modelId: "private-model",
@@ -3004,6 +3008,7 @@ describe("sendUserMessage", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           trigger: "webhook",
+          routineId: "routine-1",
           modelProvider: "openai-compatible",
           modelId: "private-model",
           thinkingLevel: "low",
@@ -3106,6 +3111,7 @@ describe("sendUserMessage", () => {
       blocks: [{ kind: "text", text: "ping" }],
       prompt: "ping",
       trigger: "webhook",
+      routineId: "routine-1",
       modelPin: {
         modelProvider: "openai-compatible",
         modelId: "private-model",
@@ -3121,6 +3127,7 @@ describe("sendUserMessage", () => {
         userId: "user-1",
         runId: null,
         originTrigger: "webhook",
+        routineId: "routine-1",
         modelProvider: "openai-compatible",
         modelId: "private-model",
         thinkingLevel: "low",
@@ -4250,4 +4257,24 @@ it("checks cross-space peer permission inside the message transaction before cre
   ).rejects.toBeInstanceOf(CrossSpaceCommunicationBlockedError);
   expect(tx.task.create).not.toHaveBeenCalled();
   expect(tx.run.create).not.toHaveBeenCalled();
+});
+
+describe("continuationRoutineId", () => {
+  it("keeps the routine when every held delivery came from it", () => {
+    expect(continuationRoutineId([{ routineId: "r1" }, { routineId: "r1" }])).toBe("r1");
+  });
+  it("drops attribution for a batch that mixes routines", () => {
+    expect(continuationRoutineId([{ routineId: "r1" }, { routineId: "r2" }])).toBeNull();
+  });
+  it.each([
+    [[{ routineId: null }, { routineId: "r1" }]],
+    [[{ routineId: "r1" }, { routineId: null }]],
+    [[{ routineId: "r1" }, {}]],
+  ])("drops attribution when attributed and unattributed deliveries mix (%j)", (batch) => {
+    expect(continuationRoutineId(batch)).toBeNull();
+  });
+  it("is null for an empty or unattributed batch", () => {
+    expect(continuationRoutineId([])).toBeNull();
+    expect(continuationRoutineId([{ routineId: null }])).toBeNull();
+  });
 });

@@ -205,6 +205,7 @@ export function mountGithubWebhookRoute(
       },
       select: {
         id: true,
+        createdAt: true,
         name: true,
         prompt: true,
         modelProvider: true,

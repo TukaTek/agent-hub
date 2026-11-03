@@ -832,6 +832,9 @@ model SteeringMessage {
   run       Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
   /// Set when a pending row must resume as this trigger so its reply can be delivered.
   originTrigger String?
+  /// Routine behind a held webhook delivery, copied to the continuation run.
+  routineId     String?
+  routine       Routine? @relation(fields: [routineId], references: [id], onDelete: SetNull)
   /// Model agreed for an inbound delivery that had to wait. Empty follows the bot.
   modelProvider String?
   modelId       String?
@@ -948,6 +951,7 @@ model Routine {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   runs           Run[]
+  steeringMessages SteeringMessage[]
 
   @@index([active, nextRunAt])
   @@index([spaceId, botId])
