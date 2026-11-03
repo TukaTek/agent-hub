@@ -15,6 +15,7 @@ export type WebhookEvents = {
     threadId: string;
     botId: string;
     userId: string;
+    routineId?: string;
     blocks: Array<{ kind: "text"; text: string }>;
     prompt: string;
     trigger: "webhook";
@@ -265,6 +266,7 @@ export async function deliverWebhookEvent(
   input: {
     prompt: string;
     routines: Array<{
+      id?: string;
       name: string;
       prompt: string;
       modelProvider: string | null;
@@ -295,6 +297,9 @@ export async function deliverWebhookEvent(
     ? inboundDeliveryClientNonce(input.source, target.bot.id, input.idempotencyKey)
     : undefined;
   const pin = inboundRoutineModelPin(input.routines);
+  // One run serves every matching routine, so it can only be attributed to one. Routines are
+  // ordered most recently updated first; with several matches the first one gets the run.
+  const routineId = input.routines[0]?.id;
 
   const sent = await deps.events.sendUserMessage({
     spaceId: target.bot.spaceId,
@@ -304,6 +309,7 @@ export async function deliverWebhookEvent(
     blocks: [{ kind: "text", text: promptText }],
     prompt: promptText,
     trigger: "webhook",
+    ...(routineId ? { routineId } : {}),
     clientNonce,
     ...(input.allowParallelRun ? { allowParallelRun: true } : {}),
     ...(pin.modelProvider && pin.modelId

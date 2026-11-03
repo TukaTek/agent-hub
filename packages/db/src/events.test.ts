@@ -869,6 +869,7 @@ describe("pauseRunForInput", () => {
                     id: "steering-1",
                     userId: "user-1",
                     originTrigger: "webhook",
+                    routineId: "routine-1",
                     message: {
                       id: "webhook-message",
                       seq: 3,
@@ -928,6 +929,7 @@ describe("pauseRunForInput", () => {
           data: expect.objectContaining({
             status: "queued",
             trigger: "webhook",
+            routineId: "routine-1",
             sourceMessageId: "webhook-message",
           }),
         });
@@ -2993,6 +2995,7 @@ describe("sendUserMessage", () => {
       blocks: [{ kind: "text", text: "ping" }],
       prompt: "ping",
       trigger: "webhook",
+      routineId: "routine-1",
       modelPin: {
         modelProvider: "openai-compatible",
         modelId: "private-model",
@@ -3004,6 +3007,7 @@ describe("sendUserMessage", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           trigger: "webhook",
+          routineId: "routine-1",
           modelProvider: "openai-compatible",
           modelId: "private-model",
           thinkingLevel: "low",
@@ -3106,6 +3110,7 @@ describe("sendUserMessage", () => {
       blocks: [{ kind: "text", text: "ping" }],
       prompt: "ping",
       trigger: "webhook",
+      routineId: "routine-1",
       modelPin: {
         modelProvider: "openai-compatible",
         modelId: "private-model",
@@ -3121,6 +3126,7 @@ describe("sendUserMessage", () => {
         userId: "user-1",
         runId: null,
         originTrigger: "webhook",
+        routineId: "routine-1",
         modelProvider: "openai-compatible",
         modelId: "private-model",
         thinkingLevel: "low",

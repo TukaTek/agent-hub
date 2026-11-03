@@ -334,6 +334,7 @@ describe("inbound webhook HTTP route", () => {
     expect(res.status).toBe(200);
     expect(deps.sendUserMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        routineId: "routine-1",
         modelPin: {
           modelProvider: "openai-compatible",
           modelId: "private-model",
@@ -375,6 +376,8 @@ describe("inbound webhook HTTP route", () => {
     });
     expect(res.status).toBe(200);
     expect(deps.sendUserMessage.mock.calls[0]?.[0]).not.toHaveProperty("modelPin");
+    // One run serves both routines; it is attributed to the first (most recently updated).
+    expect(deps.sendUserMessage.mock.calls[0]?.[0]).toMatchObject({ routineId: "routine-1" });
   });
 
   it("accepts a plain text payload as untrusted delivery data", async () => {
