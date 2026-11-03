@@ -260,13 +260,35 @@ export function inboundDeliveryClientNonce(
   return `${source}:${botId}:${createHash("sha256").update(idempotencyKey).digest("base64url")}`;
 }
 
+/**
+ * One run serves every matching routine, so its run history entry can belong to only one.
+ * The oldest routine (createdAt, then id) wins, so editing a routine never moves attribution.
+ * The other matching routines do not list the run. Null when no routine matched.
+ */
+export function attributedRoutineId(
+  routines: ReadonlyArray<{ id: string; createdAt: Date }>,
+): string | null {
+  let first: { id: string; createdAt: Date } | null = null;
+  for (const routine of routines) {
+    if (
+      !first ||
+      routine.createdAt.getTime() < first.createdAt.getTime() ||
+      (routine.createdAt.getTime() === first.createdAt.getTime() && routine.id < first.id)
+    ) {
+      first = routine;
+    }
+  }
+  return first?.id ?? null;
+}
+
 export async function deliverWebhookEvent(
   deps: Pick<WebhookDeps, "events" | "jobs">,
   target: InboundTarget,
   input: {
     prompt: string;
     routines: Array<{
-      id?: string;
+      id: string;
+      createdAt: Date;
       name: string;
       prompt: string;
       modelProvider: string | null;
@@ -297,9 +319,7 @@ export async function deliverWebhookEvent(
     ? inboundDeliveryClientNonce(input.source, target.bot.id, input.idempotencyKey)
     : undefined;
   const pin = inboundRoutineModelPin(input.routines);
-  // One run serves every matching routine, so it can only be attributed to one. Routines are
-  // ordered most recently updated first; with several matches the first one gets the run.
-  const routineId = input.routines[0]?.id;
+  const routineId = attributedRoutineId(input.routines);
 
   const sent = await deps.events.sendUserMessage({
     spaceId: target.bot.spaceId,

@@ -15,6 +15,7 @@ import {
   claimSteering,
   clearThread,
   completedRunBlocks,
+  continuationRoutineId,
   createPendingSteeringRun,
   discardAnsweredSteering,
   finalizeComputerControlRelease,
@@ -4256,4 +4257,24 @@ it("checks cross-space peer permission inside the message transaction before cre
   ).rejects.toBeInstanceOf(CrossSpaceCommunicationBlockedError);
   expect(tx.task.create).not.toHaveBeenCalled();
   expect(tx.run.create).not.toHaveBeenCalled();
+});
+
+describe("continuationRoutineId", () => {
+  it("keeps the routine when every held delivery came from it", () => {
+    expect(continuationRoutineId([{ routineId: "r1" }, { routineId: "r1" }])).toBe("r1");
+  });
+  it("drops attribution for a batch that mixes routines", () => {
+    expect(continuationRoutineId([{ routineId: "r1" }, { routineId: "r2" }])).toBeNull();
+  });
+  it.each([
+    [[{ routineId: null }, { routineId: "r1" }]],
+    [[{ routineId: "r1" }, { routineId: null }]],
+    [[{ routineId: "r1" }, {}]],
+  ])("drops attribution when attributed and unattributed deliveries mix (%j)", (batch) => {
+    expect(continuationRoutineId(batch)).toBeNull();
+  });
+  it("is null for an empty or unattributed batch", () => {
+    expect(continuationRoutineId([])).toBeNull();
+    expect(continuationRoutineId([{ routineId: null }])).toBeNull();
+  });
 });

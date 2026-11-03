@@ -1816,8 +1816,12 @@ export async function createPendingSteeringRun(
   return run.id;
 }
 
-/** A continuation belongs to a routine only when every batched delivery came from that routine. */
-function continuationRoutineId(batch: ReadonlyArray<{ routineId?: string | null }>) {
+/**
+ * A continuation belongs to a routine only when every batched delivery came from that routine.
+ * A batch that mixes routines (or mixes attributed and unattributed deliveries) is left
+ * unattributed and so appears in no routine's run history.
+ */
+export function continuationRoutineId(batch: ReadonlyArray<{ routineId?: string | null }>) {
   const first = batch[0]?.routineId;
   if (!first) return null;
   return batch.every((item) => item.routineId === first) ? first : null;

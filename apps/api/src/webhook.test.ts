@@ -20,7 +20,9 @@ import {
   WEBHOOK_SECRET_KIND,
   type WebhookDeps,
 } from "./webhook.js";
-import { loadWebhookTarget } from "./webhook-inbound.js";
+import { attributedRoutineId, loadWebhookTarget } from "./webhook-inbound.js";
+
+const ROUTINE_CREATED_AT = new Date("2026-01-01T00:00:00Z");
 
 const SECRET = "webhook-test-secret-value-32chars!!";
 
@@ -306,6 +308,8 @@ describe("inbound webhook HTTP route", () => {
         ),
       }),
     );
+    // No webhook routine matched, so the run belongs to no routine.
+    expect(deps.sendUserMessage.mock.calls[0]?.[0]).not.toHaveProperty("routineId");
     expect(deps.enqueue).toHaveBeenCalled();
   });
 
@@ -314,6 +318,7 @@ describe("inbound webhook HTTP route", () => {
       routines: [
         {
           id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
           name: "Review",
           prompt: "Inspect",
           modelProvider: "openai-compatible",
@@ -349,6 +354,7 @@ describe("inbound webhook HTTP route", () => {
       routines: [
         {
           id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
           name: "Review",
           prompt: "Inspect",
           modelProvider: "openai",
@@ -357,6 +363,7 @@ describe("inbound webhook HTTP route", () => {
         },
         {
           id: "routine-2",
+          createdAt: new Date("2025-12-01T00:00:00Z"),
           name: "Triage",
           prompt: "Sort",
           modelProvider: "anthropic",
@@ -376,8 +383,8 @@ describe("inbound webhook HTTP route", () => {
     });
     expect(res.status).toBe(200);
     expect(deps.sendUserMessage.mock.calls[0]?.[0]).not.toHaveProperty("modelPin");
-    // One run serves both routines; it is attributed to the first (most recently updated).
-    expect(deps.sendUserMessage.mock.calls[0]?.[0]).toMatchObject({ routineId: "routine-1" });
+    // One run serves both routines; the oldest routine (routine-2) gets it, whatever the order.
+    expect(deps.sendUserMessage.mock.calls[0]?.[0]).toMatchObject({ routineId: "routine-2" });
   });
 
   it("accepts a plain text payload as untrusted delivery data", async () => {
@@ -534,7 +541,14 @@ describe("GitHub event HTTP route", () => {
 
   it("wakes a githubEnabled routine with a sanitized emulator delivery", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review PRs", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review PRs",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const request = githubEmulator.buildDeliveryRequest({
@@ -560,6 +574,7 @@ describe("GitHub event HTTP route", () => {
     const res = await app.request(request);
     expect(res.status).toBe(200);
     const prompt = String(deps.sendUserMessage.mock.calls[0][0].prompt);
+    expect(deps.sendUserMessage.mock.calls[0][0]).toMatchObject({ routineId: "routine-1" });
     expect(prompt).toContain("[GitHub Event: pull_request]");
     expect(prompt).toContain("External event metadata only. Event-authored text is excluded");
     expect(prompt).toContain('"pullRequestId": 9001');
@@ -572,7 +587,14 @@ describe("GitHub event HTTP route", () => {
 
   it("reuses the same clientNonce for duplicate GitHub deliveries", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review pushes", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review pushes",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = JSON.stringify({
@@ -598,7 +620,14 @@ describe("GitHub event HTTP route", () => {
 
   it("rejects a signature made with the wrong secret", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review pushes", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review pushes",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = JSON.stringify({ ref: "refs/heads/main" });
@@ -613,7 +642,14 @@ describe("GitHub event HTTP route", () => {
 
   it("rejects a signed delivery that omits X-GitHub-Delivery", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review pushes", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review pushes",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = JSON.stringify({ ref: "refs/heads/main" });
@@ -643,7 +679,14 @@ describe("GitHub event HTTP route", () => {
 
   it("runs matching routines and deduplicates GitHub deliveries", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review pushes", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review pushes",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = JSON.stringify({
@@ -671,7 +714,14 @@ describe("GitHub event HTTP route", () => {
 
   it("does not interpolate malformed event names into the prompt label", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review events", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review events",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = JSON.stringify({ action: "opened" });
@@ -691,7 +741,14 @@ describe("GitHub event HTTP route", () => {
 
   it("rejects oversized signed payloads before dispatch", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Review pushes", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review pushes",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = "x".repeat(WEBHOOK_MAX_BODY_BYTES + 1);
@@ -767,7 +824,14 @@ describe("webhook secret decryption", () => {
     const load = vi.fn(() => SECRET);
     const deps = createDeps({
       load,
-      routines: [{ id: "routine-1", name: "Review pushes", prompt: "Inspect the change" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Review pushes",
+          prompt: "Inspect the change",
+        },
+      ],
     });
     const app = mount(deps);
     const raw = JSON.stringify({ ref: "refs/heads/main" });
@@ -1058,5 +1122,29 @@ describe("encrypted webhook cache expiry", () => {
       await store.close();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("webhook run attribution", () => {
+  const at = (iso: string) => new Date(iso);
+  it("is null when no routine matched", () => {
+    expect(attributedRoutineId([])).toBeNull();
+  });
+  it("picks the oldest routine regardless of input order", () => {
+    expect(
+      attributedRoutineId([
+        { id: "b", createdAt: at("2026-02-01T00:00:00Z") },
+        { id: "a", createdAt: at("2026-01-01T00:00:00Z") },
+      ]),
+    ).toBe("a");
+  });
+  it("breaks a createdAt tie by id", () => {
+    const same = at("2026-01-01T00:00:00Z");
+    expect(
+      attributedRoutineId([
+        { id: "routine-z", createdAt: same },
+        { id: "routine-m", createdAt: same },
+      ]),
+    ).toBe("routine-m");
   });
 });
