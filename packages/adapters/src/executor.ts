@@ -3477,7 +3477,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         where: {
           OR: [
             { retryOfRunId: failed.id },
-            { routineId: failed.routineId, createdAt: { gt: failed.createdAt } },
+            {
+              routineId: failed.routineId,
+              trigger: "routine",
+              createdAt: { gt: failed.createdAt },
+            },
           ],
         },
         select: { id: true },
@@ -3506,7 +3510,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         },
       });
       const laterRun = await deps.prisma.run.findFirst({
-        where: { routineId: failed.routineId, createdAt: { gt: failed.createdAt } },
+        where: {
+          routineId: failed.routineId,
+          trigger: "routine",
+          createdAt: { gt: failed.createdAt },
+        },
         select: { id: true },
       });
       if (laterRun) return;
@@ -3549,7 +3557,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
           });
           if (claimed.count !== 1) return null;
           const laterRun = await tx.run.findFirst({
-            where: { routineId: failed.routineId!, createdAt: { gt: failed.createdAt } },
+            where: {
+              routineId: failed.routineId!,
+              trigger: "routine",
+              createdAt: { gt: failed.createdAt },
+            },
             select: { id: true },
           });
           if (laterRun) return null;
@@ -3609,7 +3621,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
       }
       if (!retry) {
         const laterRun = await deps.prisma.run.findFirst({
-          where: { routineId: failed.routineId, createdAt: { gt: failed.createdAt } },
+          where: {
+            routineId: failed.routineId,
+            trigger: "routine",
+            createdAt: { gt: failed.createdAt },
+          },
           select: { id: true },
         });
         if (laterRun) return;

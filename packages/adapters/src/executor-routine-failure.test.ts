@@ -306,6 +306,8 @@ interface RetryScenario {
   nextRunAt?: Date | null;
   laterRun?: boolean;
   laterRunBeforeCreate?: boolean;
+  /** Only a later webhook/messaging run of the same routine exists. */
+  laterWebhookRun?: boolean;
   duplicate?: boolean;
   enqueueFails?: boolean;
   routineNotify?: boolean;
@@ -315,6 +317,13 @@ interface RetryScenario {
   archivedBeforeCreate?: boolean;
   invalidDestination?: boolean;
   retryStartedBeforeCleanup?: boolean;
+}
+
+type LaterRunWhere = { trigger?: string; OR?: Array<{ trigger?: string }> };
+/** A later webhook run matches a lookup unless it only counts scheduled (routine) runs. */
+function webhookRunMatches(scenario: RetryScenario, where?: LaterRunWhere) {
+  if (!scenario.laterWebhookRun) return false;
+  return where?.trigger !== "routine" && !where?.OR?.some((clause) => clause.trigger === "routine");
 }
 
 function retryHarness(scenario: RetryScenario = {}) {
@@ -352,7 +361,11 @@ function retryHarness(scenario: RetryScenario = {}) {
       deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     run: {
-      findFirst: vi.fn(async () => (scenario.laterRunBeforeCreate ? { id: "run-later" } : null)),
+      findFirst: vi.fn(async (args?: { where?: LaterRunWhere }) =>
+        scenario.laterRunBeforeCreate || webhookRunMatches(scenario, args?.where)
+          ? { id: "run-later" }
+          : null,
+      ),
       deleteMany: vi.fn(async () => ({ count: scenario.retryStartedBeforeCleanup ? 0 : 1 })),
       create: vi.fn(async () => {
         if (scenario.duplicate) {
@@ -366,13 +379,15 @@ function retryHarness(scenario: RetryScenario = {}) {
     user: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => failed),
-      findFirst: vi.fn(async ({ select }: { select: { id?: boolean } }) =>
-        select.id
-          ? scenario.laterRun ||
-            (scenario.laterRunBeforeCreate && prisma.$transaction.mock.calls.length > 0)
-            ? { id: "run-later" }
-            : null
-          : { bot: { notifyOnFinish: true }, thread: { groupId: null } },
+      findFirst: vi.fn(
+        async ({ select, where }: { select: { id?: boolean }; where?: LaterRunWhere }) =>
+          select.id
+            ? scenario.laterRun ||
+              webhookRunMatches(scenario, where) ||
+              (scenario.laterRunBeforeCreate && prisma.$transaction.mock.calls.length > 0)
+              ? { id: "run-later" }
+              : null
+            : { bot: { notifyOnFinish: true }, thread: { groupId: null } },
       ),
     },
     routine: {
@@ -490,6 +505,24 @@ describe("running a routine retry", () => {
     },
   );
 
+  it("still retries a failed scheduled run when a later webhook run of the routine exists", async () => {
+    const { executor, prisma, tx, enqueue } = retryHarness({ laterWebhookRun: true });
+
+    await executor.retryRoutineRun("run-1");
+
+    expect(tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ trigger: "routine", retryOfRunId: "run-1" }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalled();
+    for (const [args] of [...prisma.run.findFirst.mock.calls, ...tx.run.findFirst.mock.calls]) {
+      if ((args as { select?: { id?: boolean } })?.select?.id) {
+        expect((args as { where: LaterRunWhere }).where.trigger).toBe("routine");
+      }
+    }
+  });
+
   it("respects the routine's notification preference when a paused retry is abandoned", async () => {
     const { executor, send } = retryHarness({ active: false, routineNotify: false });
 
@@ -579,6 +612,7 @@ describe("running a routine retry", () => {
     expect(tx.run.findFirst).toHaveBeenCalledWith({
       where: {
         routineId: "routine-1",
+        trigger: "routine",
         createdAt: { gt: new Date(NOW.getTime() - 12 * MINUTE) },
       },
       select: { id: true },
@@ -738,12 +772,28 @@ describe("exhausted routine retry notification", () => {
       where: {
         OR: [
           { retryOfRunId: "run-1" },
-          { routineId: "routine-1", createdAt: { gt: new Date(NOW.getTime() - 12 * MINUTE) } },
+          {
+            routineId: "routine-1",
+            trigger: "routine",
+            createdAt: { gt: new Date(NOW.getTime() - 12 * MINUTE) },
+          },
         ],
       },
       select: { id: true },
     });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("still alerts when only a later webhook run of the routine exists", async () => {
+    const { executor, send } = retryHarness({ enqueueFails: true, laterWebhookRun: true });
+
+    await expect(executor.retryRoutineRun("run-1")).rejects.toThrow("queue down");
+    await executor.notifyRoutineRetryAttemptsExhausted("run-1");
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: "failure" }),
+      expect.anything(),
+    );
   });
 
   it("does not notify when a later run of the routine exists", async () => {
