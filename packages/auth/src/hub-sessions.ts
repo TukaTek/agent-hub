@@ -30,6 +30,12 @@ export interface HubSessionAuthorizerConfig {
 /** The parts of the shared Hub policy that continuing sessions and work consult. */
 export type HubSessionPolicy = Pick<HubPolicy, "sessionAllowed" | "workAllowed">;
 
+/** One refresh per grant across processes; outlasts a refresh's three 8 s Hub requests. */
+const REFRESH_LEASE_MS = 30_000;
+/** How long a request waits for another request's refresh before answering unavailable. */
+const REFRESH_WAIT_MS = 10_000;
+const REFRESH_POLL_MS = 100;
+
 export function createHubSessionAuthorizer(
   prisma: PrismaClient,
   config: HubAuthConfig,
@@ -105,7 +111,40 @@ export function createHubSessionAuthorizer(
       verifyCache.set(tokenHash, tokenExpiresAt);
       return true;
     }
-    return refresh(sessionId, grantSession, identity);
+    let pending = refreshing.get(sessionId);
+    if (!pending) {
+      pending = refresh(sessionId, grantSession, identity).finally(() =>
+        refreshing.delete(sessionId),
+      );
+      refreshing.set(sessionId, pending);
+    }
+    return pending;
+  }
+
+  /** Requests in this process share one refresh per session. */
+  const refreshing = new Map<string, Promise<Outcome>>();
+
+  /** Lets the next request refresh at once after a failed attempt. */
+  const release = (sessionId: string, used: string) =>
+    prisma.hubSession
+      .updateMany({ where: { sessionId, refreshToken: used }, data: { refreshLeaseUntil: null } })
+      .catch(() => undefined);
+
+  /** Another process holds the lease: wait for its grant instead of spending the same token. */
+  async function awaitRefresh(sessionId: string, used: string): Promise<Outcome> {
+    const deadline = Date.now() + REFRESH_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, REFRESH_POLL_MS));
+      const row = await prisma.hubSession.findUnique({ where: { sessionId } });
+      if (
+        !row ||
+        row.refreshToken !== used ||
+        !row.refreshLeaseUntil ||
+        row.refreshLeaseUntil.getTime() <= Date.now()
+      )
+        return "stale";
+    }
+    throw new HubSessionUnavailableError();
   }
 
   async function refresh(
@@ -114,6 +153,16 @@ export function createHubSessionAuthorizer(
     identity: { subject: string; tenant: string },
   ): Promise<Outcome> {
     const used = grantSession.refreshToken;
+    const now = new Date();
+    const claimed = await prisma.hubSession.updateMany({
+      where: {
+        sessionId,
+        refreshToken: used,
+        OR: [{ refreshLeaseUntil: null }, { refreshLeaseUntil: { lt: now } }],
+      },
+      data: { refreshLeaseUntil: new Date(now.getTime() + REFRESH_LEASE_MS) },
+    });
+    if (!claimed.count) return awaitRefresh(sessionId, used);
     let refreshToken: string;
     try {
       refreshToken = await decrypt(used);
@@ -126,7 +175,9 @@ export function createHubSessionAuthorizer(
       if (grant.subject !== identity.subject || grant.tenant !== identity.tenant)
         throw new HubRejectedError("Hub identity changed");
     } catch (error) {
-      return failed(error, sessionId, used);
+      if (isHubRejection(error)) return end(sessionId, used);
+      await release(sessionId, used);
+      throw new HubSessionUnavailableError({ cause: error });
     }
     const stored = await prisma.hubSession.updateMany({
       where: { sessionId, refreshToken: used },
@@ -134,6 +185,7 @@ export function createHubSessionAuthorizer(
         refreshToken: await encrypt(grant.refreshToken),
         accessToken: await encrypt(grant.accessToken),
         accessUntil: grant.accessUntil,
+        refreshLeaseUntil: null,
       },
     });
     if (!stored.count) {

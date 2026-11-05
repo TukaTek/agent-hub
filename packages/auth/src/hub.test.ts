@@ -583,8 +583,7 @@ describe("Hub authentication through real auth endpoints", () => {
     expect(await f.auth.api.getSession({ headers })).toBeNull();
   });
 
-  // CAAH-108 interim: refresh runs without the row lock until the lease lands.
-  it.fails("rotates encrypted refresh once for concurrent expired-session checks", async () => {
+  it("rotates encrypted refresh once for concurrent expired-session checks", async () => {
     const f = fixture();
     const { headers } = await f.login();
     [...f.grants.values()][0].accessUntil = new Date(0);
@@ -2679,5 +2678,155 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     expect(await f.auth.api.getSession({ headers })).not.toBeNull();
     expect(f.data.session).toHaveLength(1);
     expect(f.client.verify).toHaveBeenLastCalledWith("test-fake-access-2", expect.anything());
+  });
+
+  const expire = (f: ReturnType<typeof fixture>) => {
+    [...f.grants.values()][0].accessUntil = new Date(0);
+  };
+
+  it.each(outages)(
+    "answers 503, keeps the session and frees the lease when refresh fails with %s",
+    async (_n, error) => {
+      const f = fixture();
+      const { headers } = await f.login();
+      expire(f);
+      f.client.refresh.mockRejectedValueOnce(error());
+      expect((await getSessionStatus(f, headers)).status).toBe(503);
+      expect(f.data.session).toHaveLength(1);
+      expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+      // Hub returns: the next request refreshes with the same stored token.
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+      expect(f.client.refresh).toHaveBeenLastCalledWith("refresh-secret-1");
+    },
+  );
+
+  it("ends the session once Hub confirms a rotation lost to a timeout", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    f.client.refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    expect((await getSessionStatus(f, headers)).status).toBe(503);
+    expect(f.data.session).toHaveLength(1);
+    f.client.refresh.mockRejectedValueOnce(new HubRequestError(400, "invalid_grant"));
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("refreshes once for concurrent requests and never refreshes outside the lease", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    let finish!: () => void;
+    f.client.refresh.mockImplementationOnce(async () => {
+      expect(f.openTransactions()).toBe(0);
+      expect([...f.grants.values()][0].refreshLeaseUntil).toBeInstanceOf(Date);
+      await new Promise<void>((resolve) => (finish = resolve));
+      return {
+        subject: "subject-1",
+        tenant: config.tenantId,
+        accessToken: "test-fake-access-2",
+        refreshToken: "test-fake-refresh-2",
+        accessUntil: new Date(Date.now() + 900_000),
+      };
+    });
+    const both = Promise.all([
+      f.auth.api.getSession({ headers }),
+      f.auth.api.getSession({ headers }),
+    ]);
+    await vi.waitFor(() => expect(f.client.refresh).toHaveBeenCalledOnce());
+    finish();
+    expect((await both).every(Boolean)).toBe(true);
+    expect(f.client.refresh).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+  });
+
+  it("waits for another process's refresh instead of spending the same token", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    const grant = [...f.grants.values()][0];
+    grant.accessUntil = new Date(0);
+    grant.refreshLeaseUntil = new Date(Date.now() + 30_000); // held elsewhere
+    setTimeout(async () => {
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
+      grant.accessUntil = new Date(Date.now() + 900_000);
+      grant.refreshLeaseUntil = null;
+    }, 150);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.refresh).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 when another process holds the lease too long, keeping the session", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    const grant = [...f.grants.values()][0];
+    grant.accessUntil = new Date(0);
+    grant.refreshLeaseUntil = new Date(Date.now() + 30_000);
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    const pending = getSessionStatus(f, headers);
+    // Session lookup does real async crypto before the first poll is scheduled.
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+    await vi.advanceTimersByTimeAsync(10_200);
+    expect((await pending).status).toBe(503);
+    expect(f.client.refresh).not.toHaveBeenCalled();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("does not let a refusal for a spent token delete a grant another process stored", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    const grant = [...f.grants.values()][0];
+    f.client.refresh.mockImplementationOnce(async () => {
+      // Another process won a lease that expired under us and rotated first.
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
+      grant.accessUntil = new Date(Date.now() + 900_000);
+      throw new HubRequestError(400, "invalid_grant");
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("revokes a grant it could not store because the session changed meanwhile", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    const grant = [...f.grants.values()][0];
+    f.client.refresh.mockImplementationOnce(async () => {
+      // Another process finished its own refresh first (its write also clears the lease).
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-3",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-3",
+      });
+      grant.accessUntil = new Date(Date.now() + 900_000);
+      grant.refreshLeaseUntil = null;
+      return {
+        subject: "subject-1",
+        tenant: config.tenantId,
+        accessToken: "test-fake-access-orphan",
+        refreshToken: "test-fake-refresh-orphan",
+        accessUntil: new Date(Date.now() + 900_000),
+      };
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-orphan");
+    expect(f.data.session).toHaveLength(1);
   });
 });
