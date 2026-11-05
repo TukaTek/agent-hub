@@ -86,6 +86,7 @@ import {
   createAuth,
   createUserWorkAuthorizer,
   isBlockedAuthPath,
+  isHubSessionUnavailable,
   loopbackTwinOrigins,
 } from "@cortexai-agent-hub/auth";
 import type { Actor } from "@cortexai-agent-hub/contracts";
@@ -125,6 +126,7 @@ import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { mountAppAssociation, nativePasskeys } from "./app-association.js";
 import { storeInboundAttachment } from "./artifacts.js";
 import { authCapabilities } from "./auth-capabilities.js";
@@ -757,7 +759,13 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     monitoringRoutes(
       env.browserMonitoring,
       fetch,
-      async (request) => (await auth.api.getSession({ headers: request.headers }))?.user.id,
+      async (request) =>
+        (
+          await auth.api.getSession({ headers: request.headers }).catch((error: unknown) => {
+            if (isHubSessionUnavailable(error)) return null;
+            throw error;
+          })
+        )?.user.id,
     ),
   );
   app.route("/", cspReportRoutes(requestClientIp));
@@ -792,7 +800,13 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   });
   const requestSession = async (request: Request) => {
     // The bearer plugin turns a signed `Authorization: Bearer` into the session cookie.
-    const session = await auth.api.getSession({ headers: request.headers });
+    let session: Awaited<ReturnType<typeof auth.api.getSession>>;
+    try {
+      session = await auth.api.getSession({ headers: request.headers });
+    } catch (error) {
+      if (isHubSessionUnavailable(error)) return "unavailable" as const;
+      throw error;
+    }
     if (!session?.user) return null;
     const actor = await actorFromMembership(
       requireMembership(
@@ -803,7 +817,12 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     );
     return actor && { actor, sessionId: session.session.id };
   };
-  const sessionActor = async (request: Request) => (await requestSession(request))?.actor ?? null;
+  const sessionActor = async (request: Request) => {
+    const session = await requestSession(request);
+    // Hub could not confirm the session: not a sign-out.
+    if (session === "unavailable") throw new HTTPException(503);
+    return session?.actor ?? null;
+  };
   app.use(
     "/rpc/*",
     clientBuildMiddleware({
@@ -812,7 +831,9 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     }),
   );
   app.use("/rpc/*", async (c, next) => {
-    const session = await requestSession(c.req.raw);
+    const requested = await requestSession(c.req.raw);
+    const sessionUnavailable = requested === "unavailable";
+    const session = sessionUnavailable ? null : requested;
     const actor = session?.actor ?? null;
     if (actor) {
       enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
@@ -831,6 +852,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
       prefix: "/rpc",
       context: {
         actor,
+        sessionUnavailable,
         sessionId: session?.sessionId,
         signal: requestSignal,
         // Ending a session or leaving its space also ends an active stream.

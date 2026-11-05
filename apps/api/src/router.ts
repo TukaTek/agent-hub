@@ -919,9 +919,17 @@ async function asMemberOf<T>(
   return runAsTenant({ spaceId, userId: actor.userId }, fn);
 }
 
+/** The request's actor, or 503 while Hub cannot confirm a kept session, else 401. */
+function requireActor(context: { actor: Actor | null; sessionUnavailable?: boolean }): Actor {
+  if (context.actor) return context.actor;
+  throw new ORPCError(context.sessionUnavailable ? "SERVICE_UNAVAILABLE" : "UNAUTHORIZED");
+}
+
 export function createRouter(deps: RouterDeps) {
   const os = implement(appContract).$context<{
     actor: Actor | null;
+    /** Hub could not confirm the session; it is kept, so answer 503 rather than 401. */
+    sessionUnavailable?: boolean;
     /** The signed-in session, so a push token ends with the session that registered it. */
     sessionId?: string;
     signal?: AbortSignal;
@@ -1058,8 +1066,7 @@ export function createRouter(deps: RouterDeps) {
 
   const authed = os
     .use(async ({ context, next }) => {
-      const actor = context.actor;
-      if (!actor) throw new ORPCError("UNAUTHORIZED");
+      const actor = requireActor(context);
       return asTenant(actor, () => next({ context: { ...context, actor } }));
     })
     .use(async ({ context, next, path }, input) => {
@@ -1080,8 +1087,7 @@ export function createRouter(deps: RouterDeps) {
       return next();
     })
     .use(async ({ context, next }) => {
-      const actor = context.actor;
-      if (!actor) throw new ORPCError("UNAUTHORIZED");
+      const actor = requireActor(context);
       return asTenant(actor, () => next({ context: { ...context, actor } }));
     });
   const ticketDeps = {
