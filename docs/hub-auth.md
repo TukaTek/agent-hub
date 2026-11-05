@@ -240,4 +240,4 @@ Run the normal database migrations before starting API/worker processes. The add
 
 ## Verification
 
-Run the auth unit suite and PostgreSQL integration tests against a disposable migrated database. Coverage includes native login, assignment denial before token expiry, identity continuity, concurrent refresh, encrypted persistence, local-account isolation, and shared web/desktop form behavior. Browser tests use a headless web renderer; they do not launch the desktop application.
+Run the auth unit suite and PostgreSQL integration tests against a disposable migrated database. Coverage includes native login, assignment denial before token expiry, identity continuity, concurrent refresh, encrypted persistence, local-account isolation, and shared web/desktop form behavior. Browser tests use a headless web renderer; they do not launch the desktop application. Before releasing changes to session recovery, run the [Hub session recovery staging smoke](hub-session-recovery-staging-smoke.md) and follow [its release and rollback notes](hub-session-recovery-release.md).
