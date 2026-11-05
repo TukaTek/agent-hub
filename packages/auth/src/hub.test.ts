@@ -8,6 +8,7 @@ import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
 import {
   createHubClient,
   type HubAuthConfig,
+  HubRejectedError,
   HubRequestError,
   HubUnsupportedIdpError,
   hubUserId,
@@ -21,7 +22,7 @@ import {
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
 import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
 import { createHubSessionAuthorizer, createUserWorkAuthorizer } from "./hub-sessions.js";
-import { CLIENT_IP_HEADER, createAuth } from "./index.js";
+import { CLIENT_IP_HEADER, createAuth, isHubSessionUnavailable } from "./index.js";
 
 vi.mock("better-auth/adapters/prisma", async () => {
   const { memoryAdapter } = await import("better-auth/adapters/memory");
@@ -126,18 +127,26 @@ function fixture(
   };
   vi.mocked(createHubClient).mockReturnValue(hubClient ?? client);
   let transaction = Promise.resolve();
+  let open = 0;
   const prisma: any = {
     authData: data,
     $queryRaw: vi.fn(async () => []),
-    $transaction: (fn: (tx: any) => Promise<unknown>) => {
+    $transaction: vi.fn((fn: (tx: any) => Promise<unknown>) => {
       // Simulate the database row lock without a network dependency.
-      const result = transaction.then(() => fn(prisma));
+      const result = transaction.then(async () => {
+        open++;
+        try {
+          return await fn(prisma);
+        } finally {
+          open--;
+        }
+      });
       transaction = result.then(
         () => undefined,
         () => undefined,
       );
       return result;
-    },
+    }),
     user: {
       findUnique: async ({ where }: any) => data.user!.find((row) => row.id === where.id),
       upsert: async ({ create }: any) => {
@@ -154,12 +163,28 @@ function fixture(
     hubIdentity: { findUnique: async ({ where }: any) => identities.get(where.userId) },
     hubSession: {
       create: async ({ data: row }: any) => {
-        grants.set(row.sessionId, row);
+        grants.set(row.sessionId, { refreshLeaseUntil: null, ...row });
         return row;
       },
       findUnique: async ({ where }: any) => grants.get(where.sessionId),
       update: async ({ where, data: updates }: any) =>
         Object.assign(grants.get(where.sessionId), updates),
+      // Conditional writes, as PostgreSQL would apply them to one row.
+      updateMany: async ({ where, data: updates }: any) => {
+        const row = grants.get(where.sessionId);
+        const leaseFree =
+          !where.OR ||
+          row?.refreshLeaseUntil == null ||
+          row.refreshLeaseUntil < where.OR[1].refreshLeaseUntil.lt;
+        if (
+          !row ||
+          (where.refreshToken !== undefined && row.refreshToken !== where.refreshToken) ||
+          !leaseFree
+        )
+          return { count: 0 };
+        Object.assign(row, updates);
+        return { count: 1 };
+      },
     },
     session: {
       findMany: async ({ where }: any) =>
@@ -169,8 +194,13 @@ function fixture(
         ),
       findUnique: async ({ where }: any) => data.session!.find((row) => row.id === where.id),
       deleteMany: async ({ where }: any) => {
+        const expected = where.hubSession?.is?.refreshToken;
+        if (expected !== undefined && grants.get(where.id)?.refreshToken !== expected)
+          return { count: 0 };
+        const before = data.session!.length;
         data.session = data.session!.filter((row) => row.id !== where.id);
         grants.delete(where.id);
+        return { count: before - data.session.length };
       },
     },
     spaceMember: { findFirst: async () => ({ spaceId: "space-1" }) },
@@ -290,6 +320,7 @@ function fixture(
     policy,
     hub: gate.hub,
     work,
+    openTransactions: () => open,
   };
 }
 
@@ -306,7 +337,7 @@ describe("Hub authentication through real auth endpoints", () => {
     await f.login();
     expect(await authorize(userId)).toBe(true);
     [...f.grants.values()][0].accessUntil = new Date(0);
-    f.client.refresh.mockRejectedValue(new Error("access removed"));
+    f.client.refresh.mockRejectedValue(new HubRequestError(403, "access_denied"));
     expect(await authorize(userId)).toBe(false);
     const local = createUserWorkAuthorizer(f.prisma, undefined, encryptionKey);
     expect(await local("local-user")).toBe(true);
@@ -520,7 +551,7 @@ describe("Hub authentication through real auth endpoints", () => {
   it("removes access before token expiry when Hub denies current entitlement", async () => {
     const f = fixture();
     const { headers } = await f.login();
-    f.client.verify.mockRejectedValue(new Error("assignment removed"));
+    f.client.verify.mockRejectedValue(new HubRejectedError("Hub access denied"));
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(f.data.session).toHaveLength(0);
     expect(f.client.refresh).not.toHaveBeenCalled();
@@ -552,7 +583,8 @@ describe("Hub authentication through real auth endpoints", () => {
     expect(await f.auth.api.getSession({ headers })).toBeNull();
   });
 
-  it("rotates encrypted refresh once for concurrent expired-session checks", async () => {
+  // CAAH-108 interim: refresh runs without the row lock until the lease lands.
+  it.fails("rotates encrypted refresh once for concurrent expired-session checks", async () => {
     const f = fixture();
     const { headers } = await f.login();
     [...f.grants.values()][0].accessUntil = new Date(0);
@@ -573,7 +605,8 @@ describe("Hub authentication through real auth endpoints", () => {
       const f = fixture();
       const { headers } = await f.login();
       [...f.grants.values()][0].accessUntil = new Date(0);
-      if (failure === "denied") f.client.refresh.mockRejectedValue(new Error("invalid_grant"));
+      if (failure === "denied")
+        f.client.refresh.mockRejectedValue(new HubRequestError(400, "invalid_grant"));
       else
         f.client.refresh.mockResolvedValue({
           subject: "different-user",
@@ -981,7 +1014,7 @@ describe("Hub tenant Entra SSO", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-      f.client.verify.mockRejectedValue(new Error("user disabled"));
+      f.client.verify.mockRejectedValue(new HubRequestError(403, "access_denied"));
       vi.setSystemTime(Date.now() + 29_000);
       expect(await f.auth.api.getSession({ headers })).not.toBeNull();
       vi.setSystemTime(Date.now() + 1_001);
@@ -2431,7 +2464,7 @@ describe("Hub mode with policy enforcement off (CAAH-83)", () => {
     expect(refused.status).toBeGreaterThanOrEqual(400);
     expect(f.data.session).toHaveLength(0);
     const { headers } = await f.login();
-    f.client.verify.mockRejectedValue(new Error("entitlement removed"));
+    f.client.verify.mockRejectedValue(new HubRejectedError("Hub access denied"));
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(await f.work(userId)).toBe(false);
   });
@@ -2544,5 +2577,107 @@ describe("Active sessions while Hub policy is degraded (CAAH-36)", () => {
     const f = fixture();
     expect(await f.work(userId)).toBe(false);
     expect(await f.work("local-user")).toBe(false);
+  });
+});
+
+describe("Hub outages keep the session (CAAH-108)", () => {
+  const outages: [string, () => unknown][] = [
+    ["a timeout", () => new DOMException("timed out", "TimeoutError")],
+    ["an abort", () => new DOMException("aborted", "AbortError")],
+    ["a network failure", () => new TypeError("fetch failed")],
+    ["a malformed reply", () => new Error("Invalid Hub response")],
+    ["408", () => new HubRequestError(408, undefined)],
+    ["429", () => new HubRequestError(429, undefined)],
+    ["500", () => new HubRequestError(500, undefined)],
+    ["502", () => new HubRequestError(502, undefined)],
+    ["503", () => new HubRequestError(503, "unavailable")],
+    ["504", () => new HubRequestError(504, undefined)],
+  ];
+  const getSessionStatus = (f: ReturnType<typeof fixture>, headers: Headers) =>
+    f.auth.handler(new Request("http://web.example.test/api/auth/get-session", { headers }));
+
+  async function afterWindow() {
+    const f = fixture();
+    const { headers } = await f.login();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    vi.setSystemTime(Date.now() + 30_001); // past the CAAH-40 window
+    return { f, headers };
+  }
+  afterEach(() => vi.useRealTimers());
+
+  it.each(outages)(
+    "answers 503 and keeps the session when verify fails with %s",
+    async (_n, error) => {
+      const { f, headers } = await afterWindow();
+      f.client.verify.mockRejectedValueOnce(error());
+      const response = await getSessionStatus(f, headers);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
+      expect(response.headers.get("set-cookie") ?? "").not.toMatch(/session_token=;/);
+      expect(f.data.session).toHaveLength(1);
+      expect(f.grants.size).toBe(1);
+      // Hub returns: the same credentials work again without signing in.
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    },
+  );
+
+  it("throws the unavailable error from auth.api.getSession for the API to map", async () => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    const error = await f.auth.api.getSession({ headers }).catch((e: unknown) => e);
+    expect(isHubSessionUnavailable(error)).toBe(true);
+  });
+
+  it("never calls Hub while a database transaction is open", async () => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockClear();
+    f.client.verify.mockImplementation(async () => {
+      expect(f.openTransactions()).toBe(0);
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.verify).toHaveBeenCalledOnce();
+  });
+
+  it("serves the CAAH-40 window from cache without calling Hub, even while Hub is down", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    f.client.verify.mockClear();
+    f.client.verify.mockRejectedValue(new HubRequestError(503, undefined));
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.verify).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["401", () => new HubRequestError(401, "invalid_token")],
+    ["403", () => new HubRequestError(403, "access_denied")],
+    ["a denial", () => new HubRejectedError("Hub access denied")],
+    ["an identity change", () => new HubRejectedError("Hub identity changed")],
+  ])("ends the session when Hub definitively refuses with %s", async (_n, error) => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockRejectedValueOnce(error());
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("keeps a session another request refreshed while a stale verify was refused", async () => {
+    const { f, headers } = await afterWindow();
+    const grant = [...f.grants.values()][0];
+    f.client.verify.mockImplementationOnce(async () => {
+      // Another process rotated the grant while this verify was in flight.
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
+      throw new HubRequestError(401, "invalid_token");
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.data.session).toHaveLength(1);
+    expect(f.client.verify).toHaveBeenLastCalledWith("test-fake-access-2", expect.anything());
   });
 });

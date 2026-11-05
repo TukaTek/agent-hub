@@ -8,6 +8,8 @@ import type {
 import {
   displayName,
   emailAllowed,
+  HUB_SIGN_IN_UNAVAILABLE_MESSAGE,
+  HUB_UNAVAILABLE,
   isMessagingEmail,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
@@ -53,6 +55,7 @@ import {
 import type { HubAuthConfig } from "./hub-client.js";
 import { createHubClient } from "./hub-client.js";
 import type { HubConfigFetch, HubPolicy } from "./hub-policy.js";
+import { HubSessionUnavailableError } from "./hub-sessions.js";
 
 export type { HubAuthConfig, HubConfigProblem } from "./hub-client.js";
 export { HUB_CONFIG_DOC, hubAuthFromEnv } from "./hub-client.js";
@@ -81,7 +84,16 @@ export {
 export type { HubPolicyStore } from "./hub-policy-store.js";
 export { memoryHubPolicyStore, prismaHubPolicyStore } from "./hub-policy-store.js";
 export type { HubSessionAuthorizerConfig, HubSessionPolicy } from "./hub-sessions.js";
-export { createUserWorkAuthorizer } from "./hub-sessions.js";
+export { createUserWorkAuthorizer, HubSessionUnavailableError } from "./hub-sessions.js";
+
+/** The error `auth.api.getSession` throws while Hub cannot confirm a kept session. */
+export function isHubSessionUnavailable(error: unknown): boolean {
+  return (
+    error instanceof APIError &&
+    error.status === "SERVICE_UNAVAILABLE" &&
+    (error.body as { code?: unknown } | undefined)?.code === HUB_UNAVAILABLE
+  );
+}
 /** Hub's service-config read for one deployment, through the service token. */
 export function hubConfigFetch(config: HubAuthConfig): HubConfigFetch {
   const client = createHubClient(config);
@@ -490,9 +502,20 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
                   const session = await findSession(token);
                   if (!session || isMessagingEmail(session.user.email)) return null;
                   if (session.user.id.startsWith("hub_")) {
-                    return hub && (await hub.authorizeSession(session.session.id, session.user.id))
-                      ? session
-                      : null;
+                    if (!hub) return null;
+                    try {
+                      return (await hub.authorizeSession(session.session.id, session.user.id))
+                        ? session
+                        : null;
+                    } catch (error) {
+                      // Hub could not answer: keep the session and say so, never sign out.
+                      if (error instanceof HubSessionUnavailableError)
+                        throw new APIError("SERVICE_UNAVAILABLE", {
+                          code: HUB_UNAVAILABLE,
+                          message: HUB_SIGN_IN_UNAVAILABLE_MESSAGE,
+                        });
+                      throw error;
+                    }
                   }
                   if (hub) return null;
                   if (session.user.emailVerified) return session;
