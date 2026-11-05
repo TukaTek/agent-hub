@@ -188,22 +188,24 @@ export class HubRejectedError extends Error {
     this.name = "HubRejectedError";
   }
 }
+/** The status and code pairs Hub documents as refusing a grant, token or entitlement. */
+const HUB_DENIALS = new Set([
+  "401 refresh_failed", // POST /refresh: the refresh token is invalid, expired or spent
+  "400 invalid_grant", // OAuth: the code or refresh token was rejected
+  "401 invalid_token",
+  "401 unauthorized", // the identity is inactive or missing
+  "403 access_denied", // GET /config: no longer entitled
+  "403 product_not_enabled",
+]);
 /**
- * Whether Hub definitively refused: an explicit denial, a 401 or 403, or another 4xx
- * that carries Hub's own error code (such as `invalid_grant`). Timeouts, aborts, network
- * errors, malformed replies, 408, 429, 5xx and code-less 4xx pages from a proxy are not.
+ * Whether Hub definitively refused: an explicit denial, or one of Hub's documented denial
+ * codes. Anything else keeps the session, including other coded 4xx such as
+ * `invalid_request` or `unknown_product`, code-less 401/403 pages from a proxy, 408, 429,
+ * 5xx, timeouts, aborts, network errors and malformed replies.
  */
 export function isHubRejection(error: unknown): boolean {
   if (error instanceof HubRejectedError) return true;
-  if (!(error instanceof HubRequestError)) return false;
-  if (error.status === 401 || error.status === 403) return true;
-  return (
-    error.status >= 400 &&
-    error.status < 500 &&
-    error.status !== 408 &&
-    error.status !== 429 &&
-    error.code !== undefined
-  );
+  return error instanceof HubRequestError && HUB_DENIALS.has(`${error.status} ${error.code}`);
 }
 
 export interface HubIdentity {

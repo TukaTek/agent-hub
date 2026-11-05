@@ -831,6 +831,7 @@ describe("Hub rejection classification (CAAH-108)", () => {
   const expected = { subject: "test-fake-subject", tenant: "test-fake-tenant" };
   const clientWith = (fetcher: typeof fetch) =>
     createHubClient({ origin, tenantId: expected.tenant }, fetcher);
+  const coded = (status: number, error: string) => Response.json({ error }, { status });
   const verifyError = async (fetcher: typeof fetch) =>
     clientWith(fetcher)
       .verify("test-fake-access", expected)
@@ -852,6 +853,16 @@ describe("Hub rejection classification (CAAH-108)", () => {
     ["malformed 200", async () => new Response("<html>maintenance</html>", { status: 200 })],
     ["a code-less 400", async () => new Response("<html>bad request</html>", { status: 400 })],
     ["a code-less 404", async () => new Response("<html>not found</html>", { status: 404 })],
+    ["a code-less 401", async () => new Response("", { status: 401 })],
+    ["a code-less 403", async () => new Response("<html>denied</html>", { status: 403 })],
+    ["401 with an undocumented code", async () => coded(401, "test-fake-other")],
+    ["403 forbidden", async () => coded(403, "forbidden")],
+    ["400 invalid_request", async () => coded(400, "invalid_request")],
+    ["400 envelope_too_large", async () => coded(400, "envelope_too_large")],
+    ["400 missing_product", async () => coded(400, "missing_product")],
+    ["404 unknown_product", async () => coded(404, "unknown_product")],
+    ["404 tenant_not_found", async () => coded(404, "tenant_not_found")],
+    ["409 conflict", async () => coded(409, "conflict")],
   ])("treats %s as not a rejection", async (_name, reply) => {
     const error = await verifyError(vi.fn(reply) as never);
     expect(error).toBeDefined();
@@ -859,11 +870,12 @@ describe("Hub rejection classification (CAAH-108)", () => {
   });
 
   it.each([
-    ["401", async () => Response.json({ error: "invalid_token" }, { status: 401 })],
-    ["403", async () => Response.json({ error: "access_denied" }, { status: 403 })],
-    ["400 invalid_grant", async () => Response.json({ error: "invalid_grant" }, { status: 400 })],
-    ["a code-less 401", async () => new Response("", { status: 401 })],
-    ["a code-less 403", async () => new Response("<html>denied</html>", { status: 403 })],
+    ["401 refresh_failed", async () => coded(401, "refresh_failed")],
+    ["400 invalid_grant", async () => coded(400, "invalid_grant")],
+    ["401 invalid_token", async () => coded(401, "invalid_token")],
+    ["401 unauthorized", async () => coded(401, "unauthorized")],
+    ["403 access_denied", async () => coded(403, "access_denied")],
+    ["403 product_not_enabled", async () => coded(403, "product_not_enabled")],
     ["valid:false", async () => Response.json({ valid: false })],
     [
       "other tenant",
@@ -880,11 +892,19 @@ describe("Hub rejection classification (CAAH-108)", () => {
     expect(isHubRejection(error)).toBe(true);
   });
 
-  it("treats a refresh refused with invalid_grant as definitive", async () => {
-    const client = clientWith(
-      vi.fn(async () => Response.json({ error: "invalid_grant" }, { status: 400 })) as never,
-    );
+  it.each([
+    [400, "invalid_grant"],
+    [401, "refresh_failed"],
+  ])("treats a refresh refused with %i %s as definitive", async (status, code) => {
+    const client = clientWith(vi.fn(async () => coded(status, code)) as never);
     await expect(client.refresh("test-fake-refresh")).rejects.toSatisfy(isHubRejection);
+  });
+
+  it("does not treat a refresh Hub refused as a malformed request as definitive", async () => {
+    const client = clientWith(vi.fn(async () => coded(400, "invalid_request")) as never);
+    const error = await client.refresh("test-fake-refresh").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HubRequestError);
+    expect(isHubRejection(error)).toBe(false);
   });
 
   it("returns a rotated grant without verifying it, so the caller can store it first", async () => {

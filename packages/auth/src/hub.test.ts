@@ -2598,6 +2598,21 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     ["502", () => new HubRequestError(502, undefined)],
     ["503", () => new HubRequestError(503, "unavailable")],
     ["504", () => new HubRequestError(504, undefined)],
+    ["a code-less 401", () => new HubRequestError(401, undefined)],
+    ["a code-less 403", () => new HubRequestError(403, undefined)],
+    ["403 forbidden", () => new HubRequestError(403, "forbidden")],
+    ["400 invalid_request", () => new HubRequestError(400, "invalid_request")],
+    ["400 envelope_too_large", () => new HubRequestError(400, "envelope_too_large")],
+    ["400 missing_product", () => new HubRequestError(400, "missing_product")],
+    ["404 unknown_product", () => new HubRequestError(404, "unknown_product")],
+  ];
+  const denials: [string, () => unknown][] = [
+    ["401 refresh_failed", () => new HubRequestError(401, "refresh_failed")],
+    ["400 invalid_grant", () => new HubRequestError(400, "invalid_grant")],
+    ["401 invalid_token", () => new HubRequestError(401, "invalid_token")],
+    ["401 unauthorized", () => new HubRequestError(401, "unauthorized")],
+    ["403 access_denied", () => new HubRequestError(403, "access_denied")],
+    ["403 product_not_enabled", () => new HubRequestError(403, "product_not_enabled")],
   ];
   const getSessionStatus = (f: ReturnType<typeof fixture>, headers: Headers) =>
     f.auth.handler(new Request("http://web.example.test/api/auth/get-session", { headers }));
@@ -2656,8 +2671,7 @@ describe("Hub outages keep the session (CAAH-108)", () => {
   });
 
   it.each([
-    ["401", () => new HubRequestError(401, "invalid_token")],
-    ["403", () => new HubRequestError(403, "access_denied")],
+    ...denials,
     ["a denial", () => new HubRejectedError("Hub access denied")],
     ["an identity change", () => new HubRejectedError("Hub identity changed")],
   ])("ends the session when Hub definitively refuses with %s", async (_n, error) => {
@@ -2707,17 +2721,33 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     },
   );
 
-  it("ends the session once Hub confirms a rotation lost to a timeout", async () => {
+  it.each(denials)("ends the session when refresh is refused with %s", async (_n, error) => {
     const f = fixture();
     const { headers } = await f.login();
     expire(f);
-    f.client.refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
-    expect((await getSessionStatus(f, headers)).status).toBe(503);
-    expect(f.data.session).toHaveLength(1);
-    f.client.refresh.mockRejectedValueOnce(new HubRequestError(400, "invalid_grant"));
+    f.client.refresh.mockRejectedValueOnce(error());
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(f.data.session).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
   });
+
+  it.each([
+    [400, "invalid_grant"],
+    [401, "refresh_failed"],
+  ])(
+    "ends the session once Hub confirms a rotation lost to a timeout with %i %s",
+    async (status, code) => {
+      const f = fixture();
+      const { headers } = await f.login();
+      expire(f);
+      f.client.refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+      expect((await getSessionStatus(f, headers)).status).toBe(503);
+      expect(f.data.session).toHaveLength(1);
+      f.client.refresh.mockRejectedValueOnce(new HubRequestError(status, code));
+      expect(await f.auth.api.getSession({ headers })).toBeNull();
+      expect(f.data.session).toHaveLength(0);
+    },
+  );
 
   it("refreshes once for concurrent requests and never refreshes outside the lease", async () => {
     const f = fixture();

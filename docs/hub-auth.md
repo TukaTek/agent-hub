@@ -200,7 +200,19 @@ The source is `env:<NAME>` or `deployment_settings.<field>`. Other signals are `
 
 `TENANT_DISABLED` and `HUB_CREDENTIAL_INVALID` stop new work at once. Every code except `HUB_ACCESS_DENIED` carries the message "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"; `HUB_ACCESS_DENIED` carries "Ask your admin for access". The SSO callback redirects to `/sign-in?error=` with the code in lower case. No user, session or SSO state is created for a refused sign-in.
 
-**Active sessions** keep working on last-known-good only within the verification cache window described below. On the next Hub verification after it, the stored policy must still admit the session like a new sign-in: the last refresh succeeded, the process runs Hub's revision and the user is still assigned. Otherwise the request is refused, but the session is kept, so it resumes when the policy admits it again. That holds for policy refusals only. If Hub refuses the user's own verification or refresh (a `401`, `403`, another `4xx` carrying Hub's error code such as `invalid_grant`, or a denied, changed or unentitled identity), the session is deleted and the user must sign in again. If Hub can't be reached (a timeout, a connection failure, a malformed reply, `408`, `429`, `5xx`, or a `4xx` page without Hub's error code), the session is kept and requests answer `503` `HUB_UNAVAILABLE` until Hub returns. Clients keep the user signed in and retry. New work (runs and tool calls) needs the user to be assigned in the stored policy and stops at once when Hub disables the tenant, rejects the service credential, removes the assignment, or a restart is required.
+**Active sessions** keep working on last-known-good only within the verification cache window described below. On the next Hub verification after it, the stored policy must still admit the session like a new sign-in: the last refresh succeeded, the process runs Hub's revision and the user is still assigned. Otherwise the request is refused, but the session is kept, so it resumes when the policy admits it again. That holds for policy refusals only. If Hub definitively refuses the user's own verification or refresh, the session is deleted and the user must sign in again. Only these answers count as definitive:
+
+| Hub answer | Where Hub sends it |
+| --- | --- |
+| `401 refresh_failed` | `POST /api/tenant-auth/refresh`: the refresh token is invalid, expired or already spent |
+| `400 invalid_grant` | OAuth code or refresh exchange rejected |
+| `401 invalid_token` | the bearer token is invalid |
+| `401 unauthorized` | the identity is inactive or missing |
+| `403 access_denied` | `GET /api/tenant-auth/config`: the user is no longer entitled |
+| `403 product_not_enabled` | Agent Hub is not enabled for the user |
+| `200` with `valid: false`, another identity or tenant, an expired grant, or Agent Hub missing or disabled in `products` | `/session`, `/refresh` or login replies |
+
+Anything else keeps the session and answers `503` `HUB_UNAVAILABLE` until Hub returns: a timeout, a connection failure, a malformed reply, `408`, `429`, `5xx`, a `401` or `403` without one of the codes above (such as a proxy or firewall page), and every other coded `4xx`, such as `400 invalid_request`, `400 missing_product`, `400 envelope_too_large` or `404 unknown_product`. Those describe a bad request or configuration, not a spent grant, so they never sign the user out. Clients keep the user signed in and retry. New work (runs and tool calls) needs the user to be assigned in the stored policy and stops at once when Hub disables the tenant, rejects the service credential, removes the assignment, or a restart is required.
 
 **Snapshot age.** The stored policy counts as current for 3 minutes (three API polls) after Hub was last reached. After that, sign-in is refused with `HUB_UNAVAILABLE` (reason `snapshot_stale`), new work stops, and `/internal/health` reports `hubPolicy.state: "stale"`. This bounds how long a stopped or wedged API leaves the worker running on old assignments. A sign-in may reuse a fetch from the last 5 seconds.
 
