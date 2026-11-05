@@ -172,6 +172,36 @@ export class HubUnsupportedIdpError extends Error {
     super("This organization’s sign-in method is not supported yet");
   }
 }
+/** A non-2xx Hub reply. `code` is Hub's fixed `error` value, never free-form text. */
+export class HubRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | undefined,
+  ) {
+    super("Hub access denied");
+  }
+}
+/** Hub answered and refused this identity, token or entitlement; never an outage. */
+export class HubRejectedError extends Error {
+  constructor(message: "Hub access denied" | "Hub identity changed" | "Hub session expired") {
+    super(message);
+    this.name = "HubRejectedError";
+  }
+}
+/**
+ * Whether Hub definitively refused: an explicit denial, or a 4xx other than 408 and 429.
+ * Timeouts, aborts, network errors, malformed replies, 408, 429 and 5xx are not refusals.
+ */
+export function isHubRejection(error: unknown): boolean {
+  if (error instanceof HubRejectedError) return true;
+  return (
+    error instanceof HubRequestError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.status !== 429
+  );
+}
 
 export interface HubIdentity {
   subject: string;
@@ -211,17 +241,8 @@ function enabled(value: unknown): boolean {
 function expiry(value: unknown): Date {
   const date = new Date(text(value));
   if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now())
-    throw new Error("Hub session expired");
+    throw new HubRejectedError("Hub session expired");
   return date;
-}
-/** A non-2xx Hub reply. `code` is Hub's fixed `error` value, never free-form text. */
-export class HubRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string | undefined,
-  ) {
-    super("Hub access denied");
-  }
 }
 /**
  * Hub's sso-start has no fields for re-authentication or a login hint, so add the
@@ -272,20 +293,21 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     typeof value === "string" && value.toLowerCase() === config.deploymentId;
   function identity(subject: unknown, tenant: unknown): HubIdentity {
     const result = { subject: text(subject), tenant: text(tenant) };
-    if (config.tenantId && result.tenant !== config.tenantId) throw new Error("Hub access denied");
+    if (config.tenantId && result.tenant !== config.tenantId)
+      throw new HubRejectedError("Hub access denied");
     return result;
   }
   async function verify(accessToken: string, expected: HubIdentity): Promise<void> {
     const session = await request("/api/tenant-auth/session", undefined, accessToken);
-    if (session.valid !== true) throw new Error("Hub access denied");
+    if (session.valid !== true) throw new HubRejectedError("Hub access denied");
     const actual = identity(session.userId, session.tenantId);
     if (actual.subject !== expected.subject || actual.tenant !== expected.tenant)
-      throw new Error("Hub identity changed");
+      throw new HubRejectedError("Hub identity changed");
     // Hub binds SSO sessions to a product and deployment; password sessions carry neither.
     if (session.product != null && session.product !== PRODUCT)
-      throw new Error("Hub access denied");
+      throw new HubRejectedError("Hub access denied");
     if (session.deploymentId != null && !isThisDeployment(session.deploymentId))
-      throw new Error("Hub access denied");
+      throw new HubRejectedError("Hub access denied");
     // The config payload can contain credentials. Consume only its entitlement;
     // never expose, persist, or log this response as browser authentication state.
     const configResponse = await request(
@@ -295,10 +317,10 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
       2 * 1024 * 1024,
     );
     if (configResponse.product !== PRODUCT || !enabled(configResponse.products))
-      throw new Error("Hub access denied");
+      throw new HubRejectedError("Hub access denied");
   }
   async function grant(body: Record<string, unknown>, expectedTenant?: string): Promise<HubGrant> {
-    if (body.success !== true) throw new Error("Hub access denied");
+    if (body.success !== true) throw new HubRejectedError("Hub access denied");
     const user = record(body.user);
     const result: HubGrant = {
       ...identity(user.id, user.tenantId),
@@ -309,9 +331,10 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
         ? { displayName: user.displayName.trim() }
         : {}),
     };
-    if (expectedTenant && result.tenant !== expectedTenant) throw new Error("Hub identity changed");
+    if (expectedTenant && result.tenant !== expectedTenant)
+      throw new HubRejectedError("Hub identity changed");
     expiry(body.refreshTokenExpiresAt);
-    if (!enabled(body.products)) throw new Error("Hub access denied");
+    if (!enabled(body.products)) throw new HubRejectedError("Hub access denied");
     await verify(result.accessToken, result);
     return result;
   }
@@ -322,7 +345,8 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
   }> {
     const found = await request("/api/tenant-auth/lookup", { email: email.trim() });
     const tenant = text(found.tenantId);
-    if (config.tenantId && tenant !== config.tenantId) throw new Error("Hub access denied");
+    if (config.tenantId && tenant !== config.tenantId)
+      throw new HubRejectedError("Hub access denied");
     if (found.idpType !== "native" && found.idpType !== "entra" && found.idpType !== "google") {
       throw new Error("Invalid Hub response");
     }
@@ -476,7 +500,7 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
         redirectUri,
       });
       if (reply.tenantId !== config.tenantId || !isThisDeployment(reply.deploymentId))
-        throw new Error("Hub access denied");
+        throw new HubRejectedError("Hub access denied");
       return grant(reply, config.tenantId);
     },
     async login(email: string, password: string) {
@@ -486,7 +510,7 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
         await request("/api/tenant-auth/login", { email: email.trim(), password }),
         tenant,
       );
-      if (result.tenant !== tenant) throw new Error("Hub identity changed");
+      if (result.tenant !== tenant) throw new HubRejectedError("Hub identity changed");
       return result;
     },
     refresh: async (refreshToken: string) =>
