@@ -850,6 +850,8 @@ describe("Hub rejection classification (CAAH-108)", () => {
     ["503", async () => Response.json({ error: "unavailable" }, { status: 503 })],
     ["504", async () => new Response("", { status: 504 })],
     ["malformed 200", async () => new Response("<html>maintenance</html>", { status: 200 })],
+    ["a code-less 400", async () => new Response("<html>bad request</html>", { status: 400 })],
+    ["a code-less 404", async () => new Response("<html>not found</html>", { status: 404 })],
   ])("treats %s as not a rejection", async (_name, reply) => {
     const error = await verifyError(vi.fn(reply) as never);
     expect(error).toBeDefined();
@@ -860,6 +862,8 @@ describe("Hub rejection classification (CAAH-108)", () => {
     ["401", async () => Response.json({ error: "invalid_token" }, { status: 401 })],
     ["403", async () => Response.json({ error: "access_denied" }, { status: 403 })],
     ["400 invalid_grant", async () => Response.json({ error: "invalid_grant" }, { status: 400 })],
+    ["a code-less 401", async () => new Response("", { status: 401 })],
+    ["a code-less 403", async () => new Response("<html>denied</html>", { status: 403 })],
     ["valid:false", async () => Response.json({ valid: false })],
     [
       "other tenant",
@@ -881,6 +885,41 @@ describe("Hub rejection classification (CAAH-108)", () => {
       vi.fn(async () => Response.json({ error: "invalid_grant" }, { status: 400 })) as never,
     );
     await expect(client.refresh("test-fake-refresh")).rejects.toSatisfy(isHubRejection);
+  });
+
+  it("returns a rotated grant without verifying it, so the caller can store it first", async () => {
+    const { client, fetcher } = setup({ session: new Response("", { status: 503 }) });
+    await expect(client.refresh("test-fake-refresh")).resolves.toMatchObject({
+      refreshToken: fixture.sessionResponse.refreshToken,
+    });
+    expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/tenant-auth/refresh",
+    ]);
+  });
+
+  const refreshError = (body: Record<string, unknown>) =>
+    setup({ refresh: { ...fixture.sessionResponse, ...body } })
+      .client.refresh("test-fake-refresh")
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+  it.each([
+    ["an unparseable expiry", { refreshTokenExpiresAt: "not-a-date" }],
+    ["missing products", { products: undefined }],
+  ])("treats a refresh reply with %s as malformed, not a rejection", async (_name, body) => {
+    const error = await refreshError(body);
+    expect(error).toBeDefined();
+    expect(isHubRejection(error)).toBe(false);
+  });
+
+  it.each([
+    ["an expired refresh token", { refreshTokenExpiresAt: "2000-01-01T00:00:00.000Z" }],
+    ["no Agent Hub entitlement", { products: false }],
+    ["a disabled product", { products: [{ id: "cortexai-agent-hub", enabled: false }] }],
+  ])("treats a refresh reply with %s as a rejection", async (_name, body) => {
+    expect(isHubRejection(await refreshError(body))).toBe(true);
   });
 
   it("keeps the existing messages so sign-in callers are unchanged", async () => {

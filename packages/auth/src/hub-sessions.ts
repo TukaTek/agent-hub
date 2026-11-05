@@ -3,7 +3,7 @@ import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import {
   createHubClient,
   type HubAuthConfig,
-  HubRejectedError,
+  HubRequestError,
   isHubRejection,
 } from "./hub-client.js";
 import { disabledHubPolicy, type HubPolicy } from "./hub-policy.js";
@@ -15,6 +15,22 @@ export class HubSessionUnavailableError extends Error {
     super("CortexAI Hub can't be reached", options);
     this.name = "HubSessionUnavailableError";
   }
+}
+
+/** Says why a request answered 503, never with tokens, identities or Hub bodies. */
+function logUnavailable(cause: unknown) {
+  console.warn(
+    "[hub-sessions]",
+    JSON.stringify({
+      event: "hub_session_unavailable",
+      ...(cause instanceof HubRequestError
+        ? { error: "HubRequestError", status: cause.status, code: cause.code }
+        : {
+            error:
+              cause instanceof Error ? cause.name : cause === undefined ? "none" : typeof cause,
+          }),
+    }),
+  );
 }
 
 /** `false` ends access; "stale" means the stored grant changed under this request. */
@@ -30,7 +46,7 @@ export interface HubSessionAuthorizerConfig {
 /** The parts of the shared Hub policy that continuing sessions and work consult. */
 export type HubSessionPolicy = Pick<HubPolicy, "sessionAllowed" | "workAllowed">;
 
-/** One refresh per grant across processes; outlasts a refresh's three 8 s Hub requests. */
+/** One refresh per grant across processes; the new grant is stored before it is verified. */
 const REFRESH_LEASE_MS = 30_000;
 /** How long a request waits for another request's refresh before answering unavailable. */
 const REFRESH_WAIT_MS = 10_000;
@@ -56,12 +72,17 @@ export function createHubSessionAuthorizer(
   const decrypt = (data: string) => symmetricDecrypt({ key: encryptionKey, data });
   const encrypt = (data: string) => symmetricEncrypt({ key: encryptionKey, data });
 
-  /** Ends the session only while it still holds the grant this request used. */
+  /**
+   * Ends the session only while it still holds the grant this request used. The guard is
+   * on the grant's own row, so PostgreSQL re-checks it against a concurrent refresh.
+   */
   async function end(sessionId: string, used: string): Promise<Outcome> {
-    const { count } = await prisma.session.deleteMany({
-      where: { id: sessionId, hubSession: { is: { refreshToken: used } } },
+    const { count } = await prisma.hubSession.deleteMany({
+      where: { sessionId, refreshToken: used },
     });
-    return count ? false : "stale";
+    if (!count) return "stale";
+    await prisma.session.deleteMany({ where: { id: sessionId } });
+    return false;
   }
 
   /** A definitive Hub answer ends the session; anything else keeps it for when Hub returns. */
@@ -163,41 +184,58 @@ export function createHubSessionAuthorizer(
       data: { refreshLeaseUntil: new Date(now.getTime() + REFRESH_LEASE_MS) },
     });
     if (!claimed.count) return awaitRefresh(sessionId, used);
-    let refreshToken: string;
+    let next: string | undefined;
     try {
-      refreshToken = await decrypt(used);
-    } catch {
-      return end(sessionId, used);
-    }
-    let grant: Awaited<ReturnType<typeof client.refresh>>;
-    try {
-      grant = await client.refresh(refreshToken);
+      let refreshToken: string;
+      try {
+        refreshToken = await decrypt(used);
+      } catch {
+        return await end(sessionId, used);
+      }
+      let grant: Awaited<ReturnType<typeof client.refresh>>;
+      try {
+        grant = await client.refresh(refreshToken);
+      } catch (error) {
+        return await failed(error, sessionId, used);
+      }
       if (grant.subject !== identity.subject || grant.tenant !== identity.tenant)
-        throw new HubRejectedError("Hub identity changed");
-    } catch (error) {
-      if (isHubRejection(error)) return end(sessionId, used);
-      await release(sessionId, used);
-      throw new HubSessionUnavailableError({ cause: error });
+        return await end(sessionId, used);
+      // Hub has spent the old token: keep the new grant before anything else can fail.
+      try {
+        const refreshCipher = await encrypt(grant.refreshToken);
+        const stored = await prisma.hubSession.updateMany({
+          where: { sessionId, refreshToken: used },
+          data: {
+            refreshToken: refreshCipher,
+            accessToken: await encrypt(grant.accessToken),
+            accessUntil: grant.accessUntil,
+            refreshLeaseUntil: null,
+          },
+        });
+        if (stored.count) next = refreshCipher;
+      } catch (error) {
+        await client.revoke(grant.refreshToken).catch(() => undefined);
+        throw new HubSessionUnavailableError({ cause: error });
+      }
+      if (!next) {
+        // The session ended or changed meanwhile; nothing local holds this grant.
+        await client.revoke(grant.refreshToken).catch(() => undefined);
+        return "stale";
+      }
+      if (grantSession.accessToken) {
+        const old = await decrypt(grantSession.accessToken).catch(() => undefined);
+        if (old) verifyCache.invalidate(verifyCache.hashToken(old));
+      }
+      try {
+        await client.verify(grant.accessToken, identity);
+      } catch (error) {
+        return await failed(error, sessionId, next);
+      }
+      return await policy.sessionAllowed(identity);
+    } finally {
+      // Lets the next request refresh at once when no new grant was stored.
+      if (!next) await release(sessionId, used);
     }
-    const stored = await prisma.hubSession.updateMany({
-      where: { sessionId, refreshToken: used },
-      data: {
-        refreshToken: await encrypt(grant.refreshToken),
-        accessToken: await encrypt(grant.accessToken),
-        accessUntil: grant.accessUntil,
-        refreshLeaseUntil: null,
-      },
-    });
-    if (!stored.count) {
-      // The session ended or changed meanwhile; nothing local holds this grant.
-      await client.revoke(grant.refreshToken).catch(() => undefined);
-      return "stale";
-    }
-    if (grantSession.accessToken) {
-      const old = await decrypt(grantSession.accessToken).catch(() => undefined);
-      if (old) verifyCache.invalidate(verifyCache.hashToken(old));
-    }
-    return policy.sessionAllowed(identity);
   }
 
   const authorize = async (sessionId: string, userId: string): Promise<boolean> => {
@@ -209,12 +247,16 @@ export function createHubSessionAuthorizer(
         const outcome = await authorizeOnce(sessionId, userId);
         if (outcome !== "stale") return outcome;
       }
+      throw new HubSessionUnavailableError();
     } catch (error) {
-      if (error instanceof HubSessionUnavailableError) throw error;
       // A database failure is not a sign-out either.
-      throw new HubSessionUnavailableError({ cause: error });
+      const unavailable =
+        error instanceof HubSessionUnavailableError
+          ? error
+          : new HubSessionUnavailableError({ cause: error });
+      logUnavailable(unavailable.cause);
+      throw unavailable;
     }
-    throw new HubSessionUnavailableError();
   };
 
   return Object.assign(authorize, {

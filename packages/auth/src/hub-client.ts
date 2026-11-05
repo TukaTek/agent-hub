@@ -189,17 +189,20 @@ export class HubRejectedError extends Error {
   }
 }
 /**
- * Whether Hub definitively refused: an explicit denial, or a 4xx other than 408 and 429.
- * Timeouts, aborts, network errors, malformed replies, 408, 429 and 5xx are not refusals.
+ * Whether Hub definitively refused: an explicit denial, a 401 or 403, or another 4xx
+ * that carries Hub's own error code (such as `invalid_grant`). Timeouts, aborts, network
+ * errors, malformed replies, 408, 429, 5xx and code-less 4xx pages from a proxy are not.
  */
 export function isHubRejection(error: unknown): boolean {
   if (error instanceof HubRejectedError) return true;
+  if (!(error instanceof HubRequestError)) return false;
+  if (error.status === 401 || error.status === 403) return true;
   return (
-    error instanceof HubRequestError &&
     error.status >= 400 &&
     error.status < 500 &&
     error.status !== 408 &&
-    error.status !== 429
+    error.status !== 429 &&
+    error.code !== undefined
   );
 }
 
@@ -240,8 +243,8 @@ function enabled(value: unknown): boolean {
 }
 function expiry(value: unknown): Date {
   const date = new Date(text(value));
-  if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now())
-    throw new HubRejectedError("Hub session expired");
+  if (!Number.isFinite(date.getTime())) throw new Error("Invalid Hub response");
+  if (date.getTime() <= Date.now()) throw new HubRejectedError("Hub session expired");
   return date;
 }
 /**
@@ -319,7 +322,8 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     if (configResponse.product !== PRODUCT || !enabled(configResponse.products))
       throw new HubRejectedError("Hub access denied");
   }
-  async function grant(body: Record<string, unknown>, expectedTenant?: string): Promise<HubGrant> {
+  /** Reads a grant without verifying it with Hub. */
+  function parseGrant(body: Record<string, unknown>, expectedTenant?: string): HubGrant {
     if (body.success !== true) throw new HubRejectedError("Hub access denied");
     const user = record(body.user);
     const result: HubGrant = {
@@ -334,7 +338,12 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
     if (expectedTenant && result.tenant !== expectedTenant)
       throw new HubRejectedError("Hub identity changed");
     expiry(body.refreshTokenExpiresAt);
+    if (body.products === undefined) throw new Error("Invalid Hub response");
     if (!enabled(body.products)) throw new HubRejectedError("Hub access denied");
+    return result;
+  }
+  async function grant(body: Record<string, unknown>, expectedTenant?: string): Promise<HubGrant> {
+    const result = parseGrant(body, expectedTenant);
     await verify(result.accessToken, result);
     return result;
   }
@@ -513,8 +522,12 @@ export function createHubClient(config: HubAuthConfig, fetcher: typeof fetch = f
       if (result.tenant !== tenant) throw new HubRejectedError("Hub identity changed");
       return result;
     },
+    /**
+     * Hub has spent `refreshToken` once this resolves, so the caller stores the new grant
+     * before verifying it: a failed verify must not lose it.
+     */
     refresh: async (refreshToken: string) =>
-      grant(await request("/api/tenant-auth/refresh", { refreshToken })),
+      parseGrant(await request("/api/tenant-auth/refresh", { refreshToken })),
     revoke: async (refreshToken: string) => {
       await request("/api/tenant-auth/revoke", { refreshToken });
     },

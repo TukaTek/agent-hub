@@ -185,6 +185,14 @@ function fixture(
         Object.assign(row, updates);
         return { count: 1 };
       },
+      // A single-table conditional delete, which PostgreSQL re-checks under concurrency.
+      deleteMany: async ({ where }: any) => {
+        const row = grants.get(where.sessionId);
+        if (!row || (where.refreshToken !== undefined && row.refreshToken !== where.refreshToken))
+          return { count: 0 };
+        grants.delete(where.sessionId);
+        return { count: 1 };
+      },
     },
     session: {
       findMany: async ({ where }: any) =>
@@ -193,10 +201,9 @@ function fixture(
             row.userId === where.userId && row.expiresAt > where.expiresAt.gt && grants.has(row.id),
         ),
       findUnique: async ({ where }: any) => data.session!.find((row) => row.id === where.id),
+      // Relation filters are not atomic on PostgreSQL, so the fake refuses them.
       deleteMany: async ({ where }: any) => {
-        const expected = where.hubSession?.is?.refreshToken;
-        if (expected !== undefined && grants.get(where.id)?.refreshToken !== expected)
-          return { count: 0 };
+        if (where.hubSession) throw new Error("conditional deletes belong on hubSession");
         const before = data.session!.length;
         data.session = data.session!.filter((row) => row.id !== where.id);
         grants.delete(where.id);
@@ -2871,5 +2878,115 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     });
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(f.data.session).toHaveLength(0);
+  });
+
+  /** A Hub that rotates refresh tokens and refuses spent ones, behind the real client. */
+  async function rotatingHub() {
+    const { createHubClient: realHubClient } =
+      await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+    const user = { id: "subject-1", tenantId: config.tenantId };
+    const products = [{ id: "cortexai-agent-hub", enabled: true }];
+    let issued = 1;
+    const grantBody = () => ({
+      success: true,
+      user,
+      accessToken: `test-fake-access-${issued}`,
+      accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+      refreshToken: `test-fake-refresh-${issued}`,
+      refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      products,
+    });
+    const hub: Record<string, (body: any) => Response | Promise<Response>> = {
+      lookup: () => Response.json({ tenantId: config.tenantId, idpType: "native" }),
+      login: () => Response.json(grantBody()),
+      refresh: ({ refreshToken }) => {
+        if (refreshToken !== `test-fake-refresh-${issued}`)
+          return Response.json({ error: "invalid_grant" }, { status: 400 });
+        issued++;
+        return Response.json(grantBody());
+      },
+      session: () => Response.json({ valid: true, userId: user.id, tenantId: config.tenantId }),
+      config: () => Response.json({ product: "cortexai-agent-hub", products }),
+      revoke: () => Response.json({ success: true }),
+    };
+    const healthy = { ...hub };
+    const fetcher = vi.fn(async (url: URL | string, init?: RequestInit) =>
+      hub[new URL(String(url)).pathname.split("/").at(-1)!]!(
+        init?.body ? JSON.parse(String(init.body)) : undefined,
+      ),
+    );
+    const f = fixture(realHubClient(config, fetcher as typeof fetch));
+    const { headers } = await f.login();
+    const storedRefresh = () =>
+      symmetricDecrypt({ key: encryptionKey, data: [...f.grants.values()][0].refreshToken });
+    return { f, headers, hub, recover: () => Object.assign(hub, healthy), storedRefresh };
+  }
+
+  it.each([
+    ["/config answers 503", "config", () => new Response("", { status: 503 })],
+    [
+      "/session times out",
+      "session",
+      () => Promise.reject(new DOMException("timed out", "TimeoutError")),
+    ],
+  ])("keeps the grant Hub rotated when verifying it fails because %s", async (_n, path, reply) => {
+    const { f, headers, hub, recover, storedRefresh } = await rotatingHub();
+    expire(f);
+    hub[path] = reply;
+    expect((await getSessionStatus(f, headers)).status).toBe(503);
+    expect(f.data.session).toHaveLength(1);
+    expect(await storedRefresh()).toBe("test-fake-refresh-2");
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+    recover();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("ends the session when Hub refuses the grant it just rotated", async () => {
+    const { f, headers, hub } = await rotatingHub();
+    expire(f);
+    hub.session = () => Response.json({ valid: false });
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
+  });
+
+  it("revokes a rotated grant it could not store, frees the lease and keeps the session", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    const updateMany = f.prisma.hubSession.updateMany;
+    f.prisma.hubSession.updateMany = vi.fn(async (args: any) => {
+      if (args.data.refreshToken) throw new Error("database unavailable");
+      return updateMany(args);
+    });
+    expect((await getSessionStatus(f, headers)).status).toBe(503);
+    expect(f.client.revoke).toHaveBeenCalledWith("refresh-secret-2");
+    expect(f.data.session).toHaveLength(1);
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+    f.prisma.hubSession.updateMany = updateMany;
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.refresh).toHaveBeenLastCalledWith("refresh-secret-1");
+  });
+
+  it("logs why it answered 503, once and without credentials", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { f, headers } = await afterWindow();
+      warn.mockClear();
+      f.client.verify.mockRejectedValueOnce(new HubRequestError(503, "unavailable"));
+      expect((await getSessionStatus(f, headers)).status).toBe(503);
+      const logged = warn.mock.calls.filter(([tag]) => tag === "[hub-sessions]");
+      expect(logged).toHaveLength(1);
+      expect(JSON.parse(logged[0]![1] as string)).toEqual({
+        event: "hub_session_unavailable",
+        error: "HubRequestError",
+        status: 503,
+        code: "unavailable",
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/secret|example\.test|Bearer/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
