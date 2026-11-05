@@ -2829,4 +2829,12 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-orphan");
     expect(f.data.session).toHaveLength(1);
   });
+
+  it("refuses new work but keeps the session while Hub is down, then resumes", async () => {
+    const { f } = await afterWindow();
+    f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    expect(await f.work(userId)).toBe(false);
+    expect(f.data.session).toHaveLength(1);
+    expect(await f.work(userId)).toBe(true);
+  });
 });

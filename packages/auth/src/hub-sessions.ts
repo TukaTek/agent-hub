@@ -254,7 +254,14 @@ export function createUserWorkAuthorizer(
       orderBy: { createdAt: "desc" },
       select: { id: true },
     });
-    for (const session of sessions) if (await authorize(session.id, userId)) return true;
+    for (const session of sessions) {
+      try {
+        if (await authorize(session.id, userId)) return true;
+      } catch (error) {
+        // Hub could not answer: no new work now, and the session is kept for later.
+        if (!(error instanceof HubSessionUnavailableError)) throw error;
+      }
+    }
     return false;
   };
 }
