@@ -2,8 +2,12 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@cortexai-agent-hub/db";
 import { symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHubClient } from "./hub-client.js";
-import { createHubSessionAuthorizer, type HubSessionPolicy } from "./hub-sessions.js";
+import { createHubClient, HubRejectedError } from "./hub-client.js";
+import {
+  createHubSessionAuthorizer,
+  type HubSessionPolicy,
+  HubSessionUnavailableError,
+} from "./hub-sessions.js";
 
 /** These tests cover the CAAH-40 verify cache; Hub policy is covered in hub.test.ts. */
 const admitAll: HubSessionPolicy = {
@@ -164,7 +168,7 @@ describe("Hub session authorizer with verify cache", () => {
       const verify = vi.fn(async () => {
         verifyCount++;
         if (verifyCount > 1) {
-          throw new Error("Hub access denied"); // Revoked after first verify
+          throw new HubRejectedError("Hub access denied"); // Revoked after first verify
         }
       });
       const client = createHubClient(config, vi.fn());
@@ -350,9 +354,11 @@ describe("Hub session authorizer with verify cache", () => {
 
         // Cache should not serve expired token even though TTL hasn't passed
         // The authorizer should detect token expiry and attempt refresh
-        const result = await authorizer(sessionId, userId);
-        // Should fail because refresh will fail (no mock provided)
-        expect(result).toBe(false);
+        // Refresh can't reach Hub (no fetch reply): unavailable, and the session is kept
+        await expect(authorizer(sessionId, userId)).rejects.toBeInstanceOf(
+          HubSessionUnavailableError,
+        );
+        expect(await db.prisma.session.findUnique({ where: { id: sessionId } })).not.toBeNull();
       } finally {
         await db.prisma.session.deleteMany({ where: { id: sessionId } });
         await db.prisma.user.deleteMany({ where: { id: userId } });

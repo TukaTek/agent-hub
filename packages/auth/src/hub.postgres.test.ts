@@ -5,9 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import contract from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import native from "./fixtures/agent-hub-native-sso.v1.json" with { type: "json" };
 import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
-import { hubUserId } from "./hub-client.js";
+import { HubRequestError, hubUserId } from "./hub-client.js";
 import { hubPolicyForTests } from "./hub-policy-testing.js";
-import { createHubSessionAuthorizer, type HubSessionPolicy } from "./hub-sessions.js";
+import {
+  createHubSessionAuthorizer,
+  type HubSessionPolicy,
+  HubSessionUnavailableError,
+} from "./hub-sessions.js";
 import { createAuth } from "./index.js";
 
 /** The grant-rotation test covers CAAH-40 locking; Hub policy is covered in hub.test.ts. */
@@ -497,7 +501,7 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
   );
 
   it(
-    "serializes refresh across separate authorizers and cascades session deletion",
+    "refreshes once across separate authorizers and ends the session on invalid_grant",
     asAuth(async () => {
       const db = createDb(process.env.DATABASE_URL!);
       const id = `hub-test-${randomUUID()}`;
@@ -565,10 +569,81 @@ describePostgres("Hub session persistence (PostgreSQL)", () => {
           where: { sessionId: id },
           data: { accessUntil: new Date(0) },
         });
-        refresh.mockRejectedValue(new Error("invalid_grant"));
+        refresh.mockRejectedValue(new HubRequestError(400, "invalid_grant"));
         expect(await api(id, id)).toBe(false);
         expect(await db.prisma.session.findUnique({ where: { id } })).toBeNull();
         expect(await db.prisma.hubSession.findUnique({ where: { sessionId: id } })).toBeNull();
+      } finally {
+        await db.prisma.user.deleteMany({ where: { id } });
+        await db.prisma.$disconnect();
+        await db.pool.end();
+      }
+    }),
+  );
+
+  it(
+    "keeps the session and frees the lease when Hub times out during refresh",
+    asAuth(async () => {
+      const db = createDb(process.env.DATABASE_URL!);
+      const id = `hub-test-${randomUUID()}`;
+      const key = "offline-encryption-key-not-a-real-secret";
+      const config = { origin: "https://hub.example.test", tenantId: "fixture-tenant" };
+      const refresh = vi.fn(async () => ({
+        subject: id,
+        tenant: config.tenantId,
+        accessToken: "test-fake-access-2",
+        refreshToken: "test-fake-refresh-2",
+        accessUntil: new Date(Date.now() + 900_000),
+      }));
+      const client = {
+        refresh,
+        login: refresh,
+        lookup: vi.fn(async () => ({ tenant: config.tenantId, idpType: "native" as const })),
+        verify: vi.fn(async () => undefined),
+        revoke: vi.fn(async () => undefined),
+        ssoStart: vi.fn(async () => "https://login.example.test/authorize"),
+        ssoExchange: refresh,
+        serviceConfig: vi.fn(async () => ({ status: 304 as const })),
+      };
+      try {
+        await db.prisma.user.create({
+          data: {
+            id,
+            name: "Hub test",
+            email: `${id}@hub.invalid`,
+            hubIdentity: {
+              create: { origin: config.origin, tenant: config.tenantId, subject: id },
+            },
+            sessions: {
+              create: {
+                id,
+                token: randomUUID(),
+                expiresAt: new Date(Date.now() + 86_400_000),
+                hubSession: {
+                  create: {
+                    refreshToken: await symmetricEncrypt({ key, data: "test-fake-refresh-1" }),
+                    accessUntil: new Date(0),
+                    accessToken: await symmetricEncrypt({ key, data: "test-fake-access-1" }),
+                  },
+                },
+              },
+            },
+          },
+        });
+        const api = createHubSessionAuthorizer(db.prisma, config, key, client, {
+          policy: admitAll,
+        });
+        refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+        await expect(api(id, id)).rejects.toBeInstanceOf(HubSessionUnavailableError);
+        expect(await db.prisma.session.findUnique({ where: { id } })).not.toBeNull();
+        const kept = await db.prisma.hubSession.findUniqueOrThrow({ where: { sessionId: id } });
+        expect(kept.refreshLeaseUntil).toBeNull();
+        expect(await symmetricDecrypt({ key, data: kept.refreshToken })).toBe(
+          "test-fake-refresh-1",
+        );
+        // Hub returns: the same stored token refreshes.
+        expect(await api(id, id)).toBe(true);
+        expect(refresh).toHaveBeenLastCalledWith("test-fake-refresh-1");
       } finally {
         await db.prisma.user.deleteMany({ where: { id } });
         await db.prisma.$disconnect();

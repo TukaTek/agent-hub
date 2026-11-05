@@ -2837,4 +2837,39 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     expect(f.data.session).toHaveLength(1);
     expect(await f.work(userId)).toBe(true);
   });
+
+  it("still signs out and revokes at Hub while Hub verification is down", async () => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
+    expect(await f.auth.api.signOut({ headers })).toMatchObject({ success: true });
+    expect(f.data.session).toHaveLength(0);
+    expect(f.client.revoke).toHaveBeenCalledWith("refresh-secret-1");
+  });
+
+  it("refuses a session whose stored identity is another tenant without calling Hub or deleting", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    f.identities.get(userId).tenant = "test-fake-other-tenant";
+    f.client.verify.mockClear();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 30_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.client.verify).not.toHaveBeenCalled();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("ends the session when refresh returns another tenant's grant", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    f.client.refresh.mockResolvedValueOnce({
+      subject: "subject-1",
+      tenant: "test-fake-other-tenant",
+      accessToken: "test-fake-access-x",
+      refreshToken: "test-fake-refresh-x",
+      accessUntil: new Date(Date.now() + 900_000),
+    });
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+  });
 });
