@@ -267,7 +267,8 @@ export function createHubSessionAuthorizer(
 
 /**
  * Background work uses the same expiring Hub grant as interactive requests, and
- * starts only while the shared Hub policy assigns Agent Hub to the user.
+ * starts only while the shared Hub policy assigns Agent Hub to the user. Throws
+ * HubSessionUnavailableError when Hub could not confirm any kept session.
  */
 export function createUserWorkAuthorizer(
   prisma: PrismaClient,
@@ -296,14 +297,17 @@ export function createUserWorkAuthorizer(
       orderBy: { createdAt: "desc" },
       select: { id: true },
     });
+    let unavailable: HubSessionUnavailableError | undefined;
     for (const session of sessions) {
       try {
         if (await authorize(session.id, userId)) return true;
       } catch (error) {
-        // Hub could not answer: no new work now, and the session is kept for later.
         if (!(error instanceof HubSessionUnavailableError)) throw error;
+        unavailable = error;
       }
     }
+    // Hub could not answer: no new work now, but the session is kept, so this is no sign-out.
+    if (unavailable) throw unavailable;
     return false;
   };
 }

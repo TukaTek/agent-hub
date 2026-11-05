@@ -2867,13 +2867,26 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     expect(f.data.session).toHaveLength(1);
   });
 
-  it("refuses new work but keeps the session while Hub is down, then resumes", async () => {
+  it("refuses new work as unavailable but keeps the session while Hub is down, then resumes", async () => {
     const { f } = await afterWindow();
     f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
-    expect(await f.work(userId)).toBe(false);
+    await expect(f.work(userId)).rejects.toMatchObject({
+      name: "HubSessionUnavailableError",
+      message: "CortexAI Hub can't be reached",
+    });
     expect(f.data.session).toHaveLength(1);
     expect(await f.work(userId)).toBe(true);
   });
+
+  it.each(denials)(
+    "refuses new work without an outage when Hub refuses with %s",
+    async (_n, error) => {
+      const { f } = await afterWindow();
+      f.client.verify.mockRejectedValueOnce(error());
+      expect(await f.work(userId)).toBe(false);
+      expect(f.data.session).toHaveLength(0);
+    },
+  );
 
   it("still signs out and revokes at Hub while Hub verification is down", async () => {
     const { f, headers } = await afterWindow();
