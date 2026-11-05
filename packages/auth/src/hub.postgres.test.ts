@@ -6,6 +6,7 @@ import contract from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import native from "./fixtures/agent-hub-native-sso.v1.json" with { type: "json" };
 import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import { HubRequestError, hubUserId } from "./hub-client.js";
+import { disabledHubPolicy } from "./hub-policy.js";
 import { hubPolicyForTests } from "./hub-policy-testing.js";
 import {
   createHubSessionAuthorizer,
@@ -15,10 +16,7 @@ import {
 import { createAuth } from "./index.js";
 
 /** The grant-rotation test covers CAAH-40 locking; Hub policy is covered in hub.test.ts. */
-const admitAll: HubSessionPolicy = {
-  sessionAllowed: async () => true,
-  workAllowed: async () => true,
-};
+const admitAll: HubSessionPolicy = disabledHubPolicy({});
 
 /** The API runs every auth route as a system context, before a tenant is known. */
 const asAuth = (fn: () => Promise<void>) => () => runAsSystem("authentication", fn);

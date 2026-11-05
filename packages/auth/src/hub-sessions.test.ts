@@ -3,6 +3,7 @@ import { createDb } from "@cortexai-agent-hub/db";
 import { symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHubClient, HubRejectedError } from "./hub-client.js";
+import { disabledHubPolicy } from "./hub-policy.js";
 import {
   createHubSessionAuthorizer,
   type HubSessionPolicy,
@@ -10,10 +11,7 @@ import {
 } from "./hub-sessions.js";
 
 /** These tests cover the CAAH-40 verify cache; Hub policy is covered in hub.test.ts. */
-const admitAll: HubSessionPolicy = {
-  sessionAllowed: async () => true,
-  workAllowed: async () => true,
-};
+const admitAll: HubSessionPolicy = disabledHubPolicy({});
 
 describe("Hub session authorizer with verify cache", () => {
   beforeEach(() => {

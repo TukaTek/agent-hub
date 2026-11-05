@@ -44,7 +44,7 @@ export interface HubSessionAuthorizerConfig {
 }
 
 /** The parts of the shared Hub policy that continuing sessions and work consult. */
-export type HubSessionPolicy = Pick<HubPolicy, "sessionAllowed" | "workAllowed">;
+export type HubSessionPolicy = Pick<HubPolicy, "sessionAllowed" | "workAllowed" | "status">;
 
 /** One refresh per grant across processes; the new grant is stored before it is verified. */
 const REFRESH_LEASE_MS = 30_000;
@@ -291,12 +291,19 @@ export function createUserWorkAuthorizer(
     if (!authorize || !policy) return !userId.startsWith("hub_");
     if (!userId.startsWith("hub_")) return false;
     const identity = await prisma.hubIdentity.findUnique({ where: { userId } });
-    if (!identity || !(await policy.workAllowed(identity))) return false;
+    if (!identity) return false;
     const sessions = await prisma.session.findMany({
       where: { userId, expiresAt: { gt: new Date() }, hubSession: { isNot: null } },
       orderBy: { createdAt: "desc" },
       select: { id: true },
     });
+    if (!(await policy.workAllowed(identity))) {
+      // Without a recent Hub answer the refusal is an outage, not a sign-out.
+      const { state } = await policy.status();
+      if (sessions.length && (state === "stale" || state === "missing"))
+        throw new HubSessionUnavailableError();
+      return false;
+    }
     let unavailable: HubSessionUnavailableError | undefined;
     for (const session of sessions) {
       try {

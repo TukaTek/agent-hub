@@ -2878,6 +2878,38 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     expect(await f.work(userId)).toBe(true);
   });
 
+  /** Hub down long enough that the stored policy snapshot is too old to use. */
+  async function staleOutage() {
+    const { f, headers } = await afterWindow();
+    const healthy = f.hub.reply;
+    const timeout = () => Promise.reject(new DOMException("timed out", "TimeoutError"));
+    f.hub.reply = timeout;
+    f.client.verify.mockImplementation(timeout);
+    vi.setSystemTime(Date.now() + 180_001);
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "stale" });
+    const recover = async () => {
+      f.hub.reply = healthy;
+      f.client.verify.mockImplementation(async () => undefined);
+      await f.policy.refresh();
+    };
+    return { f, headers, recover };
+  }
+
+  it("refuses new work as unavailable, not a sign-in, once the outage outlasts the policy snapshot", async () => {
+    const { f, recover } = await staleOutage();
+    await expect(f.work(userId)).rejects.toMatchObject({ name: "HubSessionUnavailableError" });
+    expect(f.data.session).toHaveLength(1);
+    await recover();
+    expect(await f.work(userId)).toBe(true);
+  });
+
+  it("still refuses work as a sign-in for a user with no kept session during that outage", async () => {
+    const { f, headers } = await staleOutage();
+    await f.auth.api.signOut({ headers });
+    expect(await f.work(userId)).toBe(false);
+  });
+
   it.each(denials)(
     "refuses new work without an outage when Hub refuses with %s",
     async (_n, error) => {
