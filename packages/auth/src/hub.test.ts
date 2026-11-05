@@ -2508,9 +2508,10 @@ describe("Active sessions while Hub policy is degraded (CAAH-36)", () => {
     expect(await f.auth.api.getSession({ headers })).not.toBeNull();
     expect(await f.work(userId)).toBe(true);
     vi.setSystemTime(Date.now() + 1_001);
-    expect(await f.auth.api.getSession({ headers })).toBeNull();
-    expect(await f.work(userId)).toBe(false);
-    // Policy refusal is not a Hub revocation: the session comes back with Hub.
+    const error = await f.auth.api.getSession({ headers }).catch((e: unknown) => e);
+    expect(isHubSessionUnavailable(error)).toBe(true);
+    await expect(f.work(userId)).rejects.toMatchObject({ name: "HubSessionUnavailableError" });
+    // An outage is not a Hub revocation: the session comes back with Hub.
     expect(f.data.session).toHaveLength(1);
     f.hub.reply = healthy;
     await f.policy.refresh();
@@ -2908,6 +2909,77 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     const { f, headers } = await staleOutage();
     await f.auth.api.signOut({ headers });
     expect(await f.work(userId)).toBe(false);
+  });
+
+  /** Only the policy poll fails; session verify still succeeds and the snapshot is not yet stale. */
+  async function policyPollOutage() {
+    const { f, headers } = await afterWindow();
+    const healthy = f.hub.reply;
+    f.hub.reply = async () => Promise.reject(new DOMException("timed out", "TimeoutError"));
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "unavailable" });
+    const recover = async () => {
+      f.hub.reply = healthy;
+      await f.policy.refresh();
+    };
+    return { f, headers, recover };
+  }
+
+  it("refuses work and the session as unavailable, not a sign-in, while only the policy poll fails", async () => {
+    const { f, headers, recover } = await policyPollOutage();
+    await expect(f.work(userId)).rejects.toMatchObject({
+      name: "HubSessionUnavailableError",
+      message: "CortexAI Hub can't be reached",
+    });
+    const response = await getSessionStatus(f, headers);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
+    expect(isHubSessionUnavailable(await f.auth.api.getSession({ headers }).catch((e) => e))).toBe(
+      true,
+    );
+    expect(f.data.session).toHaveLength(1);
+    expect(f.client.verify).toHaveBeenCalled();
+    await recover();
+    expect(await f.work(userId)).toBe(true);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  });
+
+  it("answers unavailable after a refresh while only the policy poll fails", async () => {
+    const { f, headers, recover } = await policyPollOutage();
+    [...f.grants.values()][0].accessUntil = new Date(0);
+    const error = await f.auth.api.getSession({ headers }).catch((e: unknown) => e);
+    expect(isHubSessionUnavailable(error)).toBe(true);
+    expect(f.client.refresh).toHaveBeenCalledOnce();
+    expect(f.data.session).toHaveLength(1);
+    await recover();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  });
+
+  it("still refuses work as a sign-in for a user with no kept session while the policy poll fails", async () => {
+    const { f, headers } = await policyPollOutage();
+    await f.auth.api.signOut({ headers });
+    expect(await f.work(userId)).toBe(false);
+  });
+
+  it("still refuses work and the session, keeping it, when Hub removes the user's assignment", async () => {
+    const { f, headers } = await afterWindow();
+    f.hub.reply = async () => ({
+      status: 200,
+      body: hubPolicyBodyForTests(config.tenantId, ["subject-2"], 2),
+    });
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "ok" });
+    expect(await f.work(userId)).toBe(false);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("still refuses work and the session when Hub disables the tenant", async () => {
+    const { f, headers } = await afterWindow();
+    f.hub.reply = async () => Promise.reject(new HubRequestError(403, "tenant_disabled"));
+    await f.policy.refresh();
+    expect(await f.work(userId)).toBe(false);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
   });
 
   it.each(denials)(

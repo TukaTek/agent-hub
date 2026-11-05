@@ -52,6 +52,12 @@ const REFRESH_LEASE_MS = 30_000;
 const REFRESH_WAIT_MS = 10_000;
 const REFRESH_POLL_MS = 100;
 
+/** Without a recent Hub policy answer, a refusal is an outage rather than a denial. */
+async function policyOutage(policy: HubSessionPolicy): Promise<boolean> {
+  const { state } = await policy.status();
+  return state === "unavailable" || state === "stale" || state === "missing";
+}
+
 export function createHubSessionAuthorizer(
   prisma: PrismaClient,
   config: HubAuthConfig,
@@ -91,6 +97,13 @@ export function createHubSessionAuthorizer(
     throw new HubSessionUnavailableError({ cause: error });
   }
 
+  /** A policy refusal is not a revocation, so the session is kept for when Hub recovers. */
+  async function admitted(identity: { subject: string; tenant: string }): Promise<boolean> {
+    if (await policy.sessionAllowed(identity)) return true;
+    if (await policyOutage(policy)) throw new HubSessionUnavailableError();
+    return false;
+  }
+
   async function authorizeOnce(sessionId: string, userId: string): Promise<Outcome> {
     const grantSession = await prisma.hubSession.findUnique({ where: { sessionId } });
     const session = await prisma.session.findUnique({ where: { id: sessionId } });
@@ -125,10 +138,8 @@ export function createHubSessionAuthorizer(
         return failed(error, sessionId, used);
       }
       verifyCache.recordVerifyLatency(Date.now() - verifyStart);
-      // Once the window lapses, Hub policy must admit the session like a new
-      // sign-in. A refusal is not a revocation, so the session is kept for
-      // when Hub recovers.
-      if (!(await policy.sessionAllowed(identity))) return false;
+      // Once the window lapses, Hub policy must admit the session like a new sign-in.
+      if (!(await admitted(identity))) return false;
       verifyCache.set(tokenHash, tokenExpiresAt);
       return true;
     }
@@ -236,7 +247,7 @@ export function createHubSessionAuthorizer(
         await client.revoke(grant.refreshToken).catch(() => undefined);
         return outcome;
       }
-      return await policy.sessionAllowed(identity);
+      return await admitted(identity);
     } finally {
       // Lets the next request refresh at once when no new grant was stored.
       if (!next) await release(sessionId, used);
@@ -304,9 +315,7 @@ export function createUserWorkAuthorizer(
     });
     if (!(await policy.workAllowed(identity))) {
       // Without a recent Hub answer the refusal is an outage, not a sign-out.
-      const { state } = await policy.status();
-      if (sessions.length && (state === "stale" || state === "missing"))
-        throw new HubSessionUnavailableError();
+      if (sessions.length && (await policyOutage(policy))) throw new HubSessionUnavailableError();
       return false;
     }
     let unavailable: HubSessionUnavailableError | undefined;
@@ -320,6 +329,7 @@ export function createUserWorkAuthorizer(
     }
     // Hub could not answer: no new work now, but the session is kept, so this is no sign-out.
     if (unavailable) throw unavailable;
+    if (sessions.length && (await policyOutage(policy))) throw new HubSessionUnavailableError();
     return false;
   };
 }
