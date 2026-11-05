@@ -198,8 +198,10 @@ export function createHubSessionAuthorizer(
       } catch (error) {
         return await failed(error, sessionId, used);
       }
-      if (grant.subject !== identity.subject || grant.tenant !== identity.tenant)
+      if (grant.subject !== identity.subject || grant.tenant !== identity.tenant) {
+        await client.revoke(grant.refreshToken).catch(() => undefined);
         return await end(sessionId, used);
+      }
       // Hub has spent the old token: keep the new grant before anything else can fail.
       try {
         const refreshCipher = await encrypt(grant.refreshToken);
@@ -229,7 +231,10 @@ export function createHubSessionAuthorizer(
       try {
         await client.verify(grant.accessToken, identity);
       } catch (error) {
-        return await failed(error, sessionId, next);
+        const outcome = await failed(error, sessionId, next);
+        // Refused: nothing local holds the grant Hub just issued.
+        await client.revoke(grant.refreshToken).catch(() => undefined);
+        return outcome;
       }
       return await policy.sessionAllowed(identity);
     } finally {

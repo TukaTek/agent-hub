@@ -2953,6 +2953,7 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     });
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(f.data.session).toHaveLength(0);
+    expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-x");
   });
 
   /** A Hub that rotates refresh tokens and refuses spent ones, behind the real client. */
@@ -2976,14 +2977,18 @@ describe("Hub outages keep the session (CAAH-108)", () => {
       login: () => Response.json(grantBody()),
       refresh: ({ refreshToken }) => {
         if (refreshToken !== `test-fake-refresh-${issued}`)
-          return Response.json({ error: "invalid_grant" }, { status: 400 });
+          return Response.json({ error: "refresh_failed" }, { status: 401 });
         issued++;
         return Response.json(grantBody());
       },
       session: () => Response.json({ valid: true, userId: user.id, tenantId: config.tenantId }),
       config: () => Response.json({ product: "cortexai-agent-hub", products }),
-      revoke: () => Response.json({ success: true }),
+      revoke: ({ refreshToken }) => {
+        revoked.push(refreshToken);
+        return Response.json({ success: true });
+      },
     };
+    const revoked: string[] = [];
     const healthy = { ...hub };
     const fetcher = vi.fn(async (url: URL | string, init?: RequestInit) =>
       hub[new URL(String(url)).pathname.split("/").at(-1)!]!(
@@ -2994,7 +2999,7 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     const { headers } = await f.login();
     const storedRefresh = () =>
       symmetricDecrypt({ key: encryptionKey, data: [...f.grants.values()][0].refreshToken });
-    return { f, headers, hub, recover: () => Object.assign(hub, healthy), storedRefresh };
+    return { f, headers, hub, recover: () => Object.assign(hub, healthy), storedRefresh, revoked };
   }
 
   it.each([
@@ -3018,17 +3023,18 @@ describe("Hub outages keep the session (CAAH-108)", () => {
   });
 
   it("ends the session when Hub refuses the grant it just rotated", async () => {
-    const { f, headers, hub } = await rotatingHub();
+    const { f, headers, hub, revoked } = await rotatingHub();
     expire(f);
     hub.session = () => Response.json({ valid: false });
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(f.data.session).toHaveLength(0);
     expect(f.grants.size).toBe(0);
+    expect(revoked).toContain("test-fake-refresh-2");
   });
 
-  it("revokes a rotated grant it could not store, frees the lease and keeps the session", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
+  // Known limitation: Hub has spent the stored token, so the next refresh is a sign-in.
+  it("answers 503 when it cannot store a rotated grant, then ends the session on the spent token", async () => {
+    const { f, headers, storedRefresh, revoked } = await rotatingHub();
     expire(f);
     const updateMany = f.prisma.hubSession.updateMany;
     f.prisma.hubSession.updateMany = vi.fn(async (args: any) => {
@@ -3036,12 +3042,14 @@ describe("Hub outages keep the session (CAAH-108)", () => {
       return updateMany(args);
     });
     expect((await getSessionStatus(f, headers)).status).toBe(503);
-    expect(f.client.revoke).toHaveBeenCalledWith("refresh-secret-2");
+    expect(revoked).toContain("test-fake-refresh-2");
     expect(f.data.session).toHaveLength(1);
+    expect(await storedRefresh()).toBe("test-fake-refresh-1");
     expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
     f.prisma.hubSession.updateMany = updateMany;
-    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-    expect(f.client.refresh).toHaveBeenLastCalledWith("refresh-secret-1");
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
   });
 
   it("logs why it answered 503, once and without credentials", async () => {
