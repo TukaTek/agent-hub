@@ -131,7 +131,8 @@ jobs:
   test-integration:
     name: Postgres journeys
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 minutes cancelled a run whose integration step had already passed.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
