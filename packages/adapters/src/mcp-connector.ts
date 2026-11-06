@@ -46,6 +46,7 @@ import {
 import type { McpOAuthBroker, OAuthMaterial } from "./mcp-oauth.js";
 import {
   accessTokenExpiresAt,
+  launchArgSecrets,
   looksLikeSecretValue,
   McpReauthorizationRequiredError,
   oauthMaterialSecrets,
@@ -993,6 +994,7 @@ export class McpConnector implements ConnectorProvider {
       material = plaintext === undefined ? {} : (JSON.parse(plaintext) as OAuthMaterial);
       const loaded = { material, ...(secret ? { secretId: secret.id } : {}) };
       const args = Array.isArray(server.args) ? server.args.map(String) : [];
+      launchSecrets.push(...launchArgSecrets(args));
       const env = { ...(material.env ?? {}) };
       const onPersisted = (record: { id: string; ref: string; material: OAuthMaterial }) => {
         ref = record.ref;
