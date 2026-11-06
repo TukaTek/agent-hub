@@ -33,16 +33,28 @@ describePostgres("tool completion audit idempotency (PostgreSQL)", () => {
   const first = () => clients[0]!;
 
   async function runInNewThread() {
+    // threads.botId is unique, so each fixture thread needs its own bot.
     const threadId = `test-fake-audit-thread-${randomUUID()}`;
+    const threadBotId = `test-fake-audit-bot-${randomUUID()}`;
     const { prisma } = first();
-    await prisma.thread.create({ data: { id: threadId, spaceId, userId, botId } });
+    await prisma.bot.create({
+      data: { id: threadBotId, spaceId, userId, name: "Ada", color: "ink" },
+    });
+    await prisma.thread.create({ data: { id: threadId, spaceId, userId, botId: threadBotId } });
     const task = await prisma.task.create({
-      data: { spaceId, botId, threadId, userId, prompt: "test-fake-prompt", status: "running" },
+      data: {
+        spaceId,
+        botId: threadBotId,
+        threadId,
+        userId,
+        prompt: "test-fake-prompt",
+        status: "running",
+      },
     });
     const run = await prisma.run.create({
       data: {
         spaceId,
-        botId,
+        botId: threadBotId,
         threadId,
         taskId: task.id,
         userId,
@@ -51,17 +63,17 @@ describePostgres("tool completion audit idempotency (PostgreSQL)", () => {
         startedAt: new Date(),
       },
     });
-    return { threadId, runId: run.id };
+    return { threadId, runId: run.id, botId: threadBotId };
   }
 
   function audit(
-    target: { threadId: string; runId: string },
+    target: { threadId: string; runId: string; botId: string },
     payload: { auditId: string; executionId: string; outcome?: string },
   ) {
     return {
       spaceId,
       threadId: target.threadId,
-      botId,
+      botId: target.botId,
       runId: target.runId,
       type: "agent.tool.completed" as const,
       payload: { name: "shell", durationMs: 1, outcome: "succeeded", ...payload },

@@ -44,16 +44,28 @@ describePostgres("tool completion audits under pool pressure (PostgreSQL)", () =
   }
 
   async function runInNewThread() {
+    // threads.botId is unique, so each fixture thread needs its own bot.
     const { prisma } = clients[0]!;
     const threadId = `test-fake-audit-load-thread-${randomUUID()}`;
-    await prisma.thread.create({ data: { id: threadId, spaceId, userId, botId } });
+    const threadBotId = `test-fake-audit-load-bot-${randomUUID()}`;
+    await prisma.bot.create({
+      data: { id: threadBotId, spaceId, userId, name: "Ada", color: "ink" },
+    });
+    await prisma.thread.create({ data: { id: threadId, spaceId, userId, botId: threadBotId } });
     const task = await prisma.task.create({
-      data: { spaceId, botId, threadId, userId, prompt: "test-fake-prompt", status: "running" },
+      data: {
+        spaceId,
+        botId: threadBotId,
+        threadId,
+        userId,
+        prompt: "test-fake-prompt",
+        status: "running",
+      },
     });
     const run = await prisma.run.create({
       data: {
         spaceId,
-        botId,
+        botId: threadBotId,
         threadId,
         taskId: task.id,
         userId,
@@ -62,7 +74,7 @@ describePostgres("tool completion audits under pool pressure (PostgreSQL)", () =
         startedAt: new Date(),
       },
     });
-    return { spaceId, threadId, botId, runId: run.id };
+    return { spaceId, threadId, botId: threadBotId, runId: run.id };
   }
 
   async function auditRows(runId: string) {
