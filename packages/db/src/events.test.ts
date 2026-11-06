@@ -3808,7 +3808,9 @@ describe("appendEvent", () => {
       payload: { auditId: "test-fake-audit-1", outcome: "succeeded" },
     };
     const prisma = {
-      $transaction: vi.fn().mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" })),
+      $transaction: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" })),
       event: { findFirst: vi.fn().mockResolvedValue(committed) },
     } as unknown as PrismaClient;
     const input = {

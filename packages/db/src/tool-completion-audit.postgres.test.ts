@@ -146,9 +146,7 @@ describePostgres("tool completion audit idempotency (PostgreSQL)", () => {
       const input = audit(target, { auditId: randomUUID(), executionId: "test-fake-call-race" });
 
       const results = await Promise.all(
-        Array.from({ length: 8 }, (_, index) =>
-          appendEvent(clients[index % 2]!.prisma, input),
-        ),
+        Array.from({ length: 8 }, (_, index) => appendEvent(clients[index % 2]!.prisma, input)),
       );
 
       const { events, nextEventSeq } = await threadRows(target.threadId);
@@ -184,7 +182,11 @@ describePostgres("tool completion audit idempotency (PostgreSQL)", () => {
       const target = await runInNewThread();
       await appendEvent(
         first().prisma,
-        audit(target, { auditId: randomUUID(), executionId: "test-fake-call-1", outcome: "paused" }),
+        audit(target, {
+          auditId: randomUUID(),
+          executionId: "test-fake-call-1",
+          outcome: "paused",
+        }),
       );
       await appendEvent(
         clients[1]!.prisma,
