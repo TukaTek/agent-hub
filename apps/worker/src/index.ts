@@ -59,6 +59,7 @@ import {
   SpaceMemoryProviderResolver,
   sandboxProviderOptionsFromEnv,
   shutdownPiTelemetry,
+  toolCompletionAuditQueue,
   withRunWorker,
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
@@ -357,6 +358,9 @@ async function main() {
       await stopHealth?.();
       await reconciler.stop();
       await jobHost.stop();
+      // Jobs have stopped; let queued tool audits commit before the pool closes.
+      // Each one still waiting afterwards logs its own queue_timeout warning.
+      await toolCompletionAuditQueue.drain();
       await jobs.close();
       await secrets.close();
       await realtime.close();

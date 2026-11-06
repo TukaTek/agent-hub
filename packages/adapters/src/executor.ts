@@ -463,6 +463,8 @@ import {
   listBoardTickets,
   updateTicket,
 } from "./ticket-tools.js";
+import type { ToolCompletionAuditQueue } from "./tool-completion-audit-queue.js";
+import { toolCompletionAuditQueue } from "./tool-completion-audit-queue.js";
 import { advanceToolCallLoopGuard, loopGuardStopText } from "./tool-loop.js";
 import {
   MAX_PAGED_READ_BYTES,
@@ -2949,30 +2951,38 @@ export function toolCompletionAuditPayload(
 }
 
 export async function appendToolCompletionAudit(
-  deps: { events: Pick<ThreadEvents, "append"> },
+  deps: { events: Pick<ThreadEvents, "append">; auditQueue?: ToolCompletionAuditQueue },
   target: { spaceId: string; threadId: string; botId: string; runId: string },
   completion: AgentToolCompletion,
   secrets: string[] = [],
 ): Promise<void> {
-  try {
-    await deps.events.append({
-      spaceId: target.spaceId,
-      threadId: target.threadId,
-      botId: target.botId,
-      runId: target.runId,
-      type: "agent.tool.completed",
-      payload: toolCompletionAuditPayload(completion, secrets),
-    });
-  } catch (error) {
-    // A tool that finishes after its run was cancelled has no history to join.
-    if (error instanceof RunHistoryWriteError) return;
-    // Audit persistence must not change the tool result or strand the run.
-    getLogger().warn("agent tool completion audit append failed", {
-      "error.detail": sanitizeConnectorError(error, secrets),
-      tool: redactSecrets(completion.name, secrets),
-      executionId: redactSecrets(completion.executionId, secrets),
-    });
-  }
+  const input = {
+    spaceId: target.spaceId,
+    threadId: target.threadId,
+    botId: target.botId,
+    runId: target.runId,
+    type: "agent.tool.completed" as const,
+    // One key per completion, reused by every retry, so the events unique index
+    // turns a retry of an already committed audit into a no-op. A resumed call
+    // repeats its executionId, so executionId cannot be the key.
+    payload: { ...toolCompletionAuditPayload(completion, secrets), auditId: randomUUID() },
+  };
+  const outcome = await (deps.auditQueue ?? toolCompletionAuditQueue).enqueue(target.runId, () =>
+    deps.events.append(input),
+  );
+  if (outcome.status === "appended") return;
+  // A tool that finishes after its run was cancelled has no history to join.
+  if (outcome.error instanceof RunHistoryWriteError) return;
+  // Audit persistence must not change the tool result or strand the run.
+  getLogger().warn("agent tool completion audit append failed", {
+    ...(outcome.error === undefined
+      ? {}
+      : { "error.detail": sanitizeConnectorError(outcome.error, secrets) }),
+    reason: outcome.reason,
+    attempts: outcome.attempts,
+    tool: redactSecrets(completion.name, secrets),
+    executionId: redactSecrets(completion.executionId, secrets),
+  });
 }
 
 export async function deferFutureRoutine(

@@ -1140,6 +1140,27 @@ describe("thread event reduction", () => {
     expect(next?.messages).toEqual(initial.messages);
   });
 
+  it("does not turn a failed tool audit into a visible run error", () => {
+    const initial = snapshot([], 4);
+    const next = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "agent.tool.completed",
+        seq: 5,
+        runId: "run-1",
+        payload: {
+          name: "shell",
+          executionId: "test-fake-call-1",
+          auditId: "test-fake-audit-1",
+          outcome: "error",
+          error: "Transaction API error: Unable to start a transaction in the given time.",
+        },
+      }),
+    );
+
+    expect(next).toEqual({ ...initial, cursor: 5 });
+  });
+
   it("holds a tool call that lands mid-sentence until the sentence completes", () => {
     const initial = snapshot([]);
 

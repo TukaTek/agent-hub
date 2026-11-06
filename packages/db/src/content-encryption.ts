@@ -23,8 +23,12 @@ import { createRowId } from "./row-id.js";
  * including these values, is only authoritative inside the sealed copy.
  */
 const MESSAGE_BLOCK_PLAIN_KEYS = new Set(["kind", "status", "channelId", "serverId", "artifactId"]);
-/** Event payload keys that event queries filter on. */
+/**
+ * Event payload keys that event queries filter on. `auditId` is an opaque random
+ * id the tool completion audit unique index reads.
+ */
 const EVENT_PAYLOAD_PLAIN_KEYS = new Set([
+  "auditId",
   "messageId",
   "notice",
   "state",

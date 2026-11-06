@@ -738,6 +738,8 @@ model Event {
   @@index([spaceId, createdAt])
   @@index([threadId, seq])
   @@index([runId, type, seq])
+  // Partial unique expression index events_runId_auditId_key is created in SQL:
+  // one agent.tool.completed row per (runId, payload.auditId) audit invocation.
   @@map("events")
 }
 
