@@ -52,7 +52,7 @@ jobs:
   build:
     name: Production builds
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -77,6 +77,13 @@ jobs:
           name: desktop-e2e-screenshots
           path: apps/desktop/e2e/screenshots
           if-no-files-found: ignore
+      # CAAH-144: package with plain npx (the launcher that used to fall back to npm)
+      # and fail if Koffi's Linux native module is missing from app.asar.unpacked.
+      - name: Linux package bundles the Koffi native module
+        working-directory: apps/desktop
+        run: |
+          npx --no-install electron-builder --linux --x64 --dir --publish never
+          node scripts/verify-linux-native.mjs out/linux-unpacked
 
   test:
     name: Unit tests
