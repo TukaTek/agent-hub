@@ -8,6 +8,8 @@ import {
 import type { MessagingReceipts } from "./messaging-receipts.js";
 import { inboundDeliveryClientNonce, messagingWakeIdempotencyKey } from "./webhook-inbound.js";
 
+const ROUTINE_CREATED_AT = new Date("2026-01-01T00:00:00Z");
+
 const signupPolicy = { signupsEnabled: undefined, signupAllowlist: undefined };
 
 function createDeps(
@@ -392,6 +394,7 @@ describe("createMessagingInboundHandler DM routing", () => {
   it("wakes every matching provider routine with fenced data and webhook approvals", async () => {
     const routines = Array.from({ length: 6 }, (_, index) => ({
       id: `routine-${index + 1}`,
+      createdAt: new Date(Date.UTC(2026, 0, 1 + index)),
       name: `Triage Slack ${index + 1}`,
       prompt: `Review update ${index + 1}`,
     }));
@@ -431,6 +434,8 @@ describe("createMessagingInboundHandler DM routing", () => {
       expect.objectContaining({
         trigger: "webhook",
         clientNonce: expect.stringMatching(/^messaging:bot-1:/),
+        // Several messaging routines share one run; the oldest one is credited.
+        routineId: "routine-1",
         prompt: expect.stringContaining('Run routine "Triage Slack 1":\nReview update 1'),
       }),
     );
@@ -454,19 +459,34 @@ describe("createMessagingInboundHandler DM routing", () => {
         spaceId: "ws-1",
         botId: "bot-1",
       },
-      routines: [{ id: "routine-1", name: "Triage Slack", prompt: "Review this update" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Triage Slack",
+          prompt: "Review this update",
+        },
+      ],
     });
     const handle = createMessagingInboundHandler(deps);
     await handle({ ...dmEvent, provider: "slack", handle: "Ev-dm-1", from: "U123" });
 
     expect(deps.sendUserMessage).toHaveBeenCalledTimes(1);
     expect(deps.sendUserMessage.mock.calls[0]?.[0]?.trigger).toBe("webhook");
+    expect(deps.sendUserMessage.mock.calls[0]?.[0]?.routineId).toBe("routine-1");
     expect(deps.enqueue).toHaveBeenCalledTimes(1);
   });
 
   it("aligns TeamChat wake nonces to deliveryProvider when inbound provider differs", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Emulator triage", prompt: "Review" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Emulator triage",
+          prompt: "Review",
+        },
+      ],
     });
     const event = {
       ...dmEvent,
@@ -502,7 +522,9 @@ describe("createMessagingInboundHandler DM routing", () => {
 
   it("refuses TeamChat routine wake when agent ownership already claimed the row", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Triage", prompt: "Review" }],
+      routines: [
+        { id: "routine-1", createdAt: ROUTINE_CREATED_AT, name: "Triage", prompt: "Review" },
+      ],
     });
     const updateMany = vi.fn(async () => ({ count: 0 }));
     (deps.prisma as { externalMessage: { updateMany: typeof updateMany } }).externalMessage = {
@@ -534,7 +556,9 @@ describe("createMessagingInboundHandler DM routing", () => {
 
   it("reasserts routing ownership before creating a TeamChat routine wake run", async () => {
     const deps = createDeps({
-      routines: [{ id: "routine-1", name: "Triage", prompt: "Review" }],
+      routines: [
+        { id: "routine-1", createdAt: ROUTINE_CREATED_AT, name: "Triage", prompt: "Review" },
+      ],
     });
     const updateMany = vi.fn(async () => ({ count: 1 }));
     (deps.prisma as { externalMessage: { updateMany: typeof updateMany } }).externalMessage = {
@@ -974,7 +998,14 @@ describe("createMessagingInboundHandler channel routing", () => {
     };
     const deps = createDeps({
       members: [approved],
-      routines: [{ id: "routine-1", name: "Channel triage", prompt: "Summarize the update" }],
+      routines: [
+        {
+          id: "routine-1",
+          createdAt: ROUTINE_CREATED_AT,
+          name: "Channel triage",
+          prompt: "Summarize the update",
+        },
+      ],
     });
     const handle = createMessagingInboundHandler(deps);
     await handle(groupEvent);

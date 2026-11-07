@@ -248,6 +248,8 @@ export interface SendUserMessageInput {
   blocks: MessageBlock[];
   prompt: string;
   trigger: "user" | "follow_up" | "webhook" | "messaging";
+  /** Routine that triggered this delivery (webhook), so its run shows in routine run history. */
+  routineId?: string;
   clientNonce?: string;
   linkMessageToRun?: boolean;
   /** Internal bot sender: enforce both bots' cross-space policy in the write transaction. */
@@ -497,6 +499,7 @@ export async function sendUserMessage(
             userId: input.userId,
             status: "queued",
             trigger: input.trigger,
+            ...(input.routineId ? { routineId: input.routineId } : {}),
             clientNonce: input.clientNonce ? `send:${message.id}` : undefined,
             sourceMessageId: message.id,
             ...(input.modelPin
@@ -524,6 +527,8 @@ export async function sendUserMessage(
             ...(input.trigger === "messaging" || input.trigger === "webhook"
               ? { originTrigger: input.trigger }
               : {}),
+            // Held webhook deliveries keep their routine so the continuation run is attributed.
+            ...(input.routineId ? { routineId: input.routineId } : {}),
             ...(input.modelPin
               ? {
                   modelProvider: input.modelPin.modelProvider,
@@ -1801,6 +1806,7 @@ export async function createPendingSteeringRun(
   const batch = pending.filter((item) => steeringOrigin(item) === origin);
   const source = batch.at(-1)!;
   const modelPin = continuationModelPin(batch);
+  const routineId = continuationRoutineId(batch);
   const task = await tx.task.create({
     data: {
       spaceId: input.spaceId,
@@ -1835,6 +1841,7 @@ export async function createPendingSteeringRun(
             ? "follow_up"
             : "messaging",
       sourceMessageId: source.message.id,
+      ...(routineId ? { routineId } : {}),
       ...(modelPin ?? {}),
     },
   });
@@ -1843,6 +1850,17 @@ export async function createPendingSteeringRun(
     data: { runId: run.id, claimedAt: null },
   });
   return run.id;
+}
+
+/**
+ * A continuation belongs to a routine only when every batched delivery came from that routine.
+ * A batch that mixes routines (or mixes attributed and unattributed deliveries) is left
+ * unattributed and so appears in no routine's run history.
+ */
+export function continuationRoutineId(batch: ReadonlyArray<{ routineId?: string | null }>) {
+  const first = batch[0]?.routineId;
+  if (!first) return null;
+  return batch.every((item) => item.routineId === first) ? first : null;
 }
 
 function continuationModelPin(
