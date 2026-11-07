@@ -4,7 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authClient = vi.hoisted(() => ({
   signIn: { email: vi.fn(), emailOtp: vi.fn() },
@@ -68,6 +68,7 @@ const email = "user@example.test";
 let container: HTMLDivElement;
 let root: Root;
 let fetchMock: ReturnType<typeof vi.fn>;
+let extraRoutes: Record<string, () => Response> = {};
 
 function stubServer(
   mode: "hub" | "local",
@@ -83,6 +84,8 @@ function stubServer(
       return Response.json(next, { status: continueStatus });
     if (url === "/api/auth/hub/sign-in")
       return Response.json(signIn.body, { status: signIn.status });
+    const route = extraRoutes[url];
+    if (route) return route();
     throw new Error(`Unexpected request ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -150,6 +153,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  extraRoutes = {};
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -276,6 +280,155 @@ it("points desktop Microsoft users to the browser instead of redirecting", async
   expect(container.querySelector('button[type="submit"]')).toBeNull();
   await click(button("Use a different email"));
   expect(emailInput().readOnly).toBe(false);
+});
+
+describe("desktop Microsoft sign-in", () => {
+  const nativeSso = { hubSso: true, hubSsoNative: true, sso: true, passwordAuth: false };
+  const entra = { next: "redirect", url: "https://hub.example.test/authorize" };
+  const returnTo = "http://127.0.0.1:53682/hub-sso";
+  const appChallenge = "c".repeat(43);
+  const authorizeUrl = "https://hub.example.test/authorize?state=s";
+  const handoff = { code: "h".repeat(43), state: "native-state", appVerifier: "v".repeat(43) };
+
+  function desktop(outcome: Promise<unknown> | unknown = handoff) {
+    const hubSso = {
+      start: vi.fn(async () => ({ returnTo, appChallenge })),
+      open: vi.fn(async () => outcome),
+      cancel: vi.fn(async () => undefined),
+    };
+    vi.stubGlobal("cortexAiAgentHubDesktop", { hubSso });
+    const assign = vi.fn();
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "https://agent-hub.example.test",
+      assign,
+    });
+    extraRoutes = {
+      "/api/auth/hub/sso/native/start": () =>
+        Response.json({ next: "redirect", authorizeUrl, state: "native-state" }),
+      "/api/auth/hub/sso/native/complete": () => Response.json({ user: { id: "u" } }),
+    };
+    return { hubSso, assign };
+  }
+
+  it("offers Microsoft instead of the unavailable message and finishes in the app", async () => {
+    const { hubSso, assign } = desktop();
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    const microsoft = await until(() => button("Continue with Microsoft"));
+    expect(container.textContent).not.toContain("isn't available in the desktop app");
+    expect(container.querySelector('button[type="submit"]')).toBeNull();
+    expect(emailInput().readOnly).toBe(true);
+    expect(hubSso.start).not.toHaveBeenCalled();
+
+    await click(microsoft);
+    await until(() => assign.mock.calls.length > 0);
+    expect(requestsTo("/api/auth/hub/sso/native/start")).toEqual([
+      { email, client: "desktop", returnTo, appChallenge },
+    ]);
+    expect(hubSso.open).toHaveBeenCalledExactlyOnceWith(authorizeUrl, "native-state");
+    expect(requestsTo("/api/auth/hub/sso/native/complete")).toEqual([handoff]);
+    expect(assign).toHaveBeenCalledWith("/app");
+  });
+
+  it("keeps the unavailable message when the server has no native SSO", async () => {
+    const { hubSso } = desktop();
+    stubServer("hub", entra, 200, undefined, { ...nativeSso, hubSsoNative: false });
+    await render();
+    await continueWithEmail();
+    const message = await until(() => container.querySelector('[role="status"]'));
+    expect(message.textContent).toContain("isn't available in the desktop app yet");
+    expect(button("Continue with Microsoft")).toBeUndefined();
+    expect(hubSso.start).not.toHaveBeenCalled();
+  });
+
+  it("keeps the unavailable message on a desktop build without the Hub SSO bridge", async () => {
+    vi.stubGlobal("cortexAiAgentHubDesktop", {});
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    const message = await until(() => container.querySelector('[role="status"]'));
+    expect(message.textContent).toContain("isn't available in the desktop app yet");
+  });
+
+  it("keeps redirecting in the browser", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    await until(() => assign.mock.calls.length > 0);
+    expect(assign).toHaveBeenCalledWith("https://hub.example.test/authorize");
+    expect(button("Continue with Microsoft")).toBeUndefined();
+  });
+
+  it.each([
+    ["hub_access_denied", "You don't have access to Agent Hub — ask your admin"],
+    ["sso_cancelled", "Microsoft sign-in was cancelled."],
+    ["sso_failed", "Microsoft sign-in didn't finish. Try again, or ask your admin for access."],
+    ["something_new", "Microsoft sign-in didn't finish. Try again, or ask your admin for access."],
+    ["sso_expired", "Your sign-in expired. Try again."],
+  ])("explains the %s callback error and offers Retry and Back", async (code, shown) => {
+    const { hubSso, assign } = desktop({ error: code });
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    await click(await until(() => button("Continue with Microsoft")));
+    const alert = await until(() => container.querySelector('[role="alert"]'));
+    expect(alert.textContent).toBe(shown);
+    expect(requestsTo("/api/auth/hub/sso/native/complete")).toEqual([]);
+    expect(assign).not.toHaveBeenCalled();
+
+    await click(button("Retry"));
+    await until(() => hubSso.open.mock.calls.length === 2);
+    expect(hubSso.start).toHaveBeenCalledTimes(2);
+    await click(await until(() => button("Use a different email")));
+    expect(emailInput().readOnly).toBe(false);
+  });
+
+  it("cancels a pending sign-in without an error", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    const { hubSso } = desktop(new Promise((resolve) => (finish = resolve)));
+    hubSso.cancel.mockImplementation(async () => {
+      finish({ error: "cancelled" });
+      return undefined;
+    });
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    await click(await until(() => button("Continue with Microsoft")));
+    await click(await until(() => button("Cancel")));
+    expect(hubSso.cancel).toHaveBeenCalledOnce();
+    await until(() => button("Continue with Microsoft"));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(requestsTo("/api/auth/hub/sso/native/complete")).toEqual([]);
+  });
+
+  it("shows the expired message when the handoff is refused", async () => {
+    const { assign } = desktop();
+    extraRoutes["/api/auth/hub/sso/native/complete"] = () =>
+      Response.json({ message: "Your sign-in expired" }, { status: 400 });
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    await click(await until(() => button("Continue with Microsoft")));
+    const alert = await until(() => container.querySelector('[role="alert"]'));
+    expect(alert.textContent).toBe("Your sign-in expired. Try again.");
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("releases the attempt and follows a password answer from native start", async () => {
+    const { hubSso } = desktop();
+    extraRoutes["/api/auth/hub/sso/native/start"] = () => Response.json({ next: "password" });
+    stubServer("hub", entra, 200, undefined, nativeSso);
+    await render();
+    await continueWithEmail();
+    await click(await until(() => button("Continue with Microsoft")));
+    await until(passwordInput);
+    expect(hubSso.cancel).toHaveBeenCalledOnce();
+    expect(hubSso.open).not.toHaveBeenCalled();
+  });
 });
 
 it("keeps desktop password users on the password step", async () => {

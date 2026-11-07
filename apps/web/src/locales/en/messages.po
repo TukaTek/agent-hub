@@ -1016,6 +1016,7 @@ msgstr "Can't read images"
 #: src/components/PasskeySettings.tsx
 #: src/components/teach/TeachComputerOverlay.tsx
 #: src/pages/Artifacts.tsx
+#: src/pages/Auth.tsx
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/model-settings/connection-controls.tsx
 #: src/pages/model-settings/space-bots-model.tsx
@@ -1483,6 +1484,10 @@ msgstr "Continue"
 msgid "Continue in Background"
 msgstr "Continue in Background"
 
+#: src/pages/Auth.tsx
+msgid "Continue in your browser"
+msgstr "Continue in your browser"
+
 #: src/components/ModelCredits.tsx
 msgid "Continue to checkout"
 msgstr "Continue to checkout"
@@ -1495,6 +1500,10 @@ msgstr "Continue with {0}"
 #: src/components/ModelCredits.tsx
 msgid "Continue with credits"
 msgstr "Continue with credits"
+
+#: src/pages/Auth.tsx
+msgid "Continue with Microsoft"
+msgstr "Continue with Microsoft"
 
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/model-settings/connection-controls.tsx
@@ -3224,6 +3233,10 @@ msgstr "Microsoft sign-in for your organization isn't available in Agent Hub yet
 #: src/pages/Auth.tsx
 msgid "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser."
 msgstr "Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your browser."
+
+#: src/pages/Auth.tsx
+msgid "Microsoft sign-in was cancelled."
+msgstr "Microsoft sign-in was cancelled."
 
 #: src/pages/model-settings/compatible-model-fields.tsx
 #: src/pages/Onboarding.tsx
@@ -5504,6 +5517,10 @@ msgstr "You can close this window."
 #: src/components/call/VoiceChatCard.tsx
 msgid "You declined"
 msgstr "You declined"
+
+#: src/pages/Auth.tsx
+msgid "You don't have access to Agent Hub — ask your admin"
+msgstr "You don't have access to Agent Hub — ask your admin"
 
 #: src/pages/shell/computer-overlay.tsx
 msgid "You have control"
