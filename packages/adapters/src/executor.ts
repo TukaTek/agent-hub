@@ -2777,7 +2777,10 @@ function runtimeFallbackModel(runtime: AgentRuntime) {
 }
 
 export interface ExecutorDeps {
-  /** Optional deployment identity gate, shared by interactive and scheduled runs. */
+  /**
+   * Optional deployment identity gate, shared by interactive and scheduled runs. It throws a
+   * `HubSessionUnavailableError` when Hub can't confirm a session it kept.
+   */
   authorizeUserWork?: (userId: string) => Promise<boolean>;
   maxUploadSizeBytes?: number;
   contextStrategy?: AgentContextStrategy;
@@ -3131,6 +3134,21 @@ export function isTerminalModelSetupError(error: unknown): boolean {
       (error.message === CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE ||
         error.message === cloudflareModelConfigMessage(CLOUDFLARE_WORKERS_AI_PROVIDER_ID)))
   );
+}
+
+/**
+ * Why the user may not start work now, or nothing when they may. An unreachable Hub keeps
+ * the session, so it reports the outage instead of asking the user to sign in.
+ */
+async function userWorkRefusal(deps: ExecutorDeps, userId: string): Promise<string | undefined> {
+  if (!deps.authorizeUserWork) return undefined;
+  try {
+    if (await deps.authorizeUserWork(userId)) return undefined;
+  } catch (error) {
+    if (error instanceof Error && error.name === "HubSessionUnavailableError") return error.message;
+    throw error;
+  }
+  return "Sign in through CortexAI Hub to continue";
 }
 
 export function createRunExecutor(deps: ExecutorDeps) {
@@ -3848,7 +3866,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
       const runSecrets = [...deps.secrets];
       let dispatchHandedOff = false;
       try {
-        if (deps.authorizeUserWork && !(await deps.authorizeUserWork(run.userId))) {
+        const workRefusal = await userWorkRefusal(deps, run.userId);
+        if (workRefusal) {
           await deps.events.finalizeRun({
             spaceId: run.spaceId,
             threadId: run.threadId,
@@ -3859,7 +3878,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             leaseOwner: workerId,
             leaseFence: fence,
             outcome: "failed",
-            error: "Sign in through CortexAI Hub to continue",
+            error: workRefusal,
           });
           return;
         }
@@ -4843,9 +4862,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
           observer?: AgentToolExecutionObserver,
         ) => {
           context.signal.throwIfAborted();
-          if (deps.authorizeUserWork && !(await deps.authorizeUserWork(run.userId))) {
+          const refusal = await userWorkRefusal(deps, run.userId);
+          if (refusal) {
             runAbortController?.abort();
-            throw new Error("Sign in through CortexAI Hub to continue");
+            throw new Error(refusal);
           }
           if (handedOff) {
             return {

@@ -4,10 +4,12 @@ import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import {
   createHubClient,
   HUB_CONFIG_DOC,
+  HubRejectedError,
   HubRequestError,
   HubUnsupportedIdpError,
   hubAuthFromEnv,
   hubUserId,
+  isHubRejection,
 } from "./hub-client.js";
 
 const origin = "https://hub.example.test";
@@ -821,5 +823,128 @@ describe("Hub SSO configuration", () => {
     expect(failure).toBe(
       `Error: HUB_SERVICE_SECRET_FILE must hold at most 4096 characters. See ${HUB_CONFIG_DOC}`,
     );
+  });
+});
+
+describe("Hub rejection classification (CAAH-108)", () => {
+  const origin = "https://hub.example.test";
+  const expected = { subject: "test-fake-subject", tenant: "test-fake-tenant" };
+  const clientWith = (fetcher: typeof fetch) =>
+    createHubClient({ origin, tenantId: expected.tenant }, fetcher);
+  const coded = (status: number, error: string) => Response.json({ error }, { status });
+  const verifyError = async (fetcher: typeof fetch) =>
+    clientWith(fetcher)
+      .verify("test-fake-access", expected)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+  it.each([
+    ["timeout", () => Promise.reject(new DOMException("timed out", "TimeoutError"))],
+    ["abort", () => Promise.reject(new DOMException("aborted", "AbortError"))],
+    ["network", () => Promise.reject(new TypeError("fetch failed"))],
+    ["408", async () => new Response("{}", { status: 408 })],
+    ["429", async () => new Response("{}", { status: 429 })],
+    ["500", async () => new Response("{}", { status: 500 })],
+    ["502", async () => new Response("<html>", { status: 502 })],
+    ["503", async () => Response.json({ error: "unavailable" }, { status: 503 })],
+    ["504", async () => new Response("", { status: 504 })],
+    ["malformed 200", async () => new Response("<html>maintenance</html>", { status: 200 })],
+    ["a code-less 400", async () => new Response("<html>bad request</html>", { status: 400 })],
+    ["a code-less 404", async () => new Response("<html>not found</html>", { status: 404 })],
+    ["a code-less 401", async () => new Response("", { status: 401 })],
+    ["a code-less 403", async () => new Response("<html>denied</html>", { status: 403 })],
+    ["401 with an undocumented code", async () => coded(401, "test-fake-other")],
+    ["403 forbidden", async () => coded(403, "forbidden")],
+    ["400 invalid_request", async () => coded(400, "invalid_request")],
+    ["400 envelope_too_large", async () => coded(400, "envelope_too_large")],
+    ["400 missing_product", async () => coded(400, "missing_product")],
+    ["404 unknown_product", async () => coded(404, "unknown_product")],
+    ["404 tenant_not_found", async () => coded(404, "tenant_not_found")],
+    ["409 conflict", async () => coded(409, "conflict")],
+  ])("treats %s as not a rejection", async (_name, reply) => {
+    const error = await verifyError(vi.fn(reply) as never);
+    expect(error).toBeDefined();
+    expect(isHubRejection(error)).toBe(false);
+  });
+
+  it.each([
+    ["401 refresh_failed", async () => coded(401, "refresh_failed")],
+    ["400 invalid_grant", async () => coded(400, "invalid_grant")],
+    ["401 invalid_token", async () => coded(401, "invalid_token")],
+    ["401 unauthorized", async () => coded(401, "unauthorized")],
+    ["403 access_denied", async () => coded(403, "access_denied")],
+    ["403 product_not_enabled", async () => coded(403, "product_not_enabled")],
+    ["valid:false", async () => Response.json({ valid: false })],
+    [
+      "other tenant",
+      async () =>
+        Response.json({ valid: true, userId: expected.subject, tenantId: "test-fake-other" }),
+    ],
+    [
+      "other subject",
+      async () =>
+        Response.json({ valid: true, userId: "test-fake-other", tenantId: expected.tenant }),
+    ],
+  ])("treats %s as a definitive rejection", async (_name, reply) => {
+    const error = await verifyError(vi.fn(reply) as never);
+    expect(isHubRejection(error)).toBe(true);
+  });
+
+  it.each([
+    [400, "invalid_grant"],
+    [401, "refresh_failed"],
+  ])("treats a refresh refused with %i %s as definitive", async (status, code) => {
+    const client = clientWith(vi.fn(async () => coded(status, code)) as never);
+    await expect(client.refresh("test-fake-refresh")).rejects.toSatisfy(isHubRejection);
+  });
+
+  it("does not treat a refresh Hub refused as a malformed request as definitive", async () => {
+    const client = clientWith(vi.fn(async () => coded(400, "invalid_request")) as never);
+    const error = await client.refresh("test-fake-refresh").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HubRequestError);
+    expect(isHubRejection(error)).toBe(false);
+  });
+
+  it("returns a rotated grant without verifying it, so the caller can store it first", async () => {
+    const { client, fetcher } = setup({ session: new Response("", { status: 503 }) });
+    await expect(client.refresh("test-fake-refresh")).resolves.toMatchObject({
+      refreshToken: fixture.sessionResponse.refreshToken,
+    });
+    expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/tenant-auth/refresh",
+    ]);
+  });
+
+  const refreshError = (body: Record<string, unknown>) =>
+    setup({ refresh: { ...fixture.sessionResponse, ...body } })
+      .client.refresh("test-fake-refresh")
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+  it.each([
+    ["an unparseable expiry", { refreshTokenExpiresAt: "not-a-date" }],
+    ["missing products", { products: undefined }],
+  ])("treats a refresh reply with %s as malformed, not a rejection", async (_name, body) => {
+    const error = await refreshError(body);
+    expect(error).toBeDefined();
+    expect(isHubRejection(error)).toBe(false);
+  });
+
+  it.each([
+    ["an expired refresh token", { refreshTokenExpiresAt: "2000-01-01T00:00:00.000Z" }],
+    ["no Agent Hub entitlement", { products: false }],
+    ["a disabled product", { products: [{ id: "cortexai-agent-hub", enabled: false }] }],
+  ])("treats a refresh reply with %s as a rejection", async (_name, body) => {
+    expect(isHubRejection(await refreshError(body))).toBe(true);
+  });
+
+  it("keeps the existing messages so sign-in callers are unchanged", async () => {
+    const error = await verifyError(vi.fn(async () => Response.json({ valid: false })) as never);
+    expect(error).toBeInstanceOf(HubRejectedError);
+    expect((error as Error).message).toBe("Hub access denied");
   });
 });

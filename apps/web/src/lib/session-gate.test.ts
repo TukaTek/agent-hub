@@ -40,6 +40,18 @@ describe("session gate", () => {
     );
   });
 
+  it("keeps a signed-in user through a Hub outage and recovers without signing in", () => {
+    // get-session answers 503 HUB_UNAVAILABLE while Hub is down (CAAH-108).
+    expect(sessionGate({ data: user, isPending: false, error: { status: 503 } })).toBe(
+      "authenticated",
+    );
+    expect(sessionGate({ data: null, isPending: false, error: { status: 503 } })).toBe(
+      "unreachable",
+    );
+    // Hub returns: the same cookie resolves the session again.
+    expect(sessionGate({ data: user, isPending: false, error: null })).toBe("authenticated");
+  });
+
   it("holds the reconnect screen across a null-session refetch", () => {
     expect(holdUnreachableGate("unreachable", false)).toBe(true);
     expect(holdUnreachableGate("loading", true)).toBe(true);

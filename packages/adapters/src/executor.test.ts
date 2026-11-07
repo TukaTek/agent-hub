@@ -1030,6 +1030,13 @@ describe("steering attachment hydration", () => {
   });
 });
 
+/** What the worker's Hub work authorizer throws when Hub can't confirm a kept session. */
+function hubUnavailable() {
+  return Object.assign(new Error("CortexAI Hub can't be reached"), {
+    name: "HubSessionUnavailableError",
+  });
+}
+
 function modelPreference({
   provider,
   secretId,
@@ -2689,9 +2696,19 @@ description: Prepare standup notes
     expect(enqueue).toHaveBeenCalledOnce();
   });
 
-  it.each([false, true])(
-    "fails before calling the runtime when no model or Hub access is available (Hub denied: %s)",
-    async (hubDenied) => {
+  it.each([
+    ["no model", async () => true, "Connect a model in Settings before running bots."],
+    ["Hub denied", async () => false, "Sign in through CortexAI Hub to continue"],
+    [
+      "Hub unreachable",
+      async (): Promise<boolean> => {
+        throw hubUnavailable();
+      },
+      "CortexAI Hub can't be reached",
+    ],
+  ])(
+    "fails before calling the runtime when no model or Hub access is available (%s)",
+    async (_case, authorizeUserWork, expectedError) => {
       let status = "queued";
       const runtimeRun = vi.fn();
       const finalizeRun = vi.fn(async () => {
@@ -2762,7 +2779,7 @@ description: Prepare standup notes
       } as unknown as PrismaClient;
       const executor = createRunExecutor({
         prisma,
-        authorizeUserWork: async () => !hubDenied,
+        authorizeUserWork,
         runtime: {
           describe: () => ({ capabilities: { scripted: false } }),
           run: runtimeRun,
@@ -2780,9 +2797,7 @@ description: Prepare standup notes
       expect(finalizeRun).toHaveBeenCalledWith(
         expect.objectContaining({
           outcome: "failed",
-          error: hubDenied
-            ? "Sign in through CortexAI Hub to continue"
-            : "Connect a model in Settings before running bots.",
+          error: expectedError,
         }),
       );
       expect(runtimeRun).not.toHaveBeenCalled();
