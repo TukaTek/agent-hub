@@ -3798,6 +3798,53 @@ describe("appendEvent", () => {
     expect(analytics.capture).toHaveBeenCalledTimes(1);
   });
 
+  it("returns the committed row when a tool completion audit retry hits its unique key", async () => {
+    const fanout = new TestFanout();
+    const publish = vi.spyOn(fanout, "publish");
+    const committed = {
+      ...event(6),
+      type: "agent.tool.completed",
+      runId: "run-1",
+      payload: { auditId: "test-fake-audit-1", outcome: "succeeded" },
+    };
+    const prisma = {
+      $transaction: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" })),
+      event: { findFirst: vi.fn().mockResolvedValue(committed) },
+    } as unknown as PrismaClient;
+    const input = {
+      spaceId: "workspace-1",
+      threadId: "thread-1",
+      botId: "bot-1",
+      type: "agent.tool.completed" as const,
+      runId: "run-1",
+      payload: { auditId: "test-fake-audit-1", outcome: "succeeded" },
+    };
+
+    await expect(appendEvent(prisma, input, fanout)).resolves.toMatchObject({
+      id: "event-6",
+      seq: 6,
+    });
+    expect(prisma.event.findFirst).toHaveBeenCalledExactlyOnceWith({
+      where: {
+        runId: "run-1",
+        type: "agent.tool.completed",
+        payload: { path: ["auditId"], equals: "test-fake-audit-1" },
+      },
+    });
+    expect(publish).not.toHaveBeenCalled();
+
+    // Any other append keeps its unique violation.
+    await expect(
+      appendEvent(prisma, { ...input, type: "run.started", payload: { auditId: "x" } }, fanout),
+    ).rejects.toMatchObject({ code: "P2002" });
+    await expect(
+      appendEvent(prisma, { ...input, payload: { outcome: "succeeded" } }, fanout),
+    ).rejects.toMatchObject({ code: "P2002" });
+    expect(prisma.event.findFirst).toHaveBeenCalledOnce();
+  });
+
   it("does not persist output from a cancelled run after history was cleared", async () => {
     const fanout = new TestFanout();
     const publish = vi.spyOn(fanout, "publish");

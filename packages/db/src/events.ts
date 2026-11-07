@@ -1496,10 +1496,18 @@ export async function appendEvent(
   realtime?: RealtimeFanout,
   analytics?: ProductAnalytics,
 ): Promise<ProductEvent> {
-  // Concurrent writers in one thread (group members, bot messages) can deadlock on the thread row.
-  const event = await withTransactionRetry(() =>
-    prisma.$transaction((tx: Prisma.TransactionClient) => appendEventInTransaction(tx, input)),
-  );
+  let event: Awaited<ReturnType<typeof appendEventInTransaction>>;
+  try {
+    // Concurrent writers in one thread (group members, bot messages) can deadlock on the thread row.
+    event = await withTransactionRetry(() =>
+      prisma.$transaction((tx: Prisma.TransactionClient) => appendEventInTransaction(tx, input)),
+    );
+  } catch (error) {
+    const existing = await committedToolCompletionAudit(prisma, input, error);
+    if (!existing) throw error;
+    // Its own writer already notified listeners.
+    return mapProductEvent(existing);
+  }
   if (
     input.runId &&
     (input.type === "run.started" || input.type === "run.completed" || input.type === "run.failed")
@@ -1515,6 +1523,34 @@ export async function appendEvent(
     event.firstResponse ? input.runId : undefined,
   );
   return productEvent;
+}
+
+/**
+ * A retried tool completion audit whose earlier attempt (another process, or a
+ * transaction that expired after committing) already wrote its row. The unique
+ * violation rolled back this attempt, sequence increment included.
+ */
+async function committedToolCompletionAudit(
+  prisma: PrismaClient,
+  input: AppendEventInput,
+  error: unknown,
+) {
+  const auditId = input.payload.auditId;
+  if (
+    input.type !== "agent.tool.completed" ||
+    !input.runId ||
+    typeof auditId !== "string" ||
+    !auditId ||
+    !(error && typeof error === "object" && "code" in error && error.code === "P2002")
+  )
+    return null;
+  return prisma.event.findFirst({
+    where: {
+      runId: input.runId,
+      type: input.type,
+      payload: { path: ["auditId"], equals: auditId },
+    },
+  });
 }
 
 export async function finalizeRun(
