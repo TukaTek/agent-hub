@@ -120,14 +120,16 @@ model HubPolicySnapshot {
 }
 
 model HubSession {
-  sessionId    String   @id
-  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  refreshToken String
-  accessUntil  DateTime
-  accessToken  String?
+  sessionId         String    @id
+  session           Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  refreshToken      String
+  accessUntil       DateTime
+  accessToken       String?
+  /// One process refreshes a grant at a time; others wait for it (CAAH-108).
+  refreshLeaseUntil DateTime?
   // Retained for old OAuth sessions, which must sign in again.
-  audience     String?
-  clientId     String?
+  audience          String?
+  clientId          String?
 
   @@map("hub_session")
 }

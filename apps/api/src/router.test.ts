@@ -103,6 +103,20 @@ describe("account preferences", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
+  it("answers service unavailable, not unauthorized, while Hub cannot confirm the session", async () => {
+    const { deps } = preferencesDeps("robot");
+    const unavailable = createRouterClient(createRouter(deps), {
+      context: { actor: null, sessionUnavailable: true } as never,
+    });
+    await expect(
+      unavailable.analytics.screen({ screen: "chat", surface: "web" }),
+    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    const anonymous = createRouterClient(createRouter(deps), { context: { actor: null } as never });
+    await expect(
+      anonymous.analytics.screen({ screen: "chat", surface: "web" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
   it("reports model credential store outages as service unavailable", async () => {
     const { deps, actor } = preferencesDeps("robot");
     Object.assign(deps.prisma, {

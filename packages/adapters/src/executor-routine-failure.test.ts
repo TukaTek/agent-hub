@@ -424,6 +424,23 @@ describe("Hub authorization of a routine retry", () => {
     expect(retries).toEqual([]);
   });
 
+  it("finalizes a retry as unavailable, not as a sign-in, while Hub can't be reached", async () => {
+    const authorizeUserWork = vi.fn(async (): Promise<boolean> => {
+      throw Object.assign(new Error("CortexAI Hub can't be reached"), {
+        name: "HubSessionUnavailableError",
+      });
+    });
+    const { retries, runtimeRun } = await failRun({
+      error: overloaded(),
+      retryOfRunId: "run-0",
+      authorizeUserWork,
+      expectedError: "CortexAI Hub can't be reached",
+    });
+
+    expect(runtimeRun).not.toHaveBeenCalled();
+    expect(retries).toEqual([]);
+  });
+
   it("runs the retry when work is authorized, as with Hub policy enforcement off", async () => {
     const { retries, runtimeRun } = await failRun({
       error: overloaded(),

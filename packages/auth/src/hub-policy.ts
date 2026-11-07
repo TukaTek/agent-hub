@@ -364,7 +364,10 @@ export function createHubPolicy(options: {
     async status(): Promise<HubPolicyStatus> {
       const record = await store.read(tenantId);
       const restart = record ? stale(record) && record.state === "ok" : false;
-      const old = record?.state === "ok" && Boolean(record.document) && tooOld(record);
+      const old =
+        (record?.state === "ok" || record?.state === "unavailable") &&
+        Boolean(record.document) &&
+        tooOld(record);
       const state: HubPolicyStatus["state"] = !record
         ? "missing"
         : restart

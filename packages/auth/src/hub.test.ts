@@ -8,6 +8,7 @@ import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
 import {
   createHubClient,
   type HubAuthConfig,
+  HubRejectedError,
   HubRequestError,
   HubUnsupportedIdpError,
   hubUserId,
@@ -21,7 +22,7 @@ import {
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
 import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
 import { createHubSessionAuthorizer, createUserWorkAuthorizer } from "./hub-sessions.js";
-import { CLIENT_IP_HEADER, createAuth } from "./index.js";
+import { CLIENT_IP_HEADER, createAuth, isHubSessionUnavailable } from "./index.js";
 
 vi.mock("better-auth/adapters/prisma", async () => {
   const { memoryAdapter } = await import("better-auth/adapters/memory");
@@ -126,18 +127,26 @@ function fixture(
   };
   vi.mocked(createHubClient).mockReturnValue(hubClient ?? client);
   let transaction = Promise.resolve();
+  let open = 0;
   const prisma: any = {
     authData: data,
     $queryRaw: vi.fn(async () => []),
-    $transaction: (fn: (tx: any) => Promise<unknown>) => {
+    $transaction: vi.fn((fn: (tx: any) => Promise<unknown>) => {
       // Simulate the database row lock without a network dependency.
-      const result = transaction.then(() => fn(prisma));
+      const result = transaction.then(async () => {
+        open++;
+        try {
+          return await fn(prisma);
+        } finally {
+          open--;
+        }
+      });
       transaction = result.then(
         () => undefined,
         () => undefined,
       );
       return result;
-    },
+    }),
     user: {
       findUnique: async ({ where }: any) => data.user!.find((row) => row.id === where.id),
       upsert: async ({ create }: any) => {
@@ -154,12 +163,36 @@ function fixture(
     hubIdentity: { findUnique: async ({ where }: any) => identities.get(where.userId) },
     hubSession: {
       create: async ({ data: row }: any) => {
-        grants.set(row.sessionId, row);
+        grants.set(row.sessionId, { refreshLeaseUntil: null, ...row });
         return row;
       },
       findUnique: async ({ where }: any) => grants.get(where.sessionId),
       update: async ({ where, data: updates }: any) =>
         Object.assign(grants.get(where.sessionId), updates),
+      // Conditional writes, as PostgreSQL would apply them to one row.
+      updateMany: async ({ where, data: updates }: any) => {
+        const row = grants.get(where.sessionId);
+        const leaseFree =
+          !where.OR ||
+          row?.refreshLeaseUntil == null ||
+          row.refreshLeaseUntil < where.OR[1].refreshLeaseUntil.lt;
+        if (
+          !row ||
+          (where.refreshToken !== undefined && row.refreshToken !== where.refreshToken) ||
+          !leaseFree
+        )
+          return { count: 0 };
+        Object.assign(row, updates);
+        return { count: 1 };
+      },
+      // A single-table conditional delete, which PostgreSQL re-checks under concurrency.
+      deleteMany: async ({ where }: any) => {
+        const row = grants.get(where.sessionId);
+        if (!row || (where.refreshToken !== undefined && row.refreshToken !== where.refreshToken))
+          return { count: 0 };
+        grants.delete(where.sessionId);
+        return { count: 1 };
+      },
     },
     session: {
       findMany: async ({ where }: any) =>
@@ -168,9 +201,13 @@ function fixture(
             row.userId === where.userId && row.expiresAt > where.expiresAt.gt && grants.has(row.id),
         ),
       findUnique: async ({ where }: any) => data.session!.find((row) => row.id === where.id),
+      // Relation filters are not atomic on PostgreSQL, so the fake refuses them.
       deleteMany: async ({ where }: any) => {
+        if (where.hubSession) throw new Error("conditional deletes belong on hubSession");
+        const before = data.session!.length;
         data.session = data.session!.filter((row) => row.id !== where.id);
         grants.delete(where.id);
+        return { count: before - data.session.length };
       },
     },
     spaceMember: { findFirst: async () => ({ spaceId: "space-1" }) },
@@ -290,6 +327,7 @@ function fixture(
     policy,
     hub: gate.hub,
     work,
+    openTransactions: () => open,
   };
 }
 
@@ -306,7 +344,7 @@ describe("Hub authentication through real auth endpoints", () => {
     await f.login();
     expect(await authorize(userId)).toBe(true);
     [...f.grants.values()][0].accessUntil = new Date(0);
-    f.client.refresh.mockRejectedValue(new Error("access removed"));
+    f.client.refresh.mockRejectedValue(new HubRequestError(403, "access_denied"));
     expect(await authorize(userId)).toBe(false);
     const local = createUserWorkAuthorizer(f.prisma, undefined, encryptionKey);
     expect(await local("local-user")).toBe(true);
@@ -520,7 +558,7 @@ describe("Hub authentication through real auth endpoints", () => {
   it("removes access before token expiry when Hub denies current entitlement", async () => {
     const f = fixture();
     const { headers } = await f.login();
-    f.client.verify.mockRejectedValue(new Error("assignment removed"));
+    f.client.verify.mockRejectedValue(new HubRejectedError("Hub access denied"));
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(f.data.session).toHaveLength(0);
     expect(f.client.refresh).not.toHaveBeenCalled();
@@ -573,7 +611,8 @@ describe("Hub authentication through real auth endpoints", () => {
       const f = fixture();
       const { headers } = await f.login();
       [...f.grants.values()][0].accessUntil = new Date(0);
-      if (failure === "denied") f.client.refresh.mockRejectedValue(new Error("invalid_grant"));
+      if (failure === "denied")
+        f.client.refresh.mockRejectedValue(new HubRequestError(400, "invalid_grant"));
       else
         f.client.refresh.mockResolvedValue({
           subject: "different-user",
@@ -981,7 +1020,7 @@ describe("Hub tenant Entra SSO", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-      f.client.verify.mockRejectedValue(new Error("user disabled"));
+      f.client.verify.mockRejectedValue(new HubRequestError(403, "access_denied"));
       vi.setSystemTime(Date.now() + 29_000);
       expect(await f.auth.api.getSession({ headers })).not.toBeNull();
       vi.setSystemTime(Date.now() + 1_001);
@@ -2431,7 +2470,7 @@ describe("Hub mode with policy enforcement off (CAAH-83)", () => {
     expect(refused.status).toBeGreaterThanOrEqual(400);
     expect(f.data.session).toHaveLength(0);
     const { headers } = await f.login();
-    f.client.verify.mockRejectedValue(new Error("entitlement removed"));
+    f.client.verify.mockRejectedValue(new HubRejectedError("Hub access denied"));
     expect(await f.auth.api.getSession({ headers })).toBeNull();
     expect(await f.work(userId)).toBe(false);
   });
@@ -2469,9 +2508,10 @@ describe("Active sessions while Hub policy is degraded (CAAH-36)", () => {
     expect(await f.auth.api.getSession({ headers })).not.toBeNull();
     expect(await f.work(userId)).toBe(true);
     vi.setSystemTime(Date.now() + 1_001);
-    expect(await f.auth.api.getSession({ headers })).toBeNull();
-    expect(await f.work(userId)).toBe(false);
-    // Policy refusal is not a Hub revocation: the session comes back with Hub.
+    const error = await f.auth.api.getSession({ headers }).catch((e: unknown) => e);
+    expect(isHubSessionUnavailable(error)).toBe(true);
+    await expect(f.work(userId)).rejects.toMatchObject({ name: "HubSessionUnavailableError" });
+    // An outage is not a Hub revocation: the session comes back with Hub.
     expect(f.data.session).toHaveLength(1);
     f.hub.reply = healthy;
     await f.policy.refresh();
@@ -2544,5 +2584,564 @@ describe("Active sessions while Hub policy is degraded (CAAH-36)", () => {
     const f = fixture();
     expect(await f.work(userId)).toBe(false);
     expect(await f.work("local-user")).toBe(false);
+  });
+});
+
+describe("Hub outages keep the session (CAAH-108)", () => {
+  const outages: [string, () => unknown][] = [
+    ["a timeout", () => new DOMException("timed out", "TimeoutError")],
+    ["an abort", () => new DOMException("aborted", "AbortError")],
+    ["a network failure", () => new TypeError("fetch failed")],
+    ["a malformed reply", () => new Error("Invalid Hub response")],
+    ["408", () => new HubRequestError(408, undefined)],
+    ["429", () => new HubRequestError(429, undefined)],
+    ["500", () => new HubRequestError(500, undefined)],
+    ["502", () => new HubRequestError(502, undefined)],
+    ["503", () => new HubRequestError(503, "unavailable")],
+    ["504", () => new HubRequestError(504, undefined)],
+    ["a code-less 401", () => new HubRequestError(401, undefined)],
+    ["a code-less 403", () => new HubRequestError(403, undefined)],
+    ["403 forbidden", () => new HubRequestError(403, "forbidden")],
+    ["400 invalid_request", () => new HubRequestError(400, "invalid_request")],
+    ["400 envelope_too_large", () => new HubRequestError(400, "envelope_too_large")],
+    ["400 missing_product", () => new HubRequestError(400, "missing_product")],
+    ["404 unknown_product", () => new HubRequestError(404, "unknown_product")],
+  ];
+  const denials: [string, () => unknown][] = [
+    ["401 refresh_failed", () => new HubRequestError(401, "refresh_failed")],
+    ["400 invalid_grant", () => new HubRequestError(400, "invalid_grant")],
+    ["401 invalid_token", () => new HubRequestError(401, "invalid_token")],
+    ["401 unauthorized", () => new HubRequestError(401, "unauthorized")],
+    ["403 access_denied", () => new HubRequestError(403, "access_denied")],
+    ["403 product_not_enabled", () => new HubRequestError(403, "product_not_enabled")],
+  ];
+  const getSessionStatus = (f: ReturnType<typeof fixture>, headers: Headers) =>
+    f.auth.handler(new Request("http://web.example.test/api/auth/get-session", { headers }));
+
+  async function afterWindow() {
+    const f = fixture();
+    const { headers } = await f.login();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    vi.setSystemTime(Date.now() + 30_001); // past the CAAH-40 window
+    return { f, headers };
+  }
+  afterEach(() => vi.useRealTimers());
+
+  it.each(outages)(
+    "answers 503 and keeps the session when verify fails with %s",
+    async (_n, error) => {
+      const { f, headers } = await afterWindow();
+      f.client.verify.mockRejectedValueOnce(error());
+      const response = await getSessionStatus(f, headers);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
+      expect(response.headers.get("set-cookie") ?? "").not.toMatch(/session_token=;/);
+      expect(f.data.session).toHaveLength(1);
+      expect(f.grants.size).toBe(1);
+      // Hub returns: the same credentials work again without signing in.
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    },
+  );
+
+  it("throws the unavailable error from auth.api.getSession for the API to map", async () => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    const error = await f.auth.api.getSession({ headers }).catch((e: unknown) => e);
+    expect(isHubSessionUnavailable(error)).toBe(true);
+  });
+
+  it("never calls Hub while a database transaction is open", async () => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockClear();
+    f.client.verify.mockImplementation(async () => {
+      expect(f.openTransactions()).toBe(0);
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.verify).toHaveBeenCalledOnce();
+  });
+
+  it("serves the CAAH-40 window from cache without calling Hub, even while Hub is down", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    f.client.verify.mockClear();
+    f.client.verify.mockRejectedValue(new HubRequestError(503, undefined));
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.verify).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ...denials,
+    ["a denial", () => new HubRejectedError("Hub access denied")],
+    ["an identity change", () => new HubRejectedError("Hub identity changed")],
+  ])("ends the session when Hub definitively refuses with %s", async (_n, error) => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockRejectedValueOnce(error());
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+  });
+
+  it("keeps a session another request refreshed while a stale verify was refused", async () => {
+    const { f, headers } = await afterWindow();
+    const grant = [...f.grants.values()][0];
+    f.client.verify.mockImplementationOnce(async () => {
+      // Another process rotated the grant while this verify was in flight.
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
+      throw new HubRequestError(401, "invalid_token");
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.data.session).toHaveLength(1);
+    expect(f.client.verify).toHaveBeenLastCalledWith("test-fake-access-2", expect.anything());
+  });
+
+  const expire = (f: ReturnType<typeof fixture>) => {
+    [...f.grants.values()][0].accessUntil = new Date(0);
+  };
+
+  it.each(outages)(
+    "answers 503, keeps the session and frees the lease when refresh fails with %s",
+    async (_n, error) => {
+      const f = fixture();
+      const { headers } = await f.login();
+      expire(f);
+      f.client.refresh.mockRejectedValueOnce(error());
+      expect((await getSessionStatus(f, headers)).status).toBe(503);
+      expect(f.data.session).toHaveLength(1);
+      expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+      // Hub returns: the next request refreshes with the same stored token.
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+      expect(f.client.refresh).toHaveBeenLastCalledWith("refresh-secret-1");
+    },
+  );
+
+  it.each(denials)("ends the session when refresh is refused with %s", async (_n, error) => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    f.client.refresh.mockRejectedValueOnce(error());
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
+  });
+
+  it.each([
+    [400, "invalid_grant"],
+    [401, "refresh_failed"],
+  ])(
+    "ends the session once Hub confirms a rotation lost to a timeout with %i %s",
+    async (status, code) => {
+      const f = fixture();
+      const { headers } = await f.login();
+      expire(f);
+      f.client.refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+      expect((await getSessionStatus(f, headers)).status).toBe(503);
+      expect(f.data.session).toHaveLength(1);
+      f.client.refresh.mockRejectedValueOnce(new HubRequestError(status, code));
+      expect(await f.auth.api.getSession({ headers })).toBeNull();
+      expect(f.data.session).toHaveLength(0);
+    },
+  );
+
+  it("refreshes once for concurrent requests and never refreshes outside the lease", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    let finish!: () => void;
+    f.client.refresh.mockImplementationOnce(async () => {
+      expect(f.openTransactions()).toBe(0);
+      expect([...f.grants.values()][0].refreshLeaseUntil).toBeInstanceOf(Date);
+      await new Promise<void>((resolve) => (finish = resolve));
+      return {
+        subject: "subject-1",
+        tenant: config.tenantId,
+        accessToken: "test-fake-access-2",
+        refreshToken: "test-fake-refresh-2",
+        accessUntil: new Date(Date.now() + 900_000),
+      };
+    });
+    const both = Promise.all([
+      f.auth.api.getSession({ headers }),
+      f.auth.api.getSession({ headers }),
+    ]);
+    await vi.waitFor(() => expect(f.client.refresh).toHaveBeenCalledOnce());
+    finish();
+    expect((await both).every(Boolean)).toBe(true);
+    expect(f.client.refresh).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+  });
+
+  it("waits for another process's refresh instead of spending the same token", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    const grant = [...f.grants.values()][0];
+    grant.accessUntil = new Date(0);
+    grant.refreshLeaseUntil = new Date(Date.now() + 30_000); // held elsewhere
+    setTimeout(async () => {
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
+      grant.accessUntil = new Date(Date.now() + 900_000);
+      grant.refreshLeaseUntil = null;
+    }, 150);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.refresh).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 when another process holds the lease too long, keeping the session", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    const grant = [...f.grants.values()][0];
+    grant.accessUntil = new Date(0);
+    grant.refreshLeaseUntil = new Date(Date.now() + 30_000);
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    const pending = getSessionStatus(f, headers);
+    // Session lookup does real async crypto before the first poll is scheduled.
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+    await vi.advanceTimersByTimeAsync(10_200);
+    expect((await pending).status).toBe(503);
+    expect(f.client.refresh).not.toHaveBeenCalled();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("does not let a refusal for a spent token delete a grant another process stored", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    const grant = [...f.grants.values()][0];
+    f.client.refresh.mockImplementationOnce(async () => {
+      // Another process won a lease that expired under us and rotated first.
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
+      grant.accessUntil = new Date(Date.now() + 900_000);
+      throw new HubRequestError(400, "invalid_grant");
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("revokes a grant it could not store because the session changed meanwhile", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    const grant = [...f.grants.values()][0];
+    f.client.refresh.mockImplementationOnce(async () => {
+      // Another process finished its own refresh first (its write also clears the lease).
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-3",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-3",
+      });
+      grant.accessUntil = new Date(Date.now() + 900_000);
+      grant.refreshLeaseUntil = null;
+      return {
+        subject: "subject-1",
+        tenant: config.tenantId,
+        accessToken: "test-fake-access-orphan",
+        refreshToken: "test-fake-refresh-orphan",
+        accessUntil: new Date(Date.now() + 900_000),
+      };
+    });
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-orphan");
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("refuses new work as unavailable but keeps the session while Hub is down, then resumes", async () => {
+    const { f } = await afterWindow();
+    f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    await expect(f.work(userId)).rejects.toMatchObject({
+      name: "HubSessionUnavailableError",
+      message: "CortexAI Hub can't be reached",
+    });
+    expect(f.data.session).toHaveLength(1);
+    expect(await f.work(userId)).toBe(true);
+  });
+
+  /** Hub down long enough that the stored policy snapshot is too old to use. */
+  async function staleOutage() {
+    const { f, headers } = await afterWindow();
+    const healthy = f.hub.reply;
+    const timeout = () => Promise.reject(new DOMException("timed out", "TimeoutError"));
+    f.hub.reply = timeout;
+    f.client.verify.mockImplementation(timeout);
+    vi.setSystemTime(Date.now() + 180_001);
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "stale" });
+    const recover = async () => {
+      f.hub.reply = healthy;
+      f.client.verify.mockImplementation(async () => undefined);
+      await f.policy.refresh();
+    };
+    return { f, headers, recover };
+  }
+
+  it("refuses new work as unavailable, not a sign-in, once the outage outlasts the policy snapshot", async () => {
+    const { f, recover } = await staleOutage();
+    await expect(f.work(userId)).rejects.toMatchObject({ name: "HubSessionUnavailableError" });
+    expect(f.data.session).toHaveLength(1);
+    await recover();
+    expect(await f.work(userId)).toBe(true);
+  });
+
+  it("still refuses work as a sign-in for a user with no kept session during that outage", async () => {
+    const { f, headers } = await staleOutage();
+    await f.auth.api.signOut({ headers });
+    expect(await f.work(userId)).toBe(false);
+  });
+
+  /** Only the policy poll fails; session verify still succeeds and the snapshot is not yet stale. */
+  async function policyPollOutage() {
+    const { f, headers } = await afterWindow();
+    const healthy = f.hub.reply;
+    f.hub.reply = async () => Promise.reject(new DOMException("timed out", "TimeoutError"));
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "unavailable" });
+    const recover = async () => {
+      f.hub.reply = healthy;
+      await f.policy.refresh();
+    };
+    return { f, headers, recover };
+  }
+
+  it("refuses work and the session as unavailable, not a sign-in, while only the policy poll fails", async () => {
+    const { f, headers, recover } = await policyPollOutage();
+    await expect(f.work(userId)).rejects.toMatchObject({
+      name: "HubSessionUnavailableError",
+      message: "CortexAI Hub can't be reached",
+    });
+    const response = await getSessionStatus(f, headers);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
+    expect(isHubSessionUnavailable(await f.auth.api.getSession({ headers }).catch((e) => e))).toBe(
+      true,
+    );
+    expect(f.data.session).toHaveLength(1);
+    expect(f.client.verify).toHaveBeenCalled();
+    await recover();
+    expect(await f.work(userId)).toBe(true);
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  });
+
+  it("answers unavailable after a refresh while only the policy poll fails", async () => {
+    const { f, headers, recover } = await policyPollOutage();
+    [...f.grants.values()][0].accessUntil = new Date(0);
+    const error = await f.auth.api.getSession({ headers }).catch((e: unknown) => e);
+    expect(isHubSessionUnavailable(error)).toBe(true);
+    expect(f.client.refresh).toHaveBeenCalledOnce();
+    expect(f.data.session).toHaveLength(1);
+    await recover();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  });
+
+  it("still refuses work as a sign-in for a user with no kept session while the policy poll fails", async () => {
+    const { f, headers } = await policyPollOutage();
+    await f.auth.api.signOut({ headers });
+    expect(await f.work(userId)).toBe(false);
+  });
+
+  it("still refuses work and the session, keeping it, when Hub removes the user's assignment", async () => {
+    const { f, headers } = await afterWindow();
+    f.hub.reply = async () => ({
+      status: 200,
+      body: hubPolicyBodyForTests(config.tenantId, ["subject-2"], 2),
+    });
+    await f.policy.refresh();
+    expect(await f.policy.status()).toMatchObject({ state: "ok" });
+    expect(await f.work(userId)).toBe(false);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("still refuses work and the session when Hub disables the tenant", async () => {
+    const { f, headers } = await afterWindow();
+    f.hub.reply = async () => Promise.reject(new HubRequestError(403, "tenant_disabled"));
+    await f.policy.refresh();
+    expect(await f.work(userId)).toBe(false);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+  });
+
+  it.each(denials)(
+    "refuses new work without an outage when Hub refuses with %s",
+    async (_n, error) => {
+      const { f } = await afterWindow();
+      f.client.verify.mockRejectedValueOnce(error());
+      expect(await f.work(userId)).toBe(false);
+      expect(f.data.session).toHaveLength(0);
+    },
+  );
+
+  it("still signs out and revokes at Hub while Hub verification is down", async () => {
+    const { f, headers } = await afterWindow();
+    f.client.verify.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
+    expect(await f.auth.api.signOut({ headers })).toMatchObject({ success: true });
+    expect(f.data.session).toHaveLength(0);
+    expect(f.client.revoke).toHaveBeenCalledWith("refresh-secret-1");
+  });
+
+  it("refuses a session whose stored identity is another tenant without calling Hub or deleting", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    f.identities.get(userId).tenant = "test-fake-other-tenant";
+    f.client.verify.mockClear();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 30_001);
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.client.verify).not.toHaveBeenCalled();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("ends the session when refresh returns another tenant's grant", async () => {
+    const f = fixture();
+    const { headers } = await f.login();
+    expire(f);
+    f.client.refresh.mockResolvedValueOnce({
+      subject: "subject-1",
+      tenant: "test-fake-other-tenant",
+      accessToken: "test-fake-access-x",
+      refreshToken: "test-fake-refresh-x",
+      accessUntil: new Date(Date.now() + 900_000),
+    });
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-x");
+  });
+
+  /** A Hub that rotates refresh tokens and refuses spent ones, behind the real client. */
+  async function rotatingHub() {
+    const { createHubClient: realHubClient } =
+      await vi.importActual<typeof import("./hub-client.js")>("./hub-client.js");
+    const user = { id: "subject-1", tenantId: config.tenantId };
+    const products = [{ id: "cortexai-agent-hub", enabled: true }];
+    let issued = 1;
+    const grantBody = () => ({
+      success: true,
+      user,
+      accessToken: `test-fake-access-${issued}`,
+      accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+      refreshToken: `test-fake-refresh-${issued}`,
+      refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      products,
+    });
+    const hub: Record<string, (body: any) => Response | Promise<Response>> = {
+      lookup: () => Response.json({ tenantId: config.tenantId, idpType: "native" }),
+      login: () => Response.json(grantBody()),
+      refresh: ({ refreshToken }) => {
+        if (refreshToken !== `test-fake-refresh-${issued}`)
+          return Response.json({ error: "refresh_failed" }, { status: 401 });
+        issued++;
+        return Response.json(grantBody());
+      },
+      session: () => Response.json({ valid: true, userId: user.id, tenantId: config.tenantId }),
+      config: () => Response.json({ product: "cortexai-agent-hub", products }),
+      revoke: ({ refreshToken }) => {
+        revoked.push(refreshToken);
+        return Response.json({ success: true });
+      },
+    };
+    const revoked: string[] = [];
+    const healthy = { ...hub };
+    const fetcher = vi.fn(async (url: URL | string, init?: RequestInit) =>
+      hub[new URL(String(url)).pathname.split("/").at(-1)!]!(
+        init?.body ? JSON.parse(String(init.body)) : undefined,
+      ),
+    );
+    const f = fixture(realHubClient(config, fetcher as typeof fetch));
+    const { headers } = await f.login();
+    const storedRefresh = () =>
+      symmetricDecrypt({ key: encryptionKey, data: [...f.grants.values()][0].refreshToken });
+    return { f, headers, hub, recover: () => Object.assign(hub, healthy), storedRefresh, revoked };
+  }
+
+  it.each([
+    ["/config answers 503", "config", () => new Response("", { status: 503 })],
+    [
+      "/session times out",
+      "session",
+      () => Promise.reject(new DOMException("timed out", "TimeoutError")),
+    ],
+  ])("keeps the grant Hub rotated when verifying it fails because %s", async (_n, path, reply) => {
+    const { f, headers, hub, recover, storedRefresh } = await rotatingHub();
+    expire(f);
+    hub[path] = reply;
+    expect((await getSessionStatus(f, headers)).status).toBe(503);
+    expect(f.data.session).toHaveLength(1);
+    expect(await storedRefresh()).toBe("test-fake-refresh-2");
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+    recover();
+    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    expect(f.data.session).toHaveLength(1);
+  });
+
+  it("ends the session when Hub refuses the grant it just rotated", async () => {
+    const { f, headers, hub, revoked } = await rotatingHub();
+    expire(f);
+    hub.session = () => Response.json({ valid: false });
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
+    expect(revoked).toContain("test-fake-refresh-2");
+  });
+
+  // Known limitation: Hub has spent the stored token, so the next refresh is a sign-in.
+  it("answers 503 when it cannot store a rotated grant, then ends the session on the spent token", async () => {
+    const { f, headers, storedRefresh, revoked } = await rotatingHub();
+    expire(f);
+    const updateMany = f.prisma.hubSession.updateMany;
+    f.prisma.hubSession.updateMany = vi.fn(async (args: any) => {
+      if (args.data.refreshToken) throw new Error("database unavailable");
+      return updateMany(args);
+    });
+    expect((await getSessionStatus(f, headers)).status).toBe(503);
+    expect(revoked).toContain("test-fake-refresh-2");
+    expect(f.data.session).toHaveLength(1);
+    expect(await storedRefresh()).toBe("test-fake-refresh-1");
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+    f.prisma.hubSession.updateMany = updateMany;
+    expect(await f.auth.api.getSession({ headers })).toBeNull();
+    expect(f.data.session).toHaveLength(0);
+    expect(f.grants.size).toBe(0);
+  });
+
+  it("logs why it answered 503, once and without credentials", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { f, headers } = await afterWindow();
+      warn.mockClear();
+      f.client.verify.mockRejectedValueOnce(new HubRequestError(503, "unavailable"));
+      expect((await getSessionStatus(f, headers)).status).toBe(503);
+      const logged = warn.mock.calls.filter(([tag]) => tag === "[hub-sessions]");
+      expect(logged).toHaveLength(1);
+      expect(JSON.parse(logged[0]![1] as string)).toEqual({
+        event: "hub_session_unavailable",
+        error: "HubRequestError",
+        status: 503,
+        code: "unavailable",
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/secret|example\.test|Bearer/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

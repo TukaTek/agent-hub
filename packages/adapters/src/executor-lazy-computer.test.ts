@@ -41,6 +41,7 @@ async function runRoutine(
     exportError?: Error;
     setupError?: Error;
     onRunStarted?: () => void;
+    authorizeUserWork?: (userId: string) => Promise<boolean>;
   } = {},
 ) {
   const attachment: Extract<MessageBlock, { kind: "file" | "image" }> = {
@@ -221,6 +222,7 @@ async function runRoutine(
   const finalizeRun = vi.fn(async () => ({ continuationRunId: null }));
   const enqueue = vi.fn(async () => undefined);
   const executor = createRunExecutor({
+    ...(options.authorizeUserWork ? { authorizeUserWork: options.authorizeUserWork } : {}),
     prisma: withEmptyModels(prisma),
     deploymentModelKey: "fake-deployment-key",
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
@@ -560,3 +562,31 @@ function withEmptyModels<T extends object>(prisma: T): T {
     get: (target, key) => (key in target ? target[key as keyof T] : empty),
   });
 }
+
+describe("Hub authorization during a run", () => {
+  it.each([
+    ["Hub refuses the user", async () => false, "Sign in through CortexAI Hub to continue"],
+    [
+      "Hub can't be reached",
+      async (): Promise<boolean> => {
+        throw Object.assign(new Error("CortexAI Hub can't be reached"), {
+          name: "HubSessionUnavailableError",
+        });
+      },
+      "CortexAI Hub can't be reached",
+    ],
+  ])("stops at the next tool call when %s", async (_case, refuse, expectedError) => {
+    // The run starts while Hub admits the user, then the tool call is checked again.
+    const authorizeUserWork = vi.fn(refuse).mockImplementationOnce(async () => true);
+    const { finalizeRun, sandbox } = await runRoutine(
+      [{ name: "list_files", args: { path: "" } }],
+      { authorizeUserWork },
+    );
+
+    expect(authorizeUserWork).toHaveBeenCalledTimes(2);
+    expect(sandbox.listFiles).not.toHaveBeenCalled();
+    expect(finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failed", error: expectedError }),
+    );
+  });
+});
