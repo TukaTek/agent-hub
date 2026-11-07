@@ -2172,6 +2172,8 @@ describe("MCP OAuth", () => {
       ["--secret-access-key", T],
       ["--pat", T],
       ["--auth", T],
+      ["--client-auth", T],
+      ["--basicAuth", T],
       ["--token", T],
       ["--password", T],
       ["--secret", T],
@@ -2206,6 +2208,8 @@ describe("MCP OAuth", () => {
     );
     expect(launchArgSecrets(["https://shorttok@git.example.test/"])).toContain("shorttok");
     expect(launchArgSecrets(["PAT=abc"])).toContain("abc");
+    for (const name of ["--access-key", "--private-key", "--secret-key"])
+      expect(launchArgSecrets([name, "123456789012"]), name).toContain("123456789012");
     expect(launchArgSecrets(["--header", "X-Private-Key: abc"])).toContain("abc");
     expect(launchArgSecrets(["--header", "Accept:Bearer", "/srv/data"])).toEqual([]);
 
@@ -2227,6 +2231,15 @@ describe("MCP OAuth", () => {
       "https://api.example.test/?key=0",
       "--key",
       "0",
+      "--no-auth",
+      "true",
+      "--no-auth",
+      "/srv/data",
+      "--disable-auth",
+      "/srv/other",
+      "--oauth",
+      "--auth-mode",
+      "basic",
     ];
     expect(launchArgSecrets(readable)).toEqual([]);
     expect(launchArgSecrets(["--header", "Authorization:Bearer", "--verbose"])).toEqual([]);
