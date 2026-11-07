@@ -192,6 +192,14 @@ msgstr "{name} falló"
 msgid "{name} finished"
 msgstr "{name} terminó"
 
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — {key} sends this into the running turn"
+msgstr "{name} está trabajando: {key} envía esto al turno en curso"
+
+#: src/pages/shell/composer.tsx
+msgid "{name} is working — send to add this to the running turn"
+msgstr "{name} está trabajando: envía para añadir esto al turno en curso"
+
 #. js-lingui-explicit-id
 #: src/lib/browser-notifications.ts
 msgid "{name} stopped"
@@ -319,6 +327,10 @@ msgstr ""
 #: src/pages/shell/composer.tsx
 msgid "@{0}"
 msgstr "@{0}"
+
+#: src/pages/shell/composer.tsx
+msgid "⌘ Enter"
+msgstr "⌘ Intro"
 
 #. placeholder {0}: amount / 100
 #: src/components/ModelCredits.tsx
@@ -2056,6 +2068,10 @@ msgstr "Cron"
 msgid "Cron expression"
 msgstr "Expresión cron"
 
+#: src/pages/shell/composer.tsx
+msgid "Ctrl+Enter"
+msgstr "Ctrl+Intro"
+
 #: src/components/AccountAccess.tsx
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Current password"
@@ -2391,6 +2407,10 @@ msgstr ""
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Engage when... Ignore..."
 msgstr ""
+
+#: src/pages/shell/composer.tsx
+msgid "Enter"
+msgstr "Intro"
 
 #: src/lib/user-error.ts
 msgid "Enter a password"
@@ -3929,6 +3949,7 @@ msgid "Pull request"
 msgstr "Solicitud de incorporación"
 
 #: src/pages/ActivityList.tsx
+#: src/pages/shell/composer-queued.tsx
 msgid "Queued"
 msgstr "En cola"
 

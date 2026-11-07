@@ -410,6 +410,8 @@ export const appContract = {
       z.object({
         taskId: Id,
         runId: Id,
+        /** Optional while a previous API release may still answer. */
+        messageId: Id.optional(),
         seq: z.number().int(),
         runIds: z.array(Id).optional(),
       }),

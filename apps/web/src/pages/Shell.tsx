@@ -37,6 +37,7 @@ import {
   foldPeerReplies,
   inferAttachmentMimeType,
   isActive,
+  isConversationalRun,
   isRetryableError,
   isRunTerminalEvent,
   isRunWorking,
@@ -176,6 +177,16 @@ import {
   spaceSwitchDecision,
   useSpaceEpoch,
 } from "../lib/space-switch";
+import {
+  clearSteerQueue,
+  type QueuedSteer,
+  queueSteer,
+  reconcileSteerQueue,
+  settleSteerQueue,
+  steeringClaimWatermark,
+  visibleSteers,
+  withoutQueuedSteers,
+} from "../lib/steering-queue";
 import {
   activeThreadRuns,
   applyThreadSendReceipt,
@@ -387,6 +398,9 @@ function SpaceShell() {
     return () => setComposerUnsavedWork(false);
   }, [sending, pendingAttachments.length]);
   const sendingRef = useRef(false);
+  const [steerQueue, setSteerQueue] = useState<readonly QueuedSteer[]>([]);
+  const steeringClaims = useRef(new Map<string, number>());
+  const steerableRunIdsRef = useRef<ReadonlySet<string>>(new Set());
   const [sendError, setSendError] = useState<string | null>(null);
   const [logOutError, setLogOutError] = useState<string | null>(null);
   const { signingOut, logOut } = useSignOut(() => {
@@ -1415,21 +1429,32 @@ function SpaceShell() {
     expandedHistoryThread.current = null;
     historyEpoch.current += 1;
     const abort = new AbortController();
+    // Claims and stops that happened while this thread was closed arrive only as a snapshot.
+    const reconcileSteers = (loaded: ThreadSnapshot) => {
+      setSteerQueue((queue) => reconcileSteerQueue(queue, active.id, loaded));
+      return loaded;
+    };
     void runThreadSubscription({
       signal: abort.signal,
       loadInitial: async () => {
         const primed = bootstrappedThread.current;
         bootstrappedThread.current = null;
         // Pending search jumps load the around-page separately; avoid replacing it with latest.
-        return primed?.botId === active.id
-          ? primed
-          : pendingJump
-            ? rpc.threads.get({ botId: active.id }, { signal: threadSnapshotSignal(abort.signal) })
-            : refreshThread(active.id, threadSnapshotSignal(abort.signal));
+        return reconcileSteers(
+          primed?.botId === active.id
+            ? primed
+            : pendingJump
+              ? await rpc.threads.get(
+                  { botId: active.id },
+                  { signal: threadSnapshotSignal(abort.signal) },
+                )
+              : await refreshThread(active.id, threadSnapshotSignal(abort.signal)),
+        );
       },
       loadHead: () =>
         rpc.threads.head({ botId: active.id }, { signal: threadSnapshotSignal(abort.signal) }),
-      refresh: () => refreshThread(active.id, threadSnapshotSignal(abort.signal)),
+      refresh: async () =>
+        reconcileSteers(await refreshThread(active.id, threadSnapshotSignal(abort.signal))),
       currentSnapshot: () => snapshotRef.current,
       subscribe: (cursor, signal) =>
         rpc.threads.subscribe({ botId: active.id, cursor }, { signal }),
@@ -1455,6 +1480,14 @@ function SpaceShell() {
           currentBot?.notifyOnFinish ?? false,
           false,
         );
+        const claimedThrough = steeringClaimWatermark(event);
+        if (claimedThrough !== undefined) {
+          steeringClaims.current.set(
+            active.id,
+            Math.max(claimedThrough, steeringClaims.current.get(active.id) ?? 0),
+          );
+        }
+        setSteerQueue((queue) => settleSteerQueue(queue, active.id, event));
         if (event.type === "thread.cleared") {
           expandedHistoryThread.current = null;
           pinnedAroundRef.current = null;
@@ -1981,6 +2014,17 @@ function SpaceShell() {
   const workingRuns = currentRuns.filter((run) => isRunWorking(run.status));
   const transcriptRunning = workingRuns.length > 0;
   const composerRunning = currentRuns.some((run) => isActive(run.status));
+  const steerableRunIds = new Set(
+    inGroup
+      ? []
+      : workingRuns.filter((run) => isConversationalRun(run.trigger)).map((run) => run.id),
+  );
+  steerableRunIdsRef.current = steerableRunIds;
+  const composerSteerable = steerableRunIds.size > 0;
+  const queuedSteers = useMemo(
+    () => visibleSteers(steerQueue, inGroup ? undefined : active?.id, composerRunning),
+    [steerQueue, inGroup, active?.id, composerRunning],
+  );
   const runError = threadRunError(activeSnapshot, dismissedRunErrorIds);
   const displayedRunError = !sendError ? runError : null;
   const displayedRunErrorId = displayedRunError ? (activeSnapshot?.run?.id ?? null) : null;
@@ -1988,8 +2032,11 @@ function SpaceShell() {
     rememberSeenRunErrorId(runId);
   }, []);
   const transcript = useMemo(
-    () => foldPeerReplies(activeSnapshot?.messages ?? [], { includePeerReceipts: true }),
-    [activeSnapshot?.messages],
+    () =>
+      foldPeerReplies(withoutQueuedSteers(activeSnapshot?.messages ?? [], queuedSteers), {
+        includePeerReceipts: true,
+      }),
+    [activeSnapshot?.messages, queuedSteers],
   );
   const transcriptRef = useRef(transcript);
   useLayoutEffect(() => {
@@ -2314,6 +2361,8 @@ function SpaceShell() {
         if (permissionRequest) void permissionRequest.then(flushPendingBrowserNotifications);
       }
       const trimmed = plan.trimmed;
+      // Runs this send could steer; the reply's run decides, since one may end during the upload.
+      const steerableRunIds = steerableRunIdsRef.current;
       sendingRef.current = true;
       setSending(true);
       setSendError(null);
@@ -2395,6 +2444,23 @@ function SpaceShell() {
             replyQuote: activeReplyQuote ?? undefined,
           });
           accepted = true;
+          if (sent.messageId) {
+            const text = trimmed || attachments.map((pending) => pending.file.name).join(", ");
+            const entry = {
+              threadKey: botTarget,
+              runId: sent.runId,
+              messageId: sent.messageId,
+              seq: sent.seq,
+              text,
+            };
+            setSteerQueue((queue) =>
+              queueSteer(queue, entry, {
+                steerableRunIds,
+                endedRunIds: terminalRunReceipts.current,
+                claimedThrough: steeringClaims.current.get(botTarget),
+              }),
+            );
+          }
           if (activeBotId.current === botTarget) {
             updateSnapshot((current) =>
               applyThreadSendReceipt(
@@ -2487,6 +2553,8 @@ function SpaceShell() {
         }
         return;
       }
+      // Stop drops pending steering, so queued sends are now plain messages.
+      setSteerQueue((queue) => clearSteerQueue(queue, botTarget));
       // Clear local run/busy immediately rather than waiting for run.cancelled so a
       // superseded in-flight refresh (older cursor) cannot leave Stop enabled / Take control
       // blocked while the API is already idle.
@@ -3581,6 +3649,8 @@ function SpaceShell() {
             enterToSend={enterToSend}
             activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
             running={composerRunning}
+            steerable={composerSteerable}
+            queued={queuedSteers}
             disabled={Boolean(recordingSkill)}
             pendingAttachments={activePendingAttachments}
             attachmentNotice={attachmentNotice}
@@ -4042,6 +4112,8 @@ function SpaceShell() {
                   ? { botId: clearTarget.chat.id }
                   : { groupId: clearTarget.chat.id },
               );
+              // A closed chat misses thread.cleared, so drop its deleted queued sends here.
+              setSteerQueue((queue) => clearSteerQueue(queue, clearTarget.chat.id));
               if (
                 (clearTarget.kind === "bot" && active?.id === clearTarget.chat.id) ||
                 (clearTarget.kind === "group" && activeGroup?.id === clearTarget.chat.id)
