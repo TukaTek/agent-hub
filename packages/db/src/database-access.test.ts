@@ -40,6 +40,12 @@ describe("rowSecurityWarning", () => {
     expect(rowSecurityWarning({ enforced: true, role: "cortexai_agent_hub_app" })).toBeUndefined();
   });
 
+  it("says to rerun db:migrate when the bypass key is stale", () => {
+    expect(
+      rowSecurityWarning({ enforced: true, role: "cortexai_agent_hub_app", systemBlocked: true }),
+    ).toMatch(/db:migrate/);
+  });
+
   it("names the login and why it bypasses the policies", () => {
     expect(
       rowSecurityWarning({ enforced: false, role: "cortexai-agent-hub", reason: "is a superuser" }),
