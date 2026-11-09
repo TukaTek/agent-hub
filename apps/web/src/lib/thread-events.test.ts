@@ -4,7 +4,11 @@ import type {
   ThreadMessage,
   ThreadSnapshot,
 } from "@cortexai-agent-hub/contracts";
-import { answerableAskMessageIds, withLiveStreamingProgress } from "@cortexai-agent-hub/core";
+import {
+  answerableAskMessageIds,
+  dismissableAskMessageIds,
+  withLiveStreamingProgress,
+} from "@cortexai-agent-hub/core";
 import { describe, expect, it } from "vitest";
 import {
   activeThreadRuns,
@@ -770,6 +774,58 @@ describe("thread event reduction", () => {
     expect(reconciled.snapshot.messages).toEqual([liveProgress]);
     expect(reconciled.snapshot.run).toBe(run);
     expect(reconciled.computer?.busyBotName).toBe("Chief");
+  });
+
+  it("lets the run's user answer a login card when the refresh lands after newer events", () => {
+    // What the shell builds from the send receipt and live events: no userId on the run.
+    const ask = {
+      ...message("ask-1", [
+        {
+          kind: "ask" as const,
+          text: "Example sign-in",
+          input: "secret" as const,
+          purpose: "password" as const,
+          credential: {
+            name: "example_login",
+            origin: "https://login.example.test",
+            auth: { type: "login" as const },
+          },
+          status: "pending" as const,
+        },
+      ]),
+      runId: "run-1",
+    };
+    const live = { ...threadRun("run-1"), status: "waiting_input" as const };
+    const newer: ThreadSnapshot = {
+      ...snapshot([ask]),
+      cursor: 8,
+      run: live,
+      activeRuns: [live],
+    };
+    // The send's refresh read the run row (with its user) before run.waiting_input committed.
+    const refreshed = { ...live, userId: "user-1" };
+    const older: ThreadSnapshot = {
+      ...snapshot([ask]),
+      cursor: 7,
+      run: refreshed,
+      activeRuns: [refreshed],
+    };
+
+    const reconciled = reconcileRefreshedThread(newer, older, computer());
+
+    expect(reconciled.snapshot.cursor).toBe(8);
+    expect(reconciled.snapshot.run).toMatchObject({ status: "waiting_input", userId: "user-1" });
+    expect(dismissableAskMessageIds(reconciled.snapshot, "user-1")).toEqual(new Set(["ask-1"]));
+  });
+
+  it("keeps a run's user when its started event arrives", () => {
+    const run = { ...threadRun("run-1"), status: "queued" as const, userId: "user-1" };
+    const next = reduceThreadSnapshot(
+      { ...snapshot([]), run, activeRuns: [run] },
+      event({ type: "run.started", seq: 5, payload: { trigger: "user" } }),
+    );
+    expect(next?.run).toMatchObject({ status: "running", userId: "user-1" });
+    expect(next?.activeRuns?.[0]).toMatchObject({ userId: "user-1" });
   });
 
   it("clears active runs and their transient progress after stop", () => {

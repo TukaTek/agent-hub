@@ -52,7 +52,30 @@ function runFromStartedEvent(event: ProductEvent, previous: Run | undefined): Ru
     startedAt: previous?.startedAt ?? event.createdAt,
     completedAt: null,
     createdAt: previous?.createdAt ?? event.createdAt,
+    // The event names no user; keep the one a snapshot gave, so the run's user can still answer.
+    ...(previous?.userId ? { userId: previous.userId } : {}),
   };
+}
+
+/**
+ * Runs built from a send receipt or live events carry no user. A refresh too old to replace
+ * newer live state still knows who each run belongs to, which never changes, so fill that in.
+ */
+function withRefreshedRunUsers(prev: ThreadSnapshot, refreshed: ThreadSnapshot): ThreadSnapshot {
+  const users = new Map(
+    [...activeThreadRuns(refreshed), ...(refreshed.run ? [refreshed.run] : [])].flatMap((run) =>
+      run.userId ? [[run.id, run.userId] as const] : [],
+    ),
+  );
+  const fill = (run: Run): Run => {
+    const userId = run.userId ? undefined : users.get(run.id);
+    return userId ? { ...run, userId } : run;
+  };
+  const run = prev.run ? fill(prev.run) : prev.run;
+  const activeRuns = prev.activeRuns?.map(fill);
+  const changed =
+    run !== prev.run || activeRuns?.some((candidate, i) => candidate !== prev.activeRuns?.[i]);
+  return changed ? { ...prev, run, activeRuns } : prev;
 }
 
 const computerStates: ReadonlySet<unknown> = new Set<ComputerStatus["state"]>([
@@ -205,7 +228,7 @@ export function reconcileRefreshedThread(
       !prev.run ||
       !isActive(prev.run.status as RunStatus);
     return {
-      snapshot: prev,
+      snapshot: withRefreshedRunUsers(prev, snap),
       computer: preserveLocalComputer ? prevComputer : (snap.computer ?? null),
     };
   }
