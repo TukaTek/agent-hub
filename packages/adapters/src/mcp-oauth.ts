@@ -166,6 +166,42 @@ export function launchArgSecrets(args: string[]): string[] {
   return [...new Set(values)];
 }
 
+const REDACTED = "[redacted]";
+
+/** Replaces each launch-argument credential (longest first, so a Bearer value goes whole). */
+function launchArgRedactor(args: string[]): (text: string) => string {
+  const secrets = launchArgSecrets(args).sort((a, b) => b.length - a.length);
+  return (text) => secrets.reduce((value, secret) => value.split(secret).join(REDACTED), text);
+}
+
+/** Launch arguments as clients may see them: credentials replaced, everything else readable. */
+export function redactLaunchArgs(args: string[]): string[] {
+  return args.map(launchArgRedactor(args));
+}
+
+/** Text, such as a stored health message, with the credentials from these launch arguments
+ * replaced. */
+export function redactLaunchArgSecrets(text: string, args: string[]): string {
+  return launchArgRedactor(args)(text);
+}
+
+/** Puts the stored value back for each argument a client returned exactly as it was shown.
+ * An unmatched redacted argument stays as sent, so the caller can refuse it. */
+export function restoreRedactedLaunchArgs(next: string[], stored: string[]): string[] {
+  const shown = redactLaunchArgs(stored);
+  return next.map((arg, index) => {
+    if (!arg.includes(REDACTED)) return arg;
+    if (shown[index] === arg && stored[index] !== undefined) return stored[index];
+    const matches = new Set(stored.filter((_, i) => shown[i] === arg && stored[i] !== arg));
+    return matches.size === 1 ? [...matches][0]! : arg;
+  });
+}
+
+/** True when an argument still carries the redaction marker in place of a credential. */
+export function hasRedactedLaunchArg(args: string[]): boolean {
+  return args.some((arg) => arg.includes(REDACTED));
+}
+
 /** An assignment or header value: the configured env/header rule, or a credential name. */
 function isLaunchSecret(name: string, value: string): boolean {
   return isConfiguredSecret(snakeName(name), value) || isCredentialArg(name, value);

@@ -1841,6 +1841,66 @@ describe("MCP server health", () => {
     });
   });
 
+  describe("launch-argument credentials", () => {
+    const token = "FAKE-TOKEN-0000000000000000";
+    const args = ["-y", "@klodr/gmail-mcp@2.0.2", "--api-key", token, `--client-auth=${token}`];
+
+    it("never returns a credential passed as a launch argument", async () => {
+      const h = harness({
+        row: baseRow({ args, healthStatus: "error", healthMessage: `bad key ${token}` }),
+      });
+      (h.deps.prisma.mcpServer as unknown as { findMany: unknown }).findMany = vi.fn(async () => [
+        h.row(),
+      ]);
+
+      const [listed] = await h.client.mcp.servers.list();
+
+      expect(JSON.stringify(listed)).not.toContain(token);
+      expect(listed?.args).toEqual([
+        "-y",
+        "@klodr/gmail-mcp@2.0.2",
+        "--api-key",
+        "[redacted]",
+        "--client-auth=[redacted]",
+      ]);
+      expect(listed?.health.message).toBe("bad key [redacted]");
+    });
+
+    it("keeps the stored credential when an update sends the redacted arguments back", async () => {
+      const h = harness({ row: baseRow({ args }) });
+
+      const updated = await h.client.mcp.servers.update({
+        id: "server-1",
+        config: {
+          ...stdioInput,
+          name: "Gmail 2",
+          args: ["-y", "@klodr/gmail-mcp@2.1.0", "--api-key", "[redacted]", "--client-auth=[redacted]"],
+        },
+      });
+
+      expect(JSON.stringify(updated)).not.toContain(token);
+      expect(h.row()?.args).toEqual([
+        "-y",
+        "@klodr/gmail-mcp@2.1.0",
+        "--api-key",
+        token,
+        `--client-auth=${token}`,
+      ]);
+    });
+
+    it("refuses a redacted argument it cannot match to a stored value", async () => {
+      const h = harness();
+
+      await expect(
+        h.client.mcp.servers.update({
+          id: "server-1",
+          config: { ...stdioInput, args: ["--api-key", "[redacted]"] },
+        }),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(h.row()?.args).toEqual(["-y", "@klodr/gmail-mcp@2.0.2"]);
+    });
+  });
+
   describe("test", () => {
     it("probes the server and returns the recorded health", async () => {
       const { client, probe } = harness();

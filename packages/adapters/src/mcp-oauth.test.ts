@@ -6,6 +6,8 @@ import {
   McpOAuthBroker,
   McpReauthorizationRequiredError,
   oauthMaterialSecrets,
+  redactLaunchArgs,
+  restoreRedactedLaunchArgs,
   StoredMcpOAuthProvider,
 } from "./mcp-oauth.js";
 import { McpSession } from "./mcp-transport.js";
@@ -2247,6 +2249,29 @@ describe("MCP OAuth", () => {
     // The server may echo a query value spelled as it was passed, not as it decodes.
     for (const spelled of ["abc%2fDEF123456", "Abc+DEF123456"])
       expect(launchArgSecrets([`https://api.example.test/?api_key=${spelled}`])).toContain(spelled);
+  });
+
+  it("shows launch arguments without their credentials and restores them on the way back", () => {
+    const T = "FAKE-TOKEN-0000000000000000";
+    const stored = ["-y", "pkg", "--token", T, `--header=Authorization: Bearer ${T}`, "--verbose"];
+    const shown = redactLaunchArgs(stored);
+    expect(shown).toEqual([
+      "-y",
+      "pkg",
+      "--token",
+      "[redacted]",
+      "--header=Authorization: [redacted]",
+      "--verbose",
+    ]);
+    expect(restoreRedactedLaunchArgs(shown, stored)).toEqual(stored);
+    // Reordered or inserted arguments still find their unique stored value.
+    expect(restoreRedactedLaunchArgs(["--debug", ...shown], stored)).toEqual(["--debug", ...stored]);
+    // A redacted argument with no unique stored value stays as sent, for the caller to refuse.
+    expect(restoreRedactedLaunchArgs(["--token", "[redacted]"], ["-y"])).toEqual([
+      "--token",
+      "[redacted]",
+    ]);
+    expect(redactLaunchArgs(["-y", "pkg"])).toEqual(["-y", "pkg"]);
   });
 
   it("does not start authorization for a server that neither challenges nor publishes OAuth metadata", async () => {

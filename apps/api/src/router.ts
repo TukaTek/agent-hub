@@ -73,6 +73,7 @@ import {
   findConnectedModelCredential,
   forgetBotSecret,
   hasActiveComputerControl,
+  hasRedactedLaunchArg,
   hostCredentialSource,
   isAutoReviewCheckerConfigured,
   isComputerScreenUnavailable,
@@ -108,12 +109,15 @@ import {
   provisionComputer,
   queueComputerUpdate,
   recordMcpServerHealth,
+  redactLaunchArgSecrets,
+  redactLaunchArgs,
   releaseComputerExecutionLease,
   replaceComputer,
   resolveAutoReviewChecker,
   resolveBotUploadPath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
+  restoreRedactedLaunchArgs,
   revokeScreenControl,
   routineRunModelPin,
   sanitizeComposioError,
@@ -539,6 +543,7 @@ function mcpServerDto(
     value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
   const envKeys = keysOf(row.env);
   const headerKeys = keysOf(row.headers);
+  const health = mcpServerHealthDto(row);
   return {
     id: row.id,
     spaceId: row.spaceId,
@@ -548,7 +553,8 @@ function mcpServerDto(
     transport: row.transport as McpServer["transport"],
     endpoint: row.endpoint,
     command: row.command,
-    args,
+    // Launch arguments can carry a token; clients only ever see it redacted.
+    args: redactLaunchArgs(args),
     envKeys,
     fileKeys: keysOf(row.files),
     headerKeys,
@@ -557,7 +563,7 @@ function mcpServerDto(
     oauthClientId: oauth.clientId,
     enabled: row.enabled,
     revision: row.revision,
-    health: mcpServerHealthDto(row),
+    health: { ...health, message: health.message && redactLaunchArgSecrets(health.message, args) },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -4706,6 +4712,20 @@ export function createRouter(deps: RouterDeps) {
             if (!("config" in input) && existing.transport === "stdio") {
               throw new ORPCError("BAD_REQUEST", { message: "A remote MCP server is required" });
             }
+            // Clients only see launch-argument credentials redacted, so one sent back unchanged
+            // keeps its stored value.
+            const args =
+              "args" in config
+                ? restoreRedactedLaunchArgs(
+                    config.args,
+                    Array.isArray(existing.args) ? existing.args.map(String) : [],
+                  )
+                : [];
+            if (hasRedactedLaunchArg(args)) {
+              throw new ORPCError("BAD_REQUEST", {
+                message: "Re-enter the redacted launch arguments.",
+              });
+            }
             const nextEndpoint = "endpoint" in config ? config.endpoint : null;
             if (existing.endpoint !== nextEndpoint) {
               await assertMcpRemoteEndpoint(nextEndpoint, deps);
@@ -4788,7 +4808,7 @@ export function createRouter(deps: RouterDeps) {
                       transport: config.transport,
                       endpoint: nextEndpoint,
                       command: "command" in config ? config.command : null,
-                      args: ("args" in config ? config.args : []) as Prisma.InputJsonValue,
+                      args: args as Prisma.InputJsonValue,
                       env: ("env" in config
                         ? Object.fromEntries(Object.keys(config.env).map((key) => [key, true]))
                         : {}) as Prisma.InputJsonValue,
