@@ -1783,8 +1783,20 @@ describe("MCP connector stdio OAuth", () => {
       allowedCommands: ["mail-mcp"],
     });
 
+    const error = vi.spyOn(getLogger(), "error");
+    const warn = vi.spyOn(getLogger(), "warn");
+
     const tools = await connector.discoverTools(context);
 
+    // The log never carries it: message, stack, or cause.
+    const logged = [...error.mock.calls, ...warn.mock.calls].flat().map((value) =>
+      value instanceof Error
+        ? `${value.message}\n${value.stack}\n${String(value.cause)}`
+        : JSON.stringify(value),
+    );
+    expect(logged.length).toBeGreaterThan(0);
+    for (const line of logged) expect(line).not.toContain(token);
+    // Nor does the model-visible unavailable tool.
     expect(tools).toEqual(unavailableOnly("mail"));
     expect(tools[0]?.description).not.toContain(token);
     expect(tools[0]?.description).toContain("[redacted]");
