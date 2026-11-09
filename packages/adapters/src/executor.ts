@@ -545,6 +545,11 @@ const TURN_ATTACHMENT_UNAVAILABLE =
   "An attachment in this message could not be loaded. Tell the user the attachment was unavailable and do not guess its contents.";
 const STEERING_ATTACHMENT_UNAVAILABLE = TURN_ATTACHMENT_UNAVAILABLE;
 const BUILTIN_AGENT_TOOL_NAMES = new Set(builtinAgentTools.map((tool) => tool.name));
+/** Every name the executor dispatches to a local handler, which a catalog call must not reach. */
+const LOCAL_TOOL_NAMES = new Set([
+  ...BUILTIN_AGENT_TOOL_NAMES,
+  ...agentConnectionTools.map((tool) => tool.name),
+]);
 
 /**
  * Avoid an expensive remote workspace export when a turn never touched the computer. A failed
@@ -4926,7 +4931,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             try {
               const resolved = await deps.connector.resolveCall(connectorCall, context);
               if (resolved) {
-                if (BUILTIN_AGENT_TOOL_NAMES.has(resolved.tool.name)) {
+                // A catalog call resolves after the per-tool checks above; one named like a local
+                // tool (message_agent, cloud_agent_*, ...) would otherwise run that handler.
+                if (LOCAL_TOOL_NAMES.has(resolved.tool.name)) {
                   return {
                     error: "Connector tool name conflicts with a built-in tool",
                   };

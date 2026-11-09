@@ -554,6 +554,21 @@ describe("disabled builtins", () => {
   });
 });
 
+describe("catalog calls named like a local tool", () => {
+  // Ported from elie222/rakazo#3994: a catalog call resolves after the per-tool checks, so one
+  // that resolves to a local name would otherwise run that local handler unchecked.
+  it.each(["message_agent", "connect_agent", "respond_agent_connection", "cloud_agent_launch"])(
+    "refuses a catalog call that resolves to the local tool name %s",
+    async (local) => {
+      const f = fixture({ name: local, catalog: true });
+      await f.run();
+      expect(f.results).toEqual([{ error: "Connector tool name conflicts with a built-in tool" }]);
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(f.effects).toEqual([]);
+    },
+  );
+});
+
 describe("connector read-only metadata and approval enforcement", () => {
   beforeEach(() => {
     reviewMock.mockReset();
