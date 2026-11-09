@@ -1188,6 +1188,7 @@ async function ensureComputerImage() {
           context: computerContext,
           src: [
             "Dockerfile",
+            "apt-security.sh",
             "start.sh",
             "user-env.sh",
             "control.py",

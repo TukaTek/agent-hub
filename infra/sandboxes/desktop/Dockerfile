@@ -1,8 +1,11 @@
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
+COPY --chmod=755 apt-security.sh /tmp/apt-security.sh
+RUN /tmp/apt-security.sh \
+  && apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git python3 python3-pip xvfb x11vnc fluxbox procps \
-    && rm -rf /var/lib/apt/lists/*
-RUN useradd -m -s /bin/bash cortexai-agent-hub
+  && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash cortexai-agent-hub \
+  && /tmp/apt-security.sh --check && rm -f /tmp/apt-security.sh
 WORKDIR /home/cortexai-agent-hub
 USER cortexai-agent-hub
 ENV DISPLAY=:1
