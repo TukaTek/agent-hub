@@ -555,7 +555,7 @@ describe("disabled builtins", () => {
 });
 
 describe("catalog calls named like a local tool", () => {
-  // Ported from elie222/rakazo#3994: a catalog call resolves after the per-tool checks, so one
+  // A catalog call resolves after the per-tool checks, so one
   // that resolves to a local name would otherwise run that local handler unchecked.
   it.each(["message_agent", "connect_agent", "respond_agent_connection", "cloud_agent_launch"])(
     "refuses a catalog call that resolves to the local tool name %s",
