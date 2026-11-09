@@ -1789,11 +1789,13 @@ describe("MCP connector stdio OAuth", () => {
     const tools = await connector.discoverTools(context);
 
     // The log never carries it: message, stack, or cause.
-    const logged = [...error.mock.calls, ...warn.mock.calls].flat().map((value) =>
-      value instanceof Error
-        ? `${value.message}\n${value.stack}\n${String(value.cause)}`
-        : JSON.stringify(value),
-    );
+    const logged = [...error.mock.calls, ...warn.mock.calls]
+      .flat()
+      .map((value) =>
+        value instanceof Error
+          ? `${value.message}\n${value.stack}\n${String(value.cause)}`
+          : JSON.stringify(value),
+      );
     expect(logged.length).toBeGreaterThan(0);
     for (const line of logged) expect(line).not.toContain(token);
     // Nor does the model-visible unavailable tool.
