@@ -1874,7 +1874,13 @@ describe("MCP server health", () => {
         config: {
           ...stdioInput,
           name: "Gmail 2",
-          args: ["-y", "@klodr/gmail-mcp@2.1.0", "--api-key", "[redacted]", "--client-auth=[redacted]"],
+          args: [
+            "-y",
+            "@klodr/gmail-mcp@2.1.0",
+            "--api-key",
+            "[redacted]",
+            "--client-auth=[redacted]",
+          ],
         },
       });
 

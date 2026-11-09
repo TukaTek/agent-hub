@@ -2265,7 +2265,10 @@ describe("MCP OAuth", () => {
     ]);
     expect(restoreRedactedLaunchArgs(shown, stored)).toEqual(stored);
     // Reordered or inserted arguments still find their unique stored value.
-    expect(restoreRedactedLaunchArgs(["--debug", ...shown], stored)).toEqual(["--debug", ...stored]);
+    expect(restoreRedactedLaunchArgs(["--debug", ...shown], stored)).toEqual([
+      "--debug",
+      ...stored,
+    ]);
     // A redacted argument with no unique stored value stays as sent, for the caller to refuse.
     expect(restoreRedactedLaunchArgs(["--token", "[redacted]"], ["-y"])).toEqual([
       "--token",
