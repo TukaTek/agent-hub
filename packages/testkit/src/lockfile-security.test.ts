@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const lockfile = readFileSync("pnpm-lock.yaml", "utf8");
+// From this file, so the package's own test script (run from packages/testkit) finds it too.
+const lockfile = readFileSync(path.resolve(import.meta.dirname, "../../../pnpm-lock.yaml"), "utf8");
 
 /** Packages pinned past a security fix, with the first patched release. */
 const PATCHED: Record<string, string> = {
