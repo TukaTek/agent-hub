@@ -79,10 +79,32 @@ describe("keyless HTTP web provider", () => {
     expect(extracted.text).toContain("just text here");
   });
 
-  // Readability is synchronous and slows sharply on element-heavy pages, which froze the
-  // API/worker until database transactions timed out.
-  it("extracts a page full of nested elements without blocking", () => {
-    const html = '<div><div><span><i></i></span><a href="/">x</a></div></div>'.repeat(5_000);
+  it("keeps the HTML strip fallback's output", () => {
+    const html = [
+      "<frameset><TITLE lang=en>A  <b>page</b></title><style>p{}</style>",
+      "<script type=x>var a = '<p>no</p>';</SCRIPT>keep 1 < 2 and <> too",
+      "<p>one</p>   \n\n\n\n<div>two</div><script>unclosed</frameset>",
+    ].join("");
+    expect(extractReadableText(html, "https://example.test/")).toEqual({
+      title: "A <b>page</b>",
+      text: "A page keep 1 too one\n\n two unclosed",
+    });
+  });
+
+  // Extraction is synchronous on the API/worker event loop: a hostile page must not block it
+  // long enough for database transactions to time out. Element-heavy pages skip Readability and
+  // take the HTML strip fallback, which must itself stay linear.
+  it.each([
+    ["unclosed tags", "<a".repeat(60_000)],
+    ["unclosed scripts", "<script>".repeat(40_000)],
+    ["unclosed titles", "<title>".repeat(40_000)],
+    ["unclosed styles", "<style>".repeat(40_000)],
+    ["whitespace runs", `<p>a${" ".repeat(60_000)}b</p>`],
+    [
+      "nested elements",
+      '<div><div><span><i></i></span><a href="/">x</a></div></div>'.repeat(5_000),
+    ],
+  ])("extracts a page full of %s in linear time", (_name, html) => {
     const started = performance.now();
     extractReadableText(html, "https://example.test/");
     expect(performance.now() - started).toBeLessThan(1_500);
