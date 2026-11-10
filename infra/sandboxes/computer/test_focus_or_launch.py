@@ -373,7 +373,6 @@ class IsolatedHelperTest(unittest.TestCase):
 
     Code planted there (a .pth in the user site-packages, a python3 early in PATH, PYTHON*
     variables) must not run inside them: the page browser holds saved logins and cards.
-    Ported from elie222/rakazo e444d9df (#4106).
     """
 
     HELPERS = {

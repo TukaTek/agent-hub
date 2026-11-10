@@ -5,7 +5,7 @@ const lockfile = readFileSync("pnpm-lock.yaml", "utf8");
 
 /** Packages pinned past a security fix, with the first patched release. */
 const PATCHED: Record<string, string> = {
-  // elie222/rakazo#4132: fast-uri before 3.1.9 is vulnerable.
+  // fast-uri before 3.1.9 is vulnerable.
   "fast-uri": "3.1.9",
 };
 

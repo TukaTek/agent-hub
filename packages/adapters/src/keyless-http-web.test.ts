@@ -79,8 +79,8 @@ describe("keyless HTTP web provider", () => {
     expect(extracted.text).toContain("just text here");
   });
 
-  // Ported from elie222/rakazo 2e684d7e (#4137): Readability is synchronous and slows sharply on
-  // element-heavy pages, which froze the API/worker until database transactions timed out.
+  // Readability is synchronous and slows sharply on element-heavy pages, which froze the
+  // API/worker until database transactions timed out.
   it("extracts a page full of nested elements without blocking", () => {
     const html = '<div><div><span><i></i></span><a href="/">x</a></div></div>'.repeat(5_000);
     const started = performance.now();
