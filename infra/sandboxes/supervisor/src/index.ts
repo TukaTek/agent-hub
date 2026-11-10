@@ -125,6 +125,12 @@ const computerScreens = new Map<string, Map<string, ScreenAssignment>>();
 // Container start time each screen registry was built under; see currentComputerScreens.
 const computerScreenBoots = new Map<string, string>();
 
+/**
+ * Python run inside a computer as its user: the system interpreter in isolated mode, so a .pth,
+ * PYTHON* variable or python3 the bot planted in that user's home cannot run inside it.
+ */
+const COMPUTER_PYTHON = ["/usr/bin/python3", "-I"] as const;
+
 export const MAX_SUPERVISOR_REQUEST_BYTES = 1024 * 1024;
 const maxUploadSizeBytes = uploadSizeFromEnv(process.env);
 
@@ -714,7 +720,7 @@ app.get("/computers/:id/files", async (c) => {
         "sys.stdout.write(base64.b64encode(content).decode())",
       ].join("\n");
       const result = await runContainerCommand(container, [
-        "python3",
+        ...COMPUTER_PYTHON,
         "-c",
         script,
         target,
@@ -738,7 +744,7 @@ app.get("/computers/:id/files", async (c) => {
       "print(json.dumps(sorted(out, key=lambda x: x['path'])))",
     ].join("\n");
     const result = await runContainerCommand(container, [
-      "python3",
+      ...COMPUTER_PYTHON,
       "-c",
       script,
       target,
@@ -2086,7 +2092,7 @@ async function applyContainerActions(
     "    if result.returncode: sys.exit(result.returncode)",
   ].join("\n");
   const result = await runContainerCommand(container, [
-    "python3",
+    ...COMPUTER_PYTHON,
     "-c",
     script,
     JSON.stringify(containerActionSteps(actions, display, browserProfile)),
@@ -2126,7 +2132,7 @@ async function writeContainerFile(
     `os.chmod(target, ${executable ? "0o700" : "0o600"})`,
   ].join("\n");
   const exec = await container.exec({
-    Cmd: ["python3", "-c", script, target],
+    Cmd: [...COMPUTER_PYTHON, "-c", script, target],
     AttachStdin: true,
     AttachStdout: true,
     AttachStderr: true,
