@@ -79,6 +79,23 @@ describe("keyless HTTP web provider", () => {
     expect(extracted.text).toContain("just text here");
   });
 
+  // Ported from elie222/rakazo 2e684d7e (#4137): Readability is synchronous and slows sharply on
+  // element-heavy pages, which froze the API/worker until database transactions timed out.
+  it("extracts a page full of nested elements without blocking", () => {
+    const html = '<div><div><span><i></i></span><a href="/">x</a></div></div>'.repeat(5_000);
+    const started = performance.now();
+    extractReadableText(html, "https://example.test/");
+    expect(performance.now() - started).toBeLessThan(1_500);
+  });
+
+  it("keeps the text of a page too large for article extraction", () => {
+    const html = `<html><head><title>Big</title></head><body><nav>Menu</nav>${"<div><span>row</span></div>".repeat(6_000)}<p>Closing paragraph</p></body></html>`;
+    const page = extractReadableText(html, "https://example.test/");
+    expect(page.title).toBe("Big");
+    expect(page.text).toContain("Menu");
+    expect(page.text).toContain("Closing paragraph");
+  });
+
   it("parses HTML search results with a cap", () => {
     const html = Array.from({ length: 12 }, (_, i) => {
       return `<div class="result"><a class="result__a" href="https://example.test/${i}">T${i}</a><div class="result__snippet">S${i}</div></div>`;
