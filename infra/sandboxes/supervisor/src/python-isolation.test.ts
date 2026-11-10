@@ -80,4 +80,43 @@ describe("Python started in the computer", () => {
     expect(source.replace(definition, "").match(/\[\s*"(\S*\/)?python3?"/g) ?? []).toEqual([]);
     expect(source.match(/\.\.\.COMPUTER_PYTHON,\s*"-c"/g)?.length).toBeGreaterThanOrEqual(4);
   });
+
+  it("runs action steps with the image's PATH, as the control server does", () => {
+    const source = readFileSync(supervisorIndex, "utf8");
+    const control = readFileSync(path.join(computerDir, "control.py"), "utf8");
+    const childPath = control.match(/^CHILD_PATH = "([^"]+)"$/m)?.[1];
+    expect(childPath).toBeTruthy();
+    expect(source).toContain(`const COMPUTER_CHILD_PATH = "${childPath}";`);
+    expect(source).toMatch(/subprocess\.run\(step\['argv'\], env=\{\*\*os\.environ, 'PATH': /);
+  });
+});
+
+// The shared Linux desktop runtime and the providers that use it start Python in the computer
+// too (extra screens' gateways, the terminal server, inline probes). They keep `python3` from
+// PATH, since provider images differ, but always isolated.
+const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+const RUNTIME_FILES = [
+  "packages/core/src/node/desktop-runtime.ts",
+  "packages/adapters/src/linux-desktop.ts",
+  "packages/adapters/src/createos-sandbox.ts",
+];
+
+describe("Python the desktop runtime starts in the computer", () => {
+  it.each(RUNTIME_FILES)("starts every python3 isolated in %s", (file) => {
+    const text = readFileSync(path.join(repoRoot, file), "utf8").replace(/\s+/g, " ");
+    // A python3 command in a shell string (`python3 …`) or an argv ("python3", …); not a
+    // package name in a dependency check (`python3:python3`).
+    const launches = [...text.matchAll(/(?<![:\w])python3(?=[ "'])/g)].map((match) =>
+      text.slice(match.index, match.index + 24),
+    );
+    expect(launches.length).toBeGreaterThan(0);
+    expect(launches.filter((launch) => !/^python3( -I |", "-I")/.test(launch))).toEqual([]);
+  });
+
+  it("starts the extra screens' gateway without the user site-packages", () => {
+    const runtime = readFileSync(path.join(repoRoot, RUNTIME_FILES[0]!), "utf8");
+    const launches = runtime.split("\n").filter((line) => line.includes('"$proxy" --'));
+    expect(launches).toHaveLength(1);
+    expect(launches[0]).toMatch(/PYTHONNOUSERSITE=1 nohup "\$proxy" --/);
+  });
 });

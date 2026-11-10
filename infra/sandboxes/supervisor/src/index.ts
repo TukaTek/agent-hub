@@ -130,6 +130,8 @@ const computerScreenBoots = new Map<string, string>();
  * PYTHON* variable or python3 the bot planted in that user's home cannot run inside it.
  */
 const COMPUTER_PYTHON = ["/usr/bin/python3", "-I"] as const;
+/** The image's program folders, as control.py's CHILD_PATH: what in-computer steps run from. */
+const COMPUTER_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 export const MAX_SUPERVISOR_REQUEST_BYTES = 1024 * 1024;
 const maxUploadSizeBytes = uploadSizeFromEnv(process.env);
@@ -2084,11 +2086,12 @@ async function applyContainerActions(
   browserProfile?: string,
 ) {
   const script = [
-    "import json, subprocess, sys, time",
+    "import json, os, subprocess, sys, time",
     "for step in json.loads(sys.argv[1]):",
     "  if 'waitMs' in step: time.sleep(step['waitMs'] / 1000)",
     "  else:",
-    "    result = subprocess.run(step['argv'])",
+    // Programs come from the image's folders only, never the user's ~/.local/bin.
+    `    result = subprocess.run(step['argv'], env={**os.environ, 'PATH': '${COMPUTER_CHILD_PATH}'})`,
     "    if result.returncode: sys.exit(result.returncode)",
   ].join("\n");
   const result = await runContainerCommand(container, [

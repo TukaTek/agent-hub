@@ -613,7 +613,7 @@ print(json.dumps(out))
 `;
     const result = await this.runCommand(
       computer,
-      { argv: ["python3", "-c", script, target] },
+      { argv: ["python3", "-I", "-c", script, target] },
       context,
       boundedSandboxCommandTimeoutMs(undefined),
     );
@@ -1018,6 +1018,7 @@ print(json.dumps(out))
       {
         argv: [
           "python3",
+          "-I",
           "-c",
           CREATEOS_SCREEN_MAP_SCRIPT,
           CREATEOS_SCREEN_MAP_SENTINEL,
@@ -1163,7 +1164,7 @@ print(json.dumps(out))
     // The port probe closes its socket before Chrome binds it, so two launches can
     // pick the same port. A loser that stays up must not count as a healthy profile.
     const launchBrowser = [
-      `if python3 -c ${shellQuote(CHROME_PROFILE_RUNNING_SCRIPT)} ${profileQuoted} && python3 -c ${shellQuote(CHROME_OWNS_DEBUG_PORT_SCRIPT)} ${profileQuoted}; then`,
+      `if python3 -I -c ${shellQuote(CHROME_PROFILE_RUNNING_SCRIPT)} ${profileQuoted} && python3 -I -c ${shellQuote(CHROME_OWNS_DEBUG_PORT_SCRIPT)} ${profileQuoted}; then`,
       [
         ...chromeEnv,
         `--user-data-dir=${profileQuoted}`,
@@ -1172,7 +1173,7 @@ print(json.dumps(out))
         ">/tmp/cortexai-agent-hub-chrome.log 2>&1 </dev/null &",
       ].join(" "),
       "else",
-      `python3 -c ${shellQuote(CHROME_STOP_PROFILE_SCRIPT)} ${profileQuoted}`,
+      `python3 -I -c ${shellQuote(CHROME_STOP_PROFILE_SCRIPT)} ${profileQuoted}`,
       "&&",
       [
         "rm -f",
@@ -1181,14 +1182,14 @@ print(json.dumps(out))
         shellQuote(`${profile}/SingletonCookie`),
       ].join(" "),
       "&&",
-      `python3 -c ${shellQuote(CHROME_CLEAN_EXIT_SCRIPT)} ${profileQuoted}`,
+      `python3 -I -c ${shellQuote(CHROME_CLEAN_EXIT_SCRIPT)} ${profileQuoted}`,
       "&&",
       "owned=0",
       "&&",
       "attempt=0",
       "&&",
       'while [ "$attempt" -lt 2 ]; do',
-      `debug_port=$(python3 -c ${shellQuote(CHROME_DEBUG_PORT_SCRIPT)} ${profileQuoted}) || exit 1`,
+      `debug_port=$(python3 -I -c ${shellQuote(CHROME_DEBUG_PORT_SCRIPT)} ${profileQuoted}) || exit 1`,
       [
         ...chromeEnv,
         "--disable-dev-shm-usage",
@@ -1206,12 +1207,12 @@ print(json.dumps(out))
       ].join(" "),
       "probe=0",
       'while [ "$probe" -lt 8 ]; do',
-      `if python3 -c ${shellQuote(CHROME_OWNS_DEBUG_PORT_SCRIPT)} ${profileQuoted} "$debug_port"; then owned=1; break; fi`,
+      `if python3 -I -c ${shellQuote(CHROME_OWNS_DEBUG_PORT_SCRIPT)} ${profileQuoted} "$debug_port"; then owned=1; break; fi`,
       "sleep 0.25",
       "probe=$((probe + 1))",
       "done",
       'if [ "$owned" = 1 ]; then break; fi',
-      `python3 -c ${shellQuote(CHROME_STOP_PROFILE_SCRIPT)} ${profileQuoted}`,
+      `python3 -I -c ${shellQuote(CHROME_STOP_PROFILE_SCRIPT)} ${profileQuoted}`,
       "attempt=$((attempt + 1))",
       "done",
       'test "$owned" = 1',
@@ -1331,7 +1332,7 @@ raise SystemExit(1)
 `;
     const result = await this.runCommand(
       computer,
-      { argv: ["python3", "-c", script, uri, profile] },
+      { argv: ["python3", "-I", "-c", script, uri, profile] },
       context,
       3_000,
     );
