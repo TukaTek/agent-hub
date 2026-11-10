@@ -17,10 +17,17 @@ import type { SpeechRecognizer } from "./dictation";
 import { ENDPOINT_SILENCE_MS, setSpeechRecognizer, stop as stopDictation } from "./dictation";
 import { activateUiLocale, getActiveUiLocale } from "./i18n";
 import type { UiLocale } from "./ui-locale";
+import { ensureVoiceConsent } from "./voice";
 
 vi.mock("./monitoring", () => ({ reportMobileError: vi.fn() }));
 vi.mock("expo-file-system", () => ({ File: class {}, Paths: {} }));
-vi.mock("./voice", () => ({ speakText: vi.fn(), stopSpeaking: vi.fn() }));
+vi.mock("./voice", () => ({
+  ensureVoiceConsent: vi.fn(async () => undefined),
+  speakText: vi.fn(),
+  stopSpeaking: vi.fn(),
+}));
+const audio = vi.hoisted(() => ({ requestRecordingPermissionsAsync: vi.fn() }));
+vi.mock("expo-audio", () => ({ AudioModule: audio, RecordingPresets: {} }));
 vi.mock("./call-sounds", () => ({ playCallCue: vi.fn() }));
 vi.mock("./api", () => ({
   applyMobileThreadEvent: vi.fn(),
@@ -1227,6 +1234,44 @@ describe("mobile call session on a timer", () => {
 
     expect(getSnapshot()).toBeNull();
     expect(fake.closeCall).toHaveBeenCalledOnce();
+  });
+
+  it("waits muted instead of recording when voice consent is refused without a greeting", async () => {
+    const fake = fakes();
+    const record = vi
+      .fn<CallDeps["record"]>()
+      .mockRejectedValueOnce(new AiConsentBlocked("voice consent denied"))
+      .mockImplementation(fake.deps.record);
+    startCall({ botId: "bot-1", botName: "Ada" }, { ...fake.deps, record });
+    await tick();
+
+    expect(record).toHaveBeenCalledOnce();
+    expect(fake.recordings).toEqual([]);
+    expect(getSnapshot()).toMatchObject({
+      phase: "listening",
+      muted: true,
+      caption: "voice consent denied",
+    });
+    await tick(20_000);
+    expect(record).toHaveBeenCalledOnce();
+
+    toggleMute();
+    await tick();
+    expect(record).toHaveBeenCalledTimes(2);
+    expect(getSnapshot()).toMatchObject({ botId: "bot-1", muted: false });
+  });
+
+  it("asks for voice consent before the fallback recorder opens the microphone", async () => {
+    vi.mocked(ensureVoiceConsent).mockRejectedValueOnce(
+      new AiConsentBlocked("voice consent denied"),
+    );
+    const { record: _record, ...withoutRecorder } = fakes().deps;
+    startCall({ botId: "bot-1", botName: "Ada" }, withoutRecorder);
+    await tick();
+
+    expect(ensureVoiceConsent).toHaveBeenCalledOnce();
+    expect(audio.requestRecordingPermissionsAsync).not.toHaveBeenCalled();
+    expect(getSnapshot()).toMatchObject({ muted: true, caption: "voice consent denied" });
   });
 
   it("does not start speech again after consent refuse until the caller unmutes", async () => {

@@ -287,7 +287,7 @@ export function stopBrowserProfileCommand(profile: string, pidFile: string) {
   return [
     ...browserRunningFunction(profile, pidFile),
     `if browser_running; then`,
-    `  python3 -c ${shellQuote(CLOSE_BROWSER)} "$pid" ${shellQuote(profile)} >/dev/null 2>&1 || true`,
+    `  python3 -I -c ${shellQuote(CLOSE_BROWSER)} "$pid" ${shellQuote(profile)} >/dev/null 2>&1 || true`,
     `  for i in $(seq 1 40); do browser_running || break; sleep 0.25; done`,
     `  if browser_running; then kill "$pid" 2>/dev/null || true; for i in $(seq 1 40); do browser_running || break; sleep 0.25; done; fi`,
     `  browser_running && kill -KILL "$pid" 2>/dev/null || true`,
@@ -410,7 +410,8 @@ function stopVncCommand(kind: "view" | "control", layout: DesktopLayout) {
 const TERMINAL_SERVER = "/tmp/cortexai-agent-hub/cortexai-agent-hub-terminal.py";
 
 function terminalServerPattern(socket: string) {
-  return `^([^ ]*/)?python[0-9.]* ${TERMINAL_SERVER} ${socket}( |$)`;
+  // With or without -I, so a server the previous release started is still found.
+  return `^([^ ]*/)?python[0-9.]*( -I)? ${TERMINAL_SERVER} ${socket}( |$)`;
 }
 
 function stopTerminalCommand(layout: DesktopLayout) {
@@ -445,7 +446,8 @@ function gatewayCommand(port: string, host = "127.0.0.1") {
     `  pkill -f ${portPattern} || true`,
     `  for i in $(seq 1 20); do if ! (echo >/dev/tcp/${probeHost}/${port}) >/dev/null 2>&1; then break; fi; sleep 0.1; done`,
     `  if (echo >/dev/tcp/${probeHost}/${port}) >/dev/null 2>&1; then echo 'screen gateway port is busy' >&2; exit 1; fi`,
-    `  nohup "$proxy" --heartbeat=30 --web="$web" --token-plugin=TokenFile --token-source=${TARGETS} ${host}:${port} 8>&- 9>&- 10>&- </dev/null >/tmp/cortexai-agent-hub/gateway-${port}.log 2>&1 &`,
+    // Without the user's site-packages: this gateway relays the screen's VNC session.
+    `  PYTHONNOUSERSITE=1 nohup "$proxy" --heartbeat=30 --web="$web" --token-plugin=TokenFile --token-source=${TARGETS} ${host}:${port} 8>&- 9>&- 10>&- </dev/null >/tmp/cortexai-agent-hub/gateway-${port}.log 2>&1 &`,
     "fi",
     `for i in $(seq 1 50); do (echo >/dev/tcp/${probeHost}/${port}) >/dev/null 2>&1 && break; sleep 0.1; done`,
     `flock -u 10; exec 10>&-`,
@@ -708,7 +710,7 @@ export function startTerminalCommand(
     // Displays share the program file; replace it whole so a starting server never reads half.
     `  printf %s ${shellQuote(TERMINAL_SERVER_PROGRAM)} >${TERMINAL_SERVER}.$$`,
     `  mv ${TERMINAL_SERVER}.$$ ${TERMINAL_SERVER}`,
-    `  HOME=${shellQuote(env.homeDir)} nohup python3 ${TERMINAL_SERVER} ${socket} ${shellQuote(cwd)} /tmp/cortexai-agent-hub/terminal-state-${display} 8>&- 9>&- </dev/null >/tmp/cortexai-agent-hub/terminal-${display}.log 2>&1 &`,
+    `  HOME=${shellQuote(env.homeDir)} nohup python3 -I ${TERMINAL_SERVER} ${socket} ${shellQuote(cwd)} /tmp/cortexai-agent-hub/terminal-state-${display} 8>&- 9>&- </dev/null >/tmp/cortexai-agent-hub/terminal-${display}.log 2>&1 &`,
     `  for i in $(seq 1 50); do [ -S ${socket} ] && break; sleep 0.1; done`,
     `  [ -S ${socket} ] || exit 1`,
     `  ${entry} >${next}`,
@@ -762,7 +764,7 @@ export function managedDesktopCommand(
     'index=$(sed -n "1p" "$slot" 2>/dev/null || true)',
     'view_token=$(sed -n "3p" "$slot" 2>/dev/null || true)',
     'if [ -z "$index" ]; then',
-    `  index=$(python3 -c ${shellQuote(`import pathlib, sys
+    `  index=$(python3 -I -c ${shellQuote(`import pathlib, sys
 used = set()
 for slot in pathlib.Path(sys.argv[1]).glob("*.slot"):
     try:

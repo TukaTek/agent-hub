@@ -73,6 +73,7 @@ import {
   findConnectedModelCredential,
   forgetBotSecret,
   hasActiveComputerControl,
+  hasRedactedLaunchArg,
   hostCredentialSource,
   isAutoReviewCheckerConfigured,
   isComputerScreenUnavailable,
@@ -108,12 +109,15 @@ import {
   provisionComputer,
   queueComputerUpdate,
   recordMcpServerHealth,
+  redactLaunchArgSecrets,
+  redactLaunchArgs,
   releaseComputerExecutionLease,
   replaceComputer,
   resolveAutoReviewChecker,
   resolveBotUploadPath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
+  restoreRedactedLaunchArgs,
   revokeScreenControl,
   routineRunModelPin,
   sanitizeComposioError,
@@ -539,6 +543,7 @@ function mcpServerDto(
     value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
   const envKeys = keysOf(row.env);
   const headerKeys = keysOf(row.headers);
+  const health = mcpServerHealthDto(row);
   return {
     id: row.id,
     spaceId: row.spaceId,
@@ -548,7 +553,8 @@ function mcpServerDto(
     transport: row.transport as McpServer["transport"],
     endpoint: row.endpoint,
     command: row.command,
-    args,
+    // Launch arguments can carry a token; clients only ever see it redacted.
+    args: redactLaunchArgs(args),
     envKeys,
     fileKeys: keysOf(row.files),
     headerKeys,
@@ -557,7 +563,7 @@ function mcpServerDto(
     oauthClientId: oauth.clientId,
     enabled: row.enabled,
     revision: row.revision,
-    health: mcpServerHealthDto(row),
+    health: { ...health, message: health.message && redactLaunchArgSecrets(health.message, args) },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -3931,8 +3937,10 @@ export function createRouter(deps: RouterDeps) {
               : isOneShotRoutineCrons(crons)
                 ? (armedOneShotAt ?? existing.nextRunAt)
                 : (recalculatedNextRunAt ?? existing.nextRunAt);
+        const writesSchedule = nextRunAt?.getTime() !== existing.nextRunAt?.getTime();
         // Re-check the parent in the write itself so an archive that lands after the read wins.
-        // Model patches must also match the snapshot used to resolve omitted model fields.
+        // Model and schedule patches must also match the snapshot they were computed from, so a
+        // tick that fired after the read is not rewound onto an occurrence that already ran.
         const row = await deps.prisma.routine
           .update({
             where: {
@@ -3945,6 +3953,7 @@ export function createRouter(deps: RouterDeps) {
                     thinkingLevel: existing.thinkingLevel,
                   }
                 : {}),
+              ...(writesSchedule ? { nextRunAt: existing.nextRunAt } : {}),
             },
             data: {
               name: input.name,
@@ -3964,13 +3973,13 @@ export function createRouter(deps: RouterDeps) {
                     watch: (input.watch as Prisma.InputJsonValue | null) ?? Prisma.DbNull,
                     ...(watchChanged ? { watchState: Prisma.DbNull } : {}),
                   }),
-              nextRunAt,
+              ...(writesSchedule ? { nextRunAt } : {}),
             },
           })
           .catch(async (error: unknown) => {
             if (isRecordNotFound(error)) {
               if (
-                touchesModel &&
+                (touchesModel || writesSchedule) &&
                 (await deps.prisma.routine.findFirst({
                   where: {
                     id: existing.id,
@@ -3981,7 +3990,7 @@ export function createRouter(deps: RouterDeps) {
                   select: { id: true },
                 }))
               ) {
-                throw new ORPCError("CONFLICT", { message: "Routine model changed; retry." });
+                throw new ORPCError("CONFLICT", { message: "Routine changed; retry." });
               }
               throw new ORPCError("NOT_FOUND");
             }
@@ -4013,7 +4022,11 @@ export function createRouter(deps: RouterDeps) {
       }),
       remove: authed.routines.remove.handler(async ({ context, input }) => {
         const existing = await deps.prisma.routine.findFirst({
-          where: { id: input.routineId, spaceId: context.actor.spaceId },
+          where: {
+            id: input.routineId,
+            spaceId: context.actor.spaceId,
+            userId: context.actor.userId,
+          },
         });
         if (!existing) throw new IsolationError();
         await deps.prisma.routine.delete({ where: { id: existing.id } });
@@ -4699,6 +4712,20 @@ export function createRouter(deps: RouterDeps) {
             if (!("config" in input) && existing.transport === "stdio") {
               throw new ORPCError("BAD_REQUEST", { message: "A remote MCP server is required" });
             }
+            // Clients only see launch-argument credentials redacted, so one sent back unchanged
+            // keeps its stored value.
+            const args =
+              "args" in config
+                ? restoreRedactedLaunchArgs(
+                    config.args,
+                    Array.isArray(existing.args) ? existing.args.map(String) : [],
+                  )
+                : [];
+            if (hasRedactedLaunchArg(args)) {
+              throw new ORPCError("BAD_REQUEST", {
+                message: "Re-enter the redacted launch arguments.",
+              });
+            }
             const nextEndpoint = "endpoint" in config ? config.endpoint : null;
             if (existing.endpoint !== nextEndpoint) {
               await assertMcpRemoteEndpoint(nextEndpoint, deps);
@@ -4781,7 +4808,7 @@ export function createRouter(deps: RouterDeps) {
                       transport: config.transport,
                       endpoint: nextEndpoint,
                       command: "command" in config ? config.command : null,
-                      args: ("args" in config ? config.args : []) as Prisma.InputJsonValue,
+                      args: args as Prisma.InputJsonValue,
                       env: ("env" in config
                         ? Object.fromEntries(Object.keys(config.env).map((key) => [key, true]))
                         : {}) as Prisma.InputJsonValue,

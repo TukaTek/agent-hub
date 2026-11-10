@@ -292,7 +292,7 @@ function focusOrLaunchActionCommand(
   // URI still has to surface a launcher that exits immediately.
   const background = browser
     ? foreground
-    : `DISPLAY=${layout.display} python3 -c ${shellQuote(FOCUS_URI_PROBE)} ${quotedApp}${quotedArg} || exit $?`;
+    : `DISPLAY=${layout.display} python3 -I -c ${shellQuote(FOCUS_URI_PROBE)} ${quotedApp}${quotedArg} || exit $?`;
   if (!browser && !binary) return foreground;
   const classCase = browser ? CHROME_WM_CLASSES : binary.toLowerCase();
   return [

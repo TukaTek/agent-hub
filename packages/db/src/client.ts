@@ -12,7 +12,7 @@ import {
   PgSpaceKeyStore,
 } from "./content-keys.js";
 import { PrismaClient } from "./generated/prisma/client.js";
-import { installDbContext, withRowLevelSecurity } from "./row-security.js";
+import { installDbContext, rlsBypassKey, withRowLevelSecurity } from "./row-security.js";
 
 export type Db = PrismaClient;
 
@@ -90,6 +90,7 @@ export function createDb(
   // through content encryption.
   const prisma = withRowLevelSecurity(
     withContentEncryption(new PrismaClient({ adapter }), contentKeys),
+    rlsBypassKey(connectionString),
   );
   return { prisma, pool, contentKeys };
 }

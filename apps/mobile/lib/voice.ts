@@ -354,6 +354,12 @@ export async function speakUtterance(
   opts: SpeechOptions & { requestContext?: ApiRequestContext } = {},
 ): Promise<Uint8Array> {
   const requestContext = opts.requestContext ?? (await captureApiRequestContext());
+  await ensureVoiceConsent(requestContext);
+  return renderUtterance(text, opts, requestContext);
+}
+
+/** Asks before audio or text goes to the voice provider; throws AiConsentBlocked on a refusal. */
+export async function ensureVoiceConsent(requestContext: ApiRequestContext): Promise<void> {
   await ensureAiDataConsent({
     uses: ["voice"],
     status: () => rpc("aiConsent/status", { uses: ["voice"] }, { requestContext }),
@@ -361,7 +367,6 @@ export async function speakUtterance(
     allow: (input) => rpc("aiConsent/allow", input, { requestContext }),
     coalesceKey: aiConsentCoalesceKey(requestContext),
   });
-  return renderUtterance(text, opts, requestContext);
 }
 
 async function renderUtterance(

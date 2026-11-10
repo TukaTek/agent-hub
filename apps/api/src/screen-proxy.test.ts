@@ -1,3 +1,4 @@
+import type * as Crypto from "node:crypto";
 import {
   resetRemoteScreenCapabilityReuse,
   SCREEN_TARGET_ENDPOINT,
@@ -6,6 +7,18 @@ import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { addScreenProxyCapability, mountScreenTarget } from "./screen-proxy.js";
+
+const compared = vi.hoisted(() => [] as Array<[number, number]>);
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof Crypto>();
+  return {
+    ...actual,
+    timingSafeEqual: (a: NodeJS.ArrayBufferView, b: NodeJS.ArrayBufferView) => {
+      compared.push([a.byteLength, b.byteLength]);
+      return actual.timingSafeEqual(a, b);
+    },
+  };
+});
 
 const secret = "fake-screen-secret";
 const scope = {
@@ -65,6 +78,18 @@ describe("screen capability lifecycle authorization", () => {
     expect((await request(path, "wrong")).status).toBe(403);
     expect(findFirst).not.toHaveBeenCalled();
   });
+  it.each(["wrong", "x".repeat(200), ""])(
+    "compares a %j credential in constant time, without a length shortcut",
+    async (credential) => {
+      const { request, findFirst, path } = fixture();
+      compared.length = 0;
+      expect((await request(path, credential)).status).toBe(403);
+      // The comparison always runs, on equal-length digests, so the time taken says
+      // nothing about how long the secret is.
+      expect(compared).toEqual([[32, 32]]);
+      expect(findFirst).not.toHaveBeenCalled();
+    },
+  );
   it("rejects stopped computers and old URLs after restart at the same address", async () => {
     const { request, computer } = fixture();
     computer.state = "stopped";
