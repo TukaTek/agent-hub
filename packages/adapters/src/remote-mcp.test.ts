@@ -1,8 +1,10 @@
 import dns from "node:dns";
 import { fetch as undiciFetch } from "undici";
 import { describe, expect, it, vi } from "vitest";
+import { MAX_MCP_RESPONSE_BYTES } from "./mcp-response-limit.js";
 import {
   assertSafeRemoteUrl,
+  callRemoteMcpTool,
   createPrivateNetworkFetch,
   createSafeLookup,
   createSafeRemoteFetch,
@@ -584,6 +586,53 @@ describe("remote MCP URL policy", () => {
     } finally {
       await safeFetch.close();
     }
+  });
+});
+
+describe("remote MCP tool result", () => {
+  const initialize = (id: unknown) =>
+    Response.json({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        protocolVersion: "2025-11-25",
+        capabilities: { tools: {} },
+        serverInfo: { name: "test", version: "1" },
+      },
+    });
+
+  /** Streamable HTTP peer answering one raw tool result body (with `$ID` for the request id). */
+  function toolResultFetch(result: string) {
+    return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const message = (await request.json()) as { id?: number; method?: string };
+      if (message.method === "initialize") return initialize(message.id);
+      if (message.method === "tools/call")
+        return new Response(result.replace("$ID", String(message.id)), {
+          headers: { "content-type": "application/json" },
+        });
+      return new Response(null, { status: 202 });
+    });
+  }
+
+  function callTool(fetch: ReturnType<typeof toolResultFetch>) {
+    return callRemoteMcpTool(
+      {
+        endpoint: "https://mcp.example.test/mcp",
+        fetch: fetch as unknown as typeof globalThis.fetch,
+        resolveHostname: publicResolver,
+      },
+      "recall",
+      {},
+    );
+  }
+
+  it("fails a tool result body larger than the response limit before parsing it", async () => {
+    const fetch = toolResultFetch(
+      `{"jsonrpc":"2.0","id":$ID,"result":{"content":[{"type":"text","text":"${"x".repeat(MAX_MCP_RESPONSE_BYTES)}"}]}}`,
+    );
+    await expect(callTool(fetch)).rejects.toThrow("MCP server response exceeds 16 MB");
   });
 });
 
