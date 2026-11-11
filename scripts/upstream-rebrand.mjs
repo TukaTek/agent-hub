@@ -12,16 +12,22 @@ const RULES = [
   [new RegExp(`com\\.${old}\\.(?=[a-z])`, "g"), "com.tukatek.cortexai.agenthub."],
   [new RegExp(`github\\.com/elie222/${old}`, "g"), "github.com/TukaTek/agent-hub"],
   [new RegExp(`ghcr\\.io/elie222/${old}`, "g"), "ghcr.io/tukatek/agent-hub"],
+  // An upper-case HTTP header prefix (`X-<OLD>-…`) keeps hyphens.
+  [new RegExp(`(?<=[Xx]-)${OLD}(?=-)`, "g"), "CORTEXAI-AGENT-HUB"],
   [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
   [new RegExp(`(?<![A-Za-z0-9])${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
   [new RegExp(`(?<![A-Za-z0-9])${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
   // The display name has spaces, so a bare object key needs quotes.
   [new RegExp(`(?<=(?:^|[{,])\\s*)${Old}(?=\\s*:\\s*["'\`\\d{[])`, "gm"), '"CortexAI Agent Hub"'],
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
+  // Identifiers such as Stripe metadata keys (`metadata.<old>_x`, `{ <old>_x: }`) keep underscores.
+  [new RegExp(`(?<=\\.|[{,]\\s*)${old}_(?=\\w)`, "g"), "cortexai_agent_hub_"],
+  // A bare `<old>:` object key turns into a hyphenated name, which needs quotes.
+  [new RegExp(`(?<=[{,]\\s*)${old}(?=\\s*:\\s)`, "g"), '"cortexai-agent-hub"'],
   // pgrep/pkill patterns bracket the first letter so they never match themselves.
   [new RegExp(`\\[${old[0]}\\]${old.slice(1)}`, "g"), "[c]ortexai-agent-hub"],
   // Postgres role names are unquoted SQL identifiers, so they cannot take a hyphen.
-  [new RegExp(`(?<![\\w-])${old}_app(?![a-z])`, "g"), "cortexai_agent_hub_app"],
+  [new RegExp(`(?<![\\w-])${old}_(app|pitr)(?![a-z])`, "g"), "cortexai_agent_hub_$1"],
   [new RegExp(`${old}(?!\\.com\\b)`, "g"), "cortexai-agent-hub"],
   // Upstream's short prefix for CSS classes and variables, performance marks and storage keys.
   [/(?<![\w-])rk([-:])(?=[\w$])/g, "cortexai-agent-hub$1"],
@@ -30,8 +36,8 @@ const RULES = [
 const UNRESOLVED = new RegExp(`[\\w.+-]*@?${old}\\.com\\b[\\w./-]*`, "g");
 const KEEP = new Set(["LICENSE", "NOTICE"]);
 
-// Android resource names and their Kotlin references only allow underscores.
-const ANDROID = /(^|\/)android\/|\.kt$/;
+// Android resource names, Kotlin, C and Python identifiers only allow underscores.
+const ANDROID = /(^|\/)android\/|\.(kt|c|py)$/;
 const ANDROID_RULES = [
   [
     new RegExp(`(?<![\\w.-])${old}_|(?<=_)${old}(?![A-Za-z0-9-])`, "g"),

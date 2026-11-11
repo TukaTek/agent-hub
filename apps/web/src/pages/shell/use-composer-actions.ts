@@ -1,14 +1,15 @@
 import type {
   Bot,
   ComputerStatus,
+  LoginFieldInput,
   Me,
   MessageReaction,
   ThreadMessage,
   ThreadSnapshot,
 } from "@cortexai-agent-hub/contracts";
 import {
-  ATTACHMENT_MAX_COUNT,
   attachmentMaxBytes,
+  attachmentMaxCount,
   attachmentSizeLabel,
 } from "@cortexai-agent-hub/contracts";
 import type { ComposerMention } from "@cortexai-agent-hub/core";
@@ -205,7 +206,13 @@ export function useComposerActions({
   }, [activeId, clearReply, groupId, inGroup]);
 
   const answerMessage = useCallback(
-    async (message: ThreadMessage, text: string, username?: string, dismiss?: boolean) => {
+    async (
+      message: ThreadMessage,
+      text: string,
+      fields?: LoginFieldInput[],
+      dismiss?: boolean,
+      remember?: false,
+    ) => {
       const botId = activeBotId.current;
       const groupId = activeGroupId.current;
       if (!botId && !groupId) return;
@@ -215,7 +222,8 @@ export function useComposerActions({
         runId: message.runId ?? "",
         messageId: message.id,
         answer: text,
-        ...(username ? { username } : {}),
+        ...(fields ? { fields } : {}),
+        ...(remember === false ? { remember } : {}),
         ...(dismiss ? { dismiss: true as const } : {}),
       });
       // The answer is saved; live events can reconcile a failed refresh.
@@ -265,6 +273,7 @@ export function useComposerActions({
     (files: FileList | readonly File[] | null) => {
       const threadKey = activeGroupId.current ?? activeBotId.current;
       if (!threadKey || !files?.length) return false;
+      const ATTACHMENT_MAX_COUNT = attachmentMaxCount(bootstrapMe);
       const existing = attachmentsForThread(pendingAttachments, threadKey);
       const next: PendingAttachment[] = [];
       const skipped: string[] = [];
@@ -369,7 +378,7 @@ export function useComposerActions({
           clearReply();
           revokePendingAttachmentPreviews(attachments);
           setPendingAttachments((current) =>
-            current.filter((attachment) => attachment.threadKey !== originThreadKey),
+            current.filter((attachment) => !attachments.includes(attachment)),
           );
           setAttachmentNotice(null);
           if (reroutedToGroup && groupTarget) {
@@ -449,8 +458,9 @@ export function useComposerActions({
         dropDelayedSetup();
         clearReply();
         revokePendingAttachmentPreviews(attachments);
+        // Keep files picked while this send was in flight.
         setPendingAttachments((current) =>
-          current.filter((attachment) => attachment.threadKey !== originThreadKey),
+          current.filter((attachment) => !attachments.includes(attachment)),
         );
         // Refresh sidebar status even when a bot→group reroute navigates away below.
         void refreshBots().catch(() => undefined);

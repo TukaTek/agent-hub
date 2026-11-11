@@ -45,7 +45,6 @@ export function streamStallReason(message: AssistantMessage): StreamStallReason 
 }
 
 export interface StreamIdleWatchdog {
-  /** Composed abort signal to hand to the provider request. */
   signal: AbortSignal;
   /** Re-arms the idle bound; invoke on each delivered event. */
   ping(): void;
@@ -55,7 +54,6 @@ export interface StreamIdleWatchdog {
   firstByte(): void;
   /** Wraps the provider stream so every delivered event re-arms the idle bound. */
   wrap(stream: AssistantMessageEventStream): AssistantMessageEventStream;
-  /** Stops the timer and drops the caller-signal listener. */
   dispose(): void;
 }
 
@@ -365,13 +363,9 @@ export function reliableStreamOptions(
     // runs then surface abnormal close 1006 as a terminal model error. SSE has
     // bounded network retries and no long-lived connection between tool turns.
     next = { ...next, transport: "sse" };
-    // Forward the account's compute residency so the Codex backend routes to the
-    // right region. Models.applyAuth resolves auth — including an OAuth refresh
-    // that swaps the stored credential — after these options are built, so the
-    // claim is derived in transformHeaders at request time from the credential
-    // the store holds then. Injection acts like a default header: an explicit
-    // value under any casing wins, and a caller-supplied transformHeaders keeps
-    // the final say.
+    // Compute residency routes the Codex backend to the right region. An OAuth
+    // refresh can swap the credential after these options are built, so the claim
+    // is read in transformHeaders at request time. Explicit headers win.
     const callerTransform = next.transformHeaders;
     next = {
       ...next,

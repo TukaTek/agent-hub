@@ -8,7 +8,6 @@ import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import { ModelConnectInputSchema } from "@cortexai-agent-hub/contracts";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { EVAL_CASES, HISTORY_EVAL_CASES } from "../evals/cases.js";
 import { HISTORY_FIXTURE_VERSION } from "../evals/history-fixtures.js";
 import type { DiagnosticToolObservation, HistoryDiagnostic } from "../evals/history-observer.js";
@@ -27,6 +26,7 @@ import {
 import type { DiagnosticWireObservation } from "../evals/wire-observer.js";
 import { diagnosticWireFetch } from "../evals/wire-observer.js";
 import { runApprovalSuite } from "./approval-eval.js";
+import { disposableDatabaseEnv, startPostgres } from "./postgres.js";
 
 async function main() {
   const { values } = parseArgs({
@@ -418,17 +418,18 @@ async function main() {
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-evals-"));
   let postgres: StartedPostgreSqlContainer | undefined;
   let stopRequested = false;
+  const stop = new AbortController();
   const requestStop = () => {
     stopRequested = true;
+    stop.abort();
   };
   process.on("SIGINT", requestStop);
   process.on("SIGTERM", requestStop);
   try {
-    postgres = await new PostgreSqlContainer("postgres:18-alpine").start();
+    postgres = await startPostgres(stop.signal);
     const databaseUrl = postgres.getConnectionUri();
     Object.assign(process.env, {
-      DATABASE_URL: databaseUrl,
-      REALTIME_DATABASE_URL: databaseUrl,
+      ...disposableDatabaseEnv(databaseUrl),
       WAKEUP_DRIVER: "memory",
       BETTER_AUTH_SECRET: "synthetic-eval-auth-secret-at-least-32-characters",
       ENCRYPTION_KEY: "synthetic-eval-encryption-key-at-least-32-characters",
@@ -593,8 +594,6 @@ async function main() {
               larkAppId: undefined,
               mcpStdioEnabled: false,
               mcpStdioAllowedCommands: [],
-              updaterUrl: undefined,
-              updaterToken: undefined,
             });
             return {
               ...handles,

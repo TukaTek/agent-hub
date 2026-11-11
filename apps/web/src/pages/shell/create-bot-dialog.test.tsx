@@ -76,6 +76,59 @@ describe("CreateBotDialog", () => {
     expect(button("Create").disabled).toBe(false);
   });
 
+  it("defaults new bots to the Original set with the family the preview draws", async () => {
+    const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
+    await render(onCreate);
+    expect(button("Original").getAttribute("aria-selected")).toBe("true");
+    const family = Number(
+      document
+        .querySelector(".cortexai-agent-hub-organic-avatar")
+        ?.getAttribute("data-shape-family"),
+    );
+    await typeName("Scout");
+    await click(button("Create"));
+    expect(onCreate.mock.lastCall?.[0]).toMatchObject({
+      name: "Scout",
+      avatarSet: "organic",
+      avatarFamily: family,
+    });
+    expect(onCreate.mock.lastCall?.[0]).not.toHaveProperty("id");
+  });
+
+  it("sends the CortexAI Agent Hub preview id without an organic family", async () => {
+    const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
+    await render(onCreate);
+    await click(button("CortexAI Agent Hub"));
+    await typeName("Scout");
+    await click(button("Create"));
+    const input = onCreate.mock.lastCall![0];
+    const preview = document.querySelector(".cortexai-agent-hub-logo-avatar")!;
+    expect(input).toMatchObject({ name: "Scout", avatarSet: "cortexai-agent-hub" });
+    expect(input).not.toHaveProperty("avatarFamily");
+    expect(input.id).toMatch(/^c[a-z0-9]{24}$/);
+    expect(input.color?.toUpperCase()).toBe(preview.getAttribute("data-color")?.toUpperCase());
+  });
+
+  it("preserves an explicitly chosen CortexAI Agent Hub colour through a failed create and retry", async () => {
+    const onCreate = vi
+      .fn(async (_input: CreateBotDialogInput) => undefined)
+      .mockRejectedValueOnce(new Error("Try again"));
+    await render(onCreate);
+    await click(button("CortexAI Agent Hub"));
+    await click(button("Color #10B981"));
+    await typeName("Scout");
+    await click(button("Create"));
+    expect(onCreate.mock.lastCall?.[0]).toMatchObject({
+      avatarSet: "cortexai-agent-hub",
+      color: "#10B981",
+    });
+    await click(button("Create"));
+    expect(onCreate.mock.lastCall?.[0]).toMatchObject({
+      avatarSet: "cortexai-agent-hub",
+      color: "#10B981",
+    });
+  });
+
   it("sends the organic family the preview draws", async () => {
     const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
     await render(onCreate);
@@ -89,6 +142,7 @@ describe("CreateBotDialog", () => {
       name: "Scout",
       color: "#10B981",
       avatarFamily: family,
+      avatarSet: "organic",
     });
     expect(family).toBe(ORGANIC_AVATAR_LOOKS[1]);
   });
@@ -100,7 +154,11 @@ describe("CreateBotDialog", () => {
     await click(button("wedge"));
     await typeName("Scout");
     await click(button("Create"));
-    expect(onCreate).toHaveBeenCalledWith({ name: "Scout", color: "#F97316::shape_1" });
+    expect(onCreate).toHaveBeenCalledWith({
+      name: "Scout",
+      color: "#F97316::shape_1",
+      avatarSet: "organic",
+    });
   });
 
   it("shows the error and stays open when creating fails", async () => {
@@ -116,22 +174,29 @@ describe("CreateBotDialog", () => {
   });
 });
 
-describe("importing instead", () => {
-  it("offers Import only when the parent handles it", async () => {
-    await render(async () => undefined);
-    expect(document.querySelector('[data-testid="create-bot-import"]')).toBeNull();
-
-    const onImport = vi.fn();
-    await act(async () => {
-      root.render(
-        <CreateBotDialog
-          onCancel={() => undefined}
-          onCreate={async () => undefined}
-          onImport={onImport}
-        />,
-      );
-    });
-    await act(async () => button("Import").click());
-    expect(onImport).toHaveBeenCalledTimes(1);
-  });
+it("retains the preview identity and colour through rerenders, set toggles and a retry", async () => {
+  const onCreate = vi
+    .fn(async (_input: CreateBotDialogInput) => undefined)
+    .mockRejectedValueOnce(new Error("Try again"));
+  await render(onCreate);
+  await click(button("CortexAI Agent Hub"));
+  const colour = document
+    .querySelector(".cortexai-agent-hub-logo-avatar")!
+    .getAttribute("data-color");
+  await typeName("First name");
+  await render(onCreate);
+  expect(
+    document.querySelector(".cortexai-agent-hub-logo-avatar")!.getAttribute("data-color"),
+  ).toBe(colour);
+  await click(button("Original"));
+  await click(button("CortexAI Agent Hub"));
+  await click(button("Create"));
+  const first = onCreate.mock.lastCall![0];
+  await typeName("Retry name");
+  await click(button("Create"));
+  const second = onCreate.mock.lastCall![0];
+  expect(first.id).toMatch(/^c[a-z0-9]{24}$/);
+  expect(second.id).toBe(first.id);
+  expect(second.color).toBe(first.color);
+  expect(second.color?.toUpperCase()).toBe(colour?.toUpperCase());
 });

@@ -78,6 +78,8 @@ class NativeCapture:
         library.cortexai_agent_hub_xcapture_damage.restype = ctypes.c_int
         library.cortexai_agent_hub_xinput_argv.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
         library.cortexai_agent_hub_xinput_argv.restype = ctypes.c_int
+        library.cortexai_agent_hub_xcapture_close.argtypes = [ctypes.c_void_p]
+        library.cortexai_agent_hub_xcapture_close.restype = None
         context = library.cortexai_agent_hub_xcapture_open(display.encode("utf-8"))
         if not context:
             raise RuntimeError("MIT-SHM capture is unavailable")
@@ -105,11 +107,21 @@ class NativeCapture:
         )
 
     def act(self, argv):
+        if not self.context:
+            return -1
         encoded = (ctypes.c_char_p * len(argv))(*(value.encode("utf-8") for value in argv))
         return self.library.cortexai_agent_hub_xinput_argv(self.context, len(argv), encoded)
 
+    def close(self):
+        context = self.context
+        self.context = None
+        if context:
+            self.library.cortexai_agent_hub_xcapture_close(context)
 
-def native_capture(display):
+
+def native_capture(display, reset=False):
+    if reset:
+        drop_native_capture(display)
     existing = NATIVE_CAPTURES.get(display)
     if existing is not None:
         return existing
@@ -122,7 +134,9 @@ def native_capture(display):
 
 
 def drop_native_capture(display):
-    NATIVE_CAPTURES.pop(display, None)
+    stale = NATIVE_CAPTURES.pop(display, None)
+    if stale is not None:
+        stale.close()
 
 
 def _is_int_string(value):
@@ -279,6 +293,21 @@ def run_control_argv(argv, display):
         raise RuntimeError("computer action failed")
 
 
+def run_computer_step(display, argv):
+    """Prefer the native connection; reopen it once if that X server is gone."""
+    with NATIVE_LOCK:
+        source = native_capture(display)
+        handled = source.act(argv) if source else 0
+        if handled < 0:
+            source = native_capture(display, reset=True)
+            handled = source.act(argv) if source else -1
+            if handled < 0:
+                drop_native_capture(display)
+                handled = 0
+    if not handled:
+        run_control_argv(argv, display)
+
+
 def capture(display):
     env = child_env(display)
 
@@ -298,7 +327,13 @@ def capture(display):
                 encoded, width, height, damage = source.copy()
                 image = subprocess.CompletedProcess([], 0, encoded, b"")
             except RuntimeError:
-                drop_native_capture(display)
+                source = native_capture(display, reset=True)
+                if source:
+                    try:
+                        encoded, width, height, damage = source.copy()
+                        image = subprocess.CompletedProcess([], 0, encoded, b"")
+                    except RuntimeError:
+                        drop_native_capture(display)
     if image is None:
         image = subprocess.run(
             ["import", "-define", "png:compression-level=3", "-window", "root", "png:-"],
@@ -346,14 +381,7 @@ class Handler(BaseHTTPRequestHandler):
                     argv = step.get("argv")
                     if not allowed_control_argv(argv, display):
                         raise RuntimeError("unsupported computer action")
-                    with NATIVE_LOCK:
-                        source = native_capture(display)
-                        handled = source.act(argv) if source else 0
-                        if handled < 0:
-                            drop_native_capture(display)
-                            handled = 0
-                    if not handled:
-                        run_control_argv(argv, display)
+                    run_computer_step(display, argv)
                 settle_ms = max(0, min(int(body.get("settleMs", 0)), 5000))
                 if settle_ms:
                     time.sleep(settle_ms / 1000)

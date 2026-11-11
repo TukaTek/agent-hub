@@ -334,7 +334,8 @@ export default function VoiceSettings() {
     credentials.some((entry) => entry.provider === OPENAI_COMPATIBLE_PROVIDER_ID);
 
   const selfHosted = selected?.id === OPENAI_COMPATIBLE_PROVIDER_ID;
-  const canConnect = selfHosted ? Boolean(baseUrl.trim()) : apiKey.trim().length >= 8;
+  const keyless = Boolean(selected?.keyless);
+  const canConnect = keyless || (selfHosted ? Boolean(baseUrl.trim()) : apiKey.trim().length >= 8);
 
   async function connect() {
     if (!selected || !canConnect) return;
@@ -555,26 +556,28 @@ export default function VoiceSettings() {
                 textContentType="URL"
               />
             ) : null}
-            <TextInput
-              accessibilityLabel={t("API key")}
-              autoCapitalize="none"
-              autoComplete="off"
-              autoCorrect={false}
-              importantForAutofill="no"
-              value={apiKey}
-              onChangeText={setApiKey}
-              placeholder={
-                selfHosted
-                  ? t("Optional")
-                  : credential
-                    ? t("Paste a replacement key")
-                    : t("Paste your API key")
-              }
-              placeholderTextColor={native.tertiaryLabel}
-              secureTextEntry
-              style={styles.input}
-              textContentType="none"
-            />
+            {keyless ? null : (
+              <TextInput
+                accessibilityLabel={t("API key")}
+                autoCapitalize="none"
+                autoComplete="off"
+                autoCorrect={false}
+                importantForAutofill="no"
+                value={apiKey}
+                onChangeText={setApiKey}
+                placeholder={
+                  selfHosted
+                    ? t("Optional")
+                    : credential
+                      ? t("Paste a replacement key")
+                      : t("Paste your API key")
+                }
+                placeholderTextColor={native.tertiaryLabel}
+                secureTextEntry
+                style={styles.input}
+                textContentType="none"
+              />
+            )}
             {selfHosted ? (
               <>
                 <Text style={styles.fieldLabel}>{t("Speech model")}</Text>
@@ -601,17 +604,19 @@ export default function VoiceSettings() {
                 />
               </>
             ) : null}
-            <NativeActionButton
-              disabled={pending !== null || !canConnect}
-              label={
-                credential && selfHosted
-                  ? t("Reconnect")
-                  : credential
-                    ? t("Replace key")
-                    : t("Connect")
-              }
-              onPress={() => void connect()}
-            />
+            {keyless && credential ? null : (
+              <NativeActionButton
+                disabled={pending !== null || !canConnect}
+                label={
+                  credential && selfHosted
+                    ? t("Reconnect")
+                    : credential
+                      ? t("Replace key")
+                      : t("Connect")
+                }
+                onPress={() => void connect()}
+              />
+            )}
             {credential && scope === "account" ? (
               <NativeActionButton
                 disabled={pending !== null}

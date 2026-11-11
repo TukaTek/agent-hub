@@ -9,7 +9,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 import { combineSignals } from "./connector-safety.js";
 import type { InstalledMcpBin } from "./mcp-package-installer.js";
-import { isInstalledMcpBin } from "./mcp-package-installer.js";
+import { isInstalledMcpBin, isNpxCommand } from "./mcp-package-installer.js";
 import { limitMcpResponseBody } from "./mcp-response-limit.js";
 
 import type { RemoteTransportDependencies, SafeRemoteFetch } from "./remote-mcp.js";
@@ -18,7 +18,6 @@ import { createSafeRemoteFetch, listMcpTools } from "./remote-mcp.js";
 export type McpRemoteTransport = "streamable-http" | "sse";
 
 export interface McpUrlPolicy {
-  /** Maximum URL length accepted before any network request. */
   maxUrlLength?: number;
   /** Permit plain HTTP only on the configured loopback resource's exact origin.
    * Requests only honour it together with `allowPrivateEndpoint`: loopback is private. */
@@ -275,7 +274,6 @@ export function isAllowedStdioCommand(command: string, allowed: readonly string[
 /** The deployment's stdio settings, as MCP_STDIO_ENABLED and MCP_STDIO_ALLOWED_COMMANDS set them. */
 export type McpStdioPolicy = { stdioEnabled?: boolean; allowedCommands?: readonly string[] };
 
-/** Whether this deployment can run any stdio MCP server. */
 export function mcpStdioAvailable(policy: McpStdioPolicy): boolean {
   return policy.stdioEnabled === true && (policy.allowedCommands?.length ?? 0) > 0;
 }
@@ -294,6 +292,9 @@ function stdioParams(options: McpStdioOptions): StdioServerParameters {
   }
   if (options.installedBin !== undefined && !isInstalledMcpBin(options.installedBin)) {
     throw new Error("MCP stdio bin was not installed by CortexAI Agent Hub");
+  }
+  if (options.installedBin === undefined && isNpxCommand(options.command)) {
+    throw new Error("npx only launches a package bin CortexAI Agent Hub installed");
   }
   const command = options.installedBin?.binPath ?? options.command.trim();
   const env: Record<string, string> = {};

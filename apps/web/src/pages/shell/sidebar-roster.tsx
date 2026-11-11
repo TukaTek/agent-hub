@@ -307,6 +307,7 @@ export function SidebarRoster({
                 const avatar =
                   item.kind === "bot" ? (
                     <BotAvatar
+                      avatarSet={item.chat.avatarSet}
                       color={item.chat.color}
                       identity={item.chat.id}
                       size={mini ? 40 : compact ? 28 : 38}
@@ -450,7 +451,7 @@ export function SidebarRoster({
                             <span
                               dir="auto"
                               data-roster-bot-name={item.kind === "bot" ? "" : undefined}
-                              className={`min-w-0 truncate text-body2 text-foreground ${
+                              className={`max-w-full shrink-0 truncate text-body2 text-foreground ${
                                 item.chat.unread ? "font-semibold" : "font-medium"
                               }`}
                             >
@@ -480,13 +481,6 @@ export function SidebarRoster({
                             ) : null}
                           </div>
                         </div>
-                        {!compact && item.kind === "bot" && item.chat.title ? (
-                          <div className="mt-1 flex">
-                            <span className="max-w-full truncate rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
-                              {item.chat.title}
-                            </span>
-                          </div>
-                        ) : null}
                         {compact ? (
                           compactStatusLabel ? (
                             <div

@@ -52,7 +52,6 @@ const CATALOG_MAX_MODELS_RESPONSE_BYTES = 8 * 1024 * 1024;
 const CATALOG_MAX_MODEL_IDS = 8_000;
 const MAX_MODEL_ID_LENGTH = 256;
 
-/** Select response-size and model-count caps, using larger caps for pinned catalogs. */
 function modelsProbeLimits(catalogProbe?: boolean): { maxBytes: number; maxModelIds: number } {
   return catalogProbe
     ? { maxBytes: CATALOG_MAX_MODELS_RESPONSE_BYTES, maxModelIds: CATALOG_MAX_MODEL_IDS }
@@ -296,14 +295,9 @@ async function closeDispatcherWithResponse(
 
 /** Always-visible catalog provider with a placeholder model entry. */
 export function openAiCompatibleCatalogProvider(): Provider {
-  // The vision gate resolves against this catalog rather than the per-run
-  // registry, so a model only declared at runtime would still read as
-  // text-only. Register the operator's declared vision models here too.
-  //
-  // If the reserved placeholder id ("custom") is itself declared vision-
-  // capable, upgrade the placeholder entry rather than appending a second
-  // model with the same id — Models.getModel returns the first match, so a
-  // duplicate would leave the gate reading the text-only placeholder.
+  // The vision gate resolves against this catalog, not the per-run registry, so
+  // declared vision models are registered here too. A declared placeholder id
+  // upgrades the placeholder in place: Models.getModel returns the first match.
   const visionIds = openAiCompatibleVisionModelIds();
   const placeholderAcceptsImages = visionIds.has(OPENAI_COMPATIBLE_CATALOG_MODEL_ID);
   const visionModels = [...visionIds]
@@ -328,7 +322,6 @@ export function registerOpenAiCompatibleCatalog(models: MutableModels): MutableM
   return guardToolCallNames(models, OPENAI_COMPATIBLE_PROVIDER_ID);
 }
 
-/** Register a concrete model + base URL for an agent run. */
 export function registerOpenAiCompatibleRuntime(
   models: MutableModels,
   opts: {
@@ -404,14 +397,15 @@ export type OpenAiCompatibleModelsResponse = {
 /** Shared suffix: /models probe is optional when the user already knows a model id. */
 const OPENAI_COMPAT_PROBE_HAND_FILL_HINT = "You can still Connect with an explicit model id.";
 
+/** Extracts model ids; valid JSON can still be null or lack a list, which gets the actionable missing-list error. */
 function probeModelIds(
   body: OpenAiCompatibleModelsResponse,
   opts?: { catalogProbe?: boolean },
 ): string[] {
   const { maxModelIds } = modelsProbeLimits(opts?.catalogProbe);
-  const entries = Array.isArray(body.data)
+  const entries = Array.isArray(body?.data)
     ? body.data
-    : Array.isArray(body.models)
+    : Array.isArray(body?.models)
       ? body.models
       : null;
   if (!entries) {

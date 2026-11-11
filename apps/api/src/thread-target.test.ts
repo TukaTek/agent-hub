@@ -87,7 +87,12 @@ describe("queued run supersession", () => {
     });
     // A superseded run may hold an answered one-time value that it will now never read.
     expect(tx.secret.deleteMany).toHaveBeenCalledWith({
-      where: { OR: [{ userId: "user-1", spaceId: "space-1", kind: "run-secret:run-old" }] },
+      where: {
+        OR: [
+          { userId: "user-1", spaceId: "space-1", kind: "run-secret:run-old" },
+          { userId: "user-1", spaceId: "space-1", kind: { startsWith: "run-login:run-old:" } },
+        ],
+      },
     });
   });
 });
@@ -1702,7 +1707,14 @@ describe("sendThreadMessage", () => {
     // The retired run never resumes to read a waiting secret answer.
     expect(tx.secret.deleteMany).toHaveBeenCalledWith({
       where: {
-        OR: [{ userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-waiting-2" }],
+        OR: [
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-waiting-2" },
+          {
+            userId: "user-1",
+            spaceId: "workspace-1",
+            kind: { startsWith: "run-login:run-waiting-2:" },
+          },
+        ],
       },
     });
     expect(tx.message.update).toHaveBeenCalledWith({
@@ -4082,11 +4094,18 @@ describe("stopThreadRuns", () => {
       }),
     ]);
     // The terminal seqs sit above every deleted progress seq, so max(seq) never
-    // rewinds below an applied cursor — the freeze regression.
+    // rewinds below an applied cursor.
     expect(Math.max(...created.map((data) => data.seq as number))).toBeGreaterThan(1);
     expect(writes.lastIndexOf("event.create")).toBeLessThan(writes.indexOf("event.deleteMany"));
     expect(transaction.event.deleteMany).toHaveBeenCalledWith({
-      where: { type: "thread.progress", runId: { in: ["run-a", "run-b"] } },
+      where: {
+        OR: [
+          { type: "thread.progress" },
+          { type: "thread.meta", payload: { equals: { activity: { thinking: true } } } },
+          { type: "thread.meta", payload: { equals: { activity: { thinking: false } } } },
+        ],
+        runId: { in: ["run-a", "run-b"] },
+      },
     });
     expect(notify).toHaveBeenCalledWith("thread-1", 3);
     // A stopped run never resumes to read a waiting secret answer.
@@ -4094,7 +4113,9 @@ describe("stopThreadRuns", () => {
       where: {
         OR: [
           { userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-a" },
+          { userId: "user-1", spaceId: "workspace-1", kind: { startsWith: "run-login:run-a:" } },
           { userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-b" },
+          { userId: "user-1", spaceId: "workspace-1", kind: { startsWith: "run-login:run-b:" } },
         ],
       },
     });

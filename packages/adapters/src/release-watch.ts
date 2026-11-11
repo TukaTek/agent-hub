@@ -9,10 +9,7 @@
 /** Product name for the eval model. */
 export const RELEASE_WATCH_EVAL_MODEL_LABEL = "GPT 5.6 Luna";
 
-/**
- * Default OpenRouter / Pi model string for GPT 5.6 Luna.
- * Override with `RELEASE_WATCH_EVAL_MODEL` (or the host's usual default-model env).
- */
+/** Override with `RELEASE_WATCH_EVAL_MODEL` (or the host's usual default-model env). */
 export const RELEASE_WATCH_EVAL_DEFAULT_MODEL_ID = "openai/gpt-5.6-luna";
 
 /** Composio-style GitHub tools the emulator exposes for release watching. */

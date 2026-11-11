@@ -17,6 +17,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Agent } from "undici";
+import { composioToolBatch } from "./composio-batch.js";
+import { sensitiveQueryParameter } from "./connector-http.js";
 import { combineSignals } from "./connector-safety.js";
 import { limitMcpResponseBody } from "./mcp-response-limit.js";
 import { mcpResultBudget } from "./mcp-result-budget.js";
@@ -51,12 +53,20 @@ export interface RemoteMcpOptions extends RemoteTransportDependencies, RemoteUrl
   signal?: AbortSignal;
 }
 
+export class ConnectorRedirectError extends Error {
+  constructor(message = "Connector redirects are not allowed") {
+    super(message);
+    this.name = "ConnectorRedirectError";
+  }
+}
+
 export interface SafeRemoteFetch {
   (input: string | URL | Request, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
 }
 
-export class RemoteRedirectError extends Error {
+/** A redirect with its status and target, for callers that report them. */
+export class RemoteRedirectError extends ConnectorRedirectError {
   constructor(
     message: string,
     readonly status: number,
@@ -77,6 +87,7 @@ export async function listRemoteMcpTools(options: RemoteMcpOptions): Promise<Con
       inputSchema: tool.inputSchema,
       readOnly: tool.annotations?.readOnlyHint,
       ...mcpResultBudget(tool),
+      batch: composioToolBatch(tool.name),
     })),
   );
 }
@@ -150,6 +161,12 @@ async function withRemoteMcpClient<T>(
     await client.close().catch(() => undefined);
     await safeFetch.close().catch(() => undefined);
   }
+}
+
+/** A saved MCP endpoint is stored and shown in plaintext, so its credentials belong in headers. */
+export function assertNoMcpEndpointCredential(endpoint: string): void {
+  const name = sensitiveQueryParameter(new URL(endpoint));
+  if (name) throw new Error(`Put ${name} in a header instead of the server URL`);
 }
 
 export async function assertSafeRemoteUrl(

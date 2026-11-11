@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ManagedConnectorProvider } from "@cortexai-agent-hub/adapter-kit";
-import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  ConnectorAuthUnavailableError,
+  SecretStoreUnavailableError,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { McpOAuthSummary } from "@cortexai-agent-hub/adapters";
 import * as adapters from "@cortexai-agent-hub/adapters";
 import {
@@ -15,13 +18,20 @@ import {
   IntegrationProviderSettings,
   LocalAgentHomeStore,
   listPiCatalog,
+  McpOAuthClientRequiredError,
+  ModelSignInError,
   modelCredentialDto,
   parseModelSecret,
   screenLeaseIdForRun,
   serializeModelSecret,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor, Bot, ProductEvent } from "@cortexai-agent-hub/contracts";
-import { MODEL_KEY_FORMAT_ERROR, REPLY_QUOTE_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
+import {
+  CONNECTOR_AUTH_UNAVAILABLE,
+  MCP_OAUTH_CLIENT_REQUIRED,
+  MODEL_KEY_FORMAT_ERROR,
+  REPLY_QUOTE_MAX_LENGTH,
+} from "@cortexai-agent-hub/contracts";
 import { openScreenCapability } from "@cortexai-agent-hub/core/node/screen-capability";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { AnswerTooLongError, runProviderTransaction } from "@cortexai-agent-hub/db";
@@ -576,6 +586,7 @@ describe("model setup gate", () => {
   function modelGateDeps(options: {
     agentRuntime: string;
     maxUploadSizeBytes?: number;
+    maxAttachmentsPerMessage?: number;
     deploymentModelConfigured?: boolean;
     deploymentModelHostCredentials?: boolean;
     deploymentModelCredentialCipher?: string;
@@ -604,6 +615,7 @@ describe("model setup gate", () => {
       env: {
         agentRuntime: options.agentRuntime,
         maxUploadSizeBytes: options.maxUploadSizeBytes,
+        maxAttachmentsPerMessage: options.maxAttachmentsPerMessage,
         defaultProvider: "openrouter",
         defaultModel: "test-model",
         deploymentModelConfigured: options.deploymentModelConfigured,
@@ -634,6 +646,21 @@ describe("model setup gate", () => {
     );
     return response;
   }
+
+  it.each([undefined, 1, 8, 100])(
+    "advertises the effective attachment count (%s)",
+    async (maxAttachmentsPerMessage) => {
+      const { actor, handler } = modelGateDeps({
+        agentRuntime: "scripted",
+        maxAttachmentsPerMessage,
+      });
+      const response = await call(handler, actor, "me", null);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        json: { maxAttachmentsPerMessage: maxAttachmentsPerMessage ?? 4 },
+      });
+    },
+  );
 
   it.each([undefined, 25 * 1024 * 1024])(
     "advertises the effective upload limit in me (%s)",
@@ -947,10 +974,34 @@ describe("secret request dismissal", () => {
       answeredByUserId: "user-1",
       answer: "",
       clientNonce: undefined,
+      fields: undefined,
       username: undefined,
       dismiss: true,
     });
     expect(h.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("passes a login card's fields on with an empty answer", async () => {
+    const h = setup(true);
+    const fields = [
+      { label: "ID number", value: "fake-id-123", hidden: false },
+      { label: "Phone number", value: "+1 555 0100", hidden: true },
+    ];
+    const { response } = await h.send({ answer: "", fields });
+
+    expect(response.status).toBe(200);
+    expect(h.answerRunInput).toHaveBeenCalledWith(expect.objectContaining({ answer: "", fields }));
+  });
+
+  it("passes a login answered without saving it on", async () => {
+    const h = setup(true);
+    const fields = [{ label: "Password", value: "fake-password-1", hidden: true }];
+    const { response } = await h.send({ answer: "", fields, remember: false });
+
+    expect(response.status).toBe(200);
+    expect(h.answerRunInput).toHaveBeenCalledWith(
+      expect.objectContaining({ fields, remember: false }),
+    );
   });
 
   it("reports a dismissal the card no longer accepts as a conflict", async () => {
@@ -964,8 +1015,31 @@ describe("secret request dismissal", () => {
   it.each([
     ["a dismissal with a value", { answer: "example-password", dismiss: true }],
     ["a dismissal with a username", { answer: "", username: "ada", dismiss: true }],
+    [
+      "a dismissal with fields",
+      { answer: "", fields: [{ label: "Code", value: "x", hidden: true }], dismiss: true },
+    ],
+    [
+      "fields with a value in answer",
+      { answer: "example-password", fields: [{ label: "Code", value: "x", hidden: true }] },
+    ],
+    [
+      "fields with a username",
+      { answer: "", username: "ada", fields: [{ label: "Code", value: "x", hidden: true }] },
+    ],
+    ["fields without hidden", { answer: "", fields: [{ label: "Code", value: "x" }] }],
     ["a dismissal during a call", { answer: "", clientNonce: "call:call-1:x", dismiss: true }],
     ["an empty answer", { answer: "" }],
+    ["not saving an answer that isn't a login", { answer: "123456", remember: false }],
+    ["not saving a dismissal", { answer: "", dismiss: true, remember: false }],
+    [
+      "remember true",
+      {
+        answer: "",
+        fields: [{ label: "Password", value: "x", hidden: true }],
+        remember: true,
+      },
+    ],
   ])("rejects %s before it reaches the run", async (_name, json) => {
     const h = setup(true);
     const { response } = await h.send(json);
@@ -1134,9 +1208,11 @@ describe("MCP server deletion", () => {
     const deleteSecrets = vi.fn().mockResolvedValue({ count: 0 });
     const prisma = {
       mcpServer: {
+        findMany: vi.fn(async () => []),
         findFirst: vi.fn().mockResolvedValue({ id: "server-1", secretId: "old-secret" }),
         delete: deleteServer,
       },
+      mcpServerSpace: { findMany: vi.fn(async () => []) },
       secret: { deleteMany: deleteSecrets },
       message: { findMany: vi.fn().mockResolvedValue([]) },
       $transaction: vi.fn(async (run: (tx: unknown) => Promise<unknown>) => run(prisma)),
@@ -1176,8 +1252,8 @@ describe("MCP server deletion", () => {
     expect(deleteSecrets).toHaveBeenCalledWith({
       where: {
         id: "old-secret",
-        spaceId: "workspace-1",
         userId: "user-1",
+        OR: [{ spaceId: "workspace-1" }, { spaceId: null }],
       },
     });
   });
@@ -1216,6 +1292,7 @@ describe("MCP prepared credential updates", () => {
     ]);
     const prisma = {
       mcpServer: {
+        findMany: vi.fn(async () => []),
         findFirst: async () => ({ ...server }),
         update: async ({
           data,
@@ -1226,6 +1303,7 @@ describe("MCP prepared credential updates", () => {
           return { ...server };
         },
       },
+      mcpServerSpace: { findMany: vi.fn(async () => []) },
       secret: {
         findFirst: async ({ where }: { where: { id: string } }) => rows.get(where.id) ?? null,
         create: async ({ data }: { data: { id: string; ciphertext: string } }) => {
@@ -1345,6 +1423,7 @@ describe("MCP pre-registered OAuth client", () => {
     }
     const prisma = {
       mcpServer: {
+        findMany: vi.fn(async () => []),
         findFirst: vi.fn(async () => (server ? { ...server } : null)),
         update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
           const { revision: _revision, ...rest } = data;
@@ -1362,6 +1441,7 @@ describe("MCP pre-registered OAuth client", () => {
           return server;
         }),
       },
+      mcpServerSpace: { findMany: vi.fn(async () => []) },
       secret: {
         create: vi.fn(async ({ data }: { data: { id: string; ciphertext: string } }) => {
           secretRows.set(data.id, data);
@@ -1456,6 +1536,24 @@ describe("MCP pre-registered OAuth client", () => {
       code: "CONFLICT",
       message: "An MCP server with that name already exists.",
     });
+  });
+
+  it("rejects a credential in the endpoint query, which would be stored in plaintext", async () => {
+    const { client, prisma, secrets } = harness();
+
+    await expect(
+      client.mcp.servers.create({
+        transport: "streamable_http",
+        slug: "gmail",
+        name: "Gmail",
+        endpoint: "http://localhost:3100/mcp?region=us&api_key=sk-test-123",
+      }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Put api_key in a header instead of the server URL",
+    });
+    expect(secrets.put).not.toHaveBeenCalled();
+    expect(prisma.mcpServer.create).not.toHaveBeenCalled();
   });
 
   describe("stdio server with host-managed OAuth", () => {
@@ -1825,17 +1923,21 @@ describe("MCP loopback endpoints", () => {
     }));
     const prisma = {
       mcpServer: {
+        findMany: vi.fn(async () => []),
         create,
         findFirst: vi
           .fn()
           .mockResolvedValue({ id: "server-1", endpoint: LOOPBACK, secretId: null }),
       },
+      mcpServerSpace: { findMany: vi.fn(async () => []) },
       mcpOAuthSession: {
         count: vi.fn().mockResolvedValue(0),
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       secret: { findFirst: vi.fn() },
       deploymentSettings: { findUnique: vi.fn().mockResolvedValue({ ownerUserId: "owner-1" }) },
+      $executeRaw: vi.fn(async () => 0),
+      $queryRaw: vi.fn(async () => []),
       $transaction: vi.fn(async (run: (tx: unknown) => Promise<unknown>) => run(prisma)),
     } as unknown as PrismaClient;
     const deps = {
@@ -1966,11 +2068,16 @@ describe("MCP server health", () => {
       await recordHealth(data);
       return { count: server ? 1 : 0 };
     });
-    const matches = (where: Row) =>
+    const matches = (where: Row): boolean =>
       Boolean(server) &&
-      Object.entries(where).every(([key, value]) => (server as Row)[key] === value);
+      Object.entries(where).every(([key, value]) =>
+        key === "OR"
+          ? (value as Row[]).some((branch) => matches(branch))
+          : (server as Row)[key] === value,
+      );
     const prisma = {
       mcpServer: {
+        findMany: vi.fn(async () => []),
         findFirst: vi.fn(async ({ where }: { where: Row }) =>
           matches(where) ? { ...server } : null,
         ),
@@ -1985,6 +2092,7 @@ describe("MCP server health", () => {
         }),
         updateMany,
       },
+      mcpServerSpace: { findMany: vi.fn(async () => []) },
       secret: { findFirst: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
       deploymentSettings: { findUnique: vi.fn().mockResolvedValue({ ownerUserId: "owner-1" }) },
       $executeRaw: vi.fn(async () => 1),
@@ -2105,6 +2213,7 @@ describe("MCP server health", () => {
     expect(listed?.health).toEqual({
       status: "error",
       message: "spawn npx ENOENT",
+      code: null,
       toolCount: null,
       checkedAt: "2026-10-21T10:00:00.000Z",
     });
@@ -2291,6 +2400,70 @@ describe("MCP server health", () => {
 
       expect(created.health.status).toBe("unknown");
       expect(h.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("asks for a client ID when the server cannot register one", async () => {
+      const h = harness({
+        row: baseRow({ transport: "streamable_http", endpoint: "https://mcp.example.test/mcp" }),
+      });
+      Object.assign(h.deps, {
+        mcpOAuth: {
+          ...(h.deps.mcpOAuth as object),
+          begin: vi.fn().mockRejectedValue(new McpOAuthClientRequiredError(1)),
+        },
+      });
+      const client = createRouterClient(createRouter(h.deps), {
+        context: {
+          actor: {
+            spaceId: "workspace-1",
+            userId: "owner-1",
+            email: "owner@cortexai-agent-hub.test",
+            isDeploymentOwner: true,
+          },
+        } as never,
+      });
+
+      await expect(
+        client.mcp.oauth.begin({
+          serverId: "server-1",
+          redirectUri: "http://127.0.0.1:5173/mcp/oauth/callback",
+        }),
+      ).rejects.toMatchObject({ code: MCP_OAUTH_CLIENT_REQUIRED });
+      expect(h.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "server-1", revision: 1 } }),
+      );
+      (h.deps.prisma.mcpServer as unknown as { findMany: unknown }).findMany = vi.fn(async () => [
+        h.row(),
+      ]);
+      const [listed] = await client.mcp.servers.list();
+      expect(listed?.health).toMatchObject({ status: "error", code: MCP_OAUTH_CLIENT_REQUIRED });
+    });
+
+    it("uses the registered web callback when a native client omits the redirect", async () => {
+      const h = harness({
+        row: baseRow({ transport: "streamable_http", endpoint: "https://mcp.example.test/mcp" }),
+      });
+      const begin = vi.fn(async () => ({ status: "already_connected" as const }));
+      Object.assign(h.deps, { mcpOAuth: { ...(h.deps.mcpOAuth as object), begin } });
+      const client = createRouterClient(createRouter(h.deps), {
+        context: {
+          actor: {
+            spaceId: "workspace-1",
+            userId: "owner-1",
+            email: "owner@cortexai-agent-hub.test",
+            isDeploymentOwner: true,
+          },
+        } as never,
+      });
+
+      await expect(client.mcp.oauth.begin({ serverId: "server-1" })).resolves.toEqual({
+        status: "already_connected",
+      });
+      expect(begin).toHaveBeenCalledWith(
+        expect.objectContaining({
+          redirectUri: new URL("/mcp/oauth/callback", h.deps.env.webOrigin).toString(),
+        }),
+      );
     });
 
     it("probes the server once its OAuth session completes", async () => {
@@ -2636,6 +2809,69 @@ describe("connections.begin", () => {
       vi.useRealTimers();
     }
   });
+
+  it("answers with the connector auth code when the app has no usable sign-in", async () => {
+    const begin = vi.fn().mockRejectedValue(
+      new ConnectorAuthUnavailableError({
+        cause: '400 {"error":{"slug":"ToolRouterV2_NoManagedAuth"}}',
+      }),
+    );
+    const rootUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      connection: {
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({ id: "conn-1", status: "pending" }),
+      },
+    };
+    const prisma = {
+      connection: { updateMany: rootUpdateMany },
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+    const handler = new RPCHandler(
+      createRouter({
+        prisma,
+        connectors: { managed: vi.fn(() => ({ begin })) },
+        env: {
+          defaultProvider: "fake",
+          defaultModel: "fake-model",
+          webOrigin: "http://127.0.0.1:5173",
+          screenProxySecret: "fake-test-secret",
+          sandboxProvider: "fake",
+        },
+        dataDir: "/tmp/cortexai-agent-hub-router-test",
+      } as unknown as RouterDeps),
+    );
+
+    const { response } = await handler.handle(
+      new Request("http://127.0.0.1/rpc/connections/begin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          json: { connectorId: "composio", provider: "twitter", displayName: "Twitter" },
+        }),
+      }),
+      {
+        prefix: "/rpc",
+        context: {
+          actor: {
+            spaceId: "workspace-1",
+            userId: "user-1",
+            email: "user@cortexai-agent-hub.test",
+            isDeploymentOwner: true,
+          },
+        },
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toMatchObject({ json: { code: CONNECTOR_AUTH_UNAVAILABLE } });
+    expect(JSON.stringify(body)).not.toContain("ToolRouterV2_NoManagedAuth");
+    expect(rootUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "error" } }),
+    );
+  });
 });
 
 describe("connections.complete", () => {
@@ -2963,9 +3199,17 @@ describe("connections.complete", () => {
         where.id === row.id ? { ...row } : null,
       ),
       findMany: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
       updateMany: vi.fn(
-        async ({ where, data }: { where: { status?: string }; data: Partial<typeof row> }) => {
-          if (where.status && where.status !== row.status) return { count: 0 };
+        async ({
+          where,
+          data,
+        }: {
+          where: { status?: string | { in: string[] } };
+          data: Partial<typeof row>;
+        }) => {
+          const statuses = typeof where.status === "string" ? [where.status] : where.status?.in;
+          if (statuses && !statuses.includes(row.status)) return { count: 0 };
           Object.assign(row, data);
           return { count: 1 };
         },
@@ -3001,8 +3245,14 @@ describe("connections.complete", () => {
     const sink = createTestSink();
     installLogger(createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] }));
     async function complete(connectionId = row.id, signal?: AbortSignal) {
+      return call("complete", connectionId, signal);
+    }
+    async function revoke(signal?: AbortSignal) {
+      return call("revoke", row.id, signal);
+    }
+    async function call(operation: string, connectionId: string, signal?: AbortSignal) {
       const { response } = await handler.handle(
-        new Request("http://127.0.0.1/rpc/connections/complete", {
+        new Request(`http://127.0.0.1/rpc/connections/${operation}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ json: { connectionId } }),
@@ -3023,8 +3273,29 @@ describe("connections.complete", () => {
       return { status: response.status, body: await response.json() };
     }
     const securityEvents = () => sink.events.filter((event) => event.message === "security.event");
-    return { complete, connector, securityEvents, row };
+    return { complete, revoke, connector, securityEvents, row, sink };
   }
+
+  it.each([
+    ["the caller cancelled", true, "warn"],
+    ["an uncertain remote failure", false, "error"],
+  ])("keeps the row revoked after %s and logs it at %s", async (_case, cancelled, level) => {
+    const { revoke, connector, row, sink } = pollFixture("connected");
+    row.providerRef = "account-1";
+    const request = new AbortController();
+    connector.revoke.mockImplementation(async () => {
+      if (cancelled) request.abort();
+      throw new Error("Request was cancelled by the caller: Request was aborted.");
+    });
+
+    await expect(revoke(request.signal)).resolves.toMatchObject({ status: 400 });
+    expect(row.status).toBe("revoked");
+    expect(
+      sink.events
+        .filter((event) => event.message.startsWith("connections.revoke"))
+        .map((event) => event.level),
+    ).toEqual([level]);
+  });
 
   it("records nothing but keeps the account id when the catalog connected the row first", async () => {
     const { complete, connector, securityEvents, row } = pollFixture("pending");
@@ -3646,6 +3917,28 @@ describe("computer terminal and file transfer", () => {
       call("uploadFile", { path: "bots/bot-2/secret.txt", contentBase64 }),
     ).resolves.toMatchObject({ status: 400 });
     expect(sandbox.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("answers 400 when a running computer's file is too large or not text to preview", async () => {
+    const large = setup();
+    large.sandbox.readFile.mockRejectedValueOnce(new Error("computer file exceeds 2097152 bytes"));
+    await expect(large.call("readFile", { path: "big.log" })).resolves.toMatchObject({
+      status: 400,
+      body: { json: { message: "file is too large to preview" } },
+    });
+
+    const binary = setup();
+    binary.sandbox.readFile.mockResolvedValueOnce(new Uint8Array([0xff, 0xfe, 0x00]));
+    await expect(binary.call("readFile", { path: "image.bin" })).resolves.toMatchObject({
+      status: 400,
+      body: { json: { message: "file is not a text file" } },
+    });
+
+    const text = setup();
+    await expect(text.call("readFile", { path: "notes.txt" })).resolves.toEqual({
+      status: 200,
+      body: { json: { path: "notes.txt", content: "hello" } },
+    });
   });
 
   it("downloads bytes from a running computer", async () => {
@@ -4769,6 +5062,20 @@ describe("model credential persistence", () => {
     // A new account stays a new account.
     await call(handler, "models/beginOAuth", { provider: "openai-codex", credentialId: null });
     expect(begin).toHaveBeenLastCalledWith(expect.objectContaining({ credentialId: null }));
+  });
+
+  it("tells the user to restart a pasted-code sign-in that is gone", async () => {
+    const { deps, handler } = persistDeps();
+    const message = "Sign-in session not found. Start sign-in again.";
+    Object.assign(deps.oauthLogins, {
+      submit: vi.fn().mockRejectedValue(new ModelSignInError(message)),
+    });
+    const response = await call(handler, "models/submitOAuthCode", {
+      loginId: "login-1",
+      code: "pasted-code",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ json: { message } });
   });
 
   it("names a second subscription account by the email it signed in with", async () => {
@@ -6565,7 +6872,6 @@ describe("routine live Codex model validation", () => {
 
 describe("routines.list", () => {
   it("marks routines another Space member created as not editable", async () => {
-    // Listing reads only the user and Space.
     const actor = { userId: "user-1", spaceId: "space-1" };
     const row = (id: string, userId: string) => ({
       id,
@@ -8131,20 +8437,25 @@ describe("boards.rename", () => {
 
   function renameDeps(tickets: number, ticketPrefix = "RAK") {
     const count = vi.fn(async () => tickets);
-    const update = vi.fn(async ({ data }: { data: { name?: string; ticketPrefix?: string } }) => ({
+    const applied = ({ data }: { data: { name?: string; ticketPrefix?: string } }) => ({
       ...boardRow(ticketPrefix),
       ...data,
       updatedAt: new Date("2026-06-02T00:00:00.000Z"),
-    }));
+    });
+    const update = vi.fn(applied);
+    const updateManyAndReturn = vi.fn(
+      async (args: { data: { name?: string; ticketPrefix?: string } }) => [applied(args)],
+    );
     const prisma = {
       board: {
         findUnique: vi.fn(async () => boardRow(ticketPrefix)),
         update,
+        updateManyAndReturn,
       },
       ticket: { count },
     } as unknown as PrismaClient;
     const deps = { prisma, env: { ticketBoardEnabled: true } } as unknown as RouterDeps;
-    return { count, update, handler: new RPCHandler(createRouter(deps)) };
+    return { count, update, updateManyAndReturn, handler: new RPCHandler(createRouter(deps)) };
   }
 
   async function rename(handler: RPCHandler<never>, body: unknown) {
@@ -8160,7 +8471,7 @@ describe("boards.rename", () => {
   }
 
   it("rejects a prefix change after tickets exist", async () => {
-    const { count, update, handler } = renameDeps(2);
+    const { count, update, updateManyAndReturn, handler } = renameDeps(2);
     const response = await rename(handler, { ticketPrefix: "OPS" });
     expect(response?.status).toBe(400);
     await expect(response?.json()).resolves.toEqual({
@@ -8173,10 +8484,77 @@ describe("boards.rename", () => {
       where: { boardId: "board-1", spaceId: "workspace-1" },
     });
     expect(update).not.toHaveBeenCalled();
+    expect(updateManyAndReturn).not.toHaveBeenCalled();
+  });
+
+  it("changes the prefix while the board has no tickets", async () => {
+    const { count, update, updateManyAndReturn, handler } = renameDeps(0);
+    const response = await rename(handler, { ticketPrefix: "OPS" });
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({
+      json: expect.objectContaining({ ticketPrefix: "OPS" }),
+    });
+    expect(count).toHaveBeenCalledWith({
+      where: { boardId: "board-1", spaceId: "workspace-1" },
+    });
+    expect(updateManyAndReturn).toHaveBeenCalledWith({
+      where: {
+        id: "board-1",
+        spaceId: "workspace-1",
+        nextNumber: 2,
+        tickets: { none: {} },
+      },
+      data: { ticketPrefix: "OPS" },
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("rejects the prefix change when a ticket lands between the count and the write", async () => {
+    const { count, update, updateManyAndReturn, handler } = renameDeps(0);
+    updateManyAndReturn.mockResolvedValueOnce([]);
+    const response = await rename(handler, { name: "Launch", ticketPrefix: "OPS" });
+    expect(response?.status).toBe(400);
+    await expect(response?.json()).resolves.toEqual({
+      json: expect.objectContaining({
+        code: "BAD_REQUEST",
+        message: "Cannot change the ticket prefix once tickets exist.",
+      }),
+    });
+    expect(count).toHaveBeenCalledTimes(1);
+    expect(updateManyAndReturn).toHaveBeenCalledWith({
+      where: {
+        id: "board-1",
+        spaceId: "workspace-1",
+        nextNumber: 2,
+        tickets: { none: {} },
+      },
+      data: { name: "Launch", ticketPrefix: "OPS" },
+    });
+    // The conditional write matched nothing, so no unconditional retry may
+    // apply the name change either.
+    expect(update).not.toHaveBeenCalled();
+    expect(updateManyAndReturn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the normal update path when the prefix only differs in case", async () => {
+    const { count, update, updateManyAndReturn, handler } = renameDeps(2);
+    const response = await rename(handler, { ticketPrefix: "rak" });
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({
+      json: expect.objectContaining({ ticketPrefix: "RAK" }),
+    });
+    expect(count).not.toHaveBeenCalled();
+    // The case-only request rewrites nothing, so the write must not replay the
+    // observed prefix over one a concurrent rename may have committed.
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "board-1" },
+      data: {},
+    });
+    expect(updateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("renames the board without changing the prefix", async () => {
-    const { count, update, handler } = renameDeps(2);
+    const { count, update, updateManyAndReturn, handler } = renameDeps(2);
     const response = await rename(handler, { name: "Launch" });
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toEqual({
@@ -8187,6 +8565,7 @@ describe("boards.rename", () => {
       where: { id: "board-1" },
       data: { name: "Launch" },
     });
+    expect(updateManyAndReturn).not.toHaveBeenCalled();
   });
 });
 
@@ -8260,7 +8639,11 @@ describe("export.bot", () => {
     return home;
   }
 
-  async function exportFiles(scope: "team" | "dedicated", home: LocalAgentHomeStore) {
+  async function exportManifest(
+    scope: "team" | "dedicated",
+    home: LocalAgentHomeStore,
+    appearance?: { color: string; avatarSet?: "organic" | "cortexai-agent-hub" },
+  ) {
     const prisma = {
       bot: {
         findFirst: vi.fn().mockResolvedValue({
@@ -8269,6 +8652,7 @@ describe("export.bot", () => {
           title: "",
           description: "",
           instructions: "",
+          ...appearance,
           thread: { id: "thread-1" },
           computer: { id: "computer-1", scope, homeKey: "home-1" },
         }),
@@ -8289,8 +8673,23 @@ describe("export.bot", () => {
     } as unknown as RouterDeps;
     const client = createRouterClient(createRouter(deps), { context: { actor } as never });
     const manifest = await client.export.bot({ botId: "bot-1" });
-    return manifest.files.sort((a, b) => a.path.localeCompare(b.path));
+    return manifest;
   }
+
+  async function exportFiles(scope: "team" | "dedicated", home: LocalAgentHomeStore) {
+    return (await exportManifest(scope, home)).files.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  it.each(["#8B5CF6::shape_3", "data:image/png;base64,aGVsbG8="])(
+    "exports the selected set and untouched avatar value (%s)",
+    async (color) => {
+      const manifest = await exportManifest("team", await homeWith({}), {
+        color,
+        avatarSet: "cortexai-agent-hub",
+      });
+      expect(manifest.bot).toMatchObject({ color, avatarSet: "cortexai-agent-hub" });
+    },
+  );
 
   it("exports only the bot's own folder from a Team Computer", async () => {
     const home = await homeWith({
@@ -8649,6 +9048,102 @@ describe("API-key live model catalog", () => {
           where: expect.objectContaining({ userId: actor.userId, spaceId: null }),
         }),
       );
+    },
+  );
+});
+
+describe("quarantined computer stop", () => {
+  it.each(["already-quarantined", "before-claim", "during-stop"])(
+    "preserves the recovery fence (%s)",
+    async (race) => {
+      const row = {
+        id: "computer",
+        kind: "novita",
+        providerRef: "guest",
+        homeKey: "home",
+        scope: "dedicated",
+        state: race === "already-quarantined" ? "quarantined" : "running",
+        controlHolder: "none",
+        controlLeaseId: null,
+        controlBotId: null,
+        controlRunId: null,
+        homeRevision: "saved",
+        screenGeneration: 1,
+      };
+      const endRun = vi.fn();
+      const updateMany = vi.fn(async ({ where, data }) => {
+        if (race === "before-claim") row.state = "quarantined";
+        if (typeof where.state === "string" && where.state !== row.state) return { count: 0 };
+        if (where.state?.notIn?.includes(row.state)) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      });
+      const prisma = {
+        bot: {
+          findFirst: vi.fn(async () => {
+            const snapshot = { ...row };
+            return {
+              id: "bot",
+              spaceId: "space",
+              userId: "user",
+              screenGeneration: 1,
+              thread: { id: "thread" },
+              computer: snapshot,
+            };
+          }),
+        },
+        computer: { updateMany },
+        computerRun: { updateMany: endRun },
+        computerExecutionLease: {
+          updateMany: vi.fn(async () => ({ count: 0 })),
+          findUnique: vi.fn(async () => null),
+        },
+        run: { findFirst: vi.fn(async () => null) },
+      } as unknown as PrismaClient;
+      const checkpoint = vi
+        .spyOn(adapters, "checkpointAndStopComputer")
+        .mockImplementation(async () => {
+          if (race === "during-stop") row.state = "quarantined";
+        });
+      const deps = {
+        prisma,
+        sandbox: { stop: vi.fn(async () => undefined) },
+        jobs: { cancel: vi.fn(async () => undefined) },
+        env: {
+          defaultProvider: "fake",
+          defaultModel: "fake-model",
+          sandboxProvider: "novita",
+          webOrigin: "http://127.0.0.1:5173",
+          screenProxySecret: "test-secret",
+        },
+      } as unknown as RouterDeps;
+      try {
+        const handler = new RPCHandler(createRouter(deps));
+        const { response } = await handler.handle(
+          new Request("http://127.0.0.1/rpc/computer/stop", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ json: { botId: "bot" } }),
+          }),
+          {
+            prefix: "/rpc",
+            context: {
+              actor: {
+                userId: "user",
+                spaceId: "space",
+                email: "user@cortexai-agent-hub.test",
+                isDeploymentOwner: true,
+              },
+            },
+          },
+        );
+        expect(response.status).toBe(race === "before-claim" ? 409 : 200);
+        expect(row.state).toBe("quarantined");
+        expect(endRun).not.toHaveBeenCalled();
+        if (race !== "during-stop") expect(checkpoint).not.toHaveBeenCalled();
+      } finally {
+        checkpoint.mockRestore();
+      }
     },
   );
 });

@@ -4,6 +4,7 @@ import {
   jumpTargetId,
   leaveThreadWindow,
   openThreadWindow,
+  peerExchangeLines,
 } from "@cortexai-agent-hub/core";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { MobileSnapshot } from "./api";
@@ -94,10 +95,9 @@ export async function applyThreadMessageJump(
   if (target.groupId && jump.activeGroupId.current !== target.groupId) return;
   if (target.botId && jump.activeBotId.current !== target.botId) return;
   // A relay's dropped marker (e.g. a search hit) lands on its "Messaged X" receipt.
-  const messageId = jumpTargetId(
-    foldPeerReplies(page.messages, { includePeerReceipts: true }),
-    target.messageId,
-  );
+  const transcript = foldPeerReplies(page.messages, { includePeerReceipts: true });
+  const receiptId = jumpTargetId(transcript, target.messageId);
+  const messageId = peerExchangeLines(transcript).lineOf.get(receiptId) ?? receiptId;
   const targetInPage = page.messages.some((message) => message.id === messageId);
   const opened = targetInPage ? openThreadWindow(snap, page) : null;
   jump.expandedHistoryThread.current = targetInPage ? page.threadId : null;

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDb,
   installSaturationReport,
+  isPoolCheckoutTimeout,
   isTooManyDatabaseConnections,
   parsePositiveInteger,
   retryOnTooManyConnections,
@@ -44,6 +45,18 @@ describe("createDb", () => {
     expect(pool.options.max).toBe(4);
   });
 
+  it("lets a transaction wait for a busy pool past Prisma's 2s default", async () => {
+    const { prisma, pool } = createDb(
+      "postgres://cortexai-agent-hub:cortexai-agent-hub@127.0.0.1:9/cortexai-agent-hub",
+    );
+    pools.push(pool);
+    const released = new Error("connection freed after 2.5s");
+    pool.connect = (() =>
+      new Promise((_, reject) => setTimeout(() => reject(released), 2_500))) as Pool["connect"];
+
+    await expect(prisma.$transaction(async () => "done")).rejects.toThrow(released.message);
+  });
+
   it("refuses local master keys when a key manager is configured", () => {
     vi.stubEnv("MASTER_KEY_PROVIDER", "aws-kms");
     try {
@@ -62,6 +75,16 @@ describe("parsePositiveInteger", () => {
     expect(parsePositiveInteger("0", 8)).toBe(8);
     expect(parsePositiveInteger("nope", 8)).toBe(8);
     expect(parsePositiveInteger("6", 8)).toBe(6);
+  });
+});
+
+describe("isPoolCheckoutTimeout", () => {
+  it("matches only pg-pool's checkout timeout", () => {
+    expect(isPoolCheckoutTimeout(new Error("timeout exceeded when trying to connect"))).toBe(true);
+    expect(
+      isPoolCheckoutTimeout(new Error("Connection terminated due to connection timeout")),
+    ).toBe(false);
+    expect(isPoolCheckoutTimeout(undefined)).toBe(false);
   });
 });
 

@@ -44,7 +44,7 @@ Hub owns sign-in and accounts in Hub mode, so direct OIDC (`OIDC_ISSUER`) and bi
    sudo install -m 0400 -o 1000 -g 1000 /dev/stdin /etc/cortexai-agent-hub/hub-service-secret
    ```
 3. In `.env`, set `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN`, `HUB_AUTH_TENANT_ID`, `HUB_SERVICE_API_ID` and `HUB_SERVICE_SECRET_HOST_FILE` (the host path from step 2). The API and worker both read `.env`. Leave `HUB_SERVICE_SECRET_FILE` unset; the overlay sets it.
-4. Add `infra/compose/docker-compose.hub.yml` after the base file in every Compose command. If the updater runs, add it to `CORTEXAI_AGENT_HUB_COMPOSE_FILE` too (see [self-host](self-host.md#deployments-that-layer-a-compose-overlay)):
+4. Add `infra/compose/docker-compose.hub.yml` after the base file in every Compose command. If the updater runs, add it to `CORTEXAI_AGENT_HUB_COMPOSE_FILE` too (see [production](self-host-production.md)):
    ```
    CORTEXAI_AGENT_HUB_COMPOSE_FILE=infra/compose/docker-compose.prod.yml:infra/compose/docker-compose.hub.yml
    ```

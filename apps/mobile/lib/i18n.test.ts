@@ -13,11 +13,12 @@ vi.mock("expo-secure-store", () => ({
   deleteItemAsync: vi.fn(),
 }));
 
+vi.mock("./material-icons", () => ({ materialIcons: {} }));
+
 vi.mock("./ui-direction", () => ({
   applyMobileUiDirection: vi.fn(),
 }));
 
-/** Recursively collect source files used to validate mobile translation coverage. */
 function collectSourceFiles(dir: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -116,6 +117,7 @@ describe("mobile i18n", () => {
     const { AI_DATA_DISCLOSURES, OPENAI_COMPATIBLE_BASE_URL_HINT } = await import(
       "@cortexai-agent-hub/contracts"
     );
+    const { createMenuItems } = await import("./create-chooser");
     const mobileRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     const ids = new Set<string>([
       ...Object.values(AI_DATA_DISCLOSURES),
@@ -138,6 +140,7 @@ describe("mobile i18n", () => {
       "The model returned an unusable response. Try again.",
       "The model hit its output limit before finishing its reply.",
       "This model's context window is too small. Choose another model.",
+      "This connection's request limit is too small. Choose another model.",
       "{provider} took too long to respond. Try again.",
       "{provider} is overloaded right now. Try again in a moment.",
       "{provider} couldn't be reached. Check that it's running.",
@@ -146,6 +149,7 @@ describe("mobile i18n", () => {
       EMPTY_PLUGIN_CATALOG_MESSAGE,
       OPENAI_COMPATIBLE_BASE_URL_HINT,
       ...SLASH_ACTIONS.map((action) => action.label),
+      ...createMenuItems.map((item) => item.label),
       "Sign-in did not return a session",
       "Sign-up did not return a session",
       "{count} model",

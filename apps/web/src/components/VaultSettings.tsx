@@ -1,9 +1,16 @@
-import type { BotSecretMetadata, SettingsScope } from "@cortexai-agent-hub/contracts";
+import type {
+  BotSecretMetadata,
+  LoginFieldInput,
+  SettingsScope,
+  VaultRevealed,
+} from "@cortexai-agent-hub/contracts";
 import {
   BotSecretName,
   commandVariableName,
   commandVariableProblem,
   encodeLoginSecret,
+  isIdentityConfirmationRequired,
+  LoginSecretValue,
 } from "@cortexai-agent-hub/contracts";
 import { fetchFresh, writeSaved } from "@cortexai-agent-hub/core/query";
 import { Button, Input, NativeSelect, NativeSelectOption } from "@cortexai-agent-hub/ui-web";
@@ -14,22 +21,25 @@ import {
 } from "@cortexai-agent-hub/ui-web/components/ui/tooltip";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RotateCcw, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { Check, Copy, Eye, EyeOff, Plus, RotateCcw, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useCopyText } from "../lib/copy-text";
 import { useSpaceQueries } from "../lib/query";
 import { useSpaceRpc } from "../lib/space-rpc";
 import { errorText } from "../lib/user-error";
+import { useIdentityConfirmation } from "./ConfirmIdentityDialog";
 import { InfoTooltip } from "./InfoTooltip";
+import { LoginFieldsEditor } from "./LoginFields";
 
 type ReadableCredentialAuth = NonNullable<BotSecretMetadata["auth"]>;
 type CredentialAuthType = ReadableCredentialAuth["type"];
 
-const fieldLabelClass = "mt-3 block text-[14px] text-muted-foreground";
+type Revealed = VaultRevealed & { name: string };
 
-/** The stored value: a website login is saved as one encoded username and password pair. */
-function credentialPlaintext(type: CredentialAuthType, username: string, value: string) {
-  return type === "login" ? encodeLoginSecret({ username, password: value }) : value;
-}
+const fieldLabelClass = "mt-3 block text-[14px] text-muted-foreground";
+/** How long a shown value stays on screen. */
+export const REVEAL_MS = 30_000;
+const REVEAL_CANCELLED = new Error("Reveal cancelled");
 
 /** A command variable has no site, so its destination carries no origin. */
 function credentialDestination(name: string, origin: string, auth: ReadableCredentialAuth) {
@@ -64,13 +74,30 @@ export function VaultSettings({
   const [replacing, setReplacing] = useState<string | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
   // Protected fields: held only in component state and cleared on every submit or cancel.
-  const [loginUsername, setLoginUsername] = useState("");
+  const newLogin = (): LoginFieldInput[] => [
+    { label: t`Username`, value: "", hidden: false },
+    { label: t`Password`, value: "", hidden: true },
+  ];
+  const [login, setLogin] = useState(newLogin);
   const [value, setValue] = useState("");
+  // A shown value lives only here, never in the query cache, and hides itself after a while.
+  const [revealed, setRevealed] = useState<Revealed | null>(null);
+  const [revealing, setRevealing] = useState<string | null>(null);
+  const revealAttempt = useRef(0);
+  const hideTimer = useRef<number | undefined>(undefined);
+  const { withIdentityConfirmation, identityDialog } = useIdentityConfirmation();
 
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+  useEffect(
+    () => () => {
+      revealAttempt.current += 1;
+      window.clearTimeout(hideTimer.current);
+    },
+    [],
+  );
 
   async function refresh() {
     try {
@@ -83,7 +110,47 @@ export function VaultSettings({
 
   function clearProtectedFields() {
     setValue("");
-    setLoginUsername("");
+    setLogin(newLogin());
+    hideRevealed();
+  }
+
+  function hideRevealed() {
+    // Also drops a reveal still in flight, so it can't show after another action opened.
+    revealAttempt.current += 1;
+    window.clearTimeout(hideTimer.current);
+    setRevealed(null);
+    setRevealing(null);
+  }
+
+  async function reveal(secretName: string) {
+    if (busy) return;
+    clearProtectedFields();
+    setReplacing(null);
+    setConfirmingRemove(null);
+    setAdding(false);
+    setError(null);
+    const attempt = revealAttempt.current;
+    const current = () => revealAttempt.current === attempt;
+    setRevealing(secretName);
+    try {
+      const shown = await withIdentityConfirmation(async () => {
+        try {
+          return await rpc.vault.reveal({ scope, name: secretName });
+        } catch (err) {
+          // A reveal cancelled while waiting must not ask the person to confirm.
+          throw current() ? err : REVEAL_CANCELLED;
+        }
+      });
+      if (!current()) return;
+      setRevealed({ name: secretName, ...shown });
+      hideTimer.current = window.setTimeout(hideRevealed, REVEAL_MS);
+    } catch (err) {
+      // Closing the confirmation is a choice, not a failure.
+      if (current() && err !== REVEAL_CANCELLED && !isIdentityConfirmationRequired(err))
+        setError(errorText(err, t`Could not show the credential`));
+    } finally {
+      if (current()) setRevealing(null);
+    }
   }
 
   function authLabel(auth: ReadableCredentialAuth) {
@@ -113,17 +180,11 @@ export function VaultSettings({
     origin?: string;
     auth: ReadableCredentialAuth;
   }) {
-    const username = loginUsername.trim();
-    const secretValue = value;
+    if (!valueReady(destination.auth.type)) return false;
+    const plaintext =
+      destination.auth.type === "login" ? encodeLoginSecret({ fields: login }) : value;
     clearProtectedFields();
     setError(null);
-    let plaintext: string;
-    try {
-      plaintext = credentialPlaintext(destination.auth.type, username, secretValue);
-    } catch {
-      setError(t`Enter a username and password`);
-      return false;
-    }
     setBusy(true);
     try {
       await rpc.vault.put({ scope, destination, value: plaintext });
@@ -178,25 +239,12 @@ export function VaultSettings({
     }
   }
 
-  const loginFields = (type: CredentialAuthType, testIdPrefix: string) => (
-    <>
-      {type === "login" ? (
-        <label htmlFor={`${ids}-${testIdPrefix}-username`} className={fieldLabelClass}>
-          <Trans>Username</Trans>
-          <Input
-            id={`${ids}-${testIdPrefix}-username`}
-            data-testid={`${testIdPrefix}-username`}
-            // "off" is ignored for username fields; this stops browsers saving the pair.
-            autoComplete="new-password"
-            spellCheck={false}
-            value={loginUsername}
-            onChange={(event) => setLoginUsername(event.target.value)}
-            className="mt-1.5"
-          />
-        </label>
-      ) : null}
+  const secretFields = (type: CredentialAuthType, testIdPrefix: string) =>
+    type === "login" ? (
+      <LoginFieldsEditor fields={login} disabled={busy} onChange={setLogin} />
+    ) : (
       <label htmlFor={`${ids}-${testIdPrefix}-value`} className={fieldLabelClass}>
-        {type === "login" ? <Trans>Password</Trans> : <Trans>Value</Trans>}
+        <Trans>Value</Trans>
         <Input
           id={`${ids}-${testIdPrefix}-value`}
           data-testid={`${testIdPrefix}-value`}
@@ -208,11 +256,10 @@ export function VaultSettings({
           className="mt-1.5"
         />
       </label>
-    </>
-  );
+    );
 
   const valueReady = (type: CredentialAuthType) =>
-    value.length > 0 && (type !== "login" || loginUsername.trim().length > 0);
+    type === "login" ? LoginSecretValue.safeParse({ fields: login }).success : value.length > 0;
 
   const nameValid = BotSecretName.safeParse(name.trim()).success;
   // Shown live while a command variable is named, so a reserved name is caught before saving.
@@ -263,12 +310,47 @@ export function VaultSettings({
                           {readableAuth !== null ? (
                             <Tooltip>
                               <TooltipTrigger
-                                render={<Button variant="ghost" size="icon-xs" />}
+                                // The trigger's own disabled only turns off the tooltip.
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    disabled={busy || revealing !== null}
+                                  />
+                                }
+                                type="button"
+                                aria-label={revealed?.name === secret.name ? t`Hide` : t`Show`}
+                                className="text-muted-foreground"
+                                data-testid={`credential-show-${secret.name}`}
+                                onClick={() =>
+                                  revealed?.name === secret.name
+                                    ? hideRevealed()
+                                    : void reveal(secret.name)
+                                }
+                              >
+                                {revealed?.name === secret.name ? (
+                                  <EyeOff className="size-4" />
+                                ) : (
+                                  <Eye className="size-4" />
+                                )}
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {revealed?.name === secret.name ? (
+                                  <Trans>Hide</Trans>
+                                ) : (
+                                  <Trans>Show</Trans>
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+                          {readableAuth !== null ? (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={<Button variant="ghost" size="icon-xs" disabled={busy} />}
                                 type="button"
                                 aria-label={t`Replace value`}
                                 className="text-muted-foreground"
                                 data-testid={`credential-replace-${secret.name}`}
-                                disabled={busy}
                                 onClick={() => {
                                   clearProtectedFields();
                                   setConfirmingRemove(null);
@@ -285,12 +367,11 @@ export function VaultSettings({
                           ) : null}
                           <Tooltip>
                             <TooltipTrigger
-                              render={<Button variant="ghost" size="icon-xs" />}
+                              render={<Button variant="ghost" size="icon-xs" disabled={busy} />}
                               type="button"
                               aria-label={t`Remove`}
                               className="text-muted-foreground"
                               data-testid={`credential-remove-${secret.name}`}
-                              disabled={busy}
                               onClick={() => {
                                 clearProtectedFields();
                                 setReplacing(null);
@@ -329,6 +410,22 @@ export function VaultSettings({
                         <span>{t`Updated ${updated}`}</span>
                       </div>
                     )}
+                    {readableAuth !== null && revealed?.name === secret.name ? (
+                      <div data-testid="credential-revealed" className="mt-2 space-y-1">
+                        {"value" in revealed ? (
+                          <RevealedField testId="credential-revealed-value" text={revealed.value} />
+                        ) : (
+                          revealed.fields.map((field) => (
+                            <RevealedField
+                              key={field.label}
+                              testId="credential-revealed-field"
+                              label={field.label}
+                              text={field.value}
+                            />
+                          ))
+                        )}
+                      </div>
+                    ) : null}
                     {readableAuth !== null && replacing === secret.name ? (
                       <form
                         className="mt-1"
@@ -337,7 +434,7 @@ export function VaultSettings({
                           void submitReplace(secret);
                         }}
                       >
-                        {loginFields(readableAuth.type, "credential-replace")}
+                        {secretFields(readableAuth.type, "credential-replace")}
                         <div className="mt-3 flex gap-2">
                           <Button
                             type="submit"
@@ -407,9 +504,6 @@ export function VaultSettings({
                 void submitAdd();
               }}
             >
-              <p className="mb-3 text-xs text-muted-foreground">
-                <Trans>Encrypted and never shown again</Trans>
-              </p>
               <div className={fieldLabelClass}>
                 <div className="flex items-center gap-1">
                   <label htmlFor={`${ids}-name`}>
@@ -506,7 +600,7 @@ export function VaultSettings({
                   />
                 </label>
               ) : null}
-              {loginFields(authType, "credential")}
+              {secretFields(authType, "credential")}
               <div className="mt-3 flex gap-2">
                 <Button
                   type="submit"
@@ -550,6 +644,31 @@ export function VaultSettings({
           <Trans>Add credential</Trans>
         </Button>
       )}
+      {identityDialog}
     </section>
+  );
+}
+
+/** One shown value with a copy button; a login shows each of its fields this way. */
+function RevealedField({ label, text, testId }: { label?: string; text: string; testId: string }) {
+  const { t } = useLingui();
+  const [copied, copy] = useCopyText();
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-background px-2.5 py-1.5">
+      {label ? <span className="shrink-0 text-[12px] text-muted-foreground">{label}</span> : null}
+      <code data-testid={testId} className="min-w-0 flex-1 break-all font-mono text-[12.5px]">
+        {text}
+      </code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={copied ? t`Copied` : t`Copy`}
+        className="shrink-0 text-muted-foreground"
+        onClick={() => copy(text)}
+      >
+        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+      </Button>
+    </div>
   );
 }

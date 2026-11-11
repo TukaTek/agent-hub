@@ -158,7 +158,7 @@ async function runScenario(
     computer: { updateMany: vi.fn(async () => ({ count: 1 })) },
     connection: { findMany: vi.fn(async () => []) },
     spaceModelPreference: { findFirst: vi.fn(async () => null) },
-    secret: { findFirst: vi.fn(async () => null) },
+    secret: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     userModelCredential: { findFirst: vi.fn(async () => null) },
     spaceBackupModel: { findMany: vi.fn(async () => []) },
     deploymentSettings: {

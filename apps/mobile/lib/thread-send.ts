@@ -1,4 +1,4 @@
-import type { MessageReaction } from "@cortexai-agent-hub/contracts";
+import type { LoginFieldInput, MessageReaction } from "@cortexai-agent-hub/contracts";
 import type { SlashActionId } from "@cortexai-agent-hub/core";
 import {
   attachmentsForThread,
@@ -71,7 +71,8 @@ export function useThreadSend({
   const { t } = useI18n();
   const router = useRouter();
   const navigation = useNavigation();
-  const { pendingAttachments, setPendingAttachments, setAttachmentNotice } = attachments;
+  const { pendingAttachments, setPendingAttachments, setAttachmentNotice, importingShare } =
+    attachments;
   const { setError } = feedback;
   const composerRef = useRef<ThreadComposerHandle>(null);
   const [replyTarget, setReplyTarget] = useState<MobileMessage | null>(null);
@@ -109,7 +110,7 @@ export function useThreadSend({
   }
 
   async function send() {
-    if (readOnly) return;
+    if (readOnly || importingShare.current) return;
     const initialBotTarget = botId;
     const initialGroupTarget = groupId;
     if ((!initialBotTarget && !initialGroupTarget) || sending || preparingSend.current) return;
@@ -258,13 +259,20 @@ export function useThreadSend({
   }
 
   const answer = useCallback(
-    (message: MobileMessage, answer: string, username?: string, dismiss?: boolean) =>
+    (
+      message: MobileMessage,
+      answer: string,
+      fields?: readonly LoginFieldInput[],
+      dismiss?: boolean,
+      remember?: false,
+    ) =>
       answerThreadMessage(
         { botId, groupId, readOnly, rpc, isCurrentTarget, refresh, markRead: markCaughtUp },
         message,
         answer,
-        username,
+        fields,
         dismiss,
+        remember,
       ),
     [botId, groupId, readOnly],
   );

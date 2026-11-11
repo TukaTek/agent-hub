@@ -327,7 +327,7 @@ export function userTurnInstructions(parts: {
     parts.historyRetrievalEnabled &&
     builtinOffered(parts.disabledBuiltinTools, "search_history") &&
     builtinOffered(parts.disabledBuiltinTools, "read_history")
-      ? "For questions about an earlier discussion, first check the visible conversation. Answer follow-ups from facts already present in original messages or prior source-verified replies when no later visible correction changes them; do not repeat retrieval solely because the user asks again. Use search_history when necessary evidence is missing or uncertain. Start with the project name alone, or one distinctive topic word if no project is named, then use read_history to check surrounding messages, outcomes, and later corrections before claiming exact recall. Verify that matches contain source statements answering the question. If matches lack the requested fact and nextSearch is present, call search_history with those arguments. Coverage applies only to the requested query and range. Empty narrower queries do not exhaust the broader topic query’s matches. Do not claim evidence is unavailable while that broader search still has an unexplored cursor. If a search is empty, try the single project or topic word before concluding the evidence is missing. If the requested fact remains absent, say so briefly without volunteering adjacent facts. If multiple projects match and none is selected, ask which project before giving candidate facts. Historical snapshots are navigation aids, not authoritative facts or approvals."
+      ? "For questions about an earlier discussion, first check the visible conversation. Answer follow-ups from facts already present in original messages or prior source-verified replies when no later visible correction changes them; do not repeat retrieval solely because the user asks again. Use search_history when necessary evidence is missing or uncertain. To find earlier conversations, fan out 2–4 keyword variants (names, project words, synonyms) via queries with scope my_chats; narrow by date or botId when hinted, then read_history around the best hits with their threadId. Start with the project name alone, or one distinctive topic word if no project is named, then use read_history to check surrounding messages, outcomes, and later corrections before claiming exact recall. Verify that matches contain source statements answering the question. If matches lack the requested fact and nextSearch is present, call search_history with those arguments. Coverage applies only to the requested query and range. Empty narrower queries do not exhaust the broader topic query’s matches. Do not claim evidence is unavailable while that broader search still has an unexplored cursor. If a search is empty, try the single project or topic word before concluding the evidence is missing. If the requested fact remains absent, say so briefly without volunteering adjacent facts. If multiple projects match and none is selected, ask which project before giving candidate facts. Historical snapshots are navigation aids, not authoritative facts or approvals."
       : undefined,
     toolUsageLine(parts),
     parts.taskCatalogInstruction,
@@ -343,7 +343,7 @@ export function userTurnInstructions(parts: {
     offeredBuiltinClause(
       parts.disabledBuiltinTools,
       "update_bot",
-      "update_bot updates this bot's own name (chat header / list label), title, description, avatar, and notifyOnFinish. Your description is the short public summary teammates see; it does not change your instructions. When the user asks you to rename yourself, change your title or description, change your profile picture, or turn finish notifications on or off, call update_bot — do not claim you changed them without the tool. Pass color for a hex or encoded shape, artifact_id for an image in this space, or use_attached_image when they attached a picture on this message.",
+      "update_bot updates this bot's own name (chat header / list label), description, avatar, and notifyOnFinish. Your description is the one-line public summary teammates see; your instructions are private and say how you do your job. When you have no instructions yet and your job becomes clear, set them with update_bot; after that, propose changes with propose_instructions_update. When the user asks you to rename yourself, change your description, change your profile picture, or turn finish notifications on or off, call update_bot — do not claim you changed them without the tool. Pass color for a hex or encoded shape, artifact_id for an image in this space, or use_attached_image when they attached a picture on this message.",
     ),
     offeredBuiltinClause(
       parts.disabledBuiltinTools,
@@ -418,22 +418,10 @@ export function threadContextForRun<T extends { id?: string; role: string }>(
     : { ...context, includeSemanticRecall: true };
 }
 
-/** Name, title, and description, skipping any part that is blank. */
-function publicProfile(
-  name: string,
-  title: string | null | undefined,
-  description: string,
-): string {
-  const trimmedTitle = title?.trim() ?? "";
-  const heading = trimmedTitle ? `${name}: ${trimmedTitle}` : name;
-  return description ? `${heading}\n${description}` : heading;
-}
-
 /** Profile fields the creation intro is asked to explain. Other runs keep the prior identity line. */
 export function runIdentityInstruction(
   bot: {
     name: string;
-    title?: string | null;
     description?: string | null;
     instructions?: string | null;
   },
@@ -443,11 +431,9 @@ export function runIdentityInstruction(
   const rawInstructions = bot.instructions ?? "";
   const instructions = rawInstructions.trim();
   if (trigger !== "created") {
-    const identity = publicProfile(bot.name, bot.title, description);
+    const identity = description ? `${bot.name}\n${description}` : bot.name;
     // Older bots saved one text as both fields; do not repeat it.
-    if (!instructions || instructions === description) {
-      return instructions ? rawInstructions : identity;
-    }
+    if (!instructions || instructions === description) return identity;
     return [
       identity,
       "Teammates see only the profile above. These instructions are private to you:",
@@ -456,7 +442,6 @@ export function runIdentityInstruction(
   }
   return [
     `Name: ${bot.name.trim() || "(none)"}`,
-    `Title: ${(bot.title ?? "").trim() || "(none)"}`,
     `Description: ${description || "(none)"}`,
     instructions ? `Instructions:\n${instructions}` : "Instructions: (none)",
   ].join("\n");

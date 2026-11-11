@@ -154,8 +154,7 @@ RUN sed -i 's/^# zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen && locale
 ENV LANG=C.UTF-8
 ENV UV_TOOL_DIR=/home/cortexai-agent-hub/.local/share/uv/tools \
     UV_TOOL_BIN_DIR=/home/cortexai-agent-hub/.local/bin \
-    UV_PYTHON_INSTALL_DIR=/home/cortexai-agent-hub/.local/share/uv/python \
-    UV_CACHE_DIR=/home/cortexai-agent-hub/.cache/uv
+    UV_PYTHON_INSTALL_DIR=/home/cortexai-agent-hub/.local/share/uv/python
 WORKDIR /home/cortexai-agent-hub
 
 # --chmod normalizes modes: a restrictive host umask (e.g. 077 on hardened hosts) would

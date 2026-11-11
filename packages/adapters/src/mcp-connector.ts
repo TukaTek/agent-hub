@@ -18,15 +18,19 @@ import {
   resolveMcpOAuthFileTemplate,
 } from "@cortexai-agent-hub/contracts";
 import type { McpServer, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import { availableInSpace, itemSecretIn } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { sanitizedError } from "@cortexai-agent-hub/logging/monitoring";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
+  OAuthError,
   ServerError,
   TemporarilyUnavailableError,
+  TooManyRequestsError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { catalogToolPrefix } from "./approval-effect.js";
+import { composioToolBatch } from "./composio-batch.js";
 import {
   combineSignals,
   redactConnectorPayload,
@@ -55,13 +59,15 @@ import {
   DEFAULT_MCP_INSTALL_TIMEOUT_MS,
   defaultMcpPackagesRoot,
   ensureMcpPackage,
+  isNpxCommand,
   parseNpxLaunch,
 } from "./mcp-package-installer.js";
 import { mcpResultBudget } from "./mcp-result-budget.js";
 import type { McpServerHealthUpdate } from "./mcp-server-health.js";
-import { recordMcpServerHealth } from "./mcp-server-health.js";
+import { needsMcpOAuthClient, recordMcpServerHealth } from "./mcp-server-health.js";
 import { McpSession, mcpStdioRefusal } from "./mcp-transport.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
+import { ConnectorRedirectError } from "./remote-mcp.js";
 import { appendToolCompletionAudit } from "./tool-completion-audit.js";
 
 type SessionEntry = {
@@ -140,11 +146,24 @@ function expectedFailure(error: unknown, depth = 0): ExpectedFailure | undefined
   if (error instanceof McpConnectFailure) return error.expected;
   if (error instanceof McpReauthorizationRequiredError || error instanceof UnauthorizedError)
     return "reconnect";
-  if (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403))
-    return "reconnect";
+  if (error instanceof StreamableHTTPError) {
+    // A timeout, rate limit or server error is the server's own outage.
+    if (error.code === 408 || error.code === 429 || (error.code ?? 0) >= 500) return "unreachable";
+    // A 4xx or a non-MCP body (often an HTML page) means the endpoint is not an MCP server.
+    if (error.code === -1 || (error.code !== undefined && error.code >= 400 && error.code < 500))
+      return "reconnect";
+  }
+  if (error instanceof ConnectorRedirectError) return "reconnect";
   // The server's own OAuth endpoint failed or is overloaded; it usually recovers by itself.
-  if (error instanceof ServerError || error instanceof TemporarilyUnavailableError)
+  if (
+    error instanceof ServerError ||
+    error instanceof TemporarilyUnavailableError ||
+    error instanceof TooManyRequestsError
+  )
     return "unreachable";
+  // The authorization server refused our client or grant, or cannot register a client at
+  // all; the user signs in again or enters a pre-registered client.
+  if (error instanceof OAuthError || needsMcpOAuthClient(error)) return "reconnect";
   const code = (error as { code?: unknown }).code;
   if (code === "ENOTFOUND") return "reconnect";
   if (typeof code === "string" && UNREACHABLE_CODES.has(code)) return "unreachable";
@@ -379,10 +398,7 @@ export class McpConnector implements ConnectorProvider {
   async discoverTools(context: AdapterContext): Promise<ConnectorTool[]> {
     const tools = await this.authorizedTools(context);
     if (tools.length <= DIRECT_TOOL_LIMIT) return tools;
-    // The catalog wrappers must not be named `mcp_*`: Anthropic rejects Claude Code OAuth
-    // requests that carry a tool whose name starts with "mcp_" (single underscore) with a
-    // misleading "You're out of extra usage" 400, on every model. Direct MCP tools are
-    // `mcp__server__tool` (double underscore) and are accepted; keep the wrappers off "mcp_".
+    // Keep wrappers off "mcp_": see lazyCatalogTools.
     return lazyCatalogTools(catalogToolPrefix("mcp"), "mcp", "MCP", catalogEntries(tools));
   }
 
@@ -390,6 +406,12 @@ export class McpConnector implements ConnectorProvider {
     call: ConnectorCall,
     context: AdapterContext,
   ): Promise<{ call: ConnectorCall; tool: ConnectorTool } | undefined> {
+    if (!call.route && call.tool.startsWith("mcp__")) {
+      return resolveCatalogCall(
+        { ...call, args: { id: call.tool, arguments: call.args } },
+        catalogEntries(await this.authorizedTools(context)),
+      );
+    }
     // Wrappers have no resourceId; real tools always do.
     if (call.route?.resourceId || call.route?.toolName !== CATALOG_EXECUTE) return undefined;
     return resolveCatalogCall(call, catalogEntries(await this.authorizedTools(context)));
@@ -402,7 +424,8 @@ export class McpConnector implements ConnectorProvider {
         botId: context.botId,
         spaceId: context.spaceId,
         userId: context.userId,
-        server: { enabled: true },
+        // A server no longer available in this space stays assigned but unused until it is again.
+        server: { enabled: true, ...availableInSpace(context) },
       },
       include: { server: true },
     });
@@ -465,6 +488,7 @@ export class McpConnector implements ConnectorProvider {
               inputSchema: tool.inputSchema as Record<string, unknown>,
               ...mcpResultBudget(tool),
               readOnly: tool.annotations?.readOnlyHint,
+              batch: composioToolBatch(tool.name),
               route: {
                 connectorId: "mcp",
                 resourceId: assignment.serverId,
@@ -603,7 +627,7 @@ export class McpConnector implements ConnectorProvider {
         serverId: call.route.resourceId,
         spaceId: context.spaceId,
         userId: context.userId,
-        server: { enabled: true },
+        server: { enabled: true, ...availableInSpace(context) },
       },
       include: { server: true },
     });
@@ -971,15 +995,24 @@ export class McpConnector implements ConnectorProvider {
     let material: OAuthMaterial | undefined;
     // What the process was handed; its stderr can echo any of it.
     try {
-      const secret = server.secretId
+      let secret = server.secretId
         ? await this.prisma.secret.findFirst({
-            where: {
-              id: server.secretId,
-              spaceId: context.spaceId,
-              userId: context.userId,
-            },
+            where: { id: server.secretId, ...itemSecretIn(context) },
           })
         : null;
+      if (server.secretId && !secret) {
+        // OAuth refresh replaces the secret without updating this run's server snapshot.
+        const current = await this.prisma.mcpServer.findFirst({
+          where: { id: server.id, revision: server.revision, ...availableInSpace(context) },
+          select: { secretId: true },
+        });
+        if (current?.secretId) {
+          secret = await this.prisma.secret.findFirst({
+            where: { id: current.secretId, ...itemSecretIn(context) },
+          });
+        }
+        if (!secret) throw new Error("MCP server secret is unavailable; retry");
+      }
       let ref = secret?.ciphertext;
       let recordId = secret?.id;
       if (secret) onRef(secret.ciphertext, secret.id);
@@ -1008,6 +1041,8 @@ export class McpConnector implements ConnectorProvider {
         const refusal = mcpStdioRefusal(command, this.options);
         if (refusal) throw new McpConnectFailure(refusal, "reconnect");
         const npx = parseNpxLaunch(command, args);
+        if (!npx && isNpxCommand(command))
+          throw new McpConnectFailure("This npx command isn't supported here", "reconnect");
         let installedBin: InstalledMcpBin | undefined;
         if (npx) {
           // Install outside the startup timeout, once per package, into the shared volume.

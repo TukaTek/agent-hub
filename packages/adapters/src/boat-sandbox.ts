@@ -9,7 +9,7 @@ import type {
   SandboxStateEnum,
   SavedSnapshot,
 } from "@boatdev/sdk";
-import { BoatApi, Configuration } from "@boatdev/sdk";
+import { BoatApi, Configuration, FetchError, followCommand } from "@boatdev/sdk";
 import type {
   AdapterContext,
   CommandRequest,
@@ -37,20 +37,25 @@ import {
 } from "@cortexai-agent-hub/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
 import { getLogger } from "@cortexai-agent-hub/logging";
-import { BoatApiError, boatResponseError, callerSignal, wrapBoatCall } from "./boat-errors.js";
-import { normalizeWorkspacePath, shellQuote, workspacePath } from "./computer-support.js";
 import {
-  PORTABLE_TRANSFER_BATCH_BYTES,
-  SKIPPED_BROWSER_PROFILE_DIRECTORIES,
-  SKIPPED_BROWSER_PROFILE_FILES,
-  shouldSkipPortableWorkspaceFile,
-} from "./computer-workspace.js";
+  BoatApiError,
+  BoatRequestGate,
+  boatResponseError,
+  callerSignal,
+  wrapBoatCall,
+} from "./boat-errors.js";
+import { normalizeWorkspacePath, shellQuote, workspacePath } from "./computer-support.js";
+import { PORTABLE_TRANSFER_BATCH_BYTES } from "./computer-workspace.js";
 import { LinuxDesktop, PREPARE_LINUX_DESKTOP, VERIFY_LINUX_DESKTOP } from "./linux-desktop.js";
 import { sandboxCommandArgv } from "./sandbox-command-environment.js";
 import { isSandboxGoneError } from "./sandbox-errors.js";
 import { shellExportScript } from "./sandbox-shell-environment.js";
 import { withAbort } from "./web-ssrf.js";
 import { readWorkspaceArchive } from "./workspace-archive.js";
+import {
+  shouldSkipPortableWorkspaceFile,
+  workspaceSaveFindExpression,
+} from "./workspace-save-policy.js";
 
 const BOAT_API_BASE = "https://boat.dev/api/v1";
 const BOAT_WORKSPACE = "/home/user/cortexai-agent-hub-home";
@@ -61,6 +66,13 @@ const BOAT_COMMAND_ENV = "/home/user/.cortexai-agent-hub-command-env";
 const BOAT_ARCHIVE_PREFIX = "/tmp/cortexai-agent-hub-workspace-archive-";
 const BOAT_READY_TIMEOUT_MS = 5 * 60_000;
 const BOAT_RECOVER_POLL_MAX_MS = 15_000;
+/**
+ * Status polls start fast so short waits stay quick, then slow to this. Every Boat request from
+ * this host counts against one per-IP budget.
+ */
+const BOAT_POLL_MAX_MS = 5_000;
+/** The output of a finished detached command keeps at most this much of each stream's end. */
+const BOAT_COMMAND_TAIL_BYTES = 1_000_000;
 const BOAT_API_COMMAND_TIMEOUT_SECONDS = 600;
 const BOAT_TTL_SECONDS = 2 * 60 * 60;
 const BOAT_DELETE_TIMEOUT_MS = 60_000;
@@ -85,6 +97,7 @@ const BOAT_SNAPSHOT_LOOKUP_RETRY_MS = 60_000;
 export type BoatSandboxSdk = Pick<
   BoatApi,
   | "artifactRaw"
+  | "attachCommandRaw"
   | "command"
   | "commandStatus"
   | "create"
@@ -181,11 +194,9 @@ export class BoatSandboxProvider implements SandboxProvider {
   private baseSnapshotBuild?: Promise<void>;
   private baseSnapshotRetryAt = 0;
 
-  constructor(
-    config: { apiKey: string; apiUrl?: string },
-    api: BoatSandboxSdk = createBoatSdk(config),
-  ) {
-    this.client = boatClient(api, config.apiKey);
+  constructor(config: { apiKey: string; apiUrl?: string }, api?: BoatSandboxSdk) {
+    const gate = new BoatRequestGate();
+    this.client = boatClient(api ?? createBoatSdk(config, gate), config.apiKey, gate);
   }
 
   describe() {
@@ -327,10 +338,10 @@ export class BoatSandboxProvider implements SandboxProvider {
     name: string,
     signal: AbortSignal,
   ): Promise<SavedSnapshot | undefined> {
-    while (true) {
+    for (let pause = 2_000; ; pause = nextPoll(pause)) {
       const snapshot = await this.savedSnapshot(name, signal);
       if (snapshot?.status !== "saving") return snapshot;
-      await delay(2_000, undefined, { signal });
+      await delay(pause, undefined, { signal });
     }
   }
 
@@ -400,7 +411,6 @@ export class BoatSandboxProvider implements SandboxProvider {
       });
   }
 
-  /** The saved snapshot, or undefined when the account has none by that name. */
   private async savedSnapshot(
     name: string,
     signal: AbortSignal,
@@ -658,6 +668,7 @@ export class BoatSandboxProvider implements SandboxProvider {
       batchBytes = 0;
     };
     for await (const file of files) {
+      if (shouldSkipPortableWorkspaceFile(file.path)) continue;
       if (context.signal.aborted) throw context.signal.reason ?? new Error("import aborted");
       if (
         batch.length >= 8 ||
@@ -686,6 +697,26 @@ export class BoatSandboxProvider implements SandboxProvider {
 
   async releaseScreen(computer: ComputerRef, context: AdapterContext): Promise<void> {
     return this.desktops.releaseScreen(computer, context);
+  }
+
+  async isRunning(computer: ComputerRef, context: AdapterContext): Promise<boolean> {
+    if (computer.kind !== "boat") return false;
+    try {
+      // Its caller retries an unread status itself, so a rate limit's wait is cut short here.
+      const { sandbox } = await this.client.get(
+        { sandboxId: this.id(computer) },
+        {
+          signal: AbortSignal.any([
+            context.signal,
+            AbortSignal.timeout(BOAT_GONE_CHECK_TIMEOUT_MS),
+          ]),
+        },
+      );
+      return RUNNABLE_STATES.has(sandbox.state);
+    } catch (error) {
+      if (isSandboxGoneError(error)) return false;
+      throw error;
+    }
   }
 
   async isStopped(computer: ComputerRef, context: AdapterContext): Promise<boolean> {
@@ -740,6 +771,12 @@ export class BoatSandboxProvider implements SandboxProvider {
     const id = this.id(computer);
     try {
       await this.client.deleteSandbox(id);
+    } catch (error) {
+      // Another API key created this sandbox, so this key can never delete it. Retrying cannot
+      // help, so the computer is removed here and the sandbox is left to its creator.
+      if (!(error instanceof BoatApiError && error.code === "api_key_action_forbidden"))
+        throw error;
+      getLogger().warn("sandbox.destroy", { provider: "boat", outcome: "not_owned" });
     } finally {
       this.forget(id);
     }
@@ -766,7 +803,7 @@ export class BoatSandboxProvider implements SandboxProvider {
     let started = false;
     let recovering = false;
     let forced = false;
-    let pause = 1_000;
+    let pause = 500;
     while (true) {
       if (signal?.aborted) {
         throw signal.reason ?? new Error("Boat preparation aborted");
@@ -818,8 +855,8 @@ export class BoatSandboxProvider implements SandboxProvider {
         started = false;
         deadline = Date.now() + BOAT_READY_TIMEOUT_MS;
       }
-      // A recovering machine usually answers within 1-2 minutes; back off while it reboots.
-      pause = sandbox.state === "error" ? Math.min(pause * 2, BOAT_RECOVER_POLL_MAX_MS) : 1_000;
+      // A recovering machine usually answers within 1-2 minutes; back off further while it reboots.
+      pause = nextPoll(pause, sandbox.state === "error" ? BOAT_RECOVER_POLL_MAX_MS : undefined);
       await delay(pause, undefined, { signal });
     }
   }
@@ -885,7 +922,7 @@ export class BoatSandboxProvider implements SandboxProvider {
     onWait?: (sandbox: BoatMachine) => Promise<void>,
   ): Promise<BoatMachine> {
     const deadline = Date.now() + BOAT_READY_TIMEOUT_MS;
-    while (true) {
+    for (let pause = 1_000; ; pause = nextPoll(pause)) {
       if (context.signal.aborted) throw context.signal.reason ?? new Error("Boat wait aborted");
       const response = await this.client.get({ sandboxId: id }, { signal: context.signal });
       if (states.has(response.sandbox.state)) return response.sandbox;
@@ -893,7 +930,7 @@ export class BoatSandboxProvider implements SandboxProvider {
       await onWait?.(response.sandbox);
       if (Date.now() >= deadline)
         throw new Error(`Boat ${id} did not reach ${[...states].join("/")}`);
-      await delay(1_000, undefined, { signal: context.signal });
+      await delay(pause, undefined, { signal: context.signal });
     }
   }
 
@@ -996,10 +1033,10 @@ export class BoatSandboxProvider implements SandboxProvider {
       });
     } catch {
       if (signal.aborted) throw signal.reason;
-      throw new Error("Boat file upload failed");
+      throw new SandboxUnresponsiveError("Boat file upload failed");
     }
     await response.body?.cancel().catch(() => undefined);
-    if (!response.ok) throw new Error(`Boat file upload failed (HTTP ${response.status})`);
+    if (!response.ok) throw transferError("upload", response.status);
   }
 
   private async readRemoteFile(
@@ -1119,11 +1156,11 @@ export class BoatSandboxProvider implements SandboxProvider {
       });
     } catch {
       if (downloadSignal.aborted) throw downloadSignal.reason;
-      throw new Error("Boat file download failed");
+      throw new SandboxUnresponsiveError("Boat file download failed");
     }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Boat file download failed (HTTP ${response.status})`);
+      throw transferError("download", response.status);
     }
     return response;
   }
@@ -1159,7 +1196,7 @@ export class BoatSandboxProvider implements SandboxProvider {
       );
       const result = isFinishedCommand(response)
         ? commandResponse(response)
-        : await this.pollCommand(id, response.processId, timeoutMs + 10_000, signal);
+        : await this.waitForCommand(id, response.processId, timeoutMs + 10_000, signal);
       if (result.exitCode !== 0 && systemDamaged(result.stderr)) {
         // The next start checks it again rather than trust an earlier preparation.
         this.prepared.delete(id);
@@ -1204,17 +1241,72 @@ export class BoatSandboxProvider implements SandboxProvider {
     });
   }
 
-  private async pollCommand(
+  /** Waits for a detached command on its output stream, or by polling when that is unavailable. */
+  private async waitForCommand(
     id: string,
     processId: number,
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<BoatCommandResult> {
     const deadline = Date.now() + timeoutMs;
-    while (true) {
+    return (
+      (await this.followCommand(id, processId, deadline, signal)) ??
+      this.pollCommand(id, processId, deadline, signal)
+    );
+  }
+
+  /**
+   * The command's result from Boat's output stream, which costs one request per ten minutes.
+   * Undefined at the deadline, or when Boat refused or ended the stream without the command's
+   * exit; status polls then stop the command or read how it ended.
+   */
+  private async followCommand(
+    id: string,
+    processId: number,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<BoatCommandResult | undefined> {
+    const timeout = AbortSignal.timeout(Math.max(deadline - Date.now(), 0));
+    const output = { stdout: "", stderr: "" };
+    try {
+      for await (const frame of followCommand(
+        // The helper only attaches; this client's attach waits out Boat's rate limit.
+        this.client as Pick<BoatApi, "attachCommandRaw"> as BoatApi,
+        id,
+        processId,
+        { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
+      )) {
+        if (frame.type === "stdout" || frame.type === "stderr") {
+          output[frame.type] = utf8Tail(`${output[frame.type]}${frame.data ?? ""}`);
+        } else if (frame.type === "exit") {
+          return { ...output, exitCode: frame.exitCode ?? 1, timedOut: false };
+        } else if (frame.type === "error") {
+          return undefined;
+        }
+      }
+    } catch (error) {
+      // A rate limit, or the SDK's own idle timer ending the attach (on its request, or while it
+      // waits at the request gate), leaves the command to status polls too.
+      const unavailable =
+        timeout.aborted ||
+        error instanceof BoatApiError ||
+        error instanceof SandboxRateLimitError ||
+        isAbortError(error instanceof FetchError ? error.cause : error);
+      if (signal?.aborted || !unavailable) throw error;
+    }
+    return undefined;
+  }
+
+  private async pollCommand(
+    id: string,
+    processId: number,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<BoatCommandResult> {
+    for (let pause = 500; ; pause = nextPoll(pause)) {
       if (signal?.aborted) throw signal.reason ?? new Error("command aborted");
       const status = await this.client.commandStatus(
-        { sandboxId: id, processId, tailBytes: 1_000_000 },
+        { sandboxId: id, processId, tailBytes: BOAT_COMMAND_TAIL_BYTES },
         signal ? { signal } : undefined,
       );
       if (!status.running) {
@@ -1234,7 +1326,7 @@ export class BoatSandboxProvider implements SandboxProvider {
         ).catch(() => undefined);
         return { stdout: status.stdout, stderr: status.stderr, exitCode: 124, timedOut: true };
       }
-      await delay(500, undefined, signal ? { signal } : undefined);
+      await delay(pause, undefined, signal ? { signal } : undefined);
     }
   }
 
@@ -1248,12 +1340,13 @@ export class BoatSandboxProvider implements SandboxProvider {
   }
 
   private async rawCommand(id: string, command: string, timeoutSeconds: number) {
-    const response = await this.client.command({
-      sandboxId: id,
-      commandRequest: { command, timeoutSeconds },
-    });
+    // Bounds the wait for a rate-limited Boat too, so cancellation cleanup cannot hang on it.
+    const response = await this.client.command(
+      { sandboxId: id, commandRequest: { command, timeoutSeconds } },
+      { signal: AbortSignal.timeout(timeoutSeconds * 1_000 + 5_000) },
+    );
     if (!isFinishedCommand(response)) {
-      return this.pollCommand(id, response.processId, timeoutSeconds * 1_000 + 5_000);
+      return this.waitForCommand(id, response.processId, timeoutSeconds * 1_000 + 5_000);
     }
     return commandResponse(response);
   }
@@ -1307,6 +1400,12 @@ function logRecovery(
   getLogger().warn("sandbox.recover", { provider: "boat", step, ...(reason ? { reason } : {}) });
 }
 
+/** A signed transfer Boat failed on its side is an outage there, like any other Boat call. */
+function transferError(direction: "upload" | "download", status: number): Error {
+  const message = `Boat file ${direction} failed (HTTP ${status})`;
+  return status >= 500 ? new SandboxUnresponsiveError(message) : new Error(message);
+}
+
 /** Boat deletes a stopped sandbox's data after 14 days but keeps the record; it cannot resume. */
 /** Named so the shared `isSandboxGoneError` lets callers replace it from its last checkpoint. */
 function boatSandboxGone(sandboxId: string, cause?: unknown): Error {
@@ -1316,13 +1415,17 @@ function boatSandboxGone(sandboxId: string, cause?: unknown): Error {
 }
 
 /** Turns raw SDK failures into actionable errors, rate limits, and gone sandboxes. */
-function boatClient(api: BoatSandboxSdk, apiKey: string): BoatSandboxSdk {
-  const get = wrapBoatCall(api.get.bind(api), apiKey, true);
+function boatClient(api: BoatSandboxSdk, apiKey: string, gate: BoatRequestGate): BoatSandboxSdk {
+  const boatCall = <Args extends unknown[], Result>(
+    call: (...args: Args) => Promise<Result>,
+    idempotent = false,
+  ) => wrapBoatCall(call, apiKey, idempotent, gate);
+  const get = boatCall(api.get.bind(api), true);
   const sandboxCall = <Args extends [{ sandboxId: string }, ...unknown[]], Result>(
     call: (...args: Args) => Promise<Result>,
     idempotent = false,
   ) => {
-    const wrapped = wrapBoatCall(call, apiKey, idempotent);
+    const wrapped = boatCall(call, idempotent);
     return async (...args: Args): Promise<Result> => {
       try {
         return await wrapped(...args);
@@ -1374,25 +1477,29 @@ function boatClient(api: BoatSandboxSdk, apiKey: string): BoatSandboxSdk {
   // Reads, URL grants, TTL updates, and whole-file writes are safe to send twice.
   return {
     artifactRaw: sandboxCall(api.artifactRaw.bind(api), true),
+    attachCommandRaw: sandboxCall(api.attachCommandRaw.bind(api), true),
     command: sandboxCall(api.command.bind(api)),
     commandStatus: sandboxCall(api.commandStatus.bind(api), true),
-    create: startCall("create", wrapBoatCall(api.create.bind(api), apiKey)),
+    create: startCall("create", boatCall(api.create.bind(api))),
     createDownloadUrl: sandboxCall(api.createDownloadUrl.bind(api), true),
     createUploadUrl: sandboxCall(api.createUploadUrl.bind(api), true),
     get: sandboxCall(api.get.bind(api), true),
-    getSavedSnapshot: wrapBoatCall(api.getSavedSnapshot.bind(api), apiKey, true),
+    getSavedSnapshot: boatCall(api.getSavedSnapshot.bind(api), true),
     hostPort: sandboxCall(api.hostPort.bind(api), true),
     recover: startCall("recover", sandboxCall(api.recover.bind(api))),
-    resume: startCall("resume", sandboxCall(api.resume.bind(api))),
-    saveSavedSnapshot: wrapBoatCall(api.saveSavedSnapshot.bind(api), apiKey),
+    resume: startCall("resume", sandboxCall(api.resume.bind(api), true)),
+    saveSavedSnapshot: boatCall(api.saveSavedSnapshot.bind(api)),
     stop: sandboxCall(api.stop.bind(api)),
     update: sandboxCall(api.update.bind(api), true),
     writeFile: sandboxCall(api.writeFile.bind(api), true),
-    deleteSandbox: api.deleteSandbox.bind(api),
+    deleteSandbox: boatCall(api.deleteSandbox.bind(api)),
   };
 }
 
-function createBoatSdk(config: { apiKey: string; apiUrl?: string }): BoatSandboxSdk {
+function createBoatSdk(
+  config: { apiKey: string; apiUrl?: string },
+  gate: BoatRequestGate,
+): BoatSandboxSdk {
   const apiUrl = (config.apiUrl ?? BOAT_API_BASE).replace(/\/$/, "");
   const api = new BoatApi(
     new Configuration({
@@ -1408,6 +1515,7 @@ function createBoatSdk(config: { apiKey: string; apiUrl?: string }): BoatSandbox
       const headers = { Authorization: `Bearer ${config.apiKey}` };
       const signal = AbortSignal.timeout(BOAT_DELETE_TIMEOUT_MS);
       try {
+        await withAbort(gate.wait(signal), signal);
         const response = await fetch(url, {
           method: "DELETE",
           headers: {
@@ -1420,13 +1528,14 @@ function createBoatSdk(config: { apiKey: string; apiUrl?: string }): BoatSandbox
         if (!response.ok) {
           throw await boatResponseError(response, config.apiKey, signal);
         }
-        while (!signal.aborted) {
+        for (let pause = 500; !signal.aborted; pause = nextPoll(pause)) {
+          await withAbort(gate.wait(signal), signal);
           const status = await fetch(url, { headers, signal });
           if (status.status === 404) return;
           if (!status.ok) {
             throw await boatResponseError(status, config.apiKey, signal);
           }
-          await withAbort(delay(500), signal);
+          await withAbort(delay(pause), signal);
         }
       } catch (error) {
         if (!signal.aborted || error !== signal.reason) throw error;
@@ -1434,6 +1543,20 @@ function createBoatSdk(config: { apiKey: string; apiUrl?: string }): BoatSandbox
       throw new Error(`Boat ${sandboxId} was not deleted within 60 seconds`);
     },
   });
+}
+
+/** The end of `text` within the byte budget a status poll reads, never splitting a character. */
+function utf8Tail(text: string): string {
+  if (text.length * 3 <= BOAT_COMMAND_TAIL_BYTES) return text;
+  const bytes = Buffer.from(text);
+  if (bytes.length <= BOAT_COMMAND_TAIL_BYTES) return text;
+  let start = bytes.length - BOAT_COMMAND_TAIL_BYTES;
+  while (start < bytes.length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
+  return bytes.subarray(start).toString();
+}
+
+function nextPoll(pause: number, max = BOAT_POLL_MAX_MS): number {
+  return Math.min(pause * 2, max);
 }
 
 async function sandboxMissing(
@@ -1612,9 +1735,6 @@ export function archiveBoatWorkspaceCommand(
   options: { limits?: WorkspaceExportLimits; workspace?: string } = {},
 ): string {
   const { limits, workspace = BOAT_WORKSPACE } = options;
-  const names = (set: ReadonlySet<string>) =>
-    [...set].map((name) => `-name ${shellQuote(name)}`).join(" -o ");
-  const profiles = shellQuote(`./${path.posix.relative(BOAT_WORKSPACE, BOAT_BROWSER_PROFILES)}/*`);
   const tolerated = BOAT_ARCHIVE_TOLERATED_ERRORS.map(
     (error) => `-e ${shellQuote(`${error}$`)}`,
   ).join(" ");
@@ -1628,8 +1748,8 @@ export function archiveBoatWorkspaceCommand(
     // Names start with `./`, so tar never reads one as an option.
     "(",
     boatListingWalk(
-      // Skipped browser state is neither counted toward the limits nor read.
-      `. -mindepth 1 \\( -type d -path ${profiles} \\( ${names(SKIPPED_BROWSER_PROFILE_DIRECTORIES)} \\) -prune \\) -o \\( -type f -path ${profiles} \\( ${names(SKIPPED_BROWSER_PROFILE_FILES)} \\) \\) -o -type f -fprintf "$archive.sizes" '%s\\n'`,
+      // Excluded home content is neither counted toward the limits nor read.
+      `. ${workspaceSaveFindExpression()} -fprintf "$archive.sizes" '%s\\n'`,
       [],
       "%p\\0",
     ),

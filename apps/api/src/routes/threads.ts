@@ -2,6 +2,7 @@ import { runContinueJob, runJobKey } from "@cortexai-agent-hub/adapter-kit";
 import { settleCallRequest } from "@cortexai-agent-hub/adapters";
 import type { ProductEvent } from "@cortexai-agent-hub/contracts";
 import {
+  AttachmentValidationError,
   CALL_CLIENT_NONCE_PREFIX,
   callClientNonce,
   MODEL_REQUIRED_SEND_ERROR,
@@ -49,7 +50,6 @@ import {
   THREAD_MESSAGE_PAGE_SIZE,
 } from "./shared.js";
 
-/** The card is closed by a marker; the run that follows finishes whatever the call left open. */
 /** Deterministic nonce for a call's marker message. The unique (threadId, clientNonce)
  * index makes it the hang-up idempotency key, and the "call:" prefix lets clients derive
  * the marker's callId. User turns carry a uuid suffix, so they never collide. */
@@ -57,11 +57,12 @@ export function callMarkerClientNonce(callId: string): string {
   return `${CALL_CLIENT_NONCE_PREFIX}${callId}:marker`;
 }
 
+/** The card is closed by a marker; the run that follows finishes whatever the call left open. */
 const HANG_UP_PROMPT =
   "The voice call just ended because the user hung up. First call end_call with a short title for the call (leave farewell empty). Then, if anything the user asked for during the call is still unfinished, complete it now as a normal chat reply with full formatting. If nothing is pending, reply with one short sentence.";
 
 export function threadsRoutes(ctx: RouterContext) {
-  const { deps, authed, callsEnabled } = ctx;
+  const { deps, authed, callsEnabled, codexCatalog } = ctx;
   return {
     threads: {
       head: authed.threads.head.handler(async ({ context, input }) => {
@@ -166,11 +167,13 @@ export function threadsRoutes(ctx: RouterContext) {
         return sendThreadMessage(
           {
             ...deps,
+            maxAttachmentsPerMessage: deps.env.maxAttachmentsPerMessage,
             imageAdmission: confirmingImages
               ? {
                   secrets: deps.secrets,
                   deployment,
                   hostedProvider: funding?.funding === "credits" ? deployment?.provider : undefined,
+                  codexCatalog,
                 }
               : undefined,
           },
@@ -180,7 +183,12 @@ export function threadsRoutes(ctx: RouterContext) {
           target.kind === "bot"
             ? (runId) => releaseComputerControl(deps, context.actor, target.botId, "done", runId)
             : undefined,
-        );
+        ).catch((error: unknown) => {
+          if (error instanceof AttachmentValidationError) {
+            throw new ORPCError("BAD_REQUEST", { message: error.message });
+          }
+          throw error;
+        });
       }),
       react: authed.threads.react.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
@@ -526,7 +534,9 @@ export function threadsRoutes(ctx: RouterContext) {
             answeredByUserId: context.actor.userId,
             answer: input.answer,
             clientNonce: input.clientNonce,
+            fields: input.fields,
             username: input.username,
+            remember: input.remember,
             dismiss: input.dismiss,
           })
           .catch((error: unknown) => {

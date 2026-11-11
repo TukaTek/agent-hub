@@ -34,6 +34,15 @@ export const DEFAULT_DESKTOP_ENV: DesktopEnvironment = {
   bindHost: "127.0.0.1",
   preservePrimaryDisplay: true,
 };
+/** Rebuildable tool caches live outside the saved home. Tools create these under /tmp. */
+export const COMPUTER_CACHE_ENV = {
+  XDG_CACHE_HOME: "/tmp/cortexai-agent-hub-cache/xdg",
+  npm_config_cache: "/tmp/cortexai-agent-hub-cache/npm",
+  PIP_CACHE_DIR: "/tmp/cortexai-agent-hub-cache/pip",
+  PLAYWRIGHT_BROWSERS_PATH: "/tmp/cortexai-agent-hub-cache/ms-playwright",
+  UV_CACHE_DIR: "/tmp/cortexai-agent-hub-cache/uv",
+};
+
 function gatewayHost(host = "127.0.0.1") {
   if (host !== "localhost" && host !== "::" && !isIPv4(host))
     throw new Error("invalid screen gateway bind host");

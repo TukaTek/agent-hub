@@ -499,6 +499,7 @@ export function useModelSettings(onClose: () => void, scope: SettingsScope) {
       selected.provider,
       () => rpc.models.credentials(),
       selected.id,
+      credentialIdRef.current,
     );
     if (!preflightStillCurrent(revision)) return;
     const result = await runModelConnectionPreflight({

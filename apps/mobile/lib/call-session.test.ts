@@ -6,6 +6,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallClip, CallDeps, CallEnded, DictationHandlers } from "./call-session";
 import {
+  ExpectedTurnFailure,
   endCall,
   getSnapshot,
   setCallProviderTranscribe,
@@ -16,11 +17,26 @@ import {
 import type { SpeechRecognizer } from "./dictation";
 import { ENDPOINT_SILENCE_MS, setSpeechRecognizer, stop as stopDictation } from "./dictation";
 import { activateUiLocale, getActiveUiLocale } from "./i18n";
+import { reportMobileError } from "./monitoring";
 import type { UiLocale } from "./ui-locale";
 
+const device = vi.hoisted(() => ({ languageTag: "en-US", os: "ios" }));
+
 vi.mock("./monitoring", () => ({ reportMobileError: vi.fn() }));
+vi.mock("expo-localization", () => ({ getLocales: () => [{ languageTag: device.languageTag }] }));
+vi.mock("react-native", () => ({
+  Platform: {
+    get OS() {
+      return device.os;
+    },
+  },
+}));
 vi.mock("expo-file-system", () => ({ File: class {}, Paths: {} }));
-vi.mock("./voice", () => ({ speakText: vi.fn(), stopSpeaking: vi.fn() }));
+vi.mock("./voice", () => ({
+  createSpeechOwner: () => Symbol("SpeechOwner"),
+  speakText: vi.fn(),
+  stopSpeaking: vi.fn(),
+}));
 vi.mock("./call-sounds", () => ({ playCallCue: vi.fn() }));
 vi.mock("./api", () => ({
   applyMobileThreadEvent: vi.fn(),
@@ -147,6 +163,27 @@ describe("mobile call session", () => {
       expect.stringMatching(/^call:/),
     );
     expect(getSnapshot()).toMatchObject({ phase: "thinking", heard: "how is the deploy going" });
+  });
+
+  it("reports a failed turn unless the caption already explains it", async () => {
+    vi.mocked(reportMobileError).mockClear();
+    const fake = fakes();
+    const unexpected = new Error("send crashed");
+    fake.send.mockRejectedValueOnce(unexpected);
+    fake.deps.transcribe = vi
+      .fn<CallDeps["transcribe"]>()
+      .mockRejectedValueOnce(new ExpectedTurnFailure("Could not transcribe that."))
+      .mockImplementation(async (clip) => clip.base64);
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    fake.say("hello");
+    await flush();
+    expect(fake.deps.transcribe).toHaveBeenCalledTimes(1);
+    expect(reportMobileError).not.toHaveBeenCalled();
+
+    fake.say("hello again");
+    await flush();
+    expect(reportMobileError).toHaveBeenCalledWith(unexpected, "voice.turn");
   });
 
   it("mutes after a consent refusal instead of reopening the microphone or resending", async () => {
@@ -580,6 +617,24 @@ describe("mobile call session", () => {
     expect(fake.closeCall).toHaveBeenCalledWith("bot-1", callId);
   });
 
+  it("stops the playing reply when the caller hangs up", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    fake.say("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+    expect(getSnapshot()?.phase).toBe("speaking");
+
+    endCall();
+    expect(fake.stopSpeaking).toHaveBeenCalledOnce();
+    expect(getSnapshot()).toBeNull();
+
+    // Hanging up again with no call active must not stop speech a second time.
+    endCall();
+    expect(fake.stopSpeaking).toHaveBeenCalledOnce();
+  });
+
   it("waits for an in-flight spoken turn before closing the call server-side", async () => {
     const fake = fakes();
     const pendingSend = deferred<string | undefined>();
@@ -804,6 +859,9 @@ describe("mobile call session", () => {
     await flush();
     fake.replyWith("message-1", "It is green.");
 
+    // The replacement startCall hangs the old call up, which stops its speech. Keep that
+    // one Stop from settling the reply, so the refusal below reaches the stale catch.
+    fake.stopSpeaking.mockImplementationOnce(() => undefined);
     const secondCallId = startCall(
       { botId: "bot-1", botName: "Ada", transcribe: false },
       fake.deps,
@@ -818,6 +876,22 @@ describe("mobile call session", () => {
 });
 
 describe("mobile call speech locales", () => {
+  /** Part of what iOS recognizes, which starts only for a tag it lists exactly. */
+  const IOS_LOCALES = [
+    "de-AT",
+    "de-DE",
+    "en-GB",
+    "en-US",
+    "es-419",
+    "es-CL",
+    "es-ES",
+    "es-MX",
+    "ja-JP",
+    "nl-NL",
+    "ru-RU",
+    "zh-CN",
+    "zh-TW",
+  ];
   let previousLocale: UiLocale;
 
   beforeEach(() => {
@@ -830,18 +904,31 @@ describe("mobile call speech locales", () => {
     stopDictation();
     setSpeechRecognizer(null);
     activateUiLocale(previousLocale);
+    device.languageTag = "en-US";
+    device.os = "ios";
     vi.useRealTimers();
   });
 
   it.each([
-    ["en", "en-US"],
-    ["de", "de-DE"],
-    ["ja", "ja-JP"],
-    ["ru", "ru-RU"],
-    ["zh-CN", "zh-CN"],
+    ["en", "ios", "en-US", "en-US"],
+    ["de", "ios", "en-US", "de-DE"],
+    ["ja", "ios", "en-US", "ja-JP"],
+    ["ru", "ios", "en-US", "ru-RU"],
+    ["zh-CN", "ios", "en-US", "zh-CN"],
+    // The app ships no Spanish, so a Spanish phone runs it in English.
+    ["en", "ios", "es-CL", "es-CL"],
+    ["en", "ios", "es-ES", "es-ES"],
+    ["en", "ios", "es-419", "es-MX"],
+    ["en", "android", "it-IT", "it-IT"],
+    ["en", "ios", "es-AR", "es-MX"],
+    ["en", "android", "es-AR", "es-AR"],
+    ["de", "ios", "de-AT", "de-AT"],
+    ["en", "ios", "ru-RU", "ru-RU"],
   ] as const)(
-    "recognizes a %s call with %s and sends its live transcript after silence",
-    async (locale, lang) => {
+    "recognizes a %s call on an %s %s phone with %s and sends its live transcript after silence",
+    async (locale, os, phone, lang) => {
+      device.os = os;
+      device.languageTag = phone;
       const listeners = new Map<string, (payload: never) => void>();
       const start = vi.fn();
       const recognizer: SpeechRecognizer = {
@@ -850,6 +937,7 @@ describe("mobile call speech locales", () => {
         abort: vi.fn(),
         isRecognitionAvailable: () => true,
         requestPermissionsAsync: async () => ({ granted: true }),
+        getSupportedLocales: async () => ({ locales: IOS_LOCALES }),
         addListener: (event, listener) => {
           listeners.set(event, listener as (payload: never) => void);
           return { remove: () => void listeners.delete(event) };
@@ -907,6 +995,7 @@ describe("mobile call recognition recovery", () => {
       abort: vi.fn(),
       isRecognitionAvailable: () => true,
       requestPermissionsAsync: async () => ({ granted: true }),
+      getSupportedLocales: async () => ({ locales: [] }),
       addListener: (event, listener) => {
         listeners.set(event, listener as (payload: never) => void);
         return { remove: () => void listeners.delete(event) };
@@ -1134,6 +1223,38 @@ describe("mobile call session on a timer", () => {
       "actually hang on",
       expect.stringMatching(/^call:/),
     );
+  });
+
+  it("keeps the bot's farewell when the barged-out reply settles late", async () => {
+    const fake = fakes({ onDevice: true });
+    const id = startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await tick();
+    fake.hear("status please");
+    await tick();
+    fake.replyWith("message-1", "It is green.");
+    await tick();
+    expect(fake.speeches).toHaveLength(1);
+
+    // Model hosted preparation: the stop for the barge-in does not settle the speech.
+    fake.stopSpeaking.mockImplementationOnce(() => undefined);
+    fake.interim("actually hang on");
+    await tick(INTERIM_BARGE_IN_MS);
+    expect(fake.stopSpeaking).toHaveBeenCalledOnce();
+    expect(getSnapshot()?.phase).toBe("listening");
+
+    fake.endedCall(id, "Talk soon.");
+    await tick();
+    expect(fake.spoken).toEqual(["It is green.", "Talk soon."]);
+
+    // The barged-out reply settles after the farewell started: it must not hang up.
+    fake.speeches[0]?.resolve();
+    await tick();
+    expect(getSnapshot()?.phase).toBe("speaking");
+    expect(fake.stopSpeaking).toHaveBeenCalledOnce();
+
+    fake.speeches[1]?.resolve();
+    await tick();
+    expect(getSnapshot()).toBeNull();
   });
 
   it("retries the first snapshot load instead of losing the feed", async () => {

@@ -1,5 +1,3 @@
-/** Whether plain Enter sends the composer message, with a device default and saved override. */
-
 export const COMPOSER_ENTER_TO_SEND_STORAGE_KEY = "cortexai-agent-hub.composerEnterToSend";
 
 type EnterToSendStorage = Pick<Storage, "getItem" | "setItem">;

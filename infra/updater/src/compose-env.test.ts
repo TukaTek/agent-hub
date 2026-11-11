@@ -87,8 +87,7 @@ const INDIRECT = {
   shared: [
     // core/secrets-guard.ts resolves these by name.
     "SANDBOX_SUPERVISOR_TOKEN",
-    // adapters/auto-review.ts and pi-local-provider.ts read these through small helpers.
-    "CORTEXAI_AGENT_HUB_AUTO_REVIEW",
+    // pi-local-provider.ts reads these through a small helper.
     "CORTEXAI_AGENT_HUB_LOCAL_CONTEXT_WINDOW",
     "CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS",
     // The OTLP exporter reads its standard settings itself.

@@ -1,4 +1,5 @@
 import type { McpServerHealth } from "@cortexai-agent-hub/contracts";
+import { MCP_OAUTH_CLIENT_REQUIRED } from "@cortexai-agent-hub/contracts";
 import { Disclosure } from "@cortexai-agent-hub/ui-web";
 import { Plural, Trans } from "@lingui/react/macro";
 import { CircleCheck, CircleDashed, LoaderCircle, TriangleAlert } from "lucide-react";
@@ -85,7 +86,11 @@ export function McpServerHealthLine({
         <p role="status" className="flex items-center gap-1.5 text-xs font-medium text-destructive">
           <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="flex flex-wrap gap-x-2">
-            <Trans>Not working</Trans>
+            {health.code === MCP_OAUTH_CLIENT_REQUIRED ? (
+              <Trans>Needs an OAuth client ID</Trans>
+            ) : (
+              <Trans>Not working</Trans>
+            )}
             {checkedLabel}
           </span>
         </p>

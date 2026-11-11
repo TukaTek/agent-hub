@@ -164,6 +164,7 @@ async function failRun(scenario: Scenario) {
       ),
     },
     secret: {
+      findMany: vi.fn(async () => []),
       findFirst: vi.fn(async () =>
         scenario.personalKey ? { id: "personal-secret", ciphertext: "fixture-ciphertext" } : null,
       ),
@@ -187,7 +188,6 @@ async function failRun(scenario: Scenario) {
       })),
     },
     taughtSkill: { findMany: vi.fn(async () => []) },
-    agentSecret: { findMany: vi.fn(async () => []) },
     vaultCredential: { findMany: vi.fn(async () => []) },
     agentSkill: { findMany: vi.fn(async () => []) },
     scratchpadItem: { findMany: vi.fn(async () => []) },

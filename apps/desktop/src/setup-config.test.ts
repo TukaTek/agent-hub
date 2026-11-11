@@ -15,6 +15,7 @@ import {
   resolveStartupTarget,
   safeExternalUrl,
   serializeSetup,
+  serverHeadersFor,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
 } from "./setup-config.js";
@@ -147,6 +148,48 @@ describe("saved setup", () => {
 
   it("offers no hosted Cloud address until one exists", () => {
     expect(CORTEXAI_AGENT_HUB_CLOUD_URL).toBeNull();
+  });
+});
+
+describe("server request headers", () => {
+  const access = { "CF-Access-Client-Id": "id.access", "CF-Access-Client-Secret": "secret" };
+  const setup = {
+    mode: "existing",
+    serverUrl: "https://cortexai-agent-hub.example.com",
+    headers: access,
+  } as const;
+
+  it("saves headers for an existing server and drops an empty set", () => {
+    expect(parseStoredSetup(serializeSetup(setup))).toEqual(setup);
+    expect(
+      parseSetupInput({
+        mode: "existing",
+        serverUrl: "https://cortexai-agent-hub.example.com",
+        headers: {},
+      }),
+    ).toEqual({ mode: "existing", serverUrl: "https://cortexai-agent-hub.example.com" });
+  });
+
+  it("refuses headers CortexAI Agent Hub owns and headers for a new local instance", () => {
+    expect(parseSetupInput({ ...setup, headers: { Cookie: "a=b" } })).toBeNull();
+    expect(parseSetupInput({ ...setup, headers: "x: y" })).toBeNull();
+    expect(
+      parseSetupInput({ mode: "new", serverUrl: "http://127.0.0.1:5173", headers: access }),
+    ).toBeNull();
+  });
+
+  it("adds them only to the saved server, websockets included", () => {
+    expect(serverHeadersFor("https://cortexai-agent-hub.example.com/rpc/me", setup)).toEqual(
+      access,
+    );
+    expect(
+      serverHeadersFor("wss://cortexai-agent-hub.example.com/novnc/websockify", setup),
+    ).toEqual(access);
+    expect(serverHeadersFor("https://cortexai-agent-hub.example.com.evil/rpc", setup)).toEqual({});
+    expect(serverHeadersFor("http://cortexai-agent-hub.example.com/rpc", setup)).toEqual({});
+    expect(serverHeadersFor("https://accounts.example.com/", setup)).toEqual({});
+    expect(serverHeadersFor("not a url", setup)).toEqual({});
+    expect(serverHeadersFor("https://cortexai-agent-hub.example.com/", null)).toEqual({});
   });
 });
 

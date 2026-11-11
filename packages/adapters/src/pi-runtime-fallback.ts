@@ -1,13 +1,16 @@
 import type { AgentRunRequest, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
 import {
+  isModelCredentialRejected,
   isRetryableProviderUnavailable,
   isTransientModelError,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { ModelBackupOutcome } from "@cortexai-agent-hub/core";
 import {
   abortableDelay,
+  MODEL_CONTEXT_TOO_SMALL_ERROR,
   MODEL_OUTPUT_CUT_ERROR,
   MODEL_OUTPUT_LIMIT_ERROR,
+  MODEL_REQUEST_LIMIT_ERROR,
 } from "@cortexai-agent-hub/core";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type {
@@ -16,6 +19,7 @@ import type {
   Context,
   ModelsSimpleStreamOptions,
   ModelThinkingLevel,
+  ThinkingLevelMap,
   TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -42,6 +46,7 @@ import {
 } from "./pi-runtime-limits.js";
 import type { RuntimeModelTarget } from "./pi-runtime-models.js";
 import {
+  acceptedReasoningEfforts,
   cardOutputCeiling,
   modelForCompletion,
   modelTargetKey,
@@ -52,6 +57,7 @@ import {
 } from "./pi-runtime-models.js";
 import type { StreamStallReason } from "./pi-runtime-stream.js";
 import { MODEL_STREAM_IDLE_TIMEOUT_MESSAGE, streamStallReason } from "./pi-runtime-stream.js";
+import { reportedContextWindow } from "./reported-context-window.js";
 import {
   isThinkingSignatureMismatch,
   withoutThinkingBlocks,
@@ -91,6 +97,8 @@ export interface FallbackStreamState {
   dropThinkingBlocks?: boolean;
   /** Output reservations reduced by a rejected request, scoped to this run and model. */
   outputCaps?: Map<string, number>;
+  /** Thinking levels narrowed to the reasoning efforts an endpoint accepts, scoped to this run and connection. */
+  thinkingLevelMaps?: Map<string, ThinkingLevelMap>;
   /**
    * Messages written before the last switch to a backup model. Their thinking is bound to the
    * model and transcript it was written for, and the backup's policy starts with a rebuild that
@@ -281,7 +289,6 @@ function fallbackIncompatibility(
   candidate: RuntimeModelTarget,
   context: TranscriptContext,
   options: ModelsSimpleStreamOptions | undefined,
-  requestedThinkingLevel: AgentRunRequest["model"]["thinkingLevel"],
   tools: readonly ConnectorTool[],
 ): string | undefined {
   // The backup's own context policy prunes on its first call; judge what it would send. Too
@@ -323,12 +330,10 @@ function fallbackIncompatibility(
   ) {
     return "The request exceeds the backup model's image limit.";
   }
-  const reasoningLevel = options?.reasoning ?? requestedThinkingLevel;
-  const requiresReasoning =
-    (reasoningLevel !== undefined && reasoningLevel !== null && reasoningLevel !== "off") ||
-    (candidate.config.thinkingLevel !== undefined &&
-      candidate.config.thinkingLevel !== null &&
-      candidate.config.thinkingLevel !== "off");
+  // The primary's thinking level does not count: a backup without reasoning runs with thinking off.
+  const requiresReasoning = Boolean(
+    candidate.config.thinkingLevel && candidate.config.thinkingLevel !== "off",
+  );
   return requiresReasoning && !candidate.model.reasoning
     ? "The backup model does not support the requested thinking level."
     : undefined;
@@ -451,7 +456,6 @@ export function fallbackAwareModelStream(
           candidate,
           requestContext(true),
           options,
-          state.request.model.thinkingLevel,
           state.request.tools,
         );
         if (incompatibility) {
@@ -510,8 +514,13 @@ export function fallbackAwareModelStream(
         output.end(failure.error);
         return;
       }
-      const target = state.getActive();
-      const targetKey = JSON.stringify([target.config.provider, target.config.id]);
+      const active = state.getActive();
+      const targetKey = JSON.stringify([active.config.provider, active.config.id]);
+      const connectionKey = modelTargetKey(active.config);
+      const thinkingLevelMap = state.thinkingLevelMaps?.get(connectionKey);
+      const target = thinkingLevelMap
+        ? { ...active, model: { ...active.model, thinkingLevelMap } }
+        : active;
       const outputCap = state.outputCaps?.get(targetKey);
       const attemptOptions = {
         ...options,
@@ -614,6 +623,7 @@ export function fallbackAwareModelStream(
               break;
             }
             let terminalEvent = event;
+            let requestLimitTooSmall = false;
             const hasTerminalVisibleOutput = assistantHasVisibleOutput(event.error);
             if (
               !stall &&
@@ -624,24 +634,52 @@ export function fallbackAwareModelStream(
               !sizingFailure &&
               state.isProviderFailure(event.error)
             ) {
-              const contextWindow = groqRequestContextWindow(
+              const requestWindow = groqRequestContextWindow(
                 target.config.provider,
                 event.error.errorMessage,
                 target.model.contextWindow,
               );
+              const contextWindow =
+                requestWindow ??
+                reportedContextWindow(
+                  target.config.provider,
+                  event.error.errorMessage,
+                  target.model.contextWindow,
+                );
               if (contextWindow !== undefined && Date.now() - startedAt < timeoutMs) {
-                state.onContextLimit(contextWindow);
-                getLogger().info("model.context_limit.reduced", {
-                  runId: state.request.runId,
-                  provider: target.config.provider,
-                  model: target.config.id,
-                  contextWindow,
+                const requiredContext = requestContext();
+                const minimumInput = estimateModelContextTokens({
+                  ...requiredContext,
+                  messages: requiredContext.messages.filter((message) => message.role === "system"),
                 });
-                log("provider-retried", { error: event.error.errorMessage });
-                sizingFailure = event;
-                buffered = [];
-                restart = true;
-                break;
+                const outputReserve = effectiveOutputReserve(contextWindow, sentMaxTokens);
+                requestLimitTooSmall = minimumInput >= contextWindow - outputReserve;
+                getLogger().info(
+                  requestLimitTooSmall
+                    ? "model.context_limit.refused"
+                    : "model.context_limit.reduced",
+                  {
+                    runId: state.request.runId,
+                    provider: target.config.provider,
+                    model: target.config.id,
+                    contextWindow,
+                  },
+                );
+                if (requestLimitTooSmall) {
+                  const limitError =
+                    requestWindow === undefined
+                      ? MODEL_CONTEXT_TOO_SMALL_ERROR
+                      : MODEL_REQUEST_LIMIT_ERROR;
+                  terminalEvent = { ...event, error: { ...event.error, errorMessage: limitError } };
+                  recordFailure(target, limitError);
+                } else {
+                  state.onContextLimit(contextWindow);
+                  log("provider-retried", { error: event.error.errorMessage });
+                  sizingFailure = event;
+                  buffered = [];
+                  restart = true;
+                  break;
+                }
               }
               const affordable = affordableOpenRouterOutput(
                 target.config.provider,
@@ -664,6 +702,21 @@ export function fallbackAwareModelStream(
                 restart = true;
                 break;
               }
+            }
+            const narrowedThinking =
+              !sawVisibleOutput &&
+              !hasTerminalVisibleOutput &&
+              event.reason === "error" &&
+              !signalAborted() &&
+              !thinkingLevelMap
+                ? acceptedReasoningEfforts(target.model, event.error.errorMessage)
+                : undefined;
+            if (narrowedThinking) {
+              state.thinkingLevelMaps ??= new Map();
+              state.thinkingLevelMaps.set(connectionKey, narrowedThinking);
+              buffered = [];
+              restart = true;
+              break;
             }
             if (
               !stall &&
@@ -688,11 +741,13 @@ export function fallbackAwareModelStream(
               event.reason === "error" &&
               !signalAborted() &&
               state.isProviderFailure(event.error) &&
-              isRetryableProviderUnavailable(event.error)
+              (requestLimitTooSmall ||
+                isRetryableProviderUnavailable(event.error) ||
+                isModelCredentialRejected(event.error))
             ) {
               state.primaryFailure ??= sanitizeProviderError(
                 target.config.provider,
-                event.error.errorMessage ?? "Model request failed.",
+                terminalEvent.error.errorMessage ?? "Model request failed.",
               );
               const switched = await switchTo(target);
               if (switched === "aborted") return;
@@ -702,8 +757,8 @@ export function fallbackAwareModelStream(
                 restart = true;
                 break;
               }
-              // An exhausted quota or usage window can move to a backup but will not clear
-              // within the retry budget, so only transient failures retry the same model.
+              // An exhausted quota, usage window or rejected credential can move to a backup
+              // but will not clear within the retry budget, so only transient failures retry the same model.
               if (isTransientModelError(event.error)) {
                 firstRetryableError ??= event;
                 const idle = event.error.errorMessage === MODEL_STREAM_IDLE_TIMEOUT_MESSAGE;

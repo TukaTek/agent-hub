@@ -20,15 +20,27 @@ describe("rebrand", () => {
     [`com.${old}.app`, "com.tukatek.cortexai.agenthub"],
     [`user@${old}.test`, "user@cortexai-agent-hub.test"],
     [`https://github.com/elie222/${old}/releases`, "https://github.com/TukaTek/agent-hub/releases"],
-    ['className="rk-scroll max-h-25"', 'className="cortexai-agent-hub-scroll max-h-25"'],
-    [".rk-chat-markdown-copy {", ".cortexai-agent-hub-chat-markdown-copy {"],
-    ["width: var(--rk-diagram-width);", "width: var(--cortexai-agent-hub-diagram-width);"],
-    ['markOnce("rk:renderer:shell-ready")', 'markOnce("cortexai-agent-hub:renderer:shell-ready")'],
     [
-      'sessionStorage.getItem("rk:preload-recovery")',
+      'className="cortexai-agent-hub-scroll max-h-25"',
+      'className="cortexai-agent-hub-scroll max-h-25"',
+    ],
+    [".cortexai-agent-hub-chat-markdown-copy {", ".cortexai-agent-hub-chat-markdown-copy {"],
+    [
+      "width: var(--cortexai-agent-hub-diagram-width);",
+      "width: var(--cortexai-agent-hub-diagram-width);",
+    ],
+    [
+      'markOnce("cortexai-agent-hub:renderer:shell-ready")',
+      'markOnce("cortexai-agent-hub:renderer:shell-ready")',
+    ],
+    [
+      'sessionStorage.getItem("cortexai-agent-hub:preload-recovery")',
       'sessionStorage.getItem("cortexai-agent-hub:preload-recovery")',
     ],
-    ['mark("rk:main:window-shown")', 'mark("cortexai-agent-hub:main:window-shown")'],
+    [
+      'mark("cortexai-agent-hub:main:window-shown")',
+      'mark("cortexai-agent-hub:main:window-shown")',
+    ],
     [
       `marker.replace("${old}", "[${old[0]}]${old.slice(1)}")`,
       'marker.replace("cortexai-agent-hub", "[c]ortexai-agent-hub")',
@@ -79,6 +91,12 @@ describe("rebrandPath", () => {
       "R.drawable.ic_cortexai_agent_hub_notification",
     );
     expect(rebrand(`${old}_config`).text).toBe("cortexai-agent-hub_config");
+    expect(rebrand(`metadata?.${old}_credit_cents`).text).toBe(
+      "metadata?.cortexai_agent_hub_credit_cents",
+    );
+    expect(rebrand(`{ ${old}_credit_cents: x, ${old}: "computer" }`).text).toBe(
+      '{ cortexai_agent_hub_credit_cents: x, "cortexai-agent-hub": "computer" }',
+    );
     expect(rebrand(`package com.${old}.notifications`).text).toBe(
       "package com.tukatek.cortexai.agenthub.notifications",
     );

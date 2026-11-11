@@ -1,5 +1,9 @@
 // Import just the classifier: monitoring loads before the app, ahead of the full core barrel.
-import { isAbandonedRequest, isConnectionFailure } from "@cortexai-agent-hub/core/user-error";
+import {
+  isAbandonedRequest,
+  isConnectionFailure,
+  isServerUnreachable,
+} from "@cortexai-agent-hub/core/user-error";
 import type { ClientOperation, MonitoringConfig } from "@cortexai-agent-hub/logging/monitoring";
 import {
   createClientErrorReporter,
@@ -40,9 +44,9 @@ export function reportClientError(
 
 /** Runs before the application imports, so module evaluation failures are captured too. */
 export function installEarlyErrorReporting(target: Window = window): void {
+  // An event without an error is a cross-origin script or a ResizeObserver loop: nothing to trace.
   const error = (event: ErrorEvent) => {
-    if (!sentry)
-      reportClientError(event.error ?? new Error("Application startup failed"), "react.render");
+    if (!sentry && event.error != null) reportClientError(event.error, "react.render");
   };
   const rejection = (event: PromiseRejectionEvent) => {
     if (!sentry) reportClientError(event.reason, "react.render");
@@ -142,10 +146,9 @@ async function loadSentry(fetchImpl: typeof fetch): Promise<typeof SentryReact |
         defaults.filter(
           (integration) => !["BrowserSession", "Breadcrumbs"].includes(integration.name),
         ),
-      // An uncaught timeout or cancellation still means the network, not the code, and a stale
-      // chunk the recovery reload is about to fix is not an error worth reporting.
+      // A stale chunk the recovery reload is about to fix is not an error worth reporting.
       beforeSend: (event, hint) =>
-        recoveringByReload() || isAbandonedRequest(hint?.originalException)
+        recoveringByReload() || isNotAppBug(hint?.originalException)
           ? null
           : sanitizeMonitoringEvent(event, userId),
     });
@@ -154,6 +157,20 @@ async function loadSentry(fetchImpl: typeof fetch): Promise<typeof SentryReact |
     return undefined;
   }
   return Sentry;
+}
+
+/** Scripts that browsers and extensions inject, and page translation rewriting React's DOM. */
+const INJECTED =
+  /window\.(?:__firefox__|ethereum)\b|Failed to execute '(?:removeChild|insertBefore)' on 'Node'/;
+
+/**
+ * The network rather than the code (offline, a timeout or cancellation, a gateway answer while the
+ * server restarts), or someone else's code: this app only throws errors, never bare objects.
+ */
+function isNotAppBug(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && !(error instanceof Error)) return true;
+  if (isAbandonedRequest(error) || isServerUnreachable(error)) return true;
+  return error instanceof Error && INJECTED.test(error.message);
 }
 
 /**

@@ -3,12 +3,12 @@ import { QUEUE_HOLDING_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
   appendEventInTransaction,
+  availableInSpace,
   IsolationError,
   withTransactionRetry,
 } from "@cortexai-agent-hub/db";
 import { requireBotThread } from "./bot-thread.js";
 
-/** Dependencies for resolving pending MCP approval cards in a bot's threads. */
 export type McpApprovalDeps = {
   prisma: PrismaClient;
   events: ThreadEvents;
@@ -168,8 +168,6 @@ export async function resolveMcpApprovalCards<T>(
             ? (block: ApprovalBlock) => block.status !== "connected"
             : isOpen;
         const painted = await rewriteCards(tx, actor, threads, input, selectable);
-        // Only a card decision can lose to a dismissal that already committed.
-        // Settings and onboarding approve without a threadId and must still assign.
         const dismissalWon =
           input.threadId !== undefined &&
           painted.flipped === 0 &&
@@ -313,7 +311,7 @@ export async function queueMcpConnectedRun(
       select: { id: true },
     }),
     tx.mcpServer.findFirst({
-      where: { id: input.serverId, spaceId: actor.spaceId, userId: actor.userId },
+      where: { id: input.serverId, ...availableInSpace(actor) },
       select: { name: true },
     }),
   ]);

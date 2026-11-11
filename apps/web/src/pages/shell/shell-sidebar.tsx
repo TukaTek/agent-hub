@@ -12,6 +12,7 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { Search, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { InviteDialog } from "../../components/InviteDialog";
 import { PasskeyOffer } from "../../components/PasskeyOffer";
 import { SidebarFooter } from "../../components/SidebarFooter";
 import { useBilling } from "../../components/SubscriptionGate";
@@ -53,6 +54,7 @@ export function ShellSidebar({
   navLinks,
   openSettings,
   openIntegrations,
+  openSkills,
 }: {
   isMobile: boolean;
   mobileOpen: boolean;
@@ -77,6 +79,7 @@ export function ShellSidebar({
   navLinks: NavLink[];
   openSettings: (section: SettingsSection) => void;
   openIntegrations: () => void;
+  openSkills: () => void;
 }) {
   const { t } = useLingui();
   const {
@@ -176,7 +179,12 @@ export function ShellSidebar({
                 else setQuery(e.target.value);
               }}
               onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
+                if (
+                  event.key !== "Escape" ||
+                  event.nativeEvent.isComposing ||
+                  event.keyCode === 229
+                )
+                  return;
                 if (activityMode) {
                   setActivityFilters({ ...activityFilters, query: "" });
                   return;
@@ -252,6 +260,7 @@ export function ShellSidebar({
           navigate={navigate}
           openSettings={openSettings}
           openIntegrations={openIntegrations}
+          openSkills={openSkills}
         />
       </Sidebar>
     </>
@@ -268,6 +277,7 @@ function ShellSidebarFooter({
   navigate,
   openSettings,
   openIntegrations,
+  openSkills,
 }: {
   mini: boolean;
   logos: Array<{ name: string; logo?: string | null }>;
@@ -278,6 +288,7 @@ function ShellSidebarFooter({
   navigate: (path: string) => void;
   openSettings: (section: SettingsSection) => void;
   openIntegrations: () => void;
+  openSkills: () => void;
 }) {
   const { t, i18n } = useLingui();
   const { status: billing, showPlans } = useBilling();
@@ -288,6 +299,8 @@ function ShellSidebarFooter({
       ? billing.byokFreeUntil
       : null;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const referral = billing?.referral;
   const [logOutError, setLogOutError] = useState<string | null>(null);
   const { signingOut, logOut } = useSignOut(() => {
     clearSpaceSelection();
@@ -330,6 +343,10 @@ function ShellSidebarFooter({
           setMenuOpen(false);
           openIntegrations();
         }}
+        onSkills={() => {
+          setMenuOpen(false);
+          openSkills();
+        }}
         onBoard={
           ticketBoardEnabled
             ? () => {
@@ -358,6 +375,14 @@ function ShellSidebarFooter({
           setMenuOpen(false);
           openSettings("usage");
         }}
+        onInvite={
+          referral
+            ? () => {
+                setMenuOpen(false);
+                setInviteOpen(true);
+              }
+            : undefined
+        }
         onLogOut={() => {
           setLogOutError(null);
           void logOut();
@@ -365,6 +390,9 @@ function ShellSidebarFooter({
         signingOut={signingOut}
         logOutError={logOutError}
       />
+      {referral ? (
+        <InviteDialog referral={referral} open={inviteOpen} onOpenChange={setInviteOpen} />
+      ) : null}
     </>
   );
 }

@@ -136,7 +136,11 @@ export interface SandboxProvider {
    * choose between kinds at provision time implement it.
    */
   provisionKind?(): Promise<ComputerRef["kind"]>;
-  /** Read-only probe: true only when this exact reference is already running. */
+  /**
+   * Read-only probe that never starts or resumes anything. Resolves true only when the provider
+   * reports this exact reference running, and false only when it reports it not running or gone;
+   * throws when it cannot tell.
+   */
   isRunning?(computer: ComputerRef, context: AdapterContext): Promise<boolean>;
   /**
    * Read-only probe: true only when the provider already holds this reference stopped with its
@@ -455,6 +459,11 @@ export interface BillingProvider {
   createByokCheckout?(input: BillingByokCheckoutRequest): Promise<{ url: string }>;
   /** Ends every live own-key plan at its period end. */
   endByokPlans?(customerId: string): Promise<void>;
+  /**
+   * Credits the customer's account; future invoices draw it down before charging. Idempotent per
+   * `referenceId`, so a retry after an unknown outcome never credits twice.
+   */
+  grantBalanceCredit?(customerId: string, amountCents: number, referenceId: string): Promise<void>;
   describe(): AdapterDescriptor<{ trials: boolean; portal: boolean; modelCredits?: boolean }>;
   getPrice(): Promise<BillingPrice>;
   createCustomer(input: { email: string; organizationId: string }): Promise<{ customerId: string }>;
@@ -571,11 +580,8 @@ export interface WebProvider extends WebSearchProvider, WebFetchProvider {
 }
 
 /**
- * Provider-neutral page browser on the bot computer. Builtin browser_* tools
- * route here so backends (in-process page session, CDP against the computer's
- * Chrome, future adapters) can swap without changing tool names. Not a second
- * hosted browser product. Prefer this for web pages; use computer_act when the
- * page tool cannot operate or the task needs the desktop itself.
+ * Provider-neutral page browser on the bot computer, not a hosted browser product. Prefer it
+ * for web pages; use computer_act when the page tool cannot operate or the task needs the desktop.
  */
 export interface BrowserProvider {
   describe(): AdapterDescriptor<BrowserCapabilities>;
@@ -614,8 +620,8 @@ export interface CloudAgentProvider {
 }
 
 /**
- * Provider-neutral "is this tool call safe to auto-allow?" check. First used by
- * Auto Review; swap vendors without changing approval UX (pass → run, ask → card).
+ * Provider-neutral "is this tool call safe to auto-allow?" check. Swap vendors
+ * without changing approval UX (pass → run, ask → card).
  * Core runs with none configured and falls back to the LLM adapter.
  */
 export interface AutoReviewProvider {

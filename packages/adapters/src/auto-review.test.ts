@@ -4,7 +4,6 @@ import {
   autoReviewMinConfidence,
   autoReviewTimeoutMs,
   buildAutoReviewPrompt,
-  deploymentAutoReviewDefault,
   isAutoReviewCheckerConfigured,
   parseAutoReviewJudgeText,
   redactToolArgsForReview,
@@ -150,14 +149,6 @@ describe("isAutoReviewCheckerConfigured", () => {
         env: { CORTEXAI_AGENT_HUB_AUTO_REVIEW_PROVIDER: "scripted" },
       }),
     ).toBe(false);
-  });
-});
-
-describe("deploymentAutoReviewDefault", () => {
-  it("defaults off", () => {
-    expect(deploymentAutoReviewDefault({})).toBe(false);
-    expect(deploymentAutoReviewDefault({ CORTEXAI_AGENT_HUB_AUTO_REVIEW: "1" })).toBe(true);
-    expect(deploymentAutoReviewDefault({ CORTEXAI_AGENT_HUB_AUTO_REVIEW: "true" })).toBe(true);
   });
 });
 

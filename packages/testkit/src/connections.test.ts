@@ -10,12 +10,17 @@ import {
   ThirdPartyConnectorEmulator,
 } from "@cortexai-agent-hub/adapters";
 import type { createApp } from "@cortexai-agent-hub/api/app";
-import { getModelRole, runAsSystem, runAsTenant, updateModelRole } from "@cortexai-agent-hub/db";
+import {
+  appliedModelRole,
+  runAsSystem,
+  runAsTenant,
+  updateModelRole,
+} from "@cortexai-agent-hub/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sessionCookieHeader } from "./index.js";
 import { asSystem } from "./system-db.js";
 
-type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
+type App = { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
 type Actor = { spaceId: string; userId: string };
 
@@ -91,7 +96,7 @@ describeWithDatabase("Composio catalog reconciliation", () => {
     const replace = (actor: Actor, backups: typeof first) =>
       runAsTenant(actor, () => updateModelRole(handles.prisma, actor, "main", { backups }));
     const backups = async (actor: Actor) =>
-      (await runAsTenant(actor, () => getModelRole(handles.prisma, actor, "main"))).backups;
+      (await runAsTenant(actor, () => appliedModelRole(handles.prisma, actor, "main"))).backups;
     await replace(other, first);
     await Promise.all([replace(owner, first), replace(owner, second)]);
     expect([first, second]).toContainEqual(await backups(owner));
@@ -211,8 +216,7 @@ describeWithDatabase("Composio catalog reconciliation", () => {
       ]),
     );
 
-    // Uninstall the remaining account: catalog must flip off Added (slug-only
-    // emulator refs used to skip remote revoke and leave Gmail stuck connected).
+    // Uninstall the remaining account: catalog must flip off Added.
     await rpc(app, cookie, "connections/revoke", { connectionId: second.connectionId });
     await expect(
       rpc<Array<{ slug: string; connected: boolean }>>(app, cookie, "connections/catalog", {

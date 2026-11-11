@@ -20,12 +20,14 @@ import type {
 import {
   GROUP_MEMBER_MIN,
   MessageBlock as MessageBlockSchema,
+  resolveBotAvatarSet,
 } from "@cortexai-agent-hub/contracts";
 import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_RUN_TRIGGERS,
   callIdFromClientNonce,
   isConversationalRun,
+  messageBypassesTakeoverWait,
   messageReaction,
   projectMessages,
   QUEUE_HOLDING_RUN_STATUSES,
@@ -49,6 +51,7 @@ import {
   primaryActiveRun,
   retireWaitingQuestionInTransaction,
   touchGroupUpdatedAt,
+  transientRunEventsWhere,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
@@ -303,7 +306,7 @@ async function lockAndLoadGroupMembers(
     include: {
       members: {
         where: { bot: { archivedAt: null } },
-        include: { bot: { select: { id: true, name: true, color: true } } },
+        include: { bot: { select: { id: true, name: true, color: true, avatarSet: true } } },
         orderBy: [{ createdAt: "asc" }, { botId: "asc" }],
       },
     },
@@ -313,6 +316,7 @@ async function lockAndLoadGroupMembers(
     botId: member.bot.id,
     name: member.bot.name,
     color: member.bot.color,
+    avatarSet: resolveBotAvatarSet(member.bot.avatarSet),
   }));
 }
 
@@ -341,6 +345,7 @@ export async function resolveThreadTarget(
       botId: member.bot.id,
       name: member.bot.name,
       color: member.bot.color,
+      avatarSet: resolveBotAvatarSet(member.bot.avatarSet),
       status: primaryActiveRun(member.bot.runs)?.status ?? "idle",
     }));
     return {
@@ -415,12 +420,9 @@ export async function threadSnapshot(
             }),
           ]);
           const run = pickPrimaryPrivateActiveRun(activeRuns) ?? busyOrFailed;
-          // A failed run is only the thread's word while it is still the newest
-          // terminal run; otherwise a stale failure would resurface in the
-          // composer error strip on every load, forever. Instead of comparing
-          // timestamps (equal createdAt values reverse under gt/gte), ask for
-          // the newest terminal run under the same deterministic ordering and
-          // check whether it is this failure.
+          // A failure only surfaces while it is still the newest terminal run, or a stale
+          // failure would reappear on every load. Compare by ordering, not timestamps:
+          // equal createdAt values reverse under gt/gte.
           const newestTerminal =
             run?.status === "failed"
               ? await tx.run.findFirst({
@@ -580,7 +582,6 @@ function pickPrimaryPrivateActiveRun<T extends { status: string }>(
   );
 }
 
-/** Latest terminal by end time (completedAt, else createdAt), then createdAt, then id. */
 function pickLatestTerminalRun<T extends { id: string; createdAt: Date; completedAt: Date | null }>(
   runs: T[],
 ): T | null {
@@ -720,6 +721,7 @@ export async function sendThreadMessage(
     events: ThreadEvents;
     jobs: JobPublisher;
     imageAdmission?: Parameters<typeof assertThreadImageInput>[5];
+    maxAttachmentsPerMessage?: number;
     analytics?: ProductAnalytics;
   },
   actor: Actor,
@@ -801,7 +803,7 @@ export async function sendThreadMessage(
       if (target.kind === "bot") {
         const mentionTargets = splitMentionTargets(input.mentions);
         const { blocks: attachmentBlocks, artifacts } = await resolveSendAttachments(
-          { prisma: tx },
+          { prisma: tx, maxAttachmentsPerMessage: deps.maxAttachmentsPerMessage },
           actor,
           target.botId,
           input.artifactIds,
@@ -908,8 +910,10 @@ export async function sendThreadMessage(
           });
           return { message, runs: answered, eventSeq: event.seq };
         }
-        const holdingRuns = activeRuns.filter((run) =>
-          QUEUE_HOLDING_RUN_STATUSES.some((status) => status === run.status),
+        const holdingRuns = activeRuns.filter(
+          (run) =>
+            QUEUE_HOLDING_RUN_STATUSES.some((status) => status === run.status) &&
+            !messageBypassesTakeoverWait(run),
         );
         const active = holdingRuns.find(steersUserMessage) ?? holdingRuns[0];
         if (active) {
@@ -1000,7 +1004,7 @@ export async function sendThreadMessage(
         explicitMentions: mentionTargets.botMentionIds,
       });
       const { blocks: attachmentBlocks, artifacts } = await resolveGroupSendAttachments(
-        { prisma: tx },
+        { prisma: tx, maxAttachmentsPerMessage: deps.maxAttachmentsPerMessage },
         actor,
         target.groupId,
         memberBotIds,
@@ -1079,7 +1083,7 @@ export async function sendThreadMessage(
           }
           continue;
         }
-        if (!STEERABLE_RUN_STATUSES.has(run.status)) continue;
+        if (!STEERABLE_RUN_STATUSES.has(run.status) || messageBypassesTakeoverWait(run)) continue;
         const current = activeByBotId.get(run.botId);
         if (!current || (!steersUserMessage(current) && steersUserMessage(run))) {
           activeByBotId.set(run.botId, run);
@@ -1503,7 +1507,7 @@ export async function stopThreadRuns(
     if (ids.length) {
       await tx.event.deleteMany({
         where: {
-          type: "thread.progress",
+          ...transientRunEventsWhere(),
           runId: { in: ids },
         },
       });

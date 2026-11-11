@@ -1,7 +1,7 @@
 import type { UsageOperationKind } from "@cortexai-agent-hub/adapter-kit";
 import { resolveBotWorkspacePath } from "@cortexai-agent-hub/adapters";
 import type { ExportManifest } from "@cortexai-agent-hub/contracts";
-import { attachmentMaxBytes } from "@cortexai-agent-hub/contracts";
+import { attachmentMaxBytes, resolveBotAvatarSet } from "@cortexai-agent-hub/contracts";
 import { AttachmentValidationError } from "@cortexai-agent-hub/core";
 import { IsolationError, parseComputerMode } from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
@@ -15,6 +15,7 @@ import {
   listArtifactVersions,
   listSpaceArtifacts,
 } from "../artifacts.js";
+import { requireIdentityConfirmation } from "../identity-confirmation.js";
 import { listSpaceRuns } from "../runs.js";
 import { querySpaceSearch } from "../search.js";
 import { loadAllMessages } from "../thread-message-pages.js";
@@ -232,9 +233,10 @@ export function contentRoutes(ctx: RouterContext) {
           exportedAt: new Date().toISOString(),
           bot: {
             name: bot.name,
-            title: bot.title,
             description: bot.description,
             instructions: bot.instructions,
+            color: bot.color,
+            avatarSet: resolveBotAvatarSet(bot.avatarSet),
           },
           memory: memory.map((m) => ({ path: m.path, content: m.content })),
           routines: routines.map((r) => ({
@@ -246,6 +248,10 @@ export function contentRoutes(ctx: RouterContext) {
           files,
           history,
         };
+      }),
+      accountToken: authed.export.accountToken.handler(async ({ context }) => {
+        await requireIdentityConfirmation(deps.auth, context);
+        return { token: await deps.auth.issueAccountExportToken(context.actor.userId) };
       }),
     },
     search: {

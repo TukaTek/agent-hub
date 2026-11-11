@@ -14,7 +14,6 @@ import { createThreadMessage } from "@cortexai-agent-hub/db";
 import { serve } from "@hono/node-server";
 import type { CDPSession, ElectronApplication, Page } from "@playwright/test";
 import { _electron as electron, expect } from "@playwright/test";
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import type { NumericSummary, PerformanceReport } from "../performance-report.js";
 import {
   PERFORMANCE_REPORT_SCHEMA_VERSION,
@@ -22,6 +21,7 @@ import {
   roundMetric,
   summarize,
 } from "../performance-report.js";
+import { disposableDatabaseEnv, startPostgres } from "./postgres.js";
 
 loadRootEnv();
 
@@ -50,7 +50,7 @@ const temporaryRoot = await mkdtemp(
   path.join(os.tmpdir(), "cortexai-agent-hub-desktop-performance-"),
 );
 
-const container = await new PostgreSqlContainer("postgres:18-alpine").start();
+const container = await startPostgres();
 let preview: ChildProcess | undefined;
 let server: ReturnType<typeof serve> | undefined;
 let handles: Awaited<ReturnType<typeof createApp>> | undefined;
@@ -150,8 +150,7 @@ function performanceEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     NODE_ENV: "production",
-    DATABASE_URL: databaseUrl,
-    REALTIME_DATABASE_URL: databaseUrl,
+    ...disposableDatabaseEnv(databaseUrl),
     VERIFY_DATABASE: "1",
     WAKEUP_DRIVER: "memory",
     SANDBOX_PROVIDER: "fake",

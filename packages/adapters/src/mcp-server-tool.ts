@@ -1,21 +1,17 @@
-import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import type { McpServer, Prisma } from "@cortexai-agent-hub/db";
-import { getLogger } from "@cortexai-agent-hub/logging";
-import type { ExecutorDeps } from "./executor-deps.js";
-import { mcpStdioRefusal } from "./mcp-transport.js";
-import { assertSafeRemoteUrl } from "./remote-mcp.js";
-import { isUniqueViolation, persistMessageInTransaction } from "./run-messages.js";
-/** Shared logic for the agent-facing add_mcp_server tool. Pure and unit-tested;
- * the executor wires the parsed result into Prisma + the secret store. */
-
-import type { McpTransport } from "@cortexai-agent-hub/contracts";
+import type { McpTransport, MessageBlock } from "@cortexai-agent-hub/contracts";
 import {
   McpRemoteEndpointSchema,
   McpTransportSchema,
   mcpOAuthEnvReferences,
 } from "@cortexai-agent-hub/contracts";
 import { deriveMcpSlug } from "@cortexai-agent-hub/core";
+import type { McpServer, Prisma } from "@cortexai-agent-hub/db";
+import { getLogger } from "@cortexai-agent-hub/logging";
+import type { ExecutorDeps } from "./executor-deps.js";
+import { mcpStdioRefusal } from "./mcp-transport.js";
 import { toStringRecord } from "./memory-provider-factory.js";
+import { assertNoMcpEndpointCredential, assertSafeRemoteUrl } from "./remote-mcp.js";
+import { isUniqueViolation, persistMessageInTransaction } from "./run-messages.js";
 
 export { deriveMcpSlug } from "@cortexai-agent-hub/core";
 
@@ -192,6 +188,7 @@ export async function addMcpServerFromTool(
       await assertSafeRemoteUrl(parsed.endpoint, deps.secretHttp?.resolveHostname, {
         allowPrivateEndpoint: deps.mcpAllowPrivateEndpoint === true,
       });
+      assertNoMcpEndpointCredential(parsed.endpoint);
     } catch (error) {
       return {
         error: error instanceof Error ? error.message : "Invalid MCP endpoint",

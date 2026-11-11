@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_AUDIO_MIME_TYPES,
+  appContract,
+  attachmentMaxCount,
   isAllowedAttachmentMimeType,
   isAttachmentAudioMimeType,
   isAttachmentImageMimeType,
@@ -38,6 +40,30 @@ describe("attachment contracts", () => {
       expect(isAllowedAttachmentMimeType(mimeType)).toBe(false);
     }
     expect(new Set(ATTACHMENT_ALLOWED_MIME_TYPES).size).toBe(ATTACHMENT_ALLOWED_MIME_TYPES.length);
+  });
+
+  it("falls back to four attachments for older servers", () => {
+    expect(attachmentMaxCount()).toBe(4);
+    expect(attachmentMaxCount(null)).toBe(4);
+    expect(attachmentMaxCount({})).toBe(4);
+    expect(attachmentMaxCount({ maxAttachmentsPerMessage: 8 })).toBe(8);
+  });
+  it("allows configured counts through the RPC schema up to the hard ceiling", () => {
+    const schema = appContract.threads.send["~orpc"].inputSchema!;
+    for (const count of [4, 5, 100]) {
+      expect(
+        schema.safeParse({
+          botId: "bot-1",
+          artifactIds: Array.from({ length: count }, (_, i) => `artifact-${i}`),
+        }).success,
+      ).toBe(true);
+    }
+    expect(
+      schema.safeParse({
+        botId: "bot-1",
+        artifactIds: Array.from({ length: 101 }, (_, i) => `artifact-${i}`),
+      }).success,
+    ).toBe(false);
   });
 
   it.each(ATTACHMENT_AUDIO_MIME_TYPES)("allows %s as an audio file block", (mimeType) => {

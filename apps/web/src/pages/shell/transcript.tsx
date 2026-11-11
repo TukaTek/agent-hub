@@ -1,4 +1,9 @@
-import type { MessageReaction, ThreadMessage } from "@cortexai-agent-hub/contracts";
+import type {
+  BotAvatarSet,
+  LoginFieldInput,
+  MessageReaction,
+  ThreadMessage,
+} from "@cortexai-agent-hub/contracts";
 import type { FoldedTranscript } from "@cortexai-agent-hub/core";
 import {
   expandPeerReplies,
@@ -6,6 +11,7 @@ import {
   isPeerReceiptBlocks,
   liveActivityLine,
   liveMessageComposing,
+  peerExchangeLines,
   projectBotMentions,
   projectMessageReactions,
   timeSeparatorIds,
@@ -82,7 +88,6 @@ export const Transcript = memo(function Transcript({
   onSpeak,
   onOpenComputer,
   onOpenImportSetup,
-  onOpenImport,
 }: {
   scrollRef: RefObject<HTMLDivElement | null>;
   scrollRequest: { messageId: string; nonce: number } | null;
@@ -107,8 +112,9 @@ export const Transcript = memo(function Transcript({
   onAnswer: (
     message: ThreadMessage,
     text: string,
-    username?: string,
+    fields?: LoginFieldInput[],
     dismiss?: boolean,
+    remember?: false,
   ) => Promise<void>;
   onReply: (message: ThreadMessage) => void;
   onMarkUnread: (message: ThreadMessage) => void;
@@ -118,7 +124,9 @@ export const Transcript = memo(function Transcript({
   onJumpToMessage: (messageId: string) => void;
   onOpenPeerMessages: (peer: { peerBotId: string; peerBotName: string }) => void;
   memberName?: (botId: string | undefined) => string | undefined;
-  peerBot: (botId: string) => { name?: string; color: string; status?: string } | undefined;
+  peerBot: (
+    botId: string,
+  ) => { name?: string; color: string; status?: string; avatarSet?: BotAvatarSet } | undefined;
   onRefresh: () => Promise<void>;
   onBotChanged: () => Promise<void>;
   onAddRoutine: (name: string, prompt: string) => void;
@@ -127,7 +135,6 @@ export const Transcript = memo(function Transcript({
   onSpeak: (message: ThreadMessage) => void;
   onOpenComputer: (botId?: string) => void;
   onOpenImportSetup?: (target: ImportSetupTarget) => void;
-  onOpenImport?: () => void;
 }) {
   const { t } = useLingui();
   const [atEnd, setAtEnd] = useState(true);
@@ -139,16 +146,6 @@ export const Transcript = memo(function Transcript({
   const [expandedPeerMarkers, setExpandedPeerMarkers] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const togglePeerReplies = useCallback((markerId: string) => {
-    // Like a pointer press: a keyboard toggle must not snap the transcript to its end.
-    following.current = false;
-    autoScrolling.current = false;
-    setExpandedPeerMarkers((expanded) => {
-      const next = new Set(expanded);
-      if (!next.delete(markerId)) next.add(markerId);
-      return next;
-    });
-  }, []);
   // A jump to a folded reply expands its marker; the scroll effect below then finds the row.
   useLayoutEffect(() => {
     const markerId = scrollRequest && transcript.markerOf.get(scrollRequest.messageId);
@@ -174,8 +171,12 @@ export const Transcript = memo(function Transcript({
     () => projectMessageReactions(mentionView.visibleMessages),
     [mentionView],
   );
-  const shownMessages = reactionView.visibleMessages.filter((message) =>
+  const visibleReceipts = reactionView.visibleMessages.filter((message) =>
     messageHasVisibleBlocks(message.blocks, showToolActivity),
+  );
+  const exchanges = peerExchangeLines({ ...transcript, messages: visibleReceipts });
+  const shownMessages = visibleReceipts.filter(
+    (message) => !exchanges.lineOf.has(message.id) || exchanges.lines.has(message.id),
   );
   const separatorIds = timeSeparatorIds(shownMessages);
   const unreadDividerId = unreadDividerMessageId(shownMessages, unreadAfterSeq, olderCursor);
@@ -314,7 +315,7 @@ export const Transcript = memo(function Transcript({
     if (!scrollRequest || scrolledJump.current === scrollRequest.nonce) return;
     const element = scrollRef.current;
     const row = element?.querySelector(
-      `[data-message-id="${CSS.escape(scrollRequest.messageId)}"]`,
+      `[data-message-id="${CSS.escape(exchanges.lineOf.get(scrollRequest.messageId) ?? scrollRequest.messageId)}"]`,
     );
     if (!element || !row) return;
     scrolledJump.current = scrollRequest.nonce;
@@ -338,7 +339,7 @@ export const Transcript = memo(function Transcript({
       { duration: 1200 },
     );
     onScrollRequestHandled();
-  }, [messages, scrollRequest, scrollRef, endJumpScroll, onScrollRequestHandled]);
+  }, [messages, scrollRequest, scrollRef, endJumpScroll, onScrollRequestHandled, exchanges.lineOf]);
 
   useLayoutEffect(() => {
     if (following.current) snapToEnd();
@@ -419,7 +420,7 @@ export const Transcript = memo(function Transcript({
             following.current = false;
           }
         }}
-        className="cortexai-agent-hub-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto scroll-pt-16 scroll-pb-7 px-4 pt-20 pb-12 md:px-[max(1.75rem,calc((100%_-_60rem)/2))] md:pt-[84px] md:pb-13"
+        className="cortexai-agent-hub-scroll isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto scroll-pt-16 scroll-pb-7 px-4 pt-20 pb-12 md:px-[max(1.75rem,calc((100%_-_60rem)/2))] md:pt-[84px] md:pb-13"
         style={
           userBubble
             ? ({
@@ -511,14 +512,7 @@ export const Transcript = memo(function Transcript({
                       canDismiss={dismissableAskIds.has(message.id)}
                       onOpenBot={onOpenBot}
                       onOpenPeerMessages={onOpenPeerMessages}
-                      peerReplies={
-                        transcript.folded.has(message.id)
-                          ? expandedPeerMarkers.has(message.id)
-                            ? "expanded"
-                            : "collapsed"
-                          : undefined
-                      }
-                      onTogglePeerReplies={togglePeerReplies}
+                      peerExchange={exchanges.lines.get(message.id)}
                       onAnswer={onAnswer}
                       speakerName={
                         peerReceipt
@@ -543,7 +537,6 @@ export const Transcript = memo(function Transcript({
                       onSpeak={() => onSpeak(message)}
                       onOpenComputer={onOpenComputer}
                       onOpenImportSetup={onOpenImportSetup}
-                      onOpenImport={onOpenImport}
                       showToolActivity={showToolActivity}
                       onReply={onReply}
                       onMarkUnread={onMarkUnread}

@@ -15,6 +15,10 @@ describe("attachmentPickerAccept", () => {
     expect(accept).toContain("application/pdf");
     expect(accept).toContain(".zip");
     expect(accept).toContain(".docx");
+    expect(accept).toContain("application/vnd.ms-excel");
+    expect(accept).toContain("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    expect(accept).toContain(".xls");
+    expect(accept).toContain(".xlsx");
     expect(accept).not.toBe("*/*");
   });
 });

@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@cortexai-agent-hub/contracts": "workspace:*",
+    "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/ui-tokens": "workspace:*",
     "@cortexai-agent-hub/ui-web": "workspace:*",
 

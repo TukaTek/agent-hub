@@ -6,8 +6,13 @@ import {
   resolveMemberMainModel,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor, Me } from "@cortexai-agent-hub/contracts";
-import { attachmentMaxBytes, canonicalPiProviderId } from "@cortexai-agent-hub/contracts";
+import {
+  attachmentMaxBytes,
+  attachmentMaxCount,
+  canonicalPiProviderId,
+} from "@cortexai-agent-hub/contracts";
 import { withHubModelDefaults } from "@cortexai-agent-hub/core";
+import { isAdmin } from "../plugin-submissions.js";
 import type { RouterDeps } from "../router.js";
 
 export { createAdapterContext as computerContext } from "@cortexai-agent-hub/adapter-kit";
@@ -19,7 +24,7 @@ function hostCredentials(active: boolean, provider: string) {
 }
 
 export async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
-  const [user, setup] = await Promise.all([
+  const [user, setup, admin] = await Promise.all([
     deps.prisma.user.findUniqueOrThrow({
       where: { id: actor.userId },
       select: {
@@ -30,17 +35,20 @@ export async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
       },
     }),
     modelSetup(deps, actor),
+    isAdmin(deps, actor.userId),
   ]);
   return {
     ticketBoardEnabled: deps.env.ticketBoardEnabled === true,
     phoneCallsEnabled: deps.env.phoneCallsEnabled === true,
     navLinks: deps.env.navLinks ?? [],
     maxUploadSizeBytes: attachmentMaxBytes(deps.env),
+    maxAttachmentsPerMessage: attachmentMaxCount(deps.env),
     userId: actor.userId,
     email: user.email,
     name: user.name,
     spaceId: actor.spaceId,
     isDeploymentOwner: false,
+    isAdmin: admin,
     needsModel: setup.needsModel,
     defaultProvider: canonicalPiProviderId(setup.model?.provider ?? deps.env.defaultProvider),
     defaultModel: setup.model?.modelId ?? deps.env.defaultModel,
@@ -64,6 +72,9 @@ export async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
     billingEnabled: Boolean(deps.billing),
     // Only billing deployments ask; self-hosted installs never see the survey.
     needsSignupSurvey: Boolean(deps.billing) && !user.signupSurvey,
+    paymentWalletProvider: deps.paymentWallet
+      ? { id: deps.paymentWallet.describe().id, name: deps.paymentWallet.displayName }
+      : null,
   };
 }
 

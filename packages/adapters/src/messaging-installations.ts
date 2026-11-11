@@ -8,7 +8,7 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor, MessagingInstallationSummary } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { requireMembership, runAsSystem } from "@cortexai-agent-hub/db";
+import { IsolationError, requireMembership, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { credentialDigest } from "./credential-digest.js";
 
@@ -29,7 +29,7 @@ export class MessagingInstallations implements MessagingInstallationStore {
           select: { id: true, spaceId: true },
         })
       : await this.defaultBot(actor.userId);
-    if (!bot) throw new Error("Bot not found");
+    if (!bot) throw new IsolationError("Bot not found");
     const state = randomBytes(32).toString("base64url");
     await runAsSystem("start messaging workspace installation", async () => {
       await this.prisma.messagingInstallSession.deleteMany({

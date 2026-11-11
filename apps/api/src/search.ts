@@ -125,7 +125,6 @@ export async function querySpaceSearch(
       archivedAt: null,
       OR: [
         { name: { contains: likeQuery, mode: "insensitive" } },
-        { title: { contains: likeQuery, mode: "insensitive" } },
         { description: { contains: likeQuery, mode: "insensitive" } },
       ],
     },
@@ -139,7 +138,7 @@ export async function querySpaceSearch(
         botId: bot.id,
         botName: bot.name,
         title: bot.name,
-        snippet: displayName(bot.title, "") || bot.description || displayName(bot.name, ""),
+        snippet: bot.description || displayName(bot.name, ""),
       },
       CONVERSATION_HIT_LIMIT * 2,
     );

@@ -2,7 +2,6 @@ import type { Actor, MessageBlock } from "@cortexai-agent-hub/contracts";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { appendEventInTransaction, IsolationError } from "@cortexai-agent-hub/db";
 
-/** Minimal dependency surface for helpers that update a bot's thread cards. */
 export type BotThreadDeps = {
   prisma: PrismaClient;
   events: ThreadEvents;
