@@ -836,6 +836,7 @@ describe("mobile call speech locales", () => {
   it.each([
     ["en", "en-US"],
     ["de", "de-DE"],
+    ["ja", "ja-JP"],
     ["ru", "ru-RU"],
     ["zh-CN", "zh-CN"],
   ] as const)(

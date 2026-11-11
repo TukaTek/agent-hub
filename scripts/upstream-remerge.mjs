@@ -163,9 +163,9 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
     content.push({
       path,
       texts: {
-        base: base === undefined ? undefined : rebrand(base).text,
+        base: base === undefined ? undefined : rebrand(base, path).text,
         ours,
-        theirs: rebrand(theirs).text,
+        theirs: rebrand(theirs, path).text,
       },
     });
   }
@@ -211,7 +211,7 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
     if (isBinary(buffer)) continue;
     const source = buffer.toString("utf8");
     noteUnresolved(report, path, source);
-    const { text } = rebrand(source);
+    const { text } = rebrand(source, path);
     if (text === source) continue;
     writeFileSync(file, text);
     git(cwd, ["add", "--", path]);

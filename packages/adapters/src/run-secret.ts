@@ -4,6 +4,7 @@ import type {
   SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
+  BOT_SECRET_VALUE_MAX_LENGTH,
   encodeLoginSecret,
   LoginSecretValue,
   MessageBlock as MessageBlockSchema,
@@ -11,14 +12,11 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import { isSecretAskBlock } from "@cortexai-agent-hub/core";
 import type { PrismaClient, RunSecretWriter } from "@cortexai-agent-hub/db";
-import { withTransactionRetry } from "@cortexai-agent-hub/db";
-import { type ApprovalPausedToolResult, resolveDuplicateEffectGate } from "./approval-effect.js";
+import { runSecretKind, withTransactionRetry } from "@cortexai-agent-hub/db";
+import type { ApprovalPausedToolResult } from "./approval-effect.js";
+import { resolveDuplicateEffectGate } from "./approval-effect.js";
 import { prepareBotSecret } from "./bot-secrets.js";
 import { persistPreparedSecret } from "./secret-persistence.js";
-
-export function runSecretKind(runId: string): string {
-  return `run-secret:${runId}`;
-}
 
 export function normalizeSecretAskPurpose(purpose: string | undefined): SecretAskPurpose {
   return SecretAskPurpose.safeParse(purpose).data ?? "otp";
@@ -154,6 +152,7 @@ export function createRunSecretWriter(secretStore: SecretStore): RunSecretWriter
             },
           });
         if (
+          input.answer.length > BOT_SECRET_VALUE_MAX_LENGTH ||
           (ask.credential && run.userId !== input.answeredByUserId) ||
           (ask.credential?.auth.type === "login") !== Boolean(input.username?.trim()) ||
           (ask.credential?.auth.type === "login" &&

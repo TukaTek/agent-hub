@@ -21,7 +21,7 @@ import {
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { PasskeySignIn } from "../components/PasskeySignIn";
 import { authClient } from "../lib/auth";
 import type { AuthCapabilities } from "../lib/auth-capabilities";
@@ -47,7 +47,6 @@ const CODE_LENGTH = 6;
 
 export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) {
   const { t } = useLingui();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -78,6 +77,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
       : authErrorText({ code }, "") || null;
   });
   const [pending, setPending] = useState(false);
+  const entering = useRef(false);
   const [resetSent, setResetSent] = useState(false);
   // Signup triggers a session refresh that remounts the anonymous auth page.
   const sent = resetSent || searchParams.get("verify") === "email";
@@ -273,7 +273,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     } catch {
       setError(t`Could not reach the server`);
     } finally {
-      setPending(false);
+      if (!entering.current) setPending(false);
     }
   }
 
@@ -311,19 +311,16 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     } catch {
       setError(t`Could not reach the server`);
     } finally {
-      setPending(false);
+      if (!entering.current) setPending(false);
     }
   }
 
   function enterApp() {
     clearSpaceSelection();
-    navigate(
-      mode === "up"
-        ? "/onboarding"
-        : searchParams.get("next") === "/integrations/setup"
-          ? "/integrations/setup"
-          : "/app",
-    );
+    // The routes move a signed-in user on once the session refetch lands. Navigating
+    // first beats it, so the guards bounce through sign-in and the shell.
+    entering.current = true;
+    setPending(true);
   }
 
   function chooseMethod(next: "code" | "password") {

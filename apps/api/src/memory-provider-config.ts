@@ -7,7 +7,8 @@ import {
   toStringRecord,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
-import { findSpaceMemoryConfig, Prisma, type PrismaClient } from "@cortexai-agent-hub/db";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { findSpaceMemoryConfig, Prisma } from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
 import { withSerializableRetry } from "./serializable-retry.js";
 

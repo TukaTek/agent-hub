@@ -4,6 +4,7 @@ import type {
   ThinkingLevel,
 } from "@cortexai-agent-hub/contracts";
 import {
+  assertHeaderSafeApiKey,
   OPENAI_COMPATIBLE_PROVIDER_ID as CONTRACT_OPENAI_COMPAT,
   canonicalPiProviderId,
   cloudflareModelConfigMessage,
@@ -17,12 +18,8 @@ import { enabledOpenAiCompatibleModelIds } from "./model-selection.js";
 import { modelIdSupportsImages, updateModelImageCapabilities } from "./model-vision.js";
 import { normalizeOpenAiCompatibleBaseUrl } from "./openai-compatible-url.js";
 import { modelCredentialAuthKind } from "./pi-catalog-availability.js";
-import {
-  CHATGPT_OAUTH_PROVIDER,
-  parseModelSecret,
-  type StoredModelSecret,
-  serializeModelSecret,
-} from "./pi-oauth.js";
+import type { StoredModelSecret } from "./pi-oauth.js";
+import { CHATGPT_OAUTH_PROVIDER, parseModelSecret, serializeModelSecret } from "./pi-oauth.js";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   openAiCompatibleModel,
@@ -80,6 +77,7 @@ export function buildModelConnectPlaintext(
   if (input.provider === OPENAI_COMPATIBLE_PROVIDER_ID) {
     const policy = { allowPrivate: options?.allowPrivateEndpoint };
     const prepared = prepareOpenAiCompatibleConnect(input, policy);
+    assertHeaderSafeApiKey(prepared.apiKey);
     const sameEndpoint =
       previous?.kind === "openai_compatible" && previous.baseUrl === prepared.baseUrl;
     const compatiblePrevious = sameEndpoint ? previous : undefined;
@@ -173,6 +171,7 @@ export function buildModelConnectPlaintext(
   const routing = cloudflareRoutingForConnect(input, previous);
   if (apiKey) {
     if (apiKey.length < 8) throw new Error("API key must contain at least 8 characters");
+    assertHeaderSafeApiKey(apiKey);
     return serializeModelSecret({
       kind: "api_key",
       key: apiKey,
@@ -273,7 +272,8 @@ export function modelCredentialDto(
     id: string;
     provider: string;
     label: string;
-    isDefault: boolean;
+    /** Whether this connection runs the member's main model. */
+    isDefault?: boolean;
     defaultModel?: string | null;
     thinkingLevel?: string | null;
     supportsImages?: boolean;
@@ -285,7 +285,7 @@ export function modelCredentialDto(
     provider: canonicalPiProviderId(row.provider),
     label: row.label,
     hasKey: storedModelSecretHasApiKey(plaintext),
-    isDefault: row.isDefault,
+    isDefault: row.isDefault ?? false,
     ...(row.defaultModel ? { modelId: row.defaultModel } : {}),
     // Space-scoped effort stored beside the preference's modelId; the
     // openai-compatible secret may still contribute below when unset.

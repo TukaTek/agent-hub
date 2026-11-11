@@ -133,7 +133,7 @@ describe.skipIf(!databaseAvailable)("routine silence eval through the product", 
       const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-silence-eval-"));
       let evidence: Evidence | undefined;
       try {
-        const { createApp } = await import("../../../apps/api/src/app.ts");
+        const { createApp } = await import("@cortexai-agent-hub/api/app");
         const result = await runTrial(
           {
             ...scenario,

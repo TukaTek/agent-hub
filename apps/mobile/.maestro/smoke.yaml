@@ -14,23 +14,16 @@ name: CortexAI Agent Hub mobile smoke
 - assertVisible: "Sign in to CortexAI Agent Hub"
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_EMAIL}
-- tapOn:
-    text: "Use password"
-    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_E2E_PASSWORD}
 - hideKeyboard
 - tapOn: "Sign in"
 
 - extendedWaitUntil:
-    visible: "New bot"
+    visible: "Create"
     timeout: 30000
-- tapOn: "New bot"
-- assertVisible: "Name this bot"
-- tapOn: "Name this bot"
-- inputText: ${CORTEXAI_AGENT_HUB_E2E_BOT_NAME}
-- hideKeyboard
 - tapOn: "Create"
+- tapOn: "New bot"
 
 - extendedWaitUntil:
     visible: "Message…"

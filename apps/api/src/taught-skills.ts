@@ -5,16 +5,20 @@ import type {
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
-  type AdapterContext,
+  createAdapterContext,
   runContinueJob,
   skillTeachingExpireJob,
   skillTeachingExpireJobKey,
 } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  ComputerExecutionLease,
+  TaughtSkillRow,
+  TeachComputerInput,
+} from "@cortexai-agent-hub/adapters";
 import {
   acquireComputerExecutionLease,
   appendRecordingEvent,
   ComputerBusyError,
-  type ComputerExecutionLease,
   captureTeachingSnapshot,
   completeTeachingSession,
   emptyRecording,
@@ -31,45 +35,24 @@ import {
   releaseTeachingComputerControlForBot,
   scheduleComputerControlExpiry,
   screenLeaseIdForRun,
-  type TeachComputerInput,
   teachingControlLeaseExpiresAt,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor, MessageBlock, TaughtSkill } from "@cortexai-agent-hub/contracts";
+import type { SkillPlaybook, TeachRecordingEvent } from "@cortexai-agent-hub/core";
 import {
   ACTIVE_RUN_STATUSES,
   buildPlaybookFromRecording,
   formatSkillRunPrompt,
-  type SkillPlaybook,
-  type TeachRecordingEvent,
   teachRecordingTtlMs,
 } from "@cortexai-agent-hub/core";
+import type { createRepos, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
-  clearRunTurnCheckpoints,
-  type createRepos,
+  clearEndedRunState,
   expireComputerExecutionLeases,
   IsolationError,
-  type PrismaClient,
-  type ThreadEvents,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
-
-type TaughtSkillRow = {
-  id: string;
-  spaceId: string;
-  botId: string;
-  userId: string;
-  name: string;
-  goal: string;
-  status: string;
-  playbook: unknown;
-  recording: unknown;
-  startedAt: Date | null;
-  expiresAt: Date | null;
-  stoppedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
 
 export interface TaughtSkillsDeps {
   prisma: PrismaClient;
@@ -78,17 +61,6 @@ export interface TaughtSkillsDeps {
   sandbox: SandboxProvider;
   home: AgentHomeStore;
   dataDir: string;
-}
-
-function computerContext(actor: Actor, botId: string, operationId: string): AdapterContext {
-  return {
-    operationId,
-    traceId: operationId,
-    spaceId: actor.spaceId,
-    userId: actor.userId,
-    botId,
-    signal: new AbortController().signal,
-  };
 }
 
 function ownedSkillWhere(actor: Actor, skillId: string) {
@@ -126,7 +98,7 @@ async function cancelActiveRuns(
     data: { status: "cancelled", completedAt: new Date() },
     select: { id: true },
   });
-  await clearRunTurnCheckpoints(
+  await clearEndedRunState(
     deps.prisma,
     activeRuns.map((run) => run.id),
   );
@@ -152,7 +124,7 @@ async function ensureGraphicalComputer(
   }
   if (!bot.computer) throw new IsolationError();
   if (bot.computer.state !== "running" || !bot.computer.providerRef) {
-    const ctx = computerContext(actor, bot.id, "skills.start");
+    const ctx = createAdapterContext(actor, bot.id, "skills.start");
     const manualRunId = `teach:${randomUUID()}`;
     let lease: ComputerExecutionLease | null;
     try {

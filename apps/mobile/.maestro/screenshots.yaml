@@ -36,9 +36,6 @@ tags:
 
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
-- tapOn:
-    text: "Use password"
-    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
 - hideKeyboard
@@ -78,10 +75,6 @@ tags:
 - tapOn:
     id: "search-sheet-close"
 
-- openLink: "cortexai-agent-hub:///new"
-- assertVisible: "Name this bot"
-- takeScreenshot: "07-new-bot"
-
 - openLink: "cortexai-agent-hub:///new-group"
 - assertVisible: "Search bots"
 - takeScreenshot: "08-new-group"
@@ -106,17 +99,10 @@ tags:
 
 - openLink: "cortexai-agent-hub:///models"
 - extendedWaitUntil:
-    visible: "Active model"
+    visible: "Main model"
     timeout: 10000
-- scrollUntilVisible:
-    element: "Show more"
-    direction: DOWN
+- assertVisible: "Approval model"
 - takeScreenshot: "11-models"
-- tapOn: "Show more"
-- scrollUntilVisible:
-    element: "Show less"
-    direction: DOWN
-- takeScreenshot: "11b-all-providers"
 
 - openLink: "cortexai-agent-hub:///voice"
 - extendedWaitUntil:
@@ -178,6 +164,9 @@ tags:
 - assertVisible: "Speak message"
 - takeScreenshot: "15b-message-actions"
 - back
+# Settle the keyboard inset before measuring the next message target.
+- hideKeyboard
+- waitForAnimationToEnd
 # User messages omit Speak.
 - longPressOn: "Summarize the fixture launch checklist."
 - assertVisible: "Reply"
@@ -253,10 +242,6 @@ tags:
     element: "Notification settings"
     direction: DOWN
 - takeScreenshot: "22b-account-notifications-dark"
-
-- openLink: "cortexai-agent-hub:///new"
-- assertVisible: "Name this bot"
-- takeScreenshot: "23-new-bot-dark"
 
 - openLink: "cortexai-agent-hub:///new-group"
 - assertVisible: "Search bots"

@@ -47,7 +47,7 @@ name: Settings
 - tapOn: "Back"
 - openLink: "cortexai-agent-hub:///models"
 - extendedWaitUntil:
-    visible: "Active model"
+    visible: "Main model"
     timeout: 15000
 - takeScreenshot: 06-models
 - openLink: "cortexai-agent-hub:///integrations"

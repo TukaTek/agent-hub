@@ -1,8 +1,8 @@
 import type { IntegrationCatalogResult } from "@cortexai-agent-hub/contracts";
+import { newClientId } from "@cortexai-agent-hub/core";
 import { Button, Disclosure, Input } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useState } from "react";
-import { newClientId } from "../../lib/client-id";
 import { connectMcpOauth } from "../../lib/mcp-connect";
 import { rpc } from "../../lib/rpc";
 import { errorText } from "../../lib/user-error";

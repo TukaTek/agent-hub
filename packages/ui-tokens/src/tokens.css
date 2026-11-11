@@ -71,6 +71,8 @@
   --danger: #ff9592;
   --danger-ink: #141414;
   --warning-ink: #141414;
+  --primary-hover: #dbdbdb;
+  --primary-disabled: #ffffff21;
   --radius: 0.75rem;
 }
 
@@ -143,5 +145,7 @@
   --danger: #ce2c31;
   --danger-ink: #ffffff;
   --warning-ink: #ffffff;
+  --primary-hover: #363636;
+  --primary-disabled: #00000026;
   --radius: 0.75rem;
 }

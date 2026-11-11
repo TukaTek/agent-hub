@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { CheckIcon, CopyIcon } from "./icons";
+import { useMarkdownCopy } from "./markdown-copy";
 import type { ExtractedTable, HastNode, TableAlign, TableSortDirection } from "./table-utils";
 import {
   columnSortLabel,
@@ -73,6 +74,7 @@ export const TableCard = memo(function TableCard({
 }) {
   const { columns, aligns, rows, schemaKey, dataSignature, numericColumns, minWidths, rowKeys } =
     table;
+  const copy = useMarkdownCopy();
   const [sort, setSort] = useState<SortState>(null);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState(false);
@@ -130,10 +132,8 @@ export const TableCard = memo(function TableCard({
     setPage(0);
     announce(
       next
-        ? `Sorted by ${columnSortLabel(columns, column)}, ${
-            next.direction === "asc" ? "ascending" : "descending"
-          }`
-        : "Sort cleared",
+        ? copy.sortedBy(columnSortLabel(columns, column, copy), next.direction)
+        : copy.sortCleared,
     );
   };
 
@@ -143,7 +143,7 @@ export const TableCard = memo(function TableCard({
       .writeText(tableToTsv(columns, sortedRows))
       .then(() => {
         setCopiedSignature(dataSignature);
-        announce("Copied");
+        announce(copy.copied);
         window.clearTimeout(copiedTimer.current);
         copiedTimer.current = window.setTimeout(() => setCopiedSignature(null), 1500);
       })
@@ -183,17 +183,20 @@ export const TableCard = memo(function TableCard({
   const pager = showPagination ? (
     <div className="cortexai-agent-hub-table-footer">
       <span className="cortexai-agent-hub-table-range">
-        {safePage * TABLE_PAGE_SIZE + 1}–
-        {Math.min((safePage + 1) * TABLE_PAGE_SIZE, sortedRows.length)} of {sortedRows.length} rows
+        {copy.rowRange(
+          safePage * TABLE_PAGE_SIZE + 1,
+          Math.min((safePage + 1) * TABLE_PAGE_SIZE, sortedRows.length),
+          sortedRows.length,
+        )}
       </span>
       <button
         type="button"
         className="cortexai-agent-hub-table-tool"
-        aria-label="Previous page"
+        aria-label={copy.previousPage}
         disabled={safePage === 0}
         onClick={() => {
           setPage(safePage - 1);
-          announce(`Page ${safePage} of ${pageCount}`);
+          announce(copy.pageOf(safePage, pageCount));
         }}
       >
         <ChevronLeftIcon />
@@ -201,11 +204,11 @@ export const TableCard = memo(function TableCard({
       <button
         type="button"
         className="cortexai-agent-hub-table-tool"
-        aria-label="Next page"
+        aria-label={copy.nextPage}
         disabled={safePage >= pageCount - 1}
         onClick={() => {
           setPage(safePage + 1);
-          announce(`Page ${safePage + 2} of ${pageCount}`);
+          announce(copy.pageOf(safePage + 2, pageCount));
         }}
       >
         <ChevronRightIcon />
@@ -213,9 +216,7 @@ export const TableCard = memo(function TableCard({
     </div>
   ) : (
     <div className="cortexai-agent-hub-table-footer">
-      <span className="cortexai-agent-hub-table-range">
-        {sortedRows.length} {sortedRows.length === 1 ? "row" : "rows"}
-      </span>
+      <span className="cortexai-agent-hub-table-range">{copy.rowCount(sortedRows.length)}</span>
     </div>
   );
 
@@ -225,7 +226,7 @@ export const TableCard = memo(function TableCard({
         type="button"
         className="cortexai-agent-hub-table-tool"
         onClick={copyRows}
-        aria-label={copied ? "Copied" : "Copy rows"}
+        aria-label={copied ? copy.copied : copy.copyRows}
       >
         {copied ? <CheckIcon /> : <CopyIcon />}
       </button>
@@ -233,7 +234,7 @@ export const TableCard = memo(function TableCard({
         type="button"
         className="cortexai-agent-hub-table-tool"
         onClick={downloadCsv}
-        aria-label="Download CSV"
+        aria-label={copy.downloadCsv}
       >
         <DownloadIcon />
       </button>
@@ -243,14 +244,14 @@ export const TableCard = memo(function TableCard({
           className="cortexai-agent-hub-table-tool"
           ref={expandButtonRef}
           onClick={() => setExpanded(true)}
-          aria-label="Expand table"
+          aria-label={copy.expandTable}
         >
           <ExpandIcon />
         </button>
       ) : (
         <DialogClose
           ref={closeButtonRef}
-          aria-label="Close table"
+          aria-label={copy.closeTable}
           render={<button type="button" className="cortexai-agent-hub-table-tool" />}
         >
           <CloseIcon />
@@ -274,7 +275,7 @@ export const TableCard = memo(function TableCard({
         {/* Keep the live region in the active view — dialog content is outside the card. */}
         {expanded ? null : status}
         {tools("card")}
-        <section className="cortexai-agent-hub-table-scroll" aria-label="Table" tabIndex={0}>
+        <section className="cortexai-agent-hub-table-scroll" aria-label={copy.table} tabIndex={0}>
           {tableView("card")}
         </section>
         {pager}
@@ -285,12 +286,12 @@ export const TableCard = memo(function TableCard({
         finalFocus={expandButtonRef}
         className="cortexai-agent-hub-table-dialog cortexai-agent-hub-table-box cortexai-agent-hub-chat-markdown w-auto sm:max-w-none"
       >
-        <DialogTitle className="cortexai-agent-hub-table-dialog-title">Table</DialogTitle>
+        <DialogTitle className="cortexai-agent-hub-table-dialog-title">{copy.table}</DialogTitle>
         {expanded ? status : null}
         {tools("dialog")}
         <section
           className="cortexai-agent-hub-table-scroll cortexai-agent-hub-table-dialog-scroll"
-          aria-label="Table"
+          aria-label={copy.table}
           tabIndex={0}
         >
           {tableView("dialog")}
@@ -328,6 +329,7 @@ function TableView({
   sort: SortState;
   onToggleSort: (column: number) => void;
 }) {
+  const copy = useMarkdownCopy();
   // Numeric columns right-align unless the author declared an alignment.
   const alignClass = (index: number) => {
     const align = aligns[index] ?? (numericColumns.has(index) ? "right" : "left");
@@ -335,12 +337,12 @@ function TableView({
   };
   // Sort labels need disambiguation: empty headers and duplicate names would
   // otherwise produce identical or blank "Sort by" announcements.
-  const sortLabel = (index: number) => columnSortLabel(columns, index);
+  const sortLabel = (index: number) => columnSortLabel(columns, index, copy);
   return (
-    <table className="cortexai-agent-hub-table" aria-label="Markdown table">
+    <table className="cortexai-agent-hub-table" aria-label={copy.markdownTable}>
       <thead>
         <tr>
-          <th className="cortexai-agent-hub-table-gutter" scope="col" aria-label="Row" />
+          <th className="cortexai-agent-hub-table-gutter" scope="col" aria-label={copy.row} />
           {columns.map((column, i) => (
             <SortableColumnHeader
               key={i}
@@ -357,7 +359,7 @@ function TableView({
         {rows.length === 0 ? (
           <tr>
             <td colSpan={columns.length + 1} className="cortexai-agent-hub-table-empty">
-              No rows
+              {copy.noRows}
             </td>
           </tr>
         ) : (
@@ -402,13 +404,14 @@ function SortableColumnHeader({
   className?: string;
   onToggleSort: () => void;
 }) {
+  const copy = useMarkdownCopy();
   const rich = !isPlainText(content);
   const sortButton = (
     <button
       type="button"
       className={rich ? "cortexai-agent-hub-table-sort-trigger" : "cortexai-agent-hub-table-sort"}
       onClick={onToggleSort}
-      aria-label={`Sort by ${column}`}
+      aria-label={copy.sortBy(column)}
     >
       {rich ? null : <span className="cortexai-agent-hub-table-sort-label">{content}</span>}
       <SortIndicator direction={direction} />

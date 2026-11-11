@@ -1,8 +1,5 @@
-import {
-  type MessageBlock,
-  type MessageReaction,
-  MessageReactionSchema,
-} from "@cortexai-agent-hub/contracts";
+import type { MessageBlock, MessageReaction } from "@cortexai-agent-hub/contracts";
+import { MessageReactionSchema } from "@cortexai-agent-hub/contracts";
 
 type ReactionMessage = {
   id: string;

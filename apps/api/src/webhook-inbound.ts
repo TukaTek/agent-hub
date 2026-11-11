@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import type { JobPublisher, SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import { runContinueJob, SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import { inboundRoutineModelPin } from "@cortexai-agent-hub/adapters";
-import { escapePromptData, inboundRoutineBlock } from "@cortexai-agent-hub/core";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import {
+  escapePromptData,
+  inboundRoutineBlock,
+  messageBlockForArtifact,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
@@ -15,7 +20,7 @@ export type WebhookEvents = {
     threadId: string;
     botId: string;
     userId: string;
-    blocks: Array<{ kind: "text"; text: string }>;
+    blocks: MessageBlock[];
     prompt: string;
     trigger: "webhook";
     clientNonce?: string;
@@ -264,6 +269,7 @@ export async function deliverWebhookEvent(
   target: InboundTarget,
   input: {
     prompt: string;
+    artifacts?: Array<{ id: string; name: string; mimeType: string; size: number }>;
     routines: Array<{
       name: string;
       prompt: string;
@@ -301,7 +307,10 @@ export async function deliverWebhookEvent(
     threadId: target.threadId,
     botId: target.bot.id,
     userId: target.bot.userId,
-    blocks: [{ kind: "text", text: promptText }],
+    blocks: [
+      { kind: "text", text: promptText },
+      ...(input.artifacts ?? []).map(messageBlockForArtifact),
+    ],
     prompt: promptText,
     trigger: "webhook",
     clientNonce,

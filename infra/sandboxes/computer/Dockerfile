@@ -58,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     fonts-dejavu-core \
     fonts-noto-cjk \
+    fonts-noto-color-emoji \
     locales \
     dbus-x11 \
     xdg-desktop-portal \
@@ -81,6 +82,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && groupadd --gid 1000 cortexai-agent-hub \
   && useradd --uid 1000 --gid cortexai-agent-hub --create-home --shell /bin/bash cortexai-agent-hub \
   && install -d -m 755 /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0 \
+  && mkdir -p /etc/chromium/policies/managed /etc/brave/policies/managed \
   && ln -sfn /bin/true /usr/bin/xmessage
 # Brave replaces Chromium only when built with BROWSER=brave. The default
 # build installs Chromium above, so this step does nothing for it.
@@ -161,6 +163,9 @@ WORKDIR /home/cortexai-agent-hub
 COPY --chmod=755 start.sh /usr/local/bin/cortexai-agent-hub-computer
 COPY --chmod=644 user-env.sh /usr/local/lib/cortexai-agent-hub-user-env.sh
 COPY --chmod=755 control.py /usr/local/bin/cortexai-agent-hub-computer-control
+# Tells the supervisor this control service accepts scrolls aimed at a point and sideways
+# scrolls; it sends those to older images through its fallback instead.
+LABEL cortexai-agent-hub.control.aimedScroll="1"
 COPY --from=capture-builder /build/libcortexai_agent_hub-xcapture.so /usr/local/lib/libcortexai_agent_hub-xcapture.so
 COPY --chmod=755 cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-browser
 COPY --chmod=755 cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-focus-or-launch
@@ -172,6 +177,9 @@ COPY --chmod=755 desktop/session.sh /usr/local/bin/cortexai-agent-hub-desktop-se
 COPY --chmod=644 desktop/xfwm4.xml desktop/xfce4-keyboard-shortcuts.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
 COPY --chmod=644 desktop/picom.conf desktop/tint2rc.in desktop/Xresources desktop/browser.desktop.in desktop/terminal.desktop /usr/local/share/cortexai-agent-hub/desktop/
 COPY --chmod=644 desktop/gtk-3.0/settings.ini /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0/settings.ini
+# CortexAI Agent Hub keeps credentials itself; the browser's save prompts would cover pages.
+COPY --chmod=644 browser-policy.json /etc/chromium/policies/managed/cortexai-agent-hub-browser.json
+COPY --chmod=644 browser-policy.json /etc/brave/policies/managed/cortexai-agent-hub-browser.json
 COPY --chmod=644 embed.html /usr/share/novnc/embed.html
 COPY --chmod=644 clipboard-bridge.js /usr/share/novnc/clipboard-bridge.js
 COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
@@ -199,4 +207,5 @@ ENV LD_PRELOAD=/usr/local/lib/libnss_wrapper.so \
     NSS_WRAPPER_PASSWD=/tmp/cortexai-agent-hub-nss/passwd \
     NSS_WRAPPER_GROUP=/tmp/cortexai-agent-hub-nss/group
 USER 1000:1000
-CMD ["/usr/local/bin/cortexai-agent-hub-computer"]
+# Start Bash without the wrapper; user-env enables it once both files exist.
+CMD ["/usr/bin/env", "-u", "LD_PRELOAD", "/usr/local/bin/cortexai-agent-hub-computer"]

@@ -1,13 +1,14 @@
 import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
+import { formatCompactDuration } from "@cortexai-agent-hub/core";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@cortexai-agent-hub/ui-web/components/ui/collapsible";
-import { Plural } from "@lingui/react/macro";
+import { Plural, Trans } from "@lingui/react/macro";
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { formatToolActivityDuration, toolStepCount } from "../lib/tool-activity-view";
+import { toolStepCount } from "../lib/tool-activity-view";
 
 type ToolStep = Extract<ThreadMessage["blocks"][number], { kind: "steps" }>["steps"][number];
 
@@ -75,7 +76,8 @@ export function ToolActivityDisclosure({
   durationMs?: number;
   children: ReactNode;
 }) {
-  const duration = formatToolActivityDuration(durationMs);
+  const duration = formatCompactDuration(durationMs);
+  const toolCount = stepCount;
   return (
     <Collapsible
       key={live ? "working" : "actions"}
@@ -95,14 +97,13 @@ export function ToolActivityDisclosure({
           strokeWidth={1.8}
           className="transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
-        {live ? (
-          <Plural value={stepCount} one="Working… · # tool" other="Working… · # tools" />
-        ) : (
-          <>
-            <Plural value={stepCount} one="Done · # tool" other="Done · # tools" />
-            {duration ? ` · ${duration}` : null}
-          </>
-        )}
+        <span className="flex items-center gap-2">
+          <span>{live ? <Trans>Working…</Trans> : <Trans>Done</Trans>}</span>
+          <span>
+            <Plural value={toolCount} one="# tool" other="# tools" />
+          </span>
+          {!live && duration ? <span>{duration}</span> : null}
+        </span>
       </CollapsibleTrigger>
       <CollapsibleContent hiddenUntilFound>
         <div className="ms-[7px] mt-0.5 border-s border-border ps-3">{children}</div>
@@ -127,7 +128,7 @@ export function StandaloneToolActivity({
 }) {
   return (
     <div className="flex justify-start" dir="ltr" data-testid="tool-activity-line">
-      <div className="max-w-[74%] min-w-0 ps-1">
+      <div className="max-w-full min-w-0 ps-1">
         <ToolActivityDisclosure live={live} stepCount={stepCount} durationMs={durationMs}>
           <ToolSteps
             steps={steps}

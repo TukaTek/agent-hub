@@ -28,11 +28,12 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
-import { MODEL_STREAM_IDLE_TIMEOUT_MESSAGE, PiAgentRuntime } from "./pi-runtime.js";
+import { PiAgentRuntime } from "./pi-runtime.js";
 import {
   MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
   MODEL_STREAM_IDLE_TIMEOUT_MS,
 } from "./pi-runtime-limits.js";
+import { MODEL_STREAM_IDLE_TIMEOUT_MESSAGE } from "./pi-runtime-stream.js";
 
 type FakeModel = Model<"openai-codex-responses"> | Model<"openai-completions">;
 type StreamOptions = {
@@ -266,19 +267,6 @@ describe("model stream stall retry", () => {
 
   it.each([
     [
-      "text",
-      (target: FakeModel) => {
-        const partial = message(target, [{ type: "text", text: "half an answer" }], "stop");
-        return {
-          content: partial.content,
-          events: [
-            { type: "text_start", contentIndex: 0, partial },
-            { type: "text_delta", contentIndex: 0, delta: "half an answer", partial },
-          ] as AssistantMessageEvent[],
-        };
-      },
-    ],
-    [
       "thinking",
       (target: FakeModel) => {
         const partial = message(target, [{ type: "thinking", thinking: "considering" }], "stop");
@@ -342,10 +330,6 @@ describe("model stream stall retry", () => {
     ]);
     expect(onModelChange).toHaveBeenCalledOnce();
     expect(onModelChange).toHaveBeenCalledWith(backup.provider, backup.id);
-    expect(events).toContainEqual({
-      type: "progress",
-      text: `Provider unavailable. Switched to backup model ${backup.id}.`,
-    });
     expect(events).toContainEqual({ type: "text", text: "after the helper" });
   });
 
@@ -494,25 +478,6 @@ describe("same-model provider backoff", () => {
       "provider-retried",
       "ok",
     ]);
-  });
-
-  it("does not retry a passthrough attempt that already forwarded more than start", async () => {
-    script([
-      (target) => {
-        const failure = message(target, [], "error", "503 service unavailable");
-        const result = new AssistantMessageEventStream();
-        result.push({ type: "start", partial: { ...failure, content: [] } });
-        result.push({ type: "text_start", contentIndex: 0, partial: { ...failure, content: [] } });
-        result.push({ type: "error", reason: "error", error: failure });
-        result.end(failure);
-        return result;
-      },
-    ]);
-    const { done } = run(request());
-
-    await expect(done).rejects.toThrow("503 service unavailable");
-    expect(providerState.stream).toHaveBeenCalledOnce();
-    expect(modelCalls().map((event) => event.outcome)).toEqual(["failed"]);
   });
 });
 

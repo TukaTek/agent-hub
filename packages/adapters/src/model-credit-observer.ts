@@ -1,4 +1,5 @@
 import type { ModelCallObserver } from "@cortexai-agent-hub/adapter-kit";
+import { HOSTED_MODEL_CREDITS_REQUIRED_ERROR } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   creditAccount,
@@ -18,9 +19,7 @@ export async function hostedModelCreditObserver(
   if (!membership) throw new Error("Model credit account is unavailable");
   const account = await creditAccount(prisma, membership.organizationId);
   if (account.mode !== "credits")
-    throw new HostedModelCreditsRequiredError(
-      "Connect your own API key in Models or choose CortexAI Agent Hub credits in Billing.",
-    );
+    throw new HostedModelCreditsRequiredError(HOSTED_MODEL_CREDITS_REQUIRED_ERROR);
   return {
     beforeCall: (call) =>
       reserveModelCredits(prisma, membership.organizationId, call.maxCostUsd ?? Number.NaN, {

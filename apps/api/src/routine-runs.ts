@@ -4,6 +4,7 @@ import type {
   RoutineRun,
   RoutineRunCursor,
 } from "@cortexai-agent-hub/contracts";
+import { ROUTINE_HISTORY_PAGE_SIZE } from "@cortexai-agent-hub/contracts";
 import { runFailureError } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { Prisma } from "@cortexai-agent-hub/db";
@@ -14,6 +15,7 @@ export async function listRoutineRuns(
   actor: Actor,
   routineId: string,
   before?: RoutineRunCursor,
+  limit = ROUTINE_HISTORY_PAGE_SIZE,
 ): Promise<RoutineHistory> {
   const routine = await prisma.routine.findFirst({
     where: {
@@ -53,12 +55,12 @@ export async function listRoutineRuns(
       completedAt: true,
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 21,
+    take: limit + 1,
   });
-  const runs = rows.slice(0, 20);
+  const runs = rows.slice(0, limit);
   const last = runs.at(-1);
   const nextCursor =
-    rows.length > 20 && last ? { id: last.id, createdAt: last.createdAt.toISOString() } : null;
+    rows.length > limit && last ? { id: last.id, createdAt: last.createdAt.toISOString() } : null;
   // Routine runs can finish silently. A chat link is offered only when a message exists.
   const messages = runs.length
     ? await prisma.$queryRaw<Array<{ id: string; runId: string; threadId: string }>>(Prisma.sql`

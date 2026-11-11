@@ -11,16 +11,16 @@ import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-s
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOpenAiCompatibleFetch } from "./pi-openai-compatible-provider.js";
 import {
-  MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
-  modelStreamIdleWatchdog,
-  reliableModelStream,
-  streamStallReason,
-} from "./pi-runtime.js";
-import {
   MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
   MODEL_STREAM_IDLE_TIMEOUT_MS,
   MODEL_STREAM_TIMEOUT_MS,
 } from "./pi-runtime-limits.js";
+import {
+  MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
+  modelStreamIdleWatchdog,
+  reliableModelStream,
+  streamStallReason,
+} from "./pi-runtime-stream.js";
 
 function assistantMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
   return {

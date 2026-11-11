@@ -17,7 +17,8 @@ import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { requestLogging } from "@cortexai-agent-hub/logging/hono";
 import { serve } from "@hono/node-server";
 import Docker from "dockerode";
-import { Hono, type MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { ComputerEgressMode } from "./computer-spec.js";
@@ -25,6 +26,7 @@ import {
   assertVolumeSubpathSupport,
   COMPUTER_GID,
   COMPUTER_IMAGE,
+  COMPUTER_IMAGE_CONTEXT_FILES,
   COMPUTER_UID,
   COMPUTER_USER,
   computerBridgeNameFor,
@@ -58,6 +60,7 @@ import {
 } from "./computer-spec.js";
 import { EgressNotEnforced, verifyRestrictedEgress } from "./egress-probe.js";
 import { assertComputerHomeWritable } from "./home-ownership.js";
+import type { ScreenAssignment } from "./supervisor-logic.js";
 import {
   assertRequestIdentity,
   attemptComputerControl,
@@ -69,6 +72,7 @@ import {
   computerCommandEnv,
   computerControlTimeoutMs,
   containerActionSteps,
+  controlHandlesActions,
   createDockerStreamDemuxer,
   currentComputerScreens,
   demuxDockerStream,
@@ -85,7 +89,6 @@ import {
   quiesceBrowserProfilesCommand,
   releaseAssignedScreen,
   resetManagedScreensCommand,
-  type ScreenAssignment,
   sandboxCommandTimedOut,
   sandboxTimeoutCommand,
   screenReleaseStopCommand,
@@ -526,12 +529,16 @@ app.post("/computers/:id/browser", async (c) => {
                 paths: z.array(z.string().min(1).max(1024)).min(1).max(10),
                 roots: z.array(z.string().min(1).max(1024)).max(2).optional(),
               }),
-              z.object({
-                kind: z.enum(["fill", "type"]),
-                ref: z.string().min(1).max(200),
-                text: z.string().max(32_000),
-                origin: z.string().url().max(2048).optional(),
-              }),
+              z
+                .object({
+                  kind: z.enum(["fill", "type"]),
+                  ref: z.string().min(1).max(200),
+                  text: z.string().max(32_000),
+                  origin: z.string().url().max(2048).optional(),
+                  field: z.enum(["username", "password"]).optional(),
+                })
+                // The field decides which input types the helper accepts for a saved login.
+                .refine((step) => !step.origin || step.field, "A saved login fill needs its field"),
             ]),
           )
           .min(1)
@@ -655,7 +662,9 @@ app.post("/computers/:id/actions", async (c) => {
       c.req.header("x-cortexai-agent-hub-screen-id"),
       c.req.header("x-cortexai-agent-hub-screen-lease-id"),
     );
-    const control = computerControlEndpoint(info);
+    const endpoint = computerControlEndpoint(info);
+    const control =
+      endpoint && controlHandlesActions(info.Config.Labels, body.actions) ? endpoint : undefined;
     const attempt = await attemptComputerControl(
       control
         ? () =>
@@ -1186,25 +1195,7 @@ async function ensureComputerImage() {
       const stream = await docker.buildImage(
         {
           context: computerContext,
-          src: [
-            "Dockerfile",
-            "start.sh",
-            "user-env.sh",
-            "control.py",
-            "xcapture.c",
-            "cortexai-agent-hub-browser",
-            "cortexai-agent-hub-page-browser",
-            "cortexai-agent-hub-browser.desktop",
-            "cortexai-agent-hub-focus-or-launch",
-            "cortexai-agent-hub-local-bin.sh",
-            "office-requirements.txt",
-            "office_smoke.py",
-            "desktop_smoke.py",
-            "embed.html",
-            "clipboard-bridge.js",
-            "mobile-keyboard.js",
-            "desktop",
-          ],
+          src: [...COMPUTER_IMAGE_CONTEXT_FILES],
         },
         { t: COMPUTER_IMAGE },
       );

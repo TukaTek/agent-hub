@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { link, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
-import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
+import type { BotSecretDestination, SettingsScope } from "@cortexai-agent-hub/contracts";
 import {
   BotSecretAuth,
   BotSecretName,
@@ -11,12 +11,16 @@ import {
   commandVariableName,
   commandVariableProblem,
   decodeLoginSecret,
+  encodeLoginSecret,
+  GeneratedSecretRules,
+  GenerateSecretInput,
   isPrivateNetworkHost,
+  loginCommandName,
   SecretHttpRequest,
 } from "@cortexai-agent-hub/contracts";
 import { attachmentExtensionForMimeType, inferAttachmentMimeType } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
-import { withTransactionRetry } from "@cortexai-agent-hub/db";
+import { lockSpaceSettings, settingsTarget, withTransactionRetry } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { combineSignals, redactConnectorPayload } from "./connector-safety.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
@@ -25,12 +29,43 @@ import {
   createSafeRemoteFetch,
   RemoteRedirectError,
 } from "./remote-mcp.js";
+import { generateSecretValue } from "./secret-generator.js";
 import { persistPreparedSecret } from "./secret-persistence.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
-export type BotSecretScope = { userId: string; spaceId: string; botId: string };
-function scopeFields({ userId, spaceId, botId }: BotSecretScope): BotSecretScope {
-  return { userId, spaceId, botId };
+/**
+ * The member a credential call acts for, in one Space. `vault` picks the account's vault or the
+ * Space's own; omitted, it is whichever this Space uses, which is what bots read and write.
+ */
+export type BotSecretScope = { userId: string; spaceId: string; vault?: SettingsScope };
+type VaultClient = Pick<PrismaClient, "spaceSettingOverride">;
+
+/**
+ * Orders a vault write after any change of vault (the member's settings lock) and after every
+ * other write by the member, since Spaces without their own vault share the account's.
+ */
+async function lockVault(tx: Pick<Prisma.TransactionClient, "$queryRaw">, scope: BotSecretScope) {
+  await lockSpaceSettings(tx, scope);
+  await tx.$queryRaw`SELECT id FROM "user" WHERE id = ${scope.userId} FOR UPDATE`;
+}
+
+export const SPACE_VAULT_NOT_IN_USE = "This Space uses the account vault";
+
+/**
+ * A write aimed at a Space's own vault is refused once the Space stops customizing credentials,
+ * since nothing would read it and it would only wait to be deleted.
+ */
+async function assertVaultInUse(client: VaultClient, scope: BotSecretScope) {
+  if (scope.vault !== "space") return;
+  if ((await settingsTarget(client, scope, "credentials")) !== "space") {
+    throw new Error(SPACE_VAULT_NOT_IN_USE);
+  }
+}
+
+/** The vault rows a call reads and writes: the account's (no Space) or the Space's own. */
+async function vaultFields(client: VaultClient, scope: BotSecretScope) {
+  const target = await settingsTarget(client, scope, "credentials", scope.vault);
+  return { userId: scope.userId, spaceId: target === "space" ? scope.spaceId : null };
 }
 
 export function getFileDownloadCap(): number {
@@ -121,6 +156,7 @@ export function* downloadFilenameCandidates(filename: string): Generator<string>
 
 const metadata = { name: true, origin: true, auth: true } as const;
 
+const SECRET_ALREADY_SAVED = "A credential with this name is already saved";
 const UNUSABLE_CREDENTIAL = "Credential cannot be used with this authentication method";
 
 /** `encodeURIComponent` throws on an unpaired surrogate. */
@@ -222,11 +258,10 @@ export async function loadBotCommandEnvironment(
   scope: BotSecretScope,
   unsetVariables?: Set<string>,
 ): Promise<Record<string, string>> {
-  const rows = await prisma.botSecret.findMany({
-    where: scopeFields(scope),
+  const rows = await prisma.vaultCredential.findMany({
+    where: await vaultFields(prisma, scope),
     select: { id: true, name: true, auth: true, ciphertext: true },
     orderBy: { name: "asc" },
-    take: 100,
   });
   const environment: Record<string, string> = {};
   for (const row of rows) {
@@ -282,10 +317,9 @@ export async function findCommandVariableConflict(
 ): Promise<string | undefined> {
   if (destination.auth.type !== "command") return undefined;
   const variable = commandVariableName(destination.name);
-  const rows = await client.botSecret.findMany({
-    where: { ...scopeFields(scope), name: { not: destination.name } },
+  const rows = await client.vaultCredential.findMany({
+    where: { ...(await vaultFields(client, scope)), name: { not: destination.name } },
     select: { name: true, auth: true },
-    take: 100,
   });
   return rows.find(
     (row) => isCommandCredential(row.auth) && commandVariableName(row.name) === variable,
@@ -407,26 +441,38 @@ function authMetadata(value: unknown): unknown {
 }
 
 /**
- * Keep a bare origin. Never return the raw string: `new URL` resolves `..`, so the raw
- * path can still hold a secret while the parsed path is `/`. Userinfo, query, fragment,
- * and a real path are removed. A placeholder keeps the origin error when no bare origin remains.
+ * The site a credential is saved under when given a page URL: the origin of an http or https
+ * URL, without its path, query or fragment. Any other scheme gets nothing, since
+ * `blob:https://host/x` reports `https://host` without being a page on it. With
+ * `allowUserinfo` false, a URL carrying a username or password gets nothing either, and so does
+ * one longer than `maxLength`, checked on what was given rather than on the site it reduces to.
  */
-function originMetadata(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  if (value === "") return "";
+export function pageUrlOrigin(
+  value: string,
+  { allowUserinfo, maxLength }: { allowUserinfo: boolean; maxLength: number },
+): string | undefined {
+  if (value.length > maxLength) return undefined;
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return "invalid-origin";
+    return undefined;
   }
-  const bare = !url.username && !url.password && !url.search && !url.hash && url.pathname === "/";
-  if (bare) return url.origin;
-  url.username = "";
-  url.password = "";
-  url.search = "";
-  url.hash = "";
-  return url.pathname === "/" ? url.origin : `${url.origin}/path`;
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  if (!allowUserinfo && (url.username || url.password)) return undefined;
+  return url.origin;
+}
+
+/**
+ * Keep only the site. Never return the raw string: `new URL` resolves `..`, so the raw
+ * path can still hold a secret while the parsed path is `/`. Userinfo, query, fragment,
+ * and path are removed. A placeholder keeps the origin error when no site remains.
+ */
+function originMetadata(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value === "") return "";
+  // A sign-in redirect URL can be long; the authenticated request URL's limit, not the origin's.
+  return pageUrlOrigin(value, { allowUserinfo: true, maxLength: 8192 }) ?? "invalid-origin";
 }
 
 function parsedCredentialObject(value: unknown): unknown {
@@ -457,8 +503,8 @@ export function sameSecretDestination(
 }
 
 export async function findBotSecret(prisma: PrismaClient, scope: BotSecretScope, name: string) {
-  const row = await prisma.botSecret.findFirst({
-    where: { ...scopeFields(scope), name },
+  const row = await prisma.vaultCredential.findFirst({
+    where: { ...(await vaultFields(prisma, scope)), name },
     select: metadata,
   });
   return row ? normalizeSecretDestination(row) : null;
@@ -470,6 +516,8 @@ export async function prepareBotSecret(input: {
   scope: BotSecretScope;
   destination: BotSecretDestination;
   plaintext: string;
+  /** Refuse instead of replacing a credential saved under this name, even by a concurrent call. */
+  createOnly?: boolean;
 }) {
   const { prisma, secretStore, scope, plaintext } = input;
   if (!plaintext || plaintext.length > 16_384) throw new Error("Invalid credential length");
@@ -482,15 +530,18 @@ export async function prepareBotSecret(input: {
       throw new Error(UNUSABLE_CREDENTIAL);
     }
   } else credentialHeader(destination, plaintext);
-  const existing = await prisma.botSecret.findFirst({
-    where: { ...scopeFields(scope), name: destination.name },
+  await assertVaultInUse(prisma, scope);
+  const vault = await vaultFields(prisma, scope);
+  const existing = await prisma.vaultCredential.findFirst({
+    where: { ...vault, name: destination.name },
   });
   function validate(row: typeof existing, count: number) {
+    if (row && input.createOnly) throw new Error(SECRET_ALREADY_SAVED);
     if (row && !sameSecretDestination(normalizeSecretDestination(row), destination))
       throw new Error("Remove the existing credential before changing its destination");
     if (!row && count >= 100) throw new Error("Credential limit reached");
   }
-  validate(existing, await prisma.botSecret.count({ where: scopeFields(scope) }));
+  validate(existing, await prisma.vaultCredential.count({ where: vault }));
   const id = existing?.id ?? randomBytes(12).toString("hex");
   const stored = await secretStore.put(
     plaintext,
@@ -507,11 +558,15 @@ export async function prepareBotSecret(input: {
     id,
     ciphertext: stored.ciphertext,
     async store(tx: Prisma.TransactionClient) {
-      await tx.$queryRaw`SELECT id FROM bots WHERE id = ${scope.botId} FOR UPDATE`;
-      const current = await tx.botSecret.findFirst({
-        where: { ...scopeFields(scope), name: destination.name },
+      await lockVault(tx, scope);
+      await assertVaultInUse(tx, scope);
+      const current = await tx.vaultCredential.findFirst({
+        where: { ...vault, name: destination.name },
       });
-      validate(current, await tx.botSecret.count({ where: scopeFields(scope) }));
+      if (JSON.stringify(await vaultFields(tx, scope)) !== JSON.stringify(vault)) {
+        throw Object.assign(new Error("Vault changed while saving; retry"), { code: "P2034" });
+      }
+      validate(current, await tx.vaultCredential.count({ where: vault }));
       const conflict = await findCommandVariableConflict(tx, scope, destination);
       if (conflict) {
         throw new Error(
@@ -521,10 +576,10 @@ export async function prepareBotSecret(input: {
       if (current?.id !== existing?.id)
         throw Object.assign(new Error("Credential changed while saving; retry"), { code: "P2034" });
       if (current)
-        await tx.botSecret.update({ where: { id }, data: { ciphertext: stored.ciphertext } });
+        await tx.vaultCredential.update({ where: { id }, data: { ciphertext: stored.ciphertext } });
       else
-        await tx.botSecret.create({
-          data: { id, ...scopeFields(scope), ...destination, ciphertext: stored.ciphertext },
+        await tx.vaultCredential.create({
+          data: { id, ...vault, ...destination, ciphertext: stored.ciphertext },
         });
     },
   };
@@ -542,12 +597,109 @@ export async function storeBotSecret(input: Parameters<typeof prepareBotSecret>[
   });
 }
 
+/** Save a generated login and the command variable holding its password together, or neither. */
+async function storeLoginWithCommand(
+  login: Parameters<typeof prepareBotSecret>[0],
+  command: Parameters<typeof prepareBotSecret>[0],
+) {
+  const { prisma, secretStore } = login;
+  await withTransactionRetry(async () => {
+    const preparedLogin = await prepareBotSecret(login);
+    // Prepared inside, so a refused command variable still cleans up the login's stored value.
+    await persistPreparedSecret(prisma, secretStore, preparedLogin, async () => {
+      const preparedCommand = await prepareBotSecret(command);
+      await persistPreparedSecret(prisma, secretStore, preparedCommand, () =>
+        prisma.$transaction(async (tx) => {
+          await preparedLogin.store(tx);
+          await preparedCommand.store(tx);
+        }),
+      );
+    });
+  });
+}
+
+/**
+ * Generate a random value and save it as a new login (with its username, for one site) or a
+ * command variable. A login can also save its password as a command variable, for a CLI. Only its redaction forms are returned, for the run to hide; the model sees
+ * the saved name, never the value. An existing credential is never overwritten: a site or
+ * service may already use its value.
+ */
+export async function generateBotSecret(input: {
+  prisma: PrismaClient;
+  secretStore: SecretStore;
+  scope: BotSecretScope;
+  args: unknown;
+}): Promise<{ result: Record<string, unknown>; redactions?: string[] }> {
+  const parsed = GenerateSecretInput.safeParse(input.args);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+      .join("; ");
+    return { result: { error: `Invalid secret — ${detail}` } };
+  }
+  const { name, type, origin, username } = parsed.data;
+  // The same normalization as request_secret, so a sign-up page URL saves its origin.
+  const { destination, error } = resolveRequestSecretDestination({
+    credential: { name, origin, auth: { type } },
+  });
+  if (!destination) return { result: { error } };
+  const command: BotSecretDestination | undefined = parsed.data.command
+    ? { name: loginCommandName(name), origin: "", auth: { type: "command" } }
+    : undefined;
+  const existing = await findBotSecret(input.prisma, input.scope, name);
+  if (existing) {
+    return {
+      result: sameSecretDestination(existing, destination)
+        ? {
+            error:
+              type === "login"
+                ? "A login with this name is already saved for this site; fill it with browser_act fill_secret. Use another name for a different account."
+                : "A command variable with this name is already saved; use it as it is, or use another name.",
+            ...botSecretToolView(existing),
+          }
+        : { error: "A credential with this name already exists. Use another name." },
+    };
+  }
+  if (command && (await findBotSecret(input.prisma, input.scope, command.name))) {
+    return {
+      result: {
+        error: `A credential named ${command.name} already exists. Use another name for the login.`,
+      },
+    };
+  }
+  const value = generateSecretValue(parsed.data.rules ?? GeneratedSecretRules.parse({}));
+  const save = {
+    prisma: input.prisma,
+    secretStore: input.secretStore,
+    scope: input.scope,
+    createOnly: true,
+  };
+  const plaintext = username ? encodeLoginSecret({ username, password: value }) : value;
+  try {
+    if (command) {
+      await storeLoginWithCommand(
+        { ...save, destination, plaintext },
+        { ...save, destination: command, plaintext: value },
+      );
+    } else await storeBotSecret({ ...save, destination, plaintext });
+    return {
+      result: {
+        saved: true,
+        ...botSecretToolView(destination),
+        ...(command ? { command: botSecretToolView(command) } : {}),
+      },
+      redactions: passwordRedactionForms(value),
+    };
+  } catch (error) {
+    return { result: { error: error instanceof Error ? error.message : "Secret was not saved." } };
+  }
+}
+
 export async function listBotSecrets(prisma: PrismaClient, scope: BotSecretScope) {
-  const rows = await prisma.botSecret.findMany({
-    where: scopeFields(scope),
+  const rows = await prisma.vaultCredential.findMany({
+    where: await vaultFields(prisma, scope),
     select: metadata,
     orderBy: { name: "asc" },
-    take: 100,
   });
   return rows.map(botSecretToolView);
 }
@@ -555,30 +707,49 @@ export async function listBotSecrets(prisma: PrismaClient, scope: BotSecretScope
 // Owner-facing view: destination and timestamps only, never the row id or ciphertext.
 const ownerMetadata = { ...metadata, createdAt: true, updatedAt: true } as const;
 
-export function listBotSecretMetadata(prisma: PrismaClient, scope: BotSecretScope) {
-  return prisma.botSecret.findMany({
-    where: scopeFields(scope),
+export async function listBotSecretMetadata(prisma: PrismaClient, scope: BotSecretScope) {
+  return prisma.vaultCredential.findMany({
+    where: await vaultFields(prisma, scope),
     select: ownerMetadata,
     orderBy: { name: "asc" },
-    take: 100,
   });
 }
 
-export function getBotSecretMetadata(
+export async function getBotSecretMetadata(
   client: PrismaClient | Prisma.TransactionClient,
   scope: BotSecretScope,
   name: string,
 ) {
-  return client.botSecret.findFirst({
-    where: { ...scopeFields(scope), name },
+  return client.vaultCredential.findFirst({
+    where: { ...(await vaultFields(client, scope)), name },
     select: ownerMetadata,
   });
 }
 
+/**
+ * A saved value for its owner to read. Only for the owner-facing reveal, which confirms the
+ * person first; bots never read values. A login returns its username and password.
+ */
+export async function revealBotSecret(input: {
+  prisma: PrismaClient;
+  secretStore: Pick<SecretStore, "load">;
+  scope: BotSecretScope;
+  name: string;
+}): Promise<{ username: string; password: string } | { value: string } | null> {
+  const row = await input.prisma.vaultCredential.findFirst({
+    where: { ...(await vaultFields(input.prisma, input.scope)), name: input.name },
+  });
+  if (!row) return null;
+  const plaintext = await input.secretStore.load(row.ciphertext, row.id);
+  return BotSecretAuth.safeParse(row.auth).data?.type === "login"
+    ? decodeLoginSecret(plaintext)
+    : { value: plaintext };
+}
+
 export async function forgetBotSecret(prisma: PrismaClient, scope: BotSecretScope, name: string) {
   await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM bots WHERE id = ${scope.botId} FOR UPDATE`;
-    await tx.botSecret.deleteMany({ where: { ...scopeFields(scope), name } });
+    await lockVault(tx, scope);
+    await tx.vaultCredential.deleteMany({ where: { ...(await vaultFields(tx, scope)), name } });
   });
   return { removed: true };
 }
@@ -618,8 +789,8 @@ export async function requestWithBotSecret(input: {
   if (!URL.canParse(request.url)) {
     return { error: "Invalid authenticated request — url: must be an absolute URL" };
   }
-  const row = await input.prisma.botSecret.findFirst({
-    where: { ...scopeFields(input.scope), name: request.name },
+  const row = await input.prisma.vaultCredential.findFirst({
+    where: { ...(await vaultFields(input.prisma, input.scope)), name: request.name },
   });
   if (!row) return { error: "Credential is unavailable. Use request_secret to save it first." };
   const destination = normalizeSecretDestination(row);
@@ -909,6 +1080,51 @@ async function linkWithoutReplacing(source: string, directory: string, filename:
 
 export type LoginField = "username" | "password";
 const MIN_REDACTED_USERNAME = 6;
+const MIN_REDACTED_PASSWORD_EVERY_RUN = MIN_REDACTED_USERNAME;
+
+function passwordRedactionForms(password: string): string[] {
+  return [
+    ...new Set([
+      ...commandRedactionForms(password),
+      // A submitted form encodes `+` for spaces and escapes `!'()~`, unlike encodeURIComponent.
+      new URLSearchParams({ v: password }).toString().slice(2),
+    ]),
+  ];
+}
+
+/**
+ * Redaction forms of the password of every website login saved for this bot. A filled login
+ * stays on its page after the run that filled it, so each run hides the passwords before any
+ * tool output reaches the model. Usernames stay visible outside the filling run: one is often
+ * the user's own email, which ordinary tasks need. Only login rows are decrypted.
+ */
+export async function loadLoginPasswordRedactions(
+  prisma: PrismaClient,
+  secretStore: Pick<SecretStore, "load">,
+  scope: BotSecretScope,
+): Promise<string[]> {
+  // Every saved login, however many other credentials the bot has.
+  const rows = await prisma.vaultCredential.findMany({
+    where: { ...(await vaultFields(prisma, scope)), auth: { path: ["type"], equals: "login" } },
+    select: { id: true, auth: true, ciphertext: true },
+  });
+  const forms = new Set<string>();
+  for (const row of rows) {
+    if (BotSecretAuth.safeParse(row.auth).data?.type !== "login") continue;
+    try {
+      const { password } = decodeLoginSecret(await secretStore.load(row.ciphertext, row.id));
+      // Every run would mangle each occurrence of a short password; the filling run still hides it.
+      if (password.length < MIN_REDACTED_PASSWORD_EVERY_RUN) continue;
+      for (const form of passwordRedactionForms(password)) forms.add(form);
+    } catch {
+      // Like an unreadable command variable, it must not stop every computer tool. The id only:
+      // an operator can see which login is no longer hidden. Not under a "secret" key, which
+      // the logger scrubs.
+      getLogger().warn("saved login could not be loaded for redaction", { loginId: row.id });
+    }
+  }
+  return [...forms];
+}
 
 /**
  * Resolve one field of a saved website login for a page fill. The caller must pass `origin` to
@@ -921,8 +1137,8 @@ export async function resolveLoginFill(input: {
   name: string;
   field: LoginField;
 }): Promise<{ text: string; origin: string; redactions: string[] } | { error: string }> {
-  const row = await input.prisma.botSecret.findFirst({
-    where: { ...scopeFields(input.scope), name: input.name },
+  const row = await input.prisma.vaultCredential.findFirst({
+    where: { ...(await vaultFields(input.prisma, input.scope)), name: input.name },
   });
   if (!row) return { error: "Login is unavailable. Use request_secret to save it first." };
   if (isCommandCredential(row.auth)) {

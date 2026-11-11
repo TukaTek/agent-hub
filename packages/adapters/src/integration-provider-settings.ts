@@ -5,10 +5,12 @@ import type {
   ManagedConnectorProvider,
   SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  IntegrationProviderConfig,
+  IntegrationProviderId,
+} from "@cortexai-agent-hub/contracts";
 import {
-  type IntegrationProviderConfig,
   IntegrationProviderConfigSchema,
-  type IntegrationProviderId,
   IntegrationProviderIdSchema,
 } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";

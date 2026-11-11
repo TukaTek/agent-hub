@@ -1,5 +1,6 @@
 import type { KeyProvider } from "@cortexai-agent-hub/adapter-kit";
 import { resolveContentEncryption } from "@cortexai-agent-hub/core";
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { PrismaPg } from "@prisma/adapter-pg";
 import type { PoolClient } from "pg";
 import { Pool } from "pg";
@@ -13,6 +14,7 @@ import {
 } from "./content-keys.js";
 import { PrismaClient } from "./generated/prisma/client.js";
 import { installDbContext, rlsBypassKey, withRowLevelSecurity } from "./row-security.js";
+import { withTextSanitization } from "./text-sanitization.js";
 
 export type Db = PrismaClient;
 
@@ -27,6 +29,8 @@ export interface DbClientOptions {
 
 const DEFAULT_POOL_MAX = 4;
 const CONNECT_RETRY_ATTEMPTS = 8;
+const SLOW_CHECKOUT_MS = 1_000;
+const SATURATION_REPORT_INTERVAL_MS = 10_000;
 
 export function createPool(connectionString: string, options: DbClientOptions = {}): Pool {
   const pool = new Pool({
@@ -50,6 +54,7 @@ export function createPool(connectionString: string, options: DbClientOptions = 
   });
   installConnectRetry(pool);
   installDbContext(pool);
+  installSaturationReport(pool, options.applicationName);
   return pool;
 }
 
@@ -64,6 +69,12 @@ export function createDb(
 ): { prisma: PrismaClient; pool: Pool; contentKeys: ContentKeyRing } {
   // Read first, so an invalid CONTENT_ENCRYPTION stops startup before any pool opens.
   const encryptWrites = options.encryptContent ?? resolveContentEncryption();
+  // Without the configured key manager, new space keys would quietly be wrapped by
+  // master keys held on this host.
+  if (!options.keyProvider && (process.env.MASTER_KEY_PROVIDER?.trim() || "local") !== "local")
+    throw new Error(
+      "MASTER_KEY_PROVIDER needs createDb(url, { keyProvider }) from @cortexai-agent-hub/adapters",
+    );
   const pool = createPool(connectionString, options);
   const keyPool = new Pool({
     connectionString,
@@ -75,6 +86,7 @@ export function createDb(
   });
   keyPool.on("error", () => undefined);
   installDbContext(keyPool);
+  installSaturationReport(keyPool, keyPool.options.application_name);
   const end = pool.end.bind(pool) as () => Promise<void>;
   pool.end = (async () => {
     await keyPool.end().catch(() => undefined);
@@ -87,10 +99,12 @@ export function createDb(
   );
   const adapter = new PrismaPg(pool);
   // Row-level security wraps everything else, so its findUnique rewrite still runs
-  // through content encryption.
-  const prisma = withRowLevelSecurity(
-    withContentEncryption(new PrismaClient({ adapter }), contentKeys),
-    rlsBypassKey(connectionString),
+  // through content encryption. Text is cleaned for Postgres before any of them see it.
+  const prisma = withTextSanitization(
+    withRowLevelSecurity(
+      withContentEncryption(new PrismaClient({ adapter }), contentKeys),
+      rlsBypassKey(connectionString),
+    ),
   );
   return { prisma, pool, contentKeys };
 }
@@ -158,6 +172,54 @@ function installConnectRetry(pool: Pool): void {
       });
     };
     attempt(0);
+  }
+
+  pool.connect = connect as Pool["connect"];
+}
+
+/**
+ * Warn when a checkout waited for a free connection, at most once per interval, so a pool
+ * that is running out shows up in the logs before requests start timing out on it.
+ */
+export function installSaturationReport(
+  pool: Pool,
+  name: string | undefined,
+  now: () => number = Date.now,
+): void {
+  type ConnectCallback = (
+    err: Error | undefined,
+    client: PoolClient | undefined,
+    done: (release?: unknown) => void,
+  ) => void;
+  const originalConnect = pool.connect.bind(pool) as {
+    (): Promise<PoolClient>;
+    (callback: ConnectCallback): void;
+  };
+  let reportedAt = -Infinity;
+  const report = (startedAt: number) => {
+    const at = now();
+    const waitMs = at - startedAt;
+    if (waitMs < SLOW_CHECKOUT_MS || at - reportedAt < SATURATION_REPORT_INTERVAL_MS) return;
+    reportedAt = at;
+    getLogger().warn("db.pool.saturated", {
+      "db.pool.name": name,
+      "db.pool.max": pool.options.max,
+      "db.pool.total": pool.totalCount,
+      "db.pool.idle": pool.idleCount,
+      "db.pool.waiting": pool.waitingCount,
+      "db.pool.wait_ms": waitMs,
+    });
+  };
+
+  function connect(): Promise<PoolClient>;
+  function connect(callback: ConnectCallback): void;
+  function connect(callback?: ConnectCallback): Promise<PoolClient> | undefined {
+    const startedAt = now();
+    if (!callback) return originalConnect().finally(() => report(startedAt));
+    originalConnect((err, client, done) => {
+      report(startedAt);
+      callback(err, client, done);
+    });
   }
 
   pool.connect = connect as Pool["connect"];

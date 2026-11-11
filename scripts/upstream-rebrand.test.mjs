@@ -72,6 +72,13 @@ describe("rebrandPath", () => {
       "res/drawable/ic_cortexai_agent_hub_notification.xml",
     );
     expect(rebrandPath(`docs/${old}.md`)).toBe("docs/cortexai-agent-hub.md");
+    expect(
+      rebrand(`<string name="${old}_call">x</string>`, "m/android/res/values/strings.xml").text,
+    ).toBe('<string name="cortexai_agent_hub_call">x</string>');
+    expect(rebrand(`R.drawable.ic_${old}_notification`, "m/Service.kt").text).toBe(
+      "R.drawable.ic_cortexai_agent_hub_notification",
+    );
+    expect(rebrand(`${old}_config`).text).toBe("cortexai-agent-hub_config");
     expect(rebrand(`package com.${old}.notifications`).text).toBe(
       "package com.tukatek.cortexai.agenthub.notifications",
     );

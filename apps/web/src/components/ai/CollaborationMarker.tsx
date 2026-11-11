@@ -1,4 +1,5 @@
-import { BotAvatar, Button, GroupAvatar, type GroupAvatarMember } from "@cortexai-agent-hub/ui-web";
+import type { GroupAvatarMember } from "@cortexai-agent-hub/ui-web";
+import { BotAvatar, Button, GroupAvatar } from "@cortexai-agent-hub/ui-web";
 import { ChevronDown } from "lucide-react";
 
 /**

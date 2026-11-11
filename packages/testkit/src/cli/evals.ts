@@ -26,6 +26,7 @@ import {
 } from "../evals/silence.js";
 import type { DiagnosticWireObservation } from "../evals/wire-observer.js";
 import { diagnosticWireFetch } from "../evals/wire-observer.js";
+import { runApprovalSuite } from "./approval-eval.js";
 
 async function main() {
   const { values } = parseArgs({
@@ -56,13 +57,19 @@ async function main() {
       output: { type: "string", default: "test-report/evals/report.json" },
     },
   });
+  if (values.suite === "approval")
+    return runApprovalSuite(values, {
+      codeRevision: codeRevision(),
+      workingDiffHash: workingDiffHash(),
+      readConnection,
+    });
   const suites = {
     product: { cases: EVAL_CASES, fixtureVersion: "product-v1" },
     history: { cases: HISTORY_EVAL_CASES, fixtureVersion: HISTORY_FIXTURE_VERSION },
     silence: { cases: SILENCE_EVAL_CASES, fixtureVersion: SILENCE_FIXTURE_VERSION },
   };
   if (!Object.hasOwn(suites, values.suite!))
-    throw new Error("Unknown suite; use product, history, or silence");
+    throw new Error("Unknown suite; use product, history, silence, or approval");
   const { cases, fixtureVersion } = suites[values.suite as keyof typeof suites];
   if (values["wire-diagnostics"] && values.suite !== "history")
     throw new Error("Synthetic wire diagnostics require the history suite");
@@ -442,6 +449,8 @@ async function main() {
       PIPEDREAM_CLIENT_SECRET: "",
       PIPEDREAM_PROJECT_ID: "",
       SMTP_URL: "",
+      EMAIL_PROVIDER: "none",
+      EMAIL_API_KEY: "",
       SLACK_BOT_TOKEN: "",
       TELEGRAM_BOT_TOKEN: "",
       WHATSAPP_ACCESS_TOKEN: "",
@@ -464,7 +473,7 @@ async function main() {
       },
     );
     // Import runtime modules only after generation; their barrel exports load Prisma.
-    const { createApp } = await import("../../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     const { runTrial } = await import("../evals/runner.js");
     const { dispatcherFetch, PiAgentRuntime } = await import("@cortexai-agent-hub/adapters");
     const { EvalSandboxProvider } = await import("../evals/sandbox.js");
@@ -573,6 +582,8 @@ async function main() {
               pipedreamClientSecret: undefined,
               pipedreamProjectId: undefined,
               smtpUrl: undefined,
+              emailProvider: "none",
+              emailApiKey: undefined,
               emailFrom: undefined,
               sendblueApiKeyId: undefined,
               sendblueApiSecret: undefined,

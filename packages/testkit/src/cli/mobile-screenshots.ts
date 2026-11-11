@@ -1,6 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import type { Server } from "node:http";
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -10,7 +11,8 @@ import {
   PipedreamConnector,
   ThirdPartyConnectorEmulator,
 } from "@cortexai-agent-hub/adapters";
-import { createThreadMessage, type PrismaClient } from "@cortexai-agent-hub/db";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { createThreadMessage } from "@cortexai-agent-hub/db";
 import { serve } from "@hono/node-server";
 import { sessionCookieHeader } from "../index.js";
 import { runProcess } from "./process.js";
@@ -66,7 +68,7 @@ async function main() {
     },
     { fetch: thirdParties.fetch, resolveHostname: thirdParties.resolveHostname },
   );
-  const { createApp } = await import("../../../../apps/api/src/app.ts");
+  const { createApp } = await import("@cortexai-agent-hub/api/app");
   const handles = await createApp({
     databaseUrl: process.env.DATABASE_URL!,
     dataDir: DATA_DIR,

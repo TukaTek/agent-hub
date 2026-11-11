@@ -11,10 +11,12 @@ import {
 } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { cloudAgentHttpsUrl } from "@cortexai-agent-hub/core";
-import { appendEventInTransaction, type CloudAgent, Prisma } from "@cortexai-agent-hub/db";
+import type { CloudAgent } from "@cortexai-agent-hub/db";
+import { appendEventInTransaction, Prisma } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { cloudAgentsEnabled } from "./cloud-agent-factory.js";
-import { type CloudAgentDeps, cloudAgentBlock, enqueueCloudAgent } from "./cloud-agent-service.js";
+import type { CloudAgentDeps } from "./cloud-agent-service.js";
+import { cloudAgentBlock, enqueueCloudAgent } from "./cloud-agent-service.js";
 import { cloudAgentLaunchSchema, cloudAgentPromptSchema } from "./cloud-agent-tools.js";
 
 const FOLLOWUP_SETTLE_MS = 5 * 60_000;

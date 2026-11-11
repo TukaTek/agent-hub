@@ -107,6 +107,8 @@ describe("authRateLimitOptions", () => {
       storage: "database",
       customRules: {
         "/request-account-deletion": { window: 600, max: 3 },
+        "/request-identity-code": { window: 600, max: 3 },
+        "/confirm-identity": { window: 15 * 60, max: 10 },
         "/sign-in/email": { window: 15 * 60, max: 10 },
         "/sign-up/email": { window: 15 * 60, max: 10 },
         "/request-password-reset": { window: 15 * 60, max: 10 },
@@ -150,8 +152,8 @@ describe("buildTrustedOrigins", () => {
 });
 
 describe("passwordResetEmail", () => {
-  it("keeps the reset URL in text and escapes user-controlled HTML", () => {
-    const message = passwordResetEmail(
+  it("keeps the reset URL in text and escapes user-controlled HTML", async () => {
+    const message = await passwordResetEmail(
       { id: "user-1", email: "ada@example.test", name: '<Ada & "team">' },
       "https://cortexai-agent-hub.test/reset-password?token=secret&next=1",
     );
@@ -170,15 +172,16 @@ describe("passwordResetEmail", () => {
 });
 
 describe("signInCodeEmail", () => {
-  it("puts the code in plain text and HTML without links", () => {
-    const message = signInCodeEmail("ada@example.test", "042517");
+  it("puts the code in plain text and HTML without links", async () => {
+    const message = await signInCodeEmail("ada@example.test", "042517");
     expect(message).toMatchObject({
       to: "ada@example.test",
       subject: "Your CortexAI Agent Hub sign-in code",
     });
     expect(message.text).toContain("042517");
     expect(message.html).toContain("042517");
-    expect(`${message.text}${message.html}`).not.toMatch(/https?:/);
+    expect(message.text).not.toMatch(/https?:/);
+    expect(message.html).not.toContain("<a ");
   });
 });
 

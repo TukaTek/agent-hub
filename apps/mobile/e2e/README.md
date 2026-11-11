@@ -27,12 +27,10 @@ Pass all fixture values at invocation time so credentials never land in source c
 pnpm --filter @cortexai-agent-hub/mobile test:e2e -- \
   -e CORTEXAI_AGENT_HUB_E2E_EMAIL=mobile-smoke@example.test \
   -e CORTEXAI_AGENT_HUB_E2E_PASSWORD='replace-with-the-disposable-password' \
-  -e CORTEXAI_AGENT_HUB_E2E_BOT_NAME=MaestroSmoke-001 \
   -e CORTEXAI_AGENT_HUB_E2E_MESSAGE=mobile-smoke-message
 ```
 
-Use a new bot name for each run if the backing database is persistent. `clearState` resets the app's
-local session and endpoint data; it does not delete server-side bots.
+`clearState` resets the app's local session and endpoint data; it does not delete server-side bots.
 
 ## Screenshot catalog
 

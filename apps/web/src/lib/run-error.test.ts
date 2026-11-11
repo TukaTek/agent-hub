@@ -1,4 +1,4 @@
-import { normalizeRunError } from "@cortexai-agent-hub/core";
+import { MODEL_OUTPUT_CUT_ERROR, normalizeRunError } from "@cortexai-agent-hub/core";
 import { i18n } from "@lingui/core";
 import { afterEach, expect, it } from "vitest";
 import { translateRunError } from "./run-error";
@@ -21,4 +21,17 @@ it("uses the active Lingui catalog for shared run errors", () => {
       i18n.locale,
     ).summary,
   ).toBe("Dein Modellanbieter drosselt Anfragen. Versuche es gleich noch einmal.");
+});
+
+it("translates the summary of a reply cut off at the output limit", () => {
+  i18n.load("de", {
+    [MODEL_OUTPUT_CUT_ERROR]:
+      "Das Modell hat sein Ausgabelimit erreicht, bevor es die Antwort fertig geschrieben hat.",
+  });
+  i18n.activate("de");
+  expect(normalizeRunError(MODEL_OUTPUT_CUT_ERROR, translateRunError, i18n.locale)).toMatchObject({
+    summary:
+      "Das Modell hat sein Ausgabelimit erreicht, bevor es die Antwort fertig geschrieben hat.",
+    recovery: "model",
+  });
 });

@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL_CONTEXT_WINDOW } from "@cortexai-agent-hub/contracts";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 
 /** Models endpoints often mix chat models with tools and media endpoints. */
@@ -44,5 +45,7 @@ export function liveModelSibling(
     name: id,
     reasoning: sameFamily && sibling.reasoning,
     input: sameFamily ? [...sibling.input] : ["text"],
+    // An unrelated sibling's window says nothing about this model's.
+    contextWindow: sameFamily ? sibling.contextWindow : DEFAULT_MODEL_CONTEXT_WINDOW,
   };
 }

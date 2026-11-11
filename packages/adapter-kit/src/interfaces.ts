@@ -10,6 +10,7 @@ import type {
   AutoReviewResult,
   BackgroundJob,
   BackgroundJobHandlers,
+  BillingByokCheckoutRequest,
   BillingCheckoutRequest,
   BillingCreditCheckoutRequest,
   BillingCreditPurchase,
@@ -75,6 +76,7 @@ import type {
   SemanticMemorySaveRequest,
   SnapshotRef,
   SpeechClip,
+  StreamedPortableFile,
   TerminalRequest,
   TransactionalEmail,
   VoiceCapabilities,
@@ -89,6 +91,7 @@ import type {
   WebSearchHit,
   WebSearchRequest,
   WorkspaceDirectoryRequest,
+  WorkspaceExportLimits,
 } from "./types.js";
 
 export interface SandboxProvider {
@@ -119,6 +122,12 @@ export interface SandboxProvider {
       homePath: string;
       providerRef?: string;
       providerKind?: ComputerRef["kind"];
+      /**
+       * When the saved workspace a replacement would restore was read from the computer. A
+       * provider that can only bring `providerRef` back from an older snapshot of its own
+       * reports it gone instead, so the newer save wins.
+       */
+      savedAt?: Date;
     },
     context: AdapterContext,
   ): Promise<ComputerRef>;
@@ -129,6 +138,13 @@ export interface SandboxProvider {
   provisionKind?(): Promise<ComputerRef["kind"]>;
   /** Read-only probe: true only when this exact reference is already running. */
   isRunning?(computer: ComputerRef, context: AdapterContext): Promise<boolean>;
+  /**
+   * Read-only probe: true only when the provider already holds this reference stopped with its
+   * disk kept, so it resumes as it was without anything running now.
+   */
+  isStopped?(computer: ComputerRef, context: AdapterContext): Promise<boolean>;
+  /** True only when this computer currently mounts the server's home directory. */
+  hasMountedHome?(computer: ComputerRef, context: AdapterContext): Promise<boolean>;
   /** Perform idempotent provider setup after the lifecycle has captured the reference. */
   prepare(computer: ComputerRef, context: AdapterContext): Promise<void>;
   execute(
@@ -158,7 +174,7 @@ export interface SandboxProvider {
     computer: ComputerRef,
     request: TerminalRequest,
     context: AdapterContext,
-  ): Promise<{ url: string }>;
+  ): Promise<{ url: string; headers?: Record<string, string> }>;
   setScreenControl?(
     computer: ComputerRef,
     interactive: boolean,
@@ -189,7 +205,12 @@ export interface SandboxProvider {
     options?: { maxBytes?: number },
   ): Promise<Uint8Array>;
   writeFile(computer: ComputerRef, file: PortableFile, context: AdapterContext): Promise<void>;
-  exportWorkspace(computer: ComputerRef, context: AdapterContext): AsyncIterable<PortableFile>;
+  /** Large files may come as streams. A provider that lists first refuses `limits` up front. */
+  exportWorkspace(
+    computer: ComputerRef,
+    context: AdapterContext,
+    limits?: WorkspaceExportLimits,
+  ): AsyncIterable<PortableFile | StreamedPortableFile>;
   importWorkspace(
     computer: ComputerRef,
     files: AsyncIterable<PortableFile>,
@@ -199,7 +220,16 @@ export interface SandboxProvider {
   keepAlive?(computer: ComputerRef): Promise<void>;
   /** Drop a single-screen graphical claim for this bot so another Team bot can use the display. */
   releaseScreen?(computer: ComputerRef, context: AdapterContext): Promise<void>;
-  stop(computer: ComputerRef, context: AdapterContext): Promise<void>;
+  /**
+   * Stops the computer, keeping its disk where the provider can. `discardUnsaved` says nothing on
+   * the computer can be read anymore: a provider that refuses to stop because it cannot save the
+   * disk first stops anyway, keeping its last good copy.
+   */
+  stop(
+    computer: ComputerRef,
+    context: AdapterContext,
+    options?: { discardUnsaved?: boolean },
+  ): Promise<void>;
   destroy(computer: ComputerRef, context: AdapterContext): Promise<void>;
 }
 
@@ -421,6 +451,10 @@ export interface BillingProvider {
   createCreditCheckout?(input: BillingCreditCheckoutRequest): Promise<{ url: string }>;
   listCreditPurchases?(customerId: string): Promise<BillingCreditPurchase[]>;
   setMonthlyCredits?(customerId: string, amountCents: number): Promise<void>;
+  /** Flat monthly own-key plan: access without credits. */
+  createByokCheckout?(input: BillingByokCheckoutRequest): Promise<{ url: string }>;
+  /** Ends every live own-key plan at its period end. */
+  endByokPlans?(customerId: string): Promise<void>;
   describe(): AdapterDescriptor<{ trials: boolean; portal: boolean; modelCredits?: boolean }>;
   getPrice(): Promise<BillingPrice>;
   createCustomer(input: { email: string; organizationId: string }): Promise<{ customerId: string }>;

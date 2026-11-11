@@ -46,6 +46,28 @@ describe("loadEnv", () => {
       expect(loadEnv({ ...base, TICKET_BOARD_ENABLED: value }).ticketBoardEnabled).toBe(false);
     expect(loadEnv({ ...base, TICKET_BOARD_ENABLED: "true" }).ticketBoardEnabled).toBe(true);
   });
+  it("loads operator menu links and refuses to start on a bad value", () => {
+    expect(loadEnv(base).navLinks).toEqual([]);
+    expect(
+      loadEnv({
+        ...base,
+        CORTEXAI_AGENT_HUB_NAV_LINKS: '[{"id":"clients","label":"Clients","path":"/ext/clients/"}]',
+      }).navLinks,
+    ).toEqual([{ id: "clients", label: "Clients", path: "/ext/clients/", trusted: false }]);
+    expect(() =>
+      loadEnv({
+        ...base,
+        CORTEXAI_AGENT_HUB_NAV_LINKS: '[{"id":"x","label":"X","path":"/api/me"}]',
+      }),
+    ).toThrow("CORTEXAI_AGENT_HUB_NAV_LINKS");
+  });
+  it("keeps Crisp chat off unless a valid website ID is set", () => {
+    expect(loadEnv(base).crispWebsiteId).toBeNull();
+    expect(
+      loadEnv({ ...base, CRISP_WEBSITE_ID: "c2c27ea6-4fdb-4350-a9fc-4b5b052dc5ec" }).crispWebsiteId,
+    ).toBe("c2c27ea6-4fdb-4350-a9fc-4b5b052dc5ec");
+    expect(() => loadEnv({ ...base, CRISP_WEBSITE_ID: "nope" })).toThrow("CRISP_WEBSITE_ID");
+  });
   it("defaults the product path to Pi, Docker, and Graphile Worker", () => {
     const env = loadEnv(base);
     expect(env.agentRuntime).toBe("pi");
@@ -329,6 +351,17 @@ describe("loadEnv", () => {
       }).emailEmulator,
     ).toBe(false);
     expect(loadEnv({ ...base, NODE_ENV: "development" }).nodeEnv).toBe("development");
+  });
+
+  it("loads generic email API connection settings", () => {
+    expect(
+      loadEnv({ ...base, EMAIL_PROVIDER: " resend ", EMAIL_API_KEY: " fake-key " }),
+    ).toMatchObject({
+      emailProvider: "resend",
+      emailApiKey: "fake-key",
+    });
+    expect(loadEnv(base).emailProvider).toBeUndefined();
+    expect(loadEnv(base).emailApiKey).toBeUndefined();
   });
 
   it("defaults the remote MCP private-endpoint escape to off", () => {

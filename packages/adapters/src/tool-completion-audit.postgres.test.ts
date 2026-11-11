@@ -10,7 +10,7 @@ import {
 } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { appendToolCompletionAudit } from "./executor.js";
+import { appendToolCompletionAudit } from "./tool-completion-audit.js";
 import {
   createToolCompletionAuditQueue,
   TOOL_COMPLETION_AUDIT_PROCESS_CONCURRENCY,

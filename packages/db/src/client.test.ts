@@ -1,6 +1,9 @@
+import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
+import type { Pool, PoolClient } from "pg";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDb,
+  installSaturationReport,
   isTooManyDatabaseConnections,
   parsePositiveInteger,
   retryOnTooManyConnections,
@@ -39,6 +42,17 @@ describe("createDb", () => {
     );
     pools.push(pool);
     expect(pool.options.max).toBe(4);
+  });
+
+  it("refuses local master keys when a key manager is configured", () => {
+    vi.stubEnv("MASTER_KEY_PROVIDER", "aws-kms");
+    try {
+      expect(() =>
+        createDb("postgres://cortexai-agent-hub:cortexai-agent-hub@127.0.0.1:9/cortexai-agent-hub"),
+      ).toThrow("MASTER_KEY_PROVIDER needs createDb(url, { keyProvider })");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -98,5 +112,45 @@ describe("retryOnTooManyConnections", () => {
         throw error;
       }),
     ).rejects.toBe(error);
+  });
+});
+
+describe("installSaturationReport", () => {
+  it("warns once per interval when a checkout waited for a connection", async () => {
+    const sink = createTestSink();
+    installLogger(
+      createLogger({ service: "cortexai-agent-hub-api", sinks: [sink], level: "debug" }),
+    );
+    let clock = 0;
+    const waits = [1_500, 10, 2_000, 10_000];
+    const pool = {
+      options: { max: 4 },
+      totalCount: 4,
+      idleCount: 0,
+      waitingCount: 3,
+      connect: (callback?: (err: undefined, client: PoolClient, done: () => void) => void) => {
+        clock += waits.shift() ?? 0;
+        const client = {} as PoolClient;
+        if (!callback) return Promise.resolve(client);
+        callback(undefined, client, () => undefined);
+      },
+    } as unknown as Pool;
+    installSaturationReport(pool, "cortexai-agent-hub-api", () => clock);
+
+    await pool.connect();
+    pool.connect(() => undefined);
+    await pool.connect();
+    await pool.connect();
+
+    const warnings = sink.events.filter((event) => event.message === "db.pool.saturated");
+    expect(warnings).toMatchObject([
+      {
+        "db.pool.name": "cortexai-agent-hub-api",
+        "db.pool.max": 4,
+        "db.pool.waiting": 3,
+        "db.pool.wait_ms": 1_500,
+      },
+      { "db.pool.wait_ms": 10_000 },
+    ]);
   });
 });

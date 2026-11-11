@@ -31,7 +31,7 @@ describeVoice("voice credentials and speech HTTP", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-voice-"));
 
   beforeAll(async () => {
-    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     const handles = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,
@@ -184,6 +184,9 @@ describeVoice("voice credentials and speech HTTP", () => {
     ).resolves.toBeNull();
     await expect(
       prisma.spaceVoicePreference.count({ where: { credentialId: stored.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      prisma.userVoicePreference.count({ where: { credentialId: stored.id } }),
     ).resolves.toBe(0);
     await expect(prisma.secret.findUnique({ where: { id: stored.secretId } })).resolves.toBeNull();
 

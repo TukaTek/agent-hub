@@ -55,7 +55,6 @@ Supported connections include OpenAI, Anthropic, Google, OpenRouter, Vercel AI G
 
 Permission records include the recipient, Space, disclosure version, and time. Choose Not now to decline, or withdraw permission in Account → AI data sharing for new mobile actions. Stop existing runs and disable routines separately. Withdrawal cannot recall data already sent. Web, desktop, and self-hosted server workflows do not use this mobile permission flow.
 
-
 Users can delete their account and associated personal Space data from the Account screen. For CortexAI privacy inquiries, [contact CortexAI](https://www.tukasolutions.com/contact).
 
 Read the [CortexAI product page](https://www.tukasolutions.com/cortexaiagenthub).

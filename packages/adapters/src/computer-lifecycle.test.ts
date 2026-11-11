@@ -9,7 +9,8 @@ import type {
   JobPublisher,
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import { clearThread, type PrismaClient, type ThreadEvents } from "@cortexai-agent-hub/db";
+import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import { clearThread } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   acquireComputerExecutionLease,
@@ -1025,6 +1026,68 @@ describe("computer provisioning", () => {
     },
   );
 
+  const savedAt = new Date("2024-01-01T00:20:00.000Z");
+  it.each([
+    {
+      saved: "a timed save",
+      homeRevision: "revision-1",
+      homeRevisionAt: savedAt,
+      expected: savedAt,
+    },
+    {
+      saved: "a save of unknown age",
+      homeRevision: "revision-1",
+      homeRevisionAt: null,
+      expected: undefined,
+    },
+    { saved: "no save", homeRevision: "empty", homeRevisionAt: savedAt, expected: undefined },
+  ])("tells the provider when the workspace was saved for $saved", async (row) => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-provision-saved-at-"));
+    const home = new LocalAgentHomeStore(dataDir);
+    const sandbox = new FakeSandboxProvider();
+    const ref = await sandbox.provision({ botId: "bot-1", homePath: dataDir }, context);
+    const provision = vi
+      .spyOn(sandbox, "provision")
+      .mockResolvedValue({ ...ref, kind: "boat", providerRef: "provider-1", fresh: false });
+    const prisma = {
+      computer: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue({
+          id: "computer-1",
+          homeKey: "bot-1",
+          homeRevision: row.homeRevision,
+          homeRevisionAt: row.homeRevisionAt,
+          providerRef: "provider-1",
+          kind: "boat",
+          scope: "dedicated",
+          state: "running",
+          controlLeaseId: null,
+          updatedAt: new Date("2024-01-01T00:00:00.000Z"),
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as unknown as PrismaClient;
+
+    try {
+      await provisionComputer(
+        {
+          prisma,
+          sandbox,
+          home,
+          jobs: {} as JobPublisher,
+          events: {} as ThreadEvents,
+          dataDir,
+        },
+        "computer-1",
+        context,
+      );
+      const request = provision.mock.calls[0]?.[0] as { savedAt?: Date } | undefined;
+      expect(request).toBeDefined();
+      expect(request?.savedAt).toEqual(row.expected);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { fresh: true, cleanup: "destroy" as const },
     { fresh: false, cleanup: "stop" as const },
@@ -1402,6 +1465,10 @@ describe("Team Computer wake", () => {
         }),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
+      computerRun: {
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       botDeletion: { findMany },
     } as unknown as PrismaClient;
     const sandbox = {
@@ -1473,6 +1540,83 @@ describe("Team Computer wake", () => {
 
     const runningSince = activation(harness)?.runningSince as Date;
     expect(runningSince.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("records a run from the clock's start, closing a missed earlier run as reconciled", async () => {
+    const harness = wakeHarness("stopped", undefined, {}, { runningSince: null, userId: "user-1" });
+
+    await boot(harness);
+
+    const startedAt = activation(harness)?.runningSince as Date;
+    expect(vi.mocked(harness.prisma.computerRun.updateMany)).toHaveBeenCalledWith({
+      where: { computerId: "computer-1", endedAt: null, startedAt: { lt: startedAt } },
+      data: { endedAt: startedAt, endReason: "reconciled" },
+    });
+    expect(vi.mocked(harness.prisma.computerRun.createMany)).toHaveBeenCalledWith({
+      data: [
+        {
+          computerId: "computer-1",
+          spaceId: "workspace-1",
+          userId: "user-1",
+          kind: "e2b",
+          providerRef: "sandbox-1",
+          startedAt,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it("records the sandbox the provider returned, not the one the computer had before", async () => {
+    const harness = wakeHarness(
+      "stopped",
+      undefined,
+      { id: "sandbox-2", providerRef: "sandbox-2" },
+      { runningSince: null, userId: "user-1" },
+    );
+
+    await boot(harness);
+
+    expect(vi.mocked(harness.prisma.computerRun.createMany)).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ providerRef: "sandbox-2" })],
+      skipDuplicates: true,
+    });
+  });
+
+  it("keeps the same run when reconnecting to a computer that stayed up", async () => {
+    const runningSince = new Date("2024-01-01T00:00:00.000Z");
+    const harness = wakeHarness("running", undefined, {}, { runningSince });
+
+    await boot(harness);
+
+    expect(vi.mocked(harness.prisma.computerRun.createMany)).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [expect.objectContaining({ startedAt: runningSince })] }),
+    );
+  });
+
+  it("ends a run the provider stopped on its own when reconnecting has to start it again", async () => {
+    const harness = wakeHarness(
+      "running",
+      undefined,
+      { started: true },
+      { runningSince: new Date("2024-01-01T00:00:00.000Z") },
+    );
+
+    await boot(harness);
+
+    const startedAt = activation(harness)?.runningSince as Date;
+    expect(vi.mocked(harness.prisma.computerRun.updateMany)).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { endedAt: startedAt, endReason: "gone" } }),
+    );
+  });
+
+  it("starts the computer even when the usage write fails", async () => {
+    const harness = wakeHarness("stopped");
+    vi.mocked(harness.prisma.computerRun.createMany).mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+
+    await expect(boot(harness)).resolves.toEqual(harness.ref);
   });
 
   it("removes folders of bots deleted while the Team Computer was stopped", async () => {
@@ -1764,6 +1908,7 @@ describe("computer execution leases", () => {
       },
       attempt: { updateMany: vi.fn() },
       task: { updateMany: vi.fn() },
+      secret: { deleteMany: vi.fn() },
       computerExecutionLease: {
         updateMany: vi.fn().mockImplementation(async ({ data }) => {
           lease.expiresAt = data.expiresAt;
@@ -1782,7 +1927,7 @@ describe("computer execution leases", () => {
         findUniqueOrThrow: vi.fn().mockResolvedValue({ scope: "team", state: "running" }),
         updateMany: vi.fn(),
       },
-      message: { deleteMany: vi.fn() },
+      message: { deleteMany: vi.fn(), findMany: vi.fn(async () => []) },
       event: {
         deleteMany: vi.fn(),
         create: vi.fn().mockResolvedValue({

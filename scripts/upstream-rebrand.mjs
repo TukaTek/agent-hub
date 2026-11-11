@@ -8,8 +8,10 @@ const OLD = old.toUpperCase();
 const RULES = [
   [new RegExp(`com\\.${old}\\.app`, "g"), "com.tukatek.cortexai.agenthub"],
   // Native module packages (Kotlin `com.<old>.notifications`) live under the app's package.
+  [new RegExp(`(?<=^|[/\\s"'\`])com/${old}/`, "gm"), "com/tukatek/cortexai/agenthub/"],
   [new RegExp(`com\\.${old}\\.(?=[a-z])`, "g"), "com.tukatek.cortexai.agenthub."],
   [new RegExp(`github\\.com/elie222/${old}`, "g"), "github.com/TukaTek/agent-hub"],
+  [new RegExp(`ghcr\\.io/elie222/${old}`, "g"), "ghcr.io/tukatek/agent-hub"],
   [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
   [new RegExp(`(?<![A-Za-z0-9])${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
   [new RegExp(`(?<![A-Za-z0-9])${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
@@ -28,9 +30,19 @@ const RULES = [
 const UNRESOLVED = new RegExp(`[\\w.+-]*@?${old}\\.com\\b[\\w./-]*`, "g");
 const KEEP = new Set(["LICENSE", "NOTICE"]);
 
-export function rebrand(input) {
+// Android resource names and their Kotlin references only allow underscores.
+const ANDROID = /(^|\/)android\/|\.kt$/;
+const ANDROID_RULES = [
+  [
+    new RegExp(`(?<![\\w.-])${old}_|(?<=_)${old}(?![A-Za-z0-9-])`, "g"),
+    (match) => match.replace(old, "cortexai_agent_hub"),
+  ],
+];
+
+export function rebrand(input, path = "") {
   const unresolved = [...new Set(input.match(UNRESOLVED) ?? [])];
-  const text = RULES.reduce((out, [pattern, value]) => out.replace(pattern, value), input);
+  const rules = ANDROID.test(path) ? [...ANDROID_RULES, ...RULES] : RULES;
+  const text = rules.reduce((out, [pattern, value]) => out.replace(pattern, value), input);
   return { text, unresolved };
 }
 

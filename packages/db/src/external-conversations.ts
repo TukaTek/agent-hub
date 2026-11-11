@@ -1,9 +1,9 @@
-import {
-  type Actor,
-  AutomatedSenderPoliciesSchema,
-  type ExternalConversation,
-  type ExternalConversationPolicy,
+import type {
+  Actor,
+  ExternalConversation,
+  ExternalConversationPolicy,
 } from "@cortexai-agent-hub/contracts";
+import { AutomatedSenderPoliciesSchema } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "./client.js";
 import { Prisma } from "./client.js";
 import { withNewestThreadMessages } from "./preview-messages.js";

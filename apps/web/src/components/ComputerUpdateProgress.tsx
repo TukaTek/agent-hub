@@ -1,4 +1,5 @@
-import { COMPUTER_UPDATE_STAGES, type ComputerUpdate } from "@cortexai-agent-hub/contracts";
+import type { ComputerUpdate } from "@cortexai-agent-hub/contracts";
+import { COMPUTER_UPDATE_STAGES } from "@cortexai-agent-hub/contracts";
 import { computerUpdateNeedsAttention, computerUpdateStages } from "@cortexai-agent-hub/core";
 import {
   Button,

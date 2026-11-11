@@ -4,7 +4,8 @@ import { Button } from "@cortexai-agent-hub/ui-web/components/ui/button";
 import { Input } from "@cortexai-agent-hub/ui-web/components/ui/input";
 import { Textarea } from "@cortexai-agent-hub/ui-web/components/ui/textarea";
 import { cn } from "@cortexai-agent-hub/ui-web/lib/utils";
-import { cva, type VariantProps } from "class-variance-authority";
+import type { VariantProps } from "class-variance-authority";
+import { cva } from "class-variance-authority";
 import type * as React from "react";
 
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {

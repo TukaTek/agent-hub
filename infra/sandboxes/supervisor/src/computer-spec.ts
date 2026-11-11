@@ -22,6 +22,28 @@ export function resolveComputerImage(
 }
 
 export const COMPUTER_IMAGE = resolveComputerImage();
+
+/** The files from infra/sandboxes/computer the supervisor sends when it builds the image locally. */
+export const COMPUTER_IMAGE_CONTEXT_FILES = [
+  "Dockerfile",
+  "start.sh",
+  "user-env.sh",
+  "control.py",
+  "xcapture.c",
+  "cortexai-agent-hub-browser",
+  "cortexai-agent-hub-page-browser",
+  "cortexai-agent-hub-browser.desktop",
+  "cortexai-agent-hub-focus-or-launch",
+  "cortexai-agent-hub-local-bin.sh",
+  "office-requirements.txt",
+  "office_smoke.py",
+  "desktop_smoke.py",
+  "embed.html",
+  "clipboard-bridge.js",
+  "mobile-keyboard.js",
+  "browser-policy.json",
+  "desktop",
+] as const;
 export const COMPUTER_UID = 1000;
 export const COMPUTER_GID = 1000;
 export const COMPUTER_USER = `${COMPUTER_UID}:${COMPUTER_GID}`;

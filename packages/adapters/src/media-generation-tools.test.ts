@@ -3,9 +3,9 @@ import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import { toolRequiresApproval } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
-import { selectBuiltinToolsForRun } from "./executor.js";
 import { FakeMediaGenerationProvider } from "./media-generation-provider.js";
 import { generateMediaFromTool } from "./media-generation-tools.js";
+import { selectBuiltinToolsForRun } from "./run-tool-selection.js";
 
 const run = { id: "run", threadId: "thread", botId: "bot", spaceId: "space", userId: "owner" };
 const context: AdapterContext = {

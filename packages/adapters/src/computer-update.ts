@@ -1,6 +1,7 @@
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import { computerControlExpireJobKey } from "@cortexai-agent-hub/adapter-kit";
-import { type ComputerUpdate, ComputerUpdateSchema } from "@cortexai-agent-hub/contracts";
+import type { ComputerUpdate } from "@cortexai-agent-hub/contracts";
+import { ComputerUpdateSchema } from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";

@@ -3,7 +3,8 @@ import { Separator } from "@cortexai-agent-hub/ui-web/components/ui/separator";
 import { Switch } from "@cortexai-agent-hub/ui-web/components/ui/switch";
 
 import { cn } from "@cortexai-agent-hub/ui-web/lib/utils";
-import { cva, type VariantProps } from "class-variance-authority";
+import type { VariantProps } from "class-variance-authority";
+import { cva } from "class-variance-authority";
 import { useId, useMemo } from "react";
 
 function FieldSet({ className, ...props }: React.ComponentProps<"fieldset">) {

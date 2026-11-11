@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="cortexai_agent_hub_call_channel">Laufender Anruf</string>
+  <string name="cortexai_agent_hub_call_title">CortexAI Agent Hub-Anruf</string>
+  <string name="cortexai_agent_hub_call_text">Mikrofon ist aktiv</string>
+</resources>

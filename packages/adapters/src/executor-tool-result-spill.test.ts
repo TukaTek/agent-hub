@@ -140,6 +140,7 @@ async function runScenario(
     },
     attempt: {
       create: vi.fn(async () => ({ id: "attempt-1" })),
+      findMany: vi.fn(async () => []),
       update: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
@@ -169,6 +170,8 @@ async function runScenario(
     taughtSkill: { findMany: vi.fn(async () => []) },
     agentSecret: { findMany: vi.fn(async () => []) },
     botSecret: { findMany: vi.fn(async () => []) },
+    vaultCredential: { findMany: vi.fn(async () => []) },
+    spaceSettingOverride: { findUnique: vi.fn(async () => null) },
     agentSkill: { findMany: vi.fn(async () => []) },
     scratchpadItem: { findMany: vi.fn(async () => []) },
     externalEffect: { findMany: vi.fn(async () => []) },
@@ -178,7 +181,7 @@ async function runScenario(
     artifact: { findMany: vi.fn(async () => []) },
   };
   const executor = createRunExecutor({
-    prisma,
+    prisma: withEmptyModels(prisma),
     deploymentModelKey: "fake-deployment-key",
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox,
@@ -444,3 +447,17 @@ describe("oversized tool results spill to the bot computer", () => {
     );
   });
 });
+
+/** Models the run reads but these tests do not care about behave as empty tables. */
+function withEmptyModels<T extends object>(prisma: T): T {
+  const empty = {
+    findMany: async () => [],
+    findFirst: async () => null,
+    findUnique: async () => null,
+    count: async () => 0,
+    updateMany: async () => ({ count: 0 }),
+  };
+  return new Proxy(prisma, {
+    get: (target, key) => (key in target ? target[key as keyof T] : empty),
+  });
+}

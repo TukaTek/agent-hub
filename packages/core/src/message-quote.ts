@@ -158,9 +158,9 @@ function replyBlockText(block: MessageBlock): string {
     case "choice":
       return block.question;
     case "card":
-      return block.lines.map((line) => `${line.k}: ${line.v}`).join(" · ");
+      return block.lines.map((line) => `${line.k}: ${line.v}`).join(", ");
     case "steps":
-      return block.steps.map((step) => step.label).join(" · ");
+      return block.steps.map((step) => step.label).join(", ");
     case "voice_call":
     case "cloud_agent":
       return block.title;
@@ -175,6 +175,9 @@ function replyBlockText(block: MessageBlock): string {
     case "mcp_approval":
     case "chart":
       return block.name;
+    case "import_setup":
+      if (block.undone) return "";
+      return block.items.map((item) => ("name" in item ? item.name : item.title)).join(", ");
     case "image":
     case "file":
       return block.name || blocksToAgentHistoryText([block]);

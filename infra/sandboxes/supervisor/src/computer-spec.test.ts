@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -22,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertVolumeSubpathSupport,
   COMPUTER_IMAGE,
+  COMPUTER_IMAGE_CONTEXT_FILES,
   computerBridgeNameFor,
   computerDnsMatches,
   computerHomeStorage,
@@ -72,15 +74,15 @@ describe("graphical computer spec", () => {
     // Explicit "" stands for unset, so exported CORTEXAI_AGENT_HUB_COMPUTER_IMAGE* values cannot leak in.
     expect(resolveComputerImage("", "")).toBe("cortexai-agent-hub/computer:local");
     expect(resolveComputerImage("", "edge")).toBe("cortexai-agent-hub/computer:local");
-    expect(resolveComputerImage("ghcr.io/elie222/cortexai-agent-hub/computer", "edge")).toBe(
-      "ghcr.io/elie222/cortexai-agent-hub/computer:edge",
+    expect(resolveComputerImage("ghcr.io/tukatek/agent-hub/computer", "edge")).toBe(
+      "ghcr.io/tukatek/agent-hub/computer:edge",
     );
-    expect(resolveComputerImage("ghcr.io/elie222/cortexai-agent-hub/computer", "")).toBe(
-      "ghcr.io/elie222/cortexai-agent-hub/computer",
+    expect(resolveComputerImage("ghcr.io/tukatek/agent-hub/computer", "")).toBe(
+      "ghcr.io/tukatek/agent-hub/computer",
     );
     // Compose already appends the tag, so a tagged or pinned image is never tagged twice.
-    expect(resolveComputerImage("ghcr.io/elie222/cortexai-agent-hub/computer:edge", "edge")).toBe(
-      "ghcr.io/elie222/cortexai-agent-hub/computer:edge",
+    expect(resolveComputerImage("ghcr.io/tukatek/agent-hub/computer:edge", "edge")).toBe(
+      "ghcr.io/tukatek/agent-hub/computer:edge",
     );
     expect(
       resolveComputerImage("registry.example.com:5000/cortexai-agent-hub/computer", "v1.2.3"),
@@ -258,6 +260,13 @@ describe("graphical computer spec", () => {
     expect(legacyNetworkOwnedSolelyBy("ab", [undefined, undefined])).toBe(false);
   });
 
+  it("builds the local image from files that exist in the computer context", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    for (const file of COMPUTER_IMAGE_CONTEXT_FILES) {
+      expect(existsSync(path.join(root, file)), file).toBe(true);
+    }
+  });
+
   it("ships a browser desktop, not a fullscreen terminal", () => {
     const root = path.resolve(import.meta.dirname, "../../computer");
     const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
@@ -388,7 +397,7 @@ describe("graphical computer spec", () => {
     const copied = [...dockerfile.matchAll(/^COPY (?:--chmod=\d+ )?(?!--from)(\S+) /gm)].map(
       (match) => match[1]!.split("/")[0]!,
     );
-    const listed = readFileSync(path.join(import.meta.dirname, "index.ts"), "utf8");
+    const listed = readFileSync(path.join(import.meta.dirname, "computer-spec.ts"), "utf8");
     for (const file of new Set(copied)) expect(listed).toContain(`"${file}"`);
     expect(copied).toContain("desktop_smoke.py");
   });

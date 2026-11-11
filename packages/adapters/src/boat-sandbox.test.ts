@@ -1,11 +1,18 @@
+import { createHash } from "node:crypto";
 import type * as TimersPromises from "node:timers/promises";
 import type { FileUrlResponse, SandboxStateEnum } from "@boatdev/sdk";
 import { ResponseError } from "@boatdev/sdk";
-import type { ComputerRef } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  ComputerRef,
+  PortableFile,
+  StreamedPortableFile,
+} from "@cortexai-agent-hub/adapter-kit";
 import {
+  SandboxDamagedError,
   SandboxRateLimitError,
   SandboxUnavailableError,
   SandboxUnresponsiveError,
+  WorkspaceTooLargeError,
 } from "@cortexai-agent-hub/adapter-kit";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { parse } from "shell-quote";
@@ -16,7 +23,12 @@ import {
   boatComputerSnapshotName,
 } from "./boat-sandbox.js";
 import type { BoatRecovery } from "./boat-sandbox.test-support.js";
-import { BOAT_ARTIFACT_MAX_BYTES, boatError, FakeBoatApi } from "./boat-sandbox.test-support.js";
+import {
+  BOAT_ARTIFACT_MAX_BYTES,
+  boatError,
+  FakeBoatApi,
+  serveFakeBoatDownload,
+} from "./boat-sandbox.test-support.js";
 import { PREPARE_LINUX_DESKTOP } from "./linux-desktop.js";
 import { isSandboxGoneError } from "./sandbox-errors.js";
 
@@ -39,6 +51,10 @@ const context = {
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
+  // Workspace exports download their archive from the sandbox; nothing leaves the test.
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async (url) => serveFakeBoatDownload(String(url)) ?? new Response(null, { status: 404 }),
+  );
 });
 
 afterEach(() => {
@@ -54,13 +70,59 @@ async function boat() {
   return { api, provider, computer };
 }
 
-function reconnect(provider: BoatSandboxProvider, computer: ComputerRef) {
+/** The script of every command the adapter sent, without the timeout wrapper. */
+function scripts(command: { mock: { calls: [unknown, ...unknown[]][] } }): string[] {
+  return command.mock.calls
+    .map(([request]) => (request as { commandRequest: { command: string } }).commandRequest.command)
+    .map((wrapped) => String(parse(wrapped).at(-1)));
+}
+
+/** Every exported file with its bytes, reading streamed ones in order. */
+async function readExport(files: AsyncIterable<PortableFile | StreamedPortableFile>) {
+  const read: Array<PortableFile & { streamed?: boolean }> = [];
+  for await (const file of files) {
+    if (!("body" in file)) {
+      read.push(file);
+      continue;
+    }
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of file.body) chunks.push(chunk);
+    read.push({
+      path: file.path,
+      executable: file.executable,
+      content: Buffer.concat(chunks),
+      streamed: true,
+    });
+  }
+  return read;
+}
+
+function exportAll(provider: BoatSandboxProvider, computer: ComputerRef, signal?: AbortSignal) {
+  return readExport(
+    provider.exportWorkspace(computer, { ...context, ...(signal ? { signal } : {}) }),
+  );
+}
+
+function archivesLeft(api: FakeBoatApi, computer: ComputerRef): string[] {
+  return [...api.files(computer.id).keys()].filter((path) =>
+    path.startsWith("/tmp/cortexai-agent-hub-workspace-archive-"),
+  );
+}
+
+async function drain(events: AsyncIterable<unknown>): Promise<void> {
+  for await (const _event of events) {
+    // Only the outcome matters.
+  }
+}
+
+function reconnect(provider: BoatSandboxProvider, computer: ComputerRef, savedAt?: Date) {
   return provider.provision(
     {
       botId: computer.botId,
       homePath: "/unused",
       providerRef: computer.providerRef,
       providerKind: "boat",
+      savedAt,
     },
     context,
   );
@@ -84,8 +146,10 @@ describe("BoatSandboxProvider", () => {
         { operation: "resume", outcome: "rate_limited" },
       ]);
       for (const event of sink.events) {
+        const failed = event.outcome !== "accepted";
         expect(Object.keys(event).sort()).toEqual([
           "durationMs",
+          ...(failed ? ["error"] : []),
           "level",
           "message",
           "operation",
@@ -95,6 +159,7 @@ describe("BoatSandboxProvider", () => {
           "timestamp",
         ]);
         expect(event.message).toBe("sandbox.start");
+        if (failed) expect(event.error).toMatchObject({ name: "SandboxRateLimitError" });
       }
     } finally {
       installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
@@ -168,7 +233,7 @@ describe("BoatSandboxProvider", () => {
       { path: "bin/tool", kind: "file", size: 3, executable: true },
     ]);
     const exported = [];
-    for await (const file of provider.exportWorkspace(computer, context)) exported.push(file);
+    exported.push(...(await readExport(provider.exportWorkspace(computer, context))));
     expect(exported).toEqual([
       { path: "bin/tool", content: Uint8Array.from([0, 255, 1]), executable: true },
     ]);
@@ -273,8 +338,9 @@ describe("BoatSandboxProvider", () => {
   });
 
   // Every Boat state, error and recover answer either leaves a usable sandbox or reports it gone
-  // so the caller replaces it from its checkpoint. Nothing may keep failing on the same ref.
-  type Outcome = "kept" | "started" | "replaced";
+  // so the caller replaces it from its checkpoint. Nothing may keep failing on the same ref: one
+  // that only Boat's snapshot can bring back is unavailable until a reconnect rolls it back.
+  type Outcome = "kept" | "started" | "rolled back" | "replaced";
   const stateOutcomes: Record<SandboxStateEnum, Outcome> = {
     init: "kept",
     provisioning: "kept",
@@ -313,6 +379,17 @@ describe("BoatSandboxProvider", () => {
         outcome,
       ],
     ),
+    // One that never answers again is force-stopped to its last good snapshot and resumed.
+    ...(["stuck", "recover_unsupported", "reset_failed"] as const).map(
+      (recovery): [string, (api: FakeBoatApi, id: string) => void, Outcome] => [
+        `error state with a snapshot, recover answers ${recovery}`,
+        (api, id) => {
+          api.saveSnapshot(id);
+          api.fail(id, recovery);
+        },
+        "rolled back",
+      ],
+    ),
     ["snapshot data expired", (api, id) => api.expire(id), "replaced"],
     ["deleted", (api, id) => api.delete(id), "replaced"],
   ];
@@ -328,6 +405,7 @@ describe("BoatSandboxProvider", () => {
         (error: unknown) => error,
       );
       if (outcome === "replaced") expect(isSandboxGoneError(result)).toBe(true);
+      else if (outcome === "rolled back") expect(result).toBeInstanceOf(SandboxUnavailableError);
       else expect(result).toBe("ready");
     },
   );
@@ -342,7 +420,7 @@ describe("BoatSandboxProvider", () => {
       await provider.prepare(ref, context);
       expect(ref.providerRef === computer.providerRef).toBe(outcome !== "replaced");
       expect(ref.fresh).toBe(outcome === "replaced");
-      if (outcome !== "replaced") expect(ref.started).toBe(outcome === "started");
+      if (outcome !== "replaced") expect(ref.started).toBe(outcome !== "kept");
       expect(["ready", "idle", "running"]).toContain(api.state(ref.providerRef));
     },
   );
@@ -479,6 +557,183 @@ describe("BoatSandboxProvider", () => {
     expect(isSandboxGoneError(error)).toBe(false);
   });
 
+  describe.each(["recover_unsupported", "reset_failed"] as const)(
+    "a sandbox Boat cannot power-cycle (%s)",
+    (recovery) => {
+      /** Runs `effect` on each read once the adapter first saw the sandbox in `error`. */
+      function onRead(effect: (api: FakeBoatApi, id: string, elapsedMs: number) => void) {
+        let since: number | undefined;
+        const get = FakeBoatApi.prototype.get;
+        vi.spyOn(FakeBoatApi.prototype, "get").mockImplementation(async function (
+          this: FakeBoatApi,
+          request,
+        ) {
+          if (since === undefined && this.state(request.sandboxId) === "error") since = Date.now();
+          if (since !== undefined) effect(this, request.sandboxId, Date.now() - since);
+          return get.call(this, request);
+        });
+      }
+
+      it("waits for it to answer again and never stops it", async () => {
+        const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+        // It answers again two minutes later, as Boat says most do.
+        onRead((fake, id, elapsedMs) => {
+          if (elapsedMs >= 2 * 60_000 && fake.state(id) === "error") fake.setState(id, "running");
+        });
+        const { api, provider, computer } = await boat();
+        api.saveSnapshot(computer.id);
+        api.fail(computer.id, recovery);
+
+        const ref = await reconnect(provider, computer);
+
+        expect(ref).toMatchObject({ providerRef: computer.providerRef, fresh: false });
+        expect(stop).not.toHaveBeenCalled();
+      });
+
+      it("force-stops it to its last good snapshot and resumes that when it never answers", async () => {
+        const sink = createTestSink();
+        installLogger(createLogger({ service: "test", sinks: [sink] }));
+        try {
+          const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+          const resume = vi.spyOn(FakeBoatApi.prototype, "resume");
+          const { api, provider, computer } = await boat();
+          const file = (path: string) => ({ path, content: Uint8Array.of(1) });
+          await provider.writeFile(computer, file("saved.txt"), context);
+          // The caller's own save is older than Boat's snapshot.
+          const savedAt = new Date();
+          vi.setSystemTime(Date.now() + 60_000);
+          api.saveSnapshot(computer.id);
+          vi.setSystemTime(Date.now() + 60_000);
+          await provider.writeFile(computer, file("unsaved.txt"), context);
+          api.fail(computer.id, recovery);
+          const failedAt = Date.now();
+
+          const ref = await reconnect(provider, computer, savedAt);
+
+          expect(Date.now() - failedAt).toBeGreaterThanOrEqual(5 * 60_000);
+          expect(stop).toHaveBeenCalledExactlyOnceWith(
+            { sandboxId: computer.id, stopRequest: { force: true } },
+            { signal: context.signal },
+          );
+          expect(resume).toHaveBeenCalledOnce();
+          expect(ref).toMatchObject({
+            providerRef: computer.providerRef,
+            fresh: false,
+            started: true,
+          });
+          expect(api.state(computer.id)).toBe("ready");
+          // Boat's snapshot is the newest saved state; what came after it is lost.
+          expect(await provider.readFile(ref, "saved.txt", context)).toEqual(Uint8Array.of(1));
+          await expect(provider.readFile(ref, "unsaved.txt", context)).rejects.toThrow();
+          const steps = sink.events.filter((event) => event.message === "sandbox.recover");
+          expect(steps).toEqual([
+            expect.objectContaining({
+              level: "warn",
+              provider: "boat",
+              step: "wait",
+              reason: recovery,
+            }),
+            expect.objectContaining({ level: "warn", provider: "boat", step: "force_stop" }),
+            expect.objectContaining({ level: "warn", provider: "boat", step: "resumed" }),
+          ]);
+          expect(JSON.stringify(steps)).not.toContain(computer.id);
+        } finally {
+          installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
+        }
+      });
+
+      it("reports it gone without stopping it when the caller's save is newer", async () => {
+        const sink = createTestSink();
+        installLogger(createLogger({ service: "test", sinks: [sink] }));
+        try {
+          const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+          const { api, provider, computer } = await boat();
+          api.saveSnapshot(computer.id);
+          vi.setSystemTime(Date.now() + 60_000);
+          const savedAt = new Date();
+          api.fail(computer.id, recovery);
+
+          const ref = await reconnect(provider, computer, savedAt);
+
+          expect(ref.fresh).toBe(true);
+          expect(ref.providerRef).not.toBe(computer.providerRef);
+          expect(stop).not.toHaveBeenCalled();
+          expect(sink.events).toContainEqual(
+            expect.objectContaining({
+              level: "warn",
+              message: "sandbox.recover",
+              step: "gone",
+              reason: "checkpoint_newer",
+            }),
+          );
+        } finally {
+          installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
+        }
+      });
+
+      it("reports it gone without stopping it when Boat has no snapshot of it", async () => {
+        const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+        const { api, provider, computer } = await boat();
+        api.fail(computer.id, recovery);
+
+        const error = await provider
+          .prepare(computer, context)
+          .catch((failure: unknown) => failure);
+        expect(isSandboxGoneError(error)).toBe(true);
+
+        const ref = await reconnect(provider, computer);
+        expect(ref.fresh).toBe(true);
+        expect(ref.providerRef).not.toBe(computer.providerRef);
+        expect(stop).not.toHaveBeenCalled();
+      });
+
+      it("stops waiting without stopping it when the caller gives up", async () => {
+        const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+        const caller = new AbortController();
+        const cancelled = new Error("run cancelled");
+        onRead((_fake, _id, elapsedMs) => {
+          if (elapsedMs >= 60_000) caller.abort(cancelled);
+        });
+        const { api, provider, computer } = await boat();
+        api.saveSnapshot(computer.id);
+        api.fail(computer.id, recovery);
+
+        const error = await provider
+          .provision(
+            {
+              botId: computer.botId,
+              homePath: "/unused",
+              providerRef: computer.providerRef,
+              providerKind: "boat",
+            },
+            { ...context, signal: caller.signal },
+          )
+          .catch((failure: unknown) => failure);
+
+        expect(error).toBe(cancelled);
+        expect(stop).not.toHaveBeenCalled();
+        expect(api.state(computer.id)).toBe("error");
+      });
+
+      it("leaves the rollback to the next reconnect when work in progress finds it down", async () => {
+        const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+        const { api, provider, computer } = await boat();
+        await provider.prepare(computer, context);
+        api.saveSnapshot(computer.id);
+        api.fail(computer.id, recovery);
+
+        const error = await provider
+          .readFile(computer, "notes.txt", context)
+          .catch((failure: unknown) => failure);
+
+        expect(error).toBeInstanceOf(SandboxUnavailableError);
+        expect(isSandboxGoneError(error)).toBe(false);
+        expect(stop).not.toHaveBeenCalled();
+        expect(api.state(computer.id)).toBe("error");
+      });
+    },
+  );
+
   it("reports a sandbox that never becomes runnable as unavailable, not gone", async () => {
     const get = FakeBoatApi.prototype.get;
     vi.spyOn(FakeBoatApi.prototype, "get").mockImplementation(async function (
@@ -524,6 +779,177 @@ describe("BoatSandboxProvider", () => {
       message: "could not prepare computer desktop tools",
       cause: { message: "exit 100: E: Could not get lock /var/lib/dpkg/lock-frontend" },
     });
+  });
+
+  it.each([
+    'Executable not found in $PATH: "systemd-run"',
+    "ENOENT: no such file or directory, posix_spawn 'systemd-run'",
+    "environment: line 7: /usr/bin/grep: cannot execute: required file not found\nenvironment: line 8: /usr/bin/grep: cannot execute: required file not found",
+  ])("reports a machine that cannot start programs as damaged: %s", async (stderr) => {
+    vi.spyOn(FakeBoatApi.prototype, "command").mockResolvedValue({
+      ok: true,
+      type: "command.finished",
+      success: false,
+      exitCode: 1,
+      stdout: "",
+      stderr,
+      timedOut: false,
+    });
+    const { provider, computer } = await boat();
+
+    await expect(provider.prepare(computer, context)).rejects.toBeInstanceOf(SandboxDamagedError);
+    const events = [];
+    const run = provider.execute(computer, { argv: ["ls"] }, context);
+    await expect(
+      (async () => {
+        for await (const event of run) events.push(event);
+      })(),
+    ).rejects.toBeInstanceOf(SandboxDamagedError);
+  });
+
+  it("says what Boat reports about a damaged machine and checks it again on the next prepare", async () => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "test", sinks: [sink] }));
+    try {
+      const command = vi.spyOn(FakeBoatApi.prototype, "command");
+      const { api, provider, computer } = await boat();
+      await provider.prepare(computer, context);
+      api.damage(computer.id);
+      command.mockClear();
+
+      await expect(drain(provider.execute(computer, { argv: ["ls"] }, context))).rejects.toThrow(
+        SandboxDamagedError,
+      );
+      await expect(provider.prepare(computer, context)).rejects.toThrow(SandboxDamagedError);
+
+      expect(command).toHaveBeenCalledTimes(2);
+      expect(sink.events).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message: "sandbox.damaged",
+          provider: "boat",
+          hydrated: false,
+          lastSnapshotStatus: "failed",
+        }),
+      );
+    } finally {
+      installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
+    }
+  });
+
+  describe("a stop Boat refuses because its saves fail", () => {
+    it("waits on Boat's retries without forcing it unless asked", async () => {
+      const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+      const { api, provider, computer } = await boat();
+      api.damage(computer.id);
+
+      await expect(provider.stop(computer, context)).rejects.toThrow("did not reach archived");
+
+      expect(stop).toHaveBeenCalledExactlyOnceWith(
+        { sandboxId: computer.id },
+        { signal: context.signal },
+      );
+      expect(api.state(computer.id)).toBe("ready");
+    });
+
+    it("forces it to Boat's last good snapshot when the caller may discard unsaved work", async () => {
+      const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+      const { api, provider, computer } = await boat();
+      const file = (path: string) => ({ path, content: Uint8Array.of(1) });
+      await provider.writeFile(computer, file("saved.txt"), context);
+      api.saveSnapshot(computer.id);
+      await provider.writeFile(computer, file("unsaved.txt"), context);
+      api.damage(computer.id);
+
+      await provider.stop(computer, context, { discardUnsaved: true });
+
+      expect(stop).toHaveBeenLastCalledWith(
+        { sandboxId: computer.id, stopRequest: { force: true } },
+        { signal: context.signal },
+      );
+      expect(api.state(computer.id)).toBe("archived");
+      expect([...api.files(computer.id).keys()]).toEqual([expect.stringMatching(/\/saved\.txt$/)]);
+    });
+
+    it("never forces a stop Boat completes", async () => {
+      const stop = vi.spyOn(FakeBoatApi.prototype, "stop");
+      const { api, provider, computer } = await boat();
+
+      await provider.stop(computer, context, { discardUnsaved: true });
+
+      expect(stop).toHaveBeenCalledExactlyOnceWith(
+        { sandboxId: computer.id },
+        { signal: context.signal },
+      );
+      expect(api.state(computer.id)).toBe("archived");
+    });
+  });
+
+  describe("a sandbox Boat already stopped", () => {
+    it("is reported stopped without being started", async () => {
+      const resume = vi.spyOn(FakeBoatApi.prototype, "resume");
+      const { api, provider, computer } = await boat();
+      expect(await provider.isStopped(computer, context)).toBe(false);
+      await provider.stop(computer, context);
+
+      expect(await provider.isStopped(computer, context)).toBe(true);
+      api.expire(computer.id);
+      expect(await provider.isStopped(computer, context)).toBe(false);
+      api.delete(computer.id);
+      expect(await provider.isStopped(computer, context)).toBe(false);
+      expect(resume).not.toHaveBeenCalled();
+    });
+
+    it("resumes when its snapshot is newer than the caller's save", async () => {
+      const { api, provider, computer } = await boat();
+      const savedAt = new Date();
+      vi.setSystemTime(Date.now() + 60_000);
+      await provider.stop(computer, context);
+
+      const ref = await reconnect(provider, computer, savedAt);
+
+      expect(ref).toMatchObject({ providerRef: computer.providerRef, fresh: false, started: true });
+      expect(api.state(computer.id)).toBe("ready");
+    });
+
+    it("is gone when the caller saved after its last good snapshot", async () => {
+      const resume = vi.spyOn(FakeBoatApi.prototype, "resume");
+      const { api, provider, computer } = await boat();
+      api.saveSnapshot(computer.id);
+      api.damage(computer.id);
+      await provider.stop(computer, context, { discardUnsaved: true });
+      vi.setSystemTime(Date.now() + 60_000);
+
+      const ref = await reconnect(provider, computer, new Date());
+
+      expect(ref).toMatchObject({ fresh: true });
+      expect(ref.providerRef).not.toBe(computer.providerRef);
+      expect(resume).not.toHaveBeenCalled();
+      // Boat's older copy stays stopped rather than deleted.
+      expect(api.state(computer.id)).toBe("archived");
+    });
+  });
+
+  it("leaves a command's own failure to start a program to the command", async () => {
+    vi.spyOn(FakeBoatApi.prototype, "command").mockResolvedValue({
+      ok: true,
+      type: "command.finished",
+      success: false,
+      exitCode: 126,
+      stdout: "",
+      stderr: "bash: ./run.sh: cannot execute: required file not found\n",
+      timedOut: false,
+    });
+    const { provider, computer } = await boat();
+
+    const events = [];
+    for await (const event of provider.execute(computer, { argv: ["./run.sh"] }, context)) {
+      events.push(event);
+    }
+    expect(events).toEqual([
+      { type: "stderr", data: "bash: ./run.sh: cannot execute: required file not found\n" },
+      { type: "exit", code: 126 },
+    ]);
   });
 
   it("replaces a sandbox whose data expires between the lookup and the resume", async () => {
@@ -739,57 +1165,112 @@ describe("BoatSandboxProvider", () => {
     ).rejects.toBe(reason);
   });
 
-  it("exports files listed over 5 MiB through a private download URL, not the artifact route", async () => {
+  it("exports the whole workspace through one archive download, whatever its file count", async () => {
     const artifactRaw = vi.spyOn(FakeBoatApi.prototype, "artifactRaw");
+    const createDownloadUrl = vi.spyOn(FakeBoatApi.prototype, "createDownloadUrl");
+    const command = vi.spyOn(FakeBoatApi.prototype, "command");
     const { api, provider, computer } = await boat();
-    const content = Buffer.alloc(6 * 1024 * 1024, 0xab);
-    api
-      .files(computer.id)
-      .set("/home/user/cortexai-agent-hub-home/.browser-profiles/chrome/Default/History", {
-        content,
-        executable: false,
-      });
-    api.files(computer.id).set("/home/user/cortexai-agent-hub-home/notes.txt", {
-      content: Buffer.from("small"),
+    const files = api.files(computer.id);
+    const expected: [string, Buffer, boolean][] = [];
+    const put = (path: string, content: Buffer, executable = false) => {
+      files.set(`/home/user/cortexai-agent-hub-home/${path}`, { content, executable });
+      expected.push([path, content, executable]);
+    };
+    for (let index = 0; index < 500; index++) {
+      put(`project/node_modules/pkg-${index}/index.js`, Buffer.from(`module ${index}`));
+    }
+    const large = Buffer.alloc(BOAT_ARTIFACT_MAX_BYTES + 1, 0xcd);
+    large[0] = 0;
+    put("data/archive.bin", large, true);
+    put("data/binary.bin", Buffer.from([0, 255, 1, 128, 0, 10, 13]));
+    put("data/empty", Buffer.alloc(0));
+    put("notes/tab\there/new\nline.txt", Buffer.from("odd"));
+    put("unicode/café 日本語 🙂.txt", Buffer.from("unicode"));
+    put(".browser-profiles/chrome/Default/History", Buffer.from("history"));
+    files.set("/home/user/cortexai-agent-hub-home/.browser-profiles/chrome/Default/Cache/data_0", {
+      content: Buffer.from("cache"),
       executable: false,
     });
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (url) => api.serveDownload(String(url)));
+    files.set("/home/user/outside.txt", {
+      content: Buffer.from("not exported"),
+      executable: false,
+    });
+    command.mockClear();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockClear();
 
-    const exported = [];
-    for await (const file of provider.exportWorkspace(computer, context)) exported.push(file);
+    const exported = await exportAll(provider, computer);
 
-    expect(exported.map((file) => file.path)).toEqual([
-      ".browser-profiles/chrome/Default/History",
-      "notes.txt",
-    ]);
-    expect(Buffer.from(exported[0]!.content).equals(content)).toBe(true);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(artifactRaw).toHaveBeenCalledExactlyOnceWith(
-      { sandboxId: computer.id, path: "/home/user/cortexai-agent-hub-home/notes.txt" },
-      { signal: context.signal },
+    // Digests, so a mismatch in the large file does not print 50 MiB.
+    const digest = (content: Uint8Array) => createHash("sha256").update(content).digest("hex");
+    expect(
+      exported
+        .map((file) => [file.path, digest(file.content), file.executable ?? false])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+    ).toEqual(
+      expected
+        .map(([path, content, executable]) => [path, digest(content), executable])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
     );
+    // Only the file too large to hold in memory comes as a stream.
+    expect(exported.filter((file) => file.streamed).map((file) => file.path)).toEqual([
+      "data/archive.bin",
+    ]);
+    expect(artifactRaw).not.toHaveBeenCalled();
+    expect(createDownloadUrl).toHaveBeenCalledOnce();
+    expect(createDownloadUrl.mock.calls[0]?.[0].fileUrlRequest.path).toMatch(
+      /^\/tmp\/cortexai-agent-hub-workspace-archive-[0-9a-f-]+\.tar\.gz$/,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init).toMatchObject({ method: "GET", credentials: "omit", redirect: "error" });
+    expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+    // Stopping the browsers, archiving, and removing the archive.
+    expect(command).toHaveBeenCalledTimes(3);
+    expect(command.mock.calls.at(-1)?.[0].commandRequest.command).toMatch(
+      /^rm -f -- '\/tmp\/cortexai-agent-hub-workspace-archive-/,
+    );
+    expect(archivesLeft(api, computer)).toEqual([]);
+  });
+
+  it("archives the workspace in one walk, without browser caches or links", async () => {
+    const command = vi.spyOn(FakeBoatApi.prototype, "command");
+    const { provider, computer } = await boat();
+
+    await exportAll(provider, computer);
+
+    const script = scripts(command).find((text) => text.startsWith("archive="));
+    expect(script).toContain("-printf '%p\\0'");
+    expect(script).toContain("-type f");
+    expect(script).toContain("-name 'Code Cache'");
+    expect(script).toContain("-prune");
+    expect(script).toContain("--hard-dereference");
+    expect(script).toContain("--format=pax");
+    expect(script).toContain("--null --no-recursion");
+    // Only an entry that vanished mid-walk is tolerated; other find errors fail the archive.
+    expect(script).toContain("grep -qv -e 'No such file or directory$'");
+    expect(script).toContain("-e 'file changed as we read it$'");
   });
 
   it("downloads a file the artifact route could not send before Boat's proxy timed out", async () => {
+    const read = FakeBoatApi.prototype.artifactRaw;
     const artifactRaw = vi.spyOn(FakeBoatApi.prototype, "artifactRaw");
     const { api, provider, computer } = await boat();
     api.files(computer.id).set("/home/user/cortexai-agent-hub-home/report.pdf", {
       content: Buffer.from("slow but small"),
       executable: false,
     });
-    artifactRaw.mockRejectedValueOnce(
-      boatError(502, "sandbox_direct_failed", "Request timeout after 74997ms"),
-    );
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (url) => api.serveDownload(String(url)));
+    artifactRaw.mockImplementation(async function (this: FakeBoatApi, request) {
+      if (request.path.endsWith("/report.pdf")) {
+        throw boatError(502, "sandbox_direct_failed", "Request timeout after 74997ms");
+      }
+      return read.call(this, request);
+    });
+    const fetchMock = vi.mocked(globalThis.fetch);
 
-    const exported = [];
-    for await (const file of provider.exportWorkspace(computer, context)) exported.push(file);
+    const content = await provider.readFile(computer, "report.pdf", context);
 
-    expect(Buffer.from(exported[0]!.content).toString()).toBe("slow but small");
+    expect(Buffer.from(content).toString()).toBe("slow but small");
     // The sandbox already had the request; resending it would only time out again.
     expect(artifactRaw).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -813,60 +1294,124 @@ describe("BoatSandboxProvider", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it("exports files over the artifact limit through a private download URL", async () => {
-    const { api, provider, computer } = await boat();
-    const large = Buffer.alloc(BOAT_ARTIFACT_MAX_BYTES + 1, 0xcd);
-    large[0] = 0;
-    const files = api.files(computer.id);
-    files.set("/home/user/cortexai-agent-hub-home/data/archive.bin", {
-      content: large,
-      executable: true,
+  it.each([
+    ["exit 1", { exitCode: 1, timedOut: false }, "could not list Boat workspace (exit 1)"],
+    ["timeout", { exitCode: 124, timedOut: true }, "could not list Boat workspace (timed out)"],
+  ])("reports a failed directory listing by its %s, not its output", async (_, ending, message) => {
+    const output = `${Buffer.from("/home/user/cortexai-agent-hub-home/private.txt").toString("base64")}\tfile\t1\t0\n`;
+    const run = FakeBoatApi.prototype.command;
+    vi.spyOn(FakeBoatApi.prototype, "command").mockImplementation(async function (
+      this: FakeBoatApi,
+      request,
+    ) {
+      if (!request.commandRequest.command.includes("directory=")) return run.call(this, request);
+      return {
+        ok: true,
+        type: "command.finished",
+        success: false,
+        stdout: output.repeat(1_000),
+        stderr: "",
+        ...ending,
+      };
     });
-    files.set("/home/user/cortexai-agent-hub-home/notes.txt", {
+    const { provider, computer } = await boat();
+
+    const error = await provider
+      .listFiles(computer, "", context)
+      .catch((failure: Error) => failure);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(message);
+  });
+
+  it.each([
+    ["timed out", { exitCode: 124, timedOut: true }, "timed out"],
+    ["met an unreadable file", { exitCode: 3, timedOut: false }, "an entry could not be read"],
+  ])("reports a workspace archive that %s without its output", async (_, ending, status) => {
+    const output = "/home/user/cortexai-agent-hub-home/private.txt\n";
+    const run = FakeBoatApi.prototype.command;
+    vi.spyOn(FakeBoatApi.prototype, "command").mockImplementation(async function (
+      this: FakeBoatApi,
+      request,
+    ) {
+      if (!request.commandRequest.command.includes("archive=")) return run.call(this, request);
+      return {
+        ok: true,
+        type: "command.finished",
+        success: false,
+        stdout: output.repeat(1_000),
+        stderr: output,
+        ...ending,
+      };
+    });
+    const createDownloadUrl = vi.spyOn(FakeBoatApi.prototype, "createDownloadUrl");
+    const { provider, computer } = await boat();
+
+    const error = await exportAll(provider, computer).catch((failure: Error) => failure);
+
+    expect((error as Error).message).toBe(`could not archive Boat workspace (${status})`);
+    expect(createDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it("fails an export whose archive download was cut short and removes the archive", async () => {
+    const { api, provider, computer } = await boat();
+    api.files(computer.id).set("/home/user/cortexai-agent-hub-home/notes.txt", {
+      content: Buffer.alloc(100_000, 7),
+      executable: false,
+    });
+    vi.mocked(globalThis.fetch).mockImplementation(async (url) => {
+      const whole = Buffer.from(await serveFakeBoatDownload(String(url))!.arrayBuffer());
+      return new Response(whole.subarray(0, Math.floor(whole.length / 2)));
+    });
+
+    await expect(exportAll(provider, computer)).rejects.toThrow();
+    expect(archivesLeft(api, computer)).toEqual([]);
+  });
+
+  it("stops the archive download with the caller's signal", async () => {
+    const { api, provider, computer } = await boat();
+    api.files(computer.id).set("/home/user/cortexai-agent-hub-home/notes.txt", {
       content: Buffer.from("kept"),
       executable: false,
     });
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (url) => api.serveDownload(String(url)));
+    const controller = new AbortController();
+    const reason = new DOMException("checkpoint cancelled", "AbortError");
+    vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
+      const signal = init?.signal as AbortSignal;
+      const body = new ReadableStream({
+        start(stream) {
+          signal.addEventListener("abort", () => stream.error(signal.reason));
+          controller.abort(reason);
+        },
+      });
+      return new Response(body);
+    });
 
-    const exported = [];
-    for await (const file of provider.exportWorkspace(computer, context)) exported.push(file);
-
-    expect(exported.map((file) => [file.path, file.executable])).toEqual([
-      ["data/archive.bin", true],
-      ["notes.txt", undefined],
-    ]);
-    expect(Buffer.from(exported[0]!.content).equals(large)).toBe(true);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [, init] = fetchMock.mock.calls[0]!;
-    expect(init).toMatchObject({ method: "GET", credentials: "omit", redirect: "error" });
-    expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+    await expect(exportAll(provider, computer, controller.signal)).rejects.toBe(reason);
+    expect(archivesLeft(api, computer)).toEqual([]);
   });
 
-  it("keeps large files out of the same export batch", async () => {
+  it("refuses a workspace over the save limits from its listing, before archiving it", async () => {
+    const createDownloadUrl = vi.spyOn(FakeBoatApi.prototype, "createDownloadUrl");
     const { api, provider, computer } = await boat();
     const files = api.files(computer.id);
     for (const name of ["a", "b", "c"]) {
-      files.set(`/home/user/cortexai-agent-hub-home/${name}.bin`, {
-        content: Buffer.alloc(40 * 1024 * 1024),
+      files.set(`/home/user/cortexai-agent-hub-home/${name}.txt`, {
+        content: Buffer.alloc(10),
         executable: false,
       });
     }
-    let active = 0;
-    let peak = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      peak = Math.max(peak, ++active);
-      await Promise.resolve();
-      active--;
-      return api.serveDownload(String(url));
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    let count = 0;
-    for await (const _file of provider.exportWorkspace(computer, context)) count++;
-
-    expect(count).toBe(3);
-    expect(peak).toBe(1);
+    await expect(
+      readExport(provider.exportWorkspace(computer, context, { maxBytes: 29, maxFiles: 10 })),
+    ).rejects.toEqual(new WorkspaceTooLargeError("bytes"));
+    await expect(
+      readExport(provider.exportWorkspace(computer, context, { maxBytes: 100, maxFiles: 2 })),
+    ).rejects.toEqual(new WorkspaceTooLargeError("files"));
+    expect(createDownloadUrl).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(archivesLeft(api, computer)).toEqual([]);
   });
 
   it("refuses a capped read of a file over the artifact limit without downloading it", async () => {
@@ -1035,10 +1580,9 @@ describe("BoatSandboxProvider", () => {
       { view: "stream", interactive: false },
       context,
     );
-    expect(new URL(screen.url!).searchParams.get("path")).toMatch(
-      /^websockify\?_token=secret&token=view-/,
-    );
-    expect(screen.url).toContain("_token=secret");
+    expect(new URL(screen.url!).searchParams.get("path")).toMatch(/^\/websockify\?token=view-/);
+    expect(screen.url).not.toContain("_token");
+    expect(screen.headers).toEqual({ cookie: "_port_auth=secret" });
     expect(
       command.mock.calls.some(
         ([request]) =>
@@ -1064,6 +1608,26 @@ describe("BoatSandboxProvider", () => {
       { width: 1280 },
     );
     expect(provider.describe().capabilities.multiScreen).toBe(true);
+  });
+
+  it("authenticates takeover and terminal streams without a browser cookie bootstrap", async () => {
+    const { provider, computer } = await boat();
+    await provider.prepare(computer, context);
+    const control = await provider.connectScreen(
+      computer,
+      { view: "stream", interactive: true, controlToken: "fake-control" },
+      context,
+    );
+    const terminal = await provider.connectTerminal(
+      computer,
+      { controlToken: "fake-control" },
+      context,
+    );
+    for (const session of [control, terminal]) {
+      expect(session.headers).toEqual({ cookie: "_port_auth=secret" });
+      expect(session.url).not.toContain("_token");
+      expect(new URL(session.url!).searchParams.get("path")).toContain("token=");
+    }
   });
 
   it("refuses a desktop URL that is not served over HTTPS", async () => {
@@ -1183,14 +1747,14 @@ describe("Boat computer snapshot", () => {
     installLogger(createLogger({ service: "test", sinks: [sink] }));
     try {
       const api = new FakeBoatApi();
-      api.namedSnapshots.clear();
+      api.savedSnapshots.clear();
       const remove = vi.spyOn(api, "deleteSandbox");
       const provider = new BoatSandboxProvider({ apiKey: "test-key" }, api);
 
       const first = await provision(provider);
       const second = await provision(provider);
       await vi.waitFor(() =>
-        expect(api.namedSnapshots.get(BOAT_COMPUTER_SNAPSHOT)?.status).toBe("ready"),
+        expect(api.savedSnapshots.get(BOAT_COMPUTER_SNAPSHOT)?.status).toBe("ready"),
       );
       await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce());
       const third = await provision(provider);
@@ -1203,7 +1767,7 @@ describe("Boat computer snapshot", () => {
       ]);
       const builds = api.creates.filter((request) => !request.env?.CORTEXAI_AGENT_HUB_BOT_ID);
       expect(builds).toEqual([{ ttlSeconds: 1800, noEnv: true }]);
-      const buildId = api.namedSnapshots.get(BOAT_COMPUTER_SNAPSHOT)?.sourceSandboxId;
+      const buildId = api.savedSnapshots.get(BOAT_COMPUTER_SNAPSHOT)?.sourceSandboxId;
       expect([first.id, second.id, third.id]).not.toContain(buildId);
       expect(remove).toHaveBeenCalledWith(buildId);
       expect(api.state(buildId!)).toBeUndefined();
@@ -1222,7 +1786,7 @@ describe("Boat computer snapshot", () => {
     const create = vi.spyOn(api, "create");
     const provider = new BoatSandboxProvider({ apiKey: "test-key" }, api);
     await provision(provider);
-    api.namedSnapshots.clear();
+    api.savedSnapshots.clear();
     create.mockClear();
     const build = vi.spyOn(provider, "buildComputerSnapshot");
 
@@ -1240,13 +1804,13 @@ describe("Boat computer snapshot", () => {
     expect(computer.id).toBe("bx_fake2");
     expect(build).toHaveBeenCalledOnce();
     await vi.waitFor(() =>
-      expect(api.namedSnapshots.get(BOAT_COMPUTER_SNAPSHOT)?.status).toBe("ready"),
+      expect(api.savedSnapshots.get(BOAT_COMPUTER_SNAPSHOT)?.status).toBe("ready"),
     );
   });
 
   it("builds from a clean sandbox, checks the desktop, and skips a ready snapshot", async () => {
     const api = new FakeBoatApi();
-    api.namedSnapshots.clear();
+    api.savedSnapshots.clear();
     const command = vi.spyOn(api, "command");
     const provider = new BoatSandboxProvider({ apiKey: "test-key" }, api);
 
@@ -1269,7 +1833,7 @@ describe("Boat computer snapshot", () => {
 
   it("waits for a save already in progress instead of building again", async () => {
     const api = new FakeBoatApi();
-    api.namedSnapshots.set(BOAT_COMPUTER_SNAPSHOT, {
+    api.savedSnapshots.set(BOAT_COMPUTER_SNAPSHOT, {
       name: BOAT_COMPUTER_SNAPSHOT,
       status: "saving",
       sourceSandboxId: "bx_other",
@@ -1286,7 +1850,7 @@ describe("Boat computer snapshot", () => {
 
   it("keeps using the snapshot after a boot is cancelled during its lookup", async () => {
     const api = new FakeBoatApi();
-    const lookup = vi.spyOn(api, "getNamedSnapshot");
+    const lookup = vi.spyOn(api, "getSavedSnapshot");
     const provider = new BoatSandboxProvider({ apiKey: "test-key" }, api);
     const cancelled = new AbortController();
     lookup.mockImplementationOnce(async () => {
@@ -1307,7 +1871,7 @@ describe("Boat computer snapshot", () => {
 
   it("does not save a snapshot whose desktop check fails", async () => {
     const api = new FakeBoatApi();
-    api.namedSnapshots.clear();
+    api.savedSnapshots.clear();
     const run = api.command.bind(api);
     vi.spyOn(api, "command").mockImplementation(async (request) =>
       request.commandRequest.command.includes("xdpyinfo -display :99")
@@ -1328,7 +1892,7 @@ describe("Boat computer snapshot", () => {
     await expect(provider.buildComputerSnapshot()).rejects.toMatchObject({
       cause: { message: "exit 1: Xvfb did not start" },
     });
-    expect(api.namedSnapshots.size).toBe(0);
+    expect(api.savedSnapshots.size).toBe(0);
     expect(remove).toHaveBeenCalledWith("bx_fake1");
   });
 });

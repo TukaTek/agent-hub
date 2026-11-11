@@ -24,7 +24,7 @@ const MEMORY_TEXT = "User's locker code is 4417";
 
 type Outcome = "ok" | "rejected" | "throws";
 type ToolCase = {
-  name: "save_memory" | "recall_memory" | "forget_memory";
+  name: "save_memory" | "recall_memory";
   args: Record<string, unknown>;
   success: SemanticMemoryResponse<unknown>;
   summary: Record<string, unknown>;
@@ -43,13 +43,8 @@ const cases: ToolCase[] = [
     success: { ok: true, value: [{ memory: MEMORY_TEXT, score: 0.9 }] },
     summary: { ok: true, count: 1 },
   },
-  {
-    name: "forget_memory",
-    args: { id: "fact-1", reason: "User asked to forget it" },
-    success: { ok: true, value: { id: "fact-1", expired: true, reason: null } },
-    summary: { ok: true, id: "fact-1", expired: true },
-  },
 ];
+// forget_memory asks for approval first, so it pauses before reaching the provider.
 
 function fakeMemory(tool: ToolCase, state: { outcome: Outcome; armed: boolean }) {
   const respond = async (operation: string, success: SemanticMemoryResponse<unknown>) => {
@@ -149,6 +144,7 @@ async function runTool(tool: ToolCase, outcome: Outcome) {
     },
     attempt: {
       create: vi.fn(async () => ({ id: "attempt-1" })),
+      findMany: vi.fn(async () => []),
       update: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
@@ -178,6 +174,8 @@ async function runTool(tool: ToolCase, outcome: Outcome) {
     taughtSkill: { findMany: vi.fn(async () => []) },
     agentSecret: { findMany: vi.fn(async () => []) },
     botSecret: { findMany: vi.fn(async () => []) },
+    vaultCredential: { findMany: vi.fn(async () => []) },
+    spaceSettingOverride: { findUnique: vi.fn(async () => null) },
     agentSkill: { findMany: vi.fn(async () => []) },
     scratchpadItem: { findMany: vi.fn(async () => []) },
     externalEffect: {
@@ -211,7 +209,7 @@ async function runTool(tool: ToolCase, outcome: Outcome) {
     artifact: { findMany: vi.fn(async () => []) },
   };
   const executor = createRunExecutor({
-    prisma,
+    prisma: withEmptyModels(prisma),
     deploymentModelKey: "fake-deployment-key",
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox,
@@ -275,3 +273,17 @@ describe.each(cases)("$name through the executor", (tool) => {
     expect(warnings).toEqual([]);
   });
 });
+
+/** Models the run reads but these tests do not care about behave as empty tables. */
+function withEmptyModels<T extends object>(prisma: T): T {
+  const empty = {
+    findMany: async () => [],
+    findFirst: async () => null,
+    findUnique: async () => null,
+    count: async () => 0,
+    updateMany: async () => ({ count: 0 }),
+  };
+  return new Proxy(prisma, {
+    get: (target, key) => (key in target ? target[key as keyof T] : empty),
+  });
+}

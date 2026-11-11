@@ -36,6 +36,13 @@ export interface CortexAiAgentHubDesktopOAuthCallback {
   state?: string;
 }
 
+export interface CortexAiAgentHubDesktopDevice {
+  /** Null until paired. */
+  deviceId: string | null;
+  name: string;
+  allowed: boolean;
+}
+
 export interface CortexAiAgentHubDesktop {
   /** Optional for compatibility with older desktop releases. */
   badge?: {
@@ -47,6 +54,18 @@ export interface CortexAiAgentHubDesktop {
     requestAccess: () => Promise<boolean>;
     revokeAccess: () => Promise<void>;
     onConfigure: (listener: () => void) => () => void;
+  };
+  /** Optional for compatibility with older desktop releases. */
+  device?: {
+    /** Null when the app shows its own local server. */
+    state: () => Promise<CortexAiAgentHubDesktopDevice | null>;
+    /** Turning it on asks with a native prompt the page cannot answer. */
+    setAllowed: (allowed: boolean) => Promise<CortexAiAgentHubDesktopDevice | null>;
+  };
+  /** Optional for compatibility with older desktop releases. */
+  passkeys?: {
+    /** Relying parties this build is associated with for system passkeys (macOS); others fail. */
+    rpIds: () => Promise<string[]>;
   };
   platform: string;
   window: {

@@ -30,17 +30,18 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
     resolveCreateAborted();
   });
   await openNewBot(page);
-  const form = page.getByTestId("create-bot-form");
-  await form.locator("label:has-text('Name') input").fill("New Bot");
-  await form.getByRole("button", { name: "Create", exact: true }).click();
+  const dialog = page.getByTestId("create-bot-dialog");
+  await dialog.getByPlaceholder("Name your Bot").fill("New Bot");
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
   await createAborted;
-  // Failed create keeps the form open on the current bot chat.
+  // Failed create keeps the dialog open over the current bot chat.
   await expect(page.getByPlaceholder("Message Chief")).toBeVisible();
-  await expect(page.getByTestId("side-panel")).toHaveAttribute("data-panel", "create");
-  await expect(page.getByTestId("create-bot-error")).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("create-bot-error")).toBeVisible();
   expect(createFailed).toBe(true);
   await page.unroute("**/rpc/bots/create");
-  await page.getByRole("button", { name: "Cancel new Assistant" }).click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
   await expect(page.getByTestId("side-panel")).toHaveAttribute("data-panel", "closed");
 
   let failedPostCreateRefresh = false;
@@ -117,7 +118,6 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
   await expect(settings.getByRole("switch", { name: "Manage the bots it creates" })).toBeHidden();
   await expect(modelSelect).toHaveCount(0);
   await expect(openWork).toHaveCount(0);
-  await expect(settings.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
   await expect(settings.getByRole("button", { name: "Export", exact: true })).toHaveCount(0);
   const notificationsHeading = settings.getByRole("heading", {
     name: "Notifications",
@@ -270,9 +270,6 @@ test("bot management switch persists with its subtitle", async ({ page }, testIn
 
   const fleetSwitch = await openAdvanced();
   await expect(fleetSwitch).toBeChecked();
-  await expect(
-    page.getByText("Can edit and organise bots it creates", { exact: true }),
-  ).toBeVisible();
   await expect(page.getByRole("button", { name: "About Manage the bots it creates" })).toHaveCount(
     0,
   );

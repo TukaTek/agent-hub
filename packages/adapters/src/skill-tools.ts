@@ -1,11 +1,10 @@
+import type { SkillRecord, SkillSource } from "@cortexai-agent-hub/core";
 import {
   buildSkillMd,
   findSkillByName,
   isSkillReadOnly,
   mergeBuiltinSkills,
   parseSkillMd,
-  type SkillRecord,
-  type SkillSource,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.js";

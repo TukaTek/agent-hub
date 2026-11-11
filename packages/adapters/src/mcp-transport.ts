@@ -1,4 +1,4 @@
-import { isLocalMcpHost } from "@cortexai-agent-hub/contracts";
+import { isLocalhostOrLoopbackIp } from "@cortexai-agent-hub/contracts";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -121,7 +121,7 @@ function validateUrl(raw: string | URL, policy: McpUrlPolicy = {}): URL {
   if (url.toString().length > max) throw new Error(`MCP URL exceeds ${max} characters`);
   if (url.username || url.password || url.hash)
     throw new Error("MCP URL must not contain credentials or a fragment");
-  const local = isLocalMcpHost(url.hostname);
+  const local = isLocalhostOrLoopbackIp(url.hostname);
   if (
     url.protocol !== "https:" &&
     !(url.protocol === "http:" && policy.allowHttpLocalhost === true && local) &&
@@ -147,7 +147,7 @@ export function secureFetch(
     urlPolicy.allowHttpLocalhost === true &&
     urlPolicy.allowPrivateEndpoint === true &&
     resourceUrl.protocol === "http:" &&
-    isLocalMcpHost(resourceUrl.hostname)
+    isLocalhostOrLoopbackIp(resourceUrl.hostname)
       ? resourceUrl.origin
       : undefined;
   const allowed = new Set(
@@ -191,7 +191,7 @@ export function secureFetch(
       if (url.origin !== resourceUrl.origin && configuredCredentialValues.has(value)) continue;
       headers.set(name, value);
     }
-    const localHttp = url.protocol === "http:" && isLocalMcpHost(url.hostname);
+    const localHttp = url.protocol === "http:" && isLocalhostOrLoopbackIp(url.hostname);
     if (localHttp && urlPolicy.allowLocalHttpCredentials !== true) {
       for (const name of [...headers.keys()]) {
         if (localCredentialHeaders.has(name.toLowerCase())) headers.delete(name);
@@ -270,6 +270,22 @@ export function withEndpointOriginFallback(
 export function isAllowedStdioCommand(command: string, allowed: readonly string[]): boolean {
   const trimmed = command.trim();
   return trimmed.length > 0 && allowed.includes(trimmed);
+}
+
+/** The deployment's stdio settings, as MCP_STDIO_ENABLED and MCP_STDIO_ALLOWED_COMMANDS set them. */
+export type McpStdioPolicy = { stdioEnabled?: boolean; allowedCommands?: readonly string[] };
+
+/** Whether this deployment can run any stdio MCP server. */
+export function mcpStdioAvailable(policy: McpStdioPolicy): boolean {
+  return policy.stdioEnabled === true && (policy.allowedCommands?.length ?? 0) > 0;
+}
+
+/** Why this deployment can't run a stdio server with `command`, or undefined when it can. */
+export function mcpStdioRefusal(command: string, policy: McpStdioPolicy): string | undefined {
+  if (!mcpStdioAvailable(policy)) return "Stdio MCP servers aren't available here";
+  if (!isAllowedStdioCommand(command, policy.allowedCommands ?? []))
+    return "This stdio command isn't allowed here";
+  return undefined;
 }
 
 function stdioParams(options: McpStdioOptions): StdioServerParameters {

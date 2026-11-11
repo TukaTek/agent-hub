@@ -9,7 +9,8 @@ import type {
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import { clampMaxChars, clampMaxResults } from "./web-limits.js";
-import { fetchSafeWebText, type ResolveHostname } from "./web-ssrf.js";
+import type { ResolveHostname } from "./web-ssrf.js";
+import { fetchSafeWebText } from "./web-ssrf.js";
 
 export {
   clampMaxChars,

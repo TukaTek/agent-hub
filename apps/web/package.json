@@ -19,6 +19,7 @@
     "@lingui/react": "6.6.0",
     "@orpc/client": "1.15.7",
     "@orpc/contract": "1.15.7",
+    "@orpc/tanstack-query": "1.15.7",
     "@cortexai-agent-hub/chat-ui": "workspace:*",
     "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
@@ -26,6 +27,7 @@
     "@cortexai-agent-hub/ui-web": "workspace:*",
     "@sentry/react": "11.8.0",
     "@simplewebauthn/browser": "13.3.0",
+    "@tanstack/react-query": "5.104.5",
     "better-auth": "1.7.16",
     "lucide-react": "1.60.0",
     "react": "19.2.3",
@@ -51,7 +53,7 @@
     "cross-env": "10.1.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "vite": "8.3.4",
+    "vite": "8.3.5",
     "vitest": "4.1.12"
   }
 }

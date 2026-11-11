@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ScratchpadItem } from "@cortexai-agent-hub/contracts";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -12,7 +13,15 @@ const api = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
 }));
-vi.mock("../lib/rpc", () => ({ rpc: { scratchpad: api } }));
+vi.mock("../lib/rpc", () => {
+  const rpc = { scratchpad: api };
+  return {
+    rpc,
+    rpcForSpace: () => rpc,
+    createSpaceRpc: () => rpc,
+    selectedSpaceId: () => null,
+  };
+});
 vi.mock("@lingui/react/macro", () => {
   const t = (parts: TemplateStringsArray) => parts.join("");
   return { useLingui: () => ({ t }), Trans: ({ children }: { children: ReactNode }) => children };
@@ -50,12 +59,30 @@ function fixtureItems(count: number, botId = "bot-fixture"): ScratchpadItem[] {
   }));
 }
 
+function workItem(id: string, title: string): ScratchpadItem {
+  return {
+    id,
+    botId: "bot-fixture",
+    title,
+    notes: "",
+    status: "open",
+    createdAt: "",
+    updatedAt: "",
+  };
+}
+
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
+let queryClient: QueryClient;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   localStorage.clear();
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  api.list.mockReset().mockResolvedValue([]);
+  api.create.mockReset();
+  api.update.mockReset();
+  api.remove.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -64,13 +91,28 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  queryClient.clear();
   vi.unstubAllGlobals();
-  vi.clearAllMocks();
 });
+
+async function flush() {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+}
+
+async function mount(botId = "bot-fixture") {
+  await act(async () =>
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <ScratchpadSection botId={botId} />
+      </QueryClientProvider>,
+    ),
+  );
+  await flush();
+}
 
 async function renderWith(items: ScratchpadItem[], botId = "bot-fixture") {
   api.list.mockResolvedValue(items);
-  await act(async () => root.render(<ScratchpadSection botId={botId} />));
+  await mount(botId);
 }
 
 function header() {
@@ -112,7 +154,7 @@ it("renders work without status chrome, adds from the heading and removes an ite
   const parked = { ...item!, status: "parked" as const, notes: "Compare both themes" };
   api.remove.mockResolvedValue({ ok: true });
   api.list.mockResolvedValueOnce([parked]).mockResolvedValueOnce([]);
-  await act(async () => root.render(<ScratchpadSection botId="bot-fixture" />));
+  await mount();
   expect(container.textContent).toContain("Compare both themes");
   expect(container.textContent).not.toContain("parked");
   expect(container.querySelector('[aria-label="Park"]')).toBeNull();
@@ -125,6 +167,7 @@ it("renders work without status chrome, adds from the heading and removes an ite
     container.querySelector<HTMLButtonElement>('[aria-label="Remove"]')!.click(),
   );
   expect(api.remove).toHaveBeenCalledWith({ itemId: parked.id });
+  await flush();
   expect(renderedTitles()).toEqual([]);
 });
 
@@ -171,4 +214,55 @@ it("keeps each bot's default when another bot was toggled", async () => {
   await act(async () => header().click());
   await renderWith(fixtureItems(12, "bot-b"), "bot-b");
   expect(header().getAttribute("aria-expanded")).toBe("false");
+});
+
+it("reopens on the cached list and refreshes it in the background", async () => {
+  api.list.mockResolvedValueOnce([workItem("a", "Cached task")]);
+  await mount();
+  await act(async () => root.unmount());
+
+  let resolveRead: (items: ScratchpadItem[]) => void = () => undefined;
+  api.list.mockImplementationOnce(() => new Promise((resolve) => (resolveRead = resolve)));
+  root = createRoot(container);
+  await mount();
+  expect(container.textContent).toContain("Cached task");
+  expect(api.list).toHaveBeenCalledTimes(2);
+  await act(async () => resolveRead([workItem("b", "Fresh task")]));
+  await vi.waitFor(() => expect(container.textContent).toContain("Fresh task"));
+  expect(container.textContent).not.toContain("Cached task");
+});
+
+it("keeps an added item when an older background read lands after it", async () => {
+  const existing = workItem("a", "Existing task");
+  const added = workItem("b", "Added task");
+  api.list.mockResolvedValueOnce([existing]);
+  await mount();
+  await act(async () => root.unmount());
+
+  let resolveOlderRead: (items: ScratchpadItem[]) => void = () => undefined;
+  api.list
+    .mockImplementationOnce(() => new Promise((resolve) => (resolveOlderRead = resolve)))
+    .mockResolvedValueOnce([added, existing]);
+  api.create.mockResolvedValue(added);
+  root = createRoot(container);
+  await mount();
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Add open work"]')!.click(),
+  );
+  const input = container.querySelector<HTMLInputElement>('[aria-label="New open-work item"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+      input,
+      added.title,
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.form!.requestSubmit());
+  await flush();
+  expect(container.textContent).toContain("Added task");
+  await act(async () => {
+    resolveOlderRead([existing]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(container.textContent).toContain("Added task");
 });

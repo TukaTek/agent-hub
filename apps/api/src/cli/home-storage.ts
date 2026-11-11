@@ -1,5 +1,9 @@
 import { parseArgs } from "node:util";
-import { createAgentHomeStore, ObjectAgentHomeStore } from "@cortexai-agent-hub/adapters";
+import {
+  contentKeyProviderFromEnv,
+  createAgentHomeStore,
+  ObjectAgentHomeStore,
+} from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { createDb } from "@cortexai-agent-hub/db";
 
@@ -33,6 +37,7 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
 const { prisma, pool } = createDb(process.env.DATABASE_URL, {
   applicationName: "cortexai-agent-hub-home-storage",
+  keyProvider: contentKeyProviderFromEnv(),
 });
 const write = (line: string) => process.stdout.write(`${line}\n`);
 let stopping = false;

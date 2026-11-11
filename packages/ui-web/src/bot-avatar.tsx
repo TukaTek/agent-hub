@@ -189,8 +189,6 @@ export const BotAvatar = memo(function BotAvatar({
       </svg>
       <svg
         viewBox={VIEWBOX}
-        width={size}
-        height={size}
         aria-hidden="true"
         className={cn(
           "overflow-visible transition-transform duration-300",
@@ -198,7 +196,10 @@ export const BotAvatar = memo(function BotAvatar({
             ? "animate-pulse scale-[1.04] motion-reduce:animate-none"
             : "hover:scale-[1.03] motion-reduce:hover:scale-100",
         )}
+        // Inline size so a parent's icon sizing (Button sizes bare SVGs) cannot shrink it.
         style={{
+          width: size,
+          height: size,
           filter: isWorking
             ? `drop-shadow(0 0 8px ${colorDef.light}) drop-shadow(0 0 2px #ffffff)`
             : "drop-shadow(0 2px 4px rgba(0,0,0,0.45))",
@@ -315,24 +316,31 @@ function subscribeToReducedMotion(onChange: () => void): () => void {
 
 export function BotShapePreview({
   shapeIndex,
+  identity,
+  label,
   color,
   selected,
   onClick,
 }: {
-  shapeIndex: number;
+  /** An Avatar Studio shape; omit it to draw the organic body `identity` gets. */
+  shapeIndex?: number;
+  identity?: string;
+  label?: string;
   color: string;
   selected?: boolean;
   onClick?: () => void;
 }) {
-  const key = SHIPPED_SHAPE_KEYS[shapeIndex % SHIPPED_SHAPE_KEYS.length] ?? "hex";
-  const path = shippedBotAvatarShapePath(shapeIndex);
+  const key =
+    shapeIndex === undefined
+      ? undefined
+      : (SHIPPED_SHAPE_KEYS[shapeIndex % SHIPPED_SHAPE_KEYS.length] ?? "hex");
   const colorDef = resolvePersonaColorDef("preview", color);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={key}
+      aria-label={label ?? key}
       aria-pressed={selected ?? false}
       className={cn(
         "relative flex size-11 items-center justify-center rounded-xl transition-transform hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover",
@@ -341,13 +349,17 @@ export function BotShapePreview({
           : "hover:bg-white/5",
       )}
     >
-      <svg viewBox={VIEWBOX} className="size-8 overflow-visible" aria-hidden="true">
-        <path d={path} fill={colorDef.light} />
-        <g fill={colorDef.eyeColor}>
-          <ellipse cx={CENTER - 29} cy={CENTER - 8} rx={10} ry={7} />
-          <ellipse cx={CENTER + 29} cy={CENTER - 8} rx={10} ry={7} />
-        </g>
-      </svg>
+      {shapeIndex === undefined ? (
+        <BotAvatar color={color} identity={identity} size={32} />
+      ) : (
+        <svg viewBox={VIEWBOX} className="size-8 overflow-visible" aria-hidden="true">
+          <path d={shippedBotAvatarShapePath(shapeIndex)} fill={colorDef.light} />
+          <g fill={colorDef.eyeColor}>
+            <ellipse cx={CENTER - 29} cy={CENTER - 8} rx={10} ry={7} />
+            <ellipse cx={CENTER + 29} cy={CENTER - 8} rx={10} ry={7} />
+          </g>
+        </svg>
+      )}
     </button>
   );
 }

@@ -166,7 +166,7 @@ describe.skipIf(!enabled)("history retrieval through executor", () => {
       const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-history-redaction-"));
       let stop: (() => Promise<void>) | undefined;
       try {
-        const { createApp } = await import("../../../apps/api/src/app.ts");
+        const { createApp } = await import("@cortexai-agent-hub/api/app");
         const handles = await createApp({
           databaseUrl: process.env.DATABASE_URL!,
           realtimeDatabaseUrl: process.env.DATABASE_URL!,

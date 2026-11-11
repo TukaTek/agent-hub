@@ -2,6 +2,7 @@ import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
 import {
+  contentKeyProviderFromEnv,
   EncryptedSecretStore,
   LocalArtifactStore,
   upgradeLegacySecrets,
@@ -81,6 +82,7 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 const encrypting = ["migrate", "rotate", "reencrypt"].includes(command);
 const { prisma, pool, contentKeys } = createDb(process.env.DATABASE_URL, {
   applicationName: "cortexai-agent-hub-content-encryption",
+  keyProvider: contentKeyProviderFromEnv(),
   ...(encrypting ? { encryptContent: true } : {}),
 });
 const artifacts = new LocalArtifactStore(process.env.DATA_DIR ?? "./data", contentKeys);

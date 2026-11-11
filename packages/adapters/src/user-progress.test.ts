@@ -2,7 +2,7 @@ import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { isToolActivityBlock } from "@cortexai-agent-hub/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
-import { longWorkProgressGuidance } from "./executor.js";
+import { longWorkProgressGuidance } from "./run-replies.js";
 import {
   assistantTurnSeparator,
   botMessageOutcomeFromMidTurn,

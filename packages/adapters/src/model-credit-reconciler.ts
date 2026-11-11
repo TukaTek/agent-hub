@@ -51,6 +51,8 @@ export function createModelCreditReconciler(deps: {
           });
           if (!claimed.count) return;
           let complete = false;
+          // Why this attempt could not settle the hold, for whoever reviews it.
+          let reason = "usage unavailable";
           try {
             if (!call.callId || !call.userId || !call.spaceId || !call.provider || !call.model)
               throw new Error("Legacy reservation requires manual attribution");
@@ -61,7 +63,7 @@ export function createModelCreditReconciler(deps: {
               if (recovered) {
                 usage = { ...usage, ...recovered };
                 reconciled = true;
-              }
+              } else reason = "provider has no usage for the request";
             }
             if (
               usage &&
@@ -87,11 +89,15 @@ export function createModelCreditReconciler(deps: {
                 true,
               );
               complete = hasFinalModelCost(usage);
+              if (!complete) reason = "cost is not final";
+            } else if (usage) {
+              reason = usage.costUsd == null ? "cost unavailable" : "cost is not final";
             }
           } catch (error) {
+            reason = error instanceof Error ? error.message : String(error);
             getLogger().warn("Model credit reconciliation could not verify a call", {
               callId: call.callId,
-              error,
+              reason,
             });
           }
           const needsReview = !complete && call.reconciliationAttempts >= 5;
@@ -109,7 +115,16 @@ export function createModelCreditReconciler(deps: {
             },
           });
           if (needsReview)
-            getLogger().error("Model credit hold requires review", { callId: call.callId });
+            getLogger().error("Model credit hold requires review", {
+              callId: call.callId,
+              reason,
+              provider: call.provider,
+              model: call.model,
+              pending: call.pending,
+              attempts: call.reconciliationAttempts + 1,
+              hasProviderRequestId: Boolean(call.providerRequestId),
+              canLookUpUsage: lookup?.provider === call.provider,
+            });
         }),
       );
       // Hourly full journal verification, paginated separately from frequent call recovery.

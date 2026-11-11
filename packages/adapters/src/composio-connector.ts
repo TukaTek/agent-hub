@@ -11,11 +11,11 @@ import type {
   ManagedConnectorProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import type { ToolkitDirectoryEntry } from "./composio-catalog-cache.js";
 import {
   composioToolkitDirectory,
   createToolkitDirectoryCache,
   mergeCatalogWithConnected,
-  type ToolkitDirectoryEntry,
 } from "./composio-catalog-cache.js";
 import { isVitestRuntime } from "./test-runtime.js";
 

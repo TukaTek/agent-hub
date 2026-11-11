@@ -29,6 +29,13 @@ describe("BotAvatar", () => {
     }
   });
 
+  // Button sizes any SVG without a size class, which beats width/height attributes but not inline styles.
+  it("sizes the shape with an inline style so icon sizing in a button cannot shrink it", () => {
+    const html = renderToString(<BotAvatar color="#8B5CF6::shape_0" size={26} />);
+    const shape = html.match(/<svg[^>]*transition-transform[^>]*>/)?.[0];
+    expect(shape).toMatch(/style="[^"]*width:26px;height:26px/);
+  });
+
   it.each([...ACTIVE_RUN_STATUSES])("marks active run status %s as working", (status) => {
     const html = renderToString(<BotAvatar color="#3B82F6" status={status} />);
     expect(html).toContain("<svg");
@@ -154,6 +161,14 @@ describe("BotAvatar", () => {
     expect(html).toContain('aria-label="hex"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("focus-visible:ring-2");
+  });
+
+  it("previews an organic body when no studio shape is given", () => {
+    const html = renderToString(
+      <BotShapePreview identity="maya" label="Shape 1" color="#8B5CF6" selected={false} />,
+    );
+    expect(html).toContain('aria-label="Shape 1"');
+    expect(html).toContain("cortexai-agent-hub-organic-avatar");
   });
 
   it("draws every plain-colour bot with the organic body", () => {

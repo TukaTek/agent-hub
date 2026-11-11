@@ -80,6 +80,56 @@ describePostgres("direct run dispatch (PostgreSQL)", () => {
   const wait = async (assertion: () => Promise<void> | void) =>
     vi.waitFor(assertion, { timeout: 5_000, interval: 20 });
 
+  it("measures current due queue time without counting normal retry backoff", async () => {
+    const now = Date.now();
+    const computer = await system.computer.create({
+      data: {
+        spaceId: identity.spaceId,
+        userId: identity.userId,
+        scopeKey: `queue-age-${randomUUID()}`,
+        homeKey: `queue-age-${randomUUID()}`,
+        kind: "fake",
+      },
+    });
+    await system.bot.update({ where: { id: identity.botId }, data: { computerId: computer.id } });
+    const owner = await createRun({ status: "running" });
+    const retry = await createRun({ wakeAt: new Date(now - 5_000) });
+    const delayed = await createRun({ wakeAt: new Date(now - 45_000) });
+    await system.run.updateMany({
+      where: { id: { in: [retry.id, delayed.id] } },
+      data: { createdAt: new Date(now - 3_600_000) },
+    });
+    const lease = await system.computerExecutionLease.create({
+      data: {
+        computerId: computer.id,
+        botId: identity.botId,
+        runId: owner.id,
+        expiresAt: new Date(now + 60_000),
+      },
+    });
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "test", sinks: [sink] }));
+    const host = new RunWorkerHost(db.prisma, new InMemoryRealtimeFanout());
+    try {
+      await host.start({} as BackgroundJobHandlers);
+      await wait(() =>
+        expect(sink.events.some((event) => event.message === "run.queue_delayed")).toBe(true),
+      );
+      const warning = sink.events.find((event) => event.message === "run.queue_delayed")!;
+      expect(warning["queue.delayed_runs"]).toBe(1);
+      expect(warning["queue.oldest_wait_ms"]).toBeGreaterThanOrEqual(45_000);
+      expect(warning["queue.oldest_wait_ms"]).toBeLessThan(60_000);
+    } finally {
+      await host.stop();
+      installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
+      await system.run.updateMany({
+        where: { id: { in: [owner.id, retry.id, delayed.id] } },
+        data: { status: "cancelled" },
+      });
+      await system.computerExecutionLease.delete({ where: { id: lease.id } });
+    }
+  });
+
   it("keeps blocked rows unchanged, scans past them, and resumes after release or expiry", async () => {
     const computer = await system.computer.create({
       data: {

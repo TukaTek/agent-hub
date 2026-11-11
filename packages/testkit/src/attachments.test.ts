@@ -29,7 +29,7 @@ describeAttachments("chat attachments", () => {
   );
 
   beforeAll(async () => {
-    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     const handles = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,

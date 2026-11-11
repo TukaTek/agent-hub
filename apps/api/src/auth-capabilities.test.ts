@@ -46,7 +46,12 @@ describe("authCapabilities", () => {
           allowSignupBypass: false,
         },
       },
-      { email: true, billing: true, ssoAvailability: "available" },
+      {
+        email: true,
+        billing: true,
+        ssoAvailability: "available",
+        crispWebsiteId: "crisp-site",
+      },
     );
     expect(reply).toEqual({
       mode: "local",
@@ -58,6 +63,7 @@ describe("authCapabilities", () => {
       emailCode: false,
       billing: true,
       passkeyRpId: null,
+      crispWebsiteId: "crisp-site",
     });
   });
 

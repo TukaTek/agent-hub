@@ -12,7 +12,10 @@ body,
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Geist Variable", var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek.
