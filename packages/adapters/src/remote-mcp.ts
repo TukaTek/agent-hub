@@ -13,6 +13,7 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Agent } from "undici";
 import { combineSignals } from "./connector-safety.js";
+import { limitMcpResponseBody } from "./mcp-response-limit.js";
 import { mcpResultBudget } from "./mcp-result-budget.js";
 import {
   createAddressCheckedLookup,
@@ -139,7 +140,7 @@ async function withRemoteMcpClient<T>(
       redirect: "manual",
       signal,
     },
-    fetch: safeFetch,
+    fetch: async (input, init) => limitMcpResponseBody(await safeFetch(input, init), init?.headers),
   });
   const client = new Client({ name: "cortexai-agent-hub", version: "0.1.0" }, { capabilities: {} });
   try {
