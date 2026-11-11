@@ -42,3 +42,18 @@ for a simple daily check.
 ## Usage
 
 **Settings → Usage** shows runs, tokens and cost by model.
+
+
+## Compatible server wire protocol
+
+OpenAI-compatible connections default to Chat Completions. For an endpoint that serves another
+protocol, the shared `models/connect` RPC accepts `apiProtocol: "responses"` (OpenAI Responses API)
+or `apiProtocol: "anthropic-messages"` (Anthropic Messages API) alongside `provider:
+"openai-compatible"`, `baseUrl`, and `modelId`. Use `apiProtocol: "chat-completions"` to switch back.
+The settings screens offer the same choice as **Protocol** when a custom server URL is connected.
+This optional API setting applies to one saved connection; it does not change other connections or
+require an environment variable. Changing the base URL through the API without specifying a protocol
+resets it to Chat Completions.
+Anthropic Messages reads the key with Anthropic's own headers and posts to `/v1/messages`, so the
+base URL stays the server root, with or without `/v1`. The same private-endpoint opt-in, HTTPS,
+redirect and custom-header checks apply to every protocol.

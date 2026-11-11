@@ -43,6 +43,10 @@ vi.mock("@cortexai-agent-hub/ui-web", () => ({
     <input type="checkbox" {...props} />
   ),
   Input: (props: ComponentProps<"input">) => <input {...props} />,
+  SectionHeading: ({
+    variant: _variant,
+    ...props
+  }: ComponentProps<"h3"> & { variant?: string }) => <h3 {...props} />,
 }));
 
 import { ScratchpadSection } from "./ScratchpadSection";

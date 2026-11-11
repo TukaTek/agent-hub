@@ -1,4 +1,5 @@
-import { type SpeechLocale, speechLocaleTag } from "@cortexai-agent-hub/core";
+import type { SpeechLocale } from "@cortexai-agent-hub/core";
+import { speechLocaleTag } from "@cortexai-agent-hub/core";
 import { File, Paths } from "expo-file-system";
 import { getLocales } from "expo-localization";
 import type * as ExpoSpeech from "expo-speech";

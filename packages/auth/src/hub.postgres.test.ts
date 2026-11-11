@@ -8,11 +8,8 @@ import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };
 import { HubRequestError, hubUserId } from "./hub-client.js";
 import { disabledHubPolicy } from "./hub-policy.js";
 import { hubPolicyForTests } from "./hub-policy-testing.js";
-import {
-  createHubSessionAuthorizer,
-  type HubSessionPolicy,
-  HubSessionUnavailableError,
-} from "./hub-sessions.js";
+import type { HubSessionPolicy } from "./hub-sessions.js";
+import { createHubSessionAuthorizer, HubSessionUnavailableError } from "./hub-sessions.js";
 import { createAuth } from "./index.js";
 
 /** The grant-rotation test covers CAAH-40 locking; Hub policy is covered in hub.test.ts. */

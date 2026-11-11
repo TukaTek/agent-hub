@@ -70,6 +70,11 @@ CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS=4096
 CORTEXAI_AGENT_HUB_LOCAL_VISION_MODELS=qwen3-vl
 ```
 
+`CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS` is the output limit sent with every request to a local model, unless the
+connection sets its own max-tokens value. It never exceeds a quarter of
+`CORTEXAI_AGENT_HUB_LOCAL_CONTEXT_WINDOW`, so the prompt keeps the rest; a higher limit leaves less room for the
+prompt, so long chats are compacted sooner.
+
 The loopback default is suitable when running CortexAI Agent Hub from a source checkout. From containers,
 prefer a stable LAN RFC1918 address (not Compose service DNS alone). On Docker Desktop,
 `host.docker.internal` also works.

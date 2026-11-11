@@ -1,5 +1,6 @@
 import { BillingEmulator } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { BYOK_MONTHLY_PRICE_CENTS } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { asSystem, billingAccountForOrganization, createDb } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -78,7 +79,7 @@ dbTests("model credit billing service", () => {
     await expect(service.status(actor)).resolves.toMatchObject({
       access: false,
       funding: null,
-      byokPriceCents: 1000,
+      byokPriceCents: BYOK_MONTHLY_PRICE_CENTS,
       byokFreeUntil: null,
     });
   });

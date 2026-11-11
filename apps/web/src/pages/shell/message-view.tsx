@@ -6,16 +6,12 @@ import type {
   ThreadMessage,
 } from "@cortexai-agent-hub/contracts";
 import type { ChildBotBlock, PeerExchange } from "@cortexai-agent-hub/core";
-import {
-  isPeerReceiptBlocks,
-  isSecretAskBlock,
-  isToolActivityBlock,
-} from "@cortexai-agent-hub/core";
+import { isPeerReceiptBlocks, isToolActivityBlock } from "@cortexai-agent-hub/core";
 import { BotAvatar, Button, cn, resolvePersonaColorDef } from "@cortexai-agent-hub/ui-web";
 import { plural } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { UserRound } from "lucide-react";
-import { memo, useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { ArtifactFileCard } from "../../components/ArtifactFileCard";
 import { AskCard } from "../../components/AskCard";
 import { CollaborationMarker } from "../../components/ai/CollaborationMarker";
@@ -108,7 +104,7 @@ export const MessageView = memo(function MessageView({
   onAddRoutine: (name: string, prompt: string) => void;
   voiceReady: boolean;
   speaking: boolean;
-  onSpeak: () => void;
+  onSpeak: (message: ThreadMessage) => void;
   onOpenComputer: (botId?: string) => void;
   /** Opens where an imported item's setup is finished. */
   onOpenImportSetup?: (target: ImportSetupTarget) => void;
@@ -140,17 +136,21 @@ export const MessageView = memo(function MessageView({
     [message.blocks, mentions],
   );
   const visibleNarrationBlocks = renderableMessageBlocks(blocks, showToolActivity);
-  const renderMention = (id: string) => {
-    const block = mentions?.find((bot) => bot.botId === id);
-    return block ? (
-      <BotMention
-        block={block}
-        avatarSet={peerBot(id)?.avatarSet}
-        color={peerBot(id)?.color}
-        onOpenBot={onOpenBot}
-      />
-    ) : undefined;
-  };
+  const renderMention = useCallback(
+    (id: string) => {
+      const block = mentions?.find((bot) => bot.botId === id);
+      return block ? (
+        <BotMention
+          block={block}
+          avatarSet={peerBot(id)?.avatarSet}
+          color={peerBot(id)?.color}
+          onOpenBot={onOpenBot}
+        />
+      ) : undefined;
+    },
+    [mentions, onOpenBot, peerBot],
+  );
+  const speak = () => onSpeak(message);
   const replyBotId = message.replyPreview?.botId ?? replyParent?.botId;
   const speakerBot = message.botId ? peerBot?.(message.botId) : undefined;
   const speakerColorDef = useMemo(
@@ -269,7 +269,7 @@ export const MessageView = memo(function MessageView({
                   variant="text"
                   size="xs"
                   aria-label={speaking ? t`Stop speaking` : t`Speak this reply`}
-                  onClick={onSpeak}
+                  onClick={speak}
                   className="font-normal"
                 >
                   {speaking ? <Trans>Stop</Trans> : <Trans>Speak</Trans>}
@@ -529,7 +529,7 @@ export const MessageView = memo(function MessageView({
                       variant="text"
                       size="xs"
                       aria-label={speaking ? t`Stop speaking` : t`Speak this reply`}
-                      onClick={onSpeak}
+                      onClick={speak}
                       className="mt-2 font-normal"
                     >
                       {speaking ? <Trans>Stop</Trans> : <Trans>Speak</Trans>}
@@ -558,10 +558,7 @@ export const MessageView = memo(function MessageView({
           }
           if (block.kind === "ask") {
             return (
-              <div
-                key={i}
-                className={`relative w-full min-w-0 ${isSecretAskBlock(block) ? "" : "max-w-xl"}`}
-              >
+              <div key={i} className="relative w-full min-w-0">
                 <AskCard
                   block={block}
                   canAnswer={canAnswer}

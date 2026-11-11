@@ -1,7 +1,10 @@
 import type { Socket } from "node:net";
+import { unwrapEnvFromKeyManager } from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
+import { stopOnShutdownSignals } from "@cortexai-agent-hub/core/node/shutdown-signals";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
@@ -59,8 +62,7 @@ try {
     await hubPolicy?.close();
     await logger.flush({ timeoutMs: 2_000 });
   };
-  process.once("SIGTERM", () => void shutdown());
-  process.once("SIGINT", () => void shutdown());
+  stopOnShutdownSignals(shutdown);
   // F3: drain, then exit non-zero so Compose or systemd restarts onto Hub's revision.
   restartForHubPolicy = () =>
     void shutdown().finally(() => process.exit(HUB_POLICY_RESTART_EXIT_CODE));

@@ -1,5 +1,7 @@
+import { translate } from "@cortexai-agent-hub/core";
 import { useSyncExternalStore } from "react";
 import { DE_MESSAGES, PEER_MESSAGE_FORMS as DE_PEER_FORMS } from "./locales/de";
+import { ES_MESSAGES, PEER_MESSAGE_FORMS as ES_PEER_FORMS } from "./locales/es";
 import { JA_MESSAGES, PEER_MESSAGE_FORMS as JA_PEER_FORMS } from "./locales/ja";
 import { RU_MESSAGES, PEER_MESSAGE_FORMS as RU_PEER_FORMS } from "./locales/ru";
 import { ZH_MESSAGES, PEER_MESSAGE_FORMS as ZH_PEER_FORMS } from "./locales/zh";
@@ -13,6 +15,7 @@ const catalogs: Partial<Record<UiLocale, Record<string, string>>> = {
   ru: RU_MESSAGES,
   de: DE_MESSAGES,
   ja: JA_MESSAGES,
+  es: ES_MESSAGES,
 };
 
 let activeLocale: UiLocale = "en";
@@ -38,11 +41,7 @@ export function dateLocaleForUi(locale: UiLocale = activeLocale): string {
 }
 
 export function t(message: string, values?: Record<string, string | number>): string {
-  const template = catalogs[activeLocale]?.[message] ?? message;
-  if (!values) return template;
-  return template.replace(/\{([A-Za-z0-9_]+)\}/g, (match, key: string) =>
-    Object.hasOwn(values, key) ? String(values[key]) : match,
-  );
+  return translate(catalogs[activeLocale], message, values);
 }
 
 export function useI18n(): { locale: UiLocale; t: typeof t } {
@@ -153,6 +152,7 @@ export function peerExchangeLabel(
     de: DE_PEER_FORMS,
     ru: RU_PEER_FORMS,
     "zh-CN": ZH_PEER_FORMS,
+    es: ES_PEER_FORMS,
   };
   // Hermes ships without Intl.PluralRules, so pick the category by hand.
   const category = pluralCategory(activeLocale, count);

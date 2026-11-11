@@ -29,7 +29,6 @@ function sourceRecords(): AccountExportRecord[] {
       type: "bot",
       id: "src-bot-child",
       name: "Scout",
-      title: "Researcher",
       description: "Finds things",
       instructions: "Be brief.",
       color: "#3EC5A8",
@@ -51,6 +50,7 @@ function sourceRecords(): AccountExportRecord[] {
       teamChatAmbientEnabled: false,
       teamChatRules: "",
       crossSpaceCommunication: false,
+      dailyCheckIns: false,
       fleetManagement: false,
       createdAt: at,
     },
@@ -58,7 +58,6 @@ function sourceRecords(): AccountExportRecord[] {
       type: "bot",
       id: "src-bot-parent",
       name: "Chief",
-      title: "",
       description: "",
       instructions: "",
       color: "#F5A03C",
@@ -79,6 +78,7 @@ function sourceRecords(): AccountExportRecord[] {
       teamChatAmbientEnabled: false,
       teamChatRules: "",
       crossSpaceCommunication: false,
+      dailyCheckIns: false,
       fleetManagement: true,
       createdAt: at,
     },
@@ -418,6 +418,8 @@ describePostgres("account import (PostgreSQL)", () => {
     expect(child.parentBotId).toBe(parent.id);
     expect(child.pinned).toBe(true);
     expect(child.fleetManagement).toBe(false);
+    expect(child.dailyCheckIns).toBe(false);
+    expect(parent.dailyCheckIns).toBe(false);
     expect(child.disabledBuiltinTools).toEqual(["browser"]);
     const section = await system.botSection.findFirstOrThrow({ where: { spaceId } });
     expect(child.sectionId).toBe(section.id);

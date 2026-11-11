@@ -209,7 +209,11 @@ async function runTool(tool: ToolCase, outcome: Outcome) {
     artifact: { findMany: vi.fn(async () => []) },
   };
   const executor = createRunExecutor({
-    prisma: withEmptyModels(prisma),
+    prisma: withEmptyModels({
+      ...prisma,
+      $transaction: async (fn: (tx: unknown) => unknown) =>
+        fn(withEmptyModels({ ...prisma, $queryRaw: async () => [] })),
+    }),
     deploymentModelKey: "fake-deployment-key",
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox,

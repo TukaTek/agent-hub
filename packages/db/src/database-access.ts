@@ -1,3 +1,4 @@
+import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 import { Client, escapeIdentifier, escapeLiteral } from "pg";
 import type { PrismaClient } from "./generated/prisma/client.js";
 import { rlsBypassKey, runAsSystem } from "./row-security.js";
@@ -91,6 +92,7 @@ async function provisionWith(owner: Client, runtimeUrl: string): Promise<{ warni
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${RUNTIME_ROLE};
     REVOKE ALL ON TABLE "_prisma_migrations" FROM ${RUNTIME_ROLE};
     REVOKE UPDATE ON TABLE "security_events" FROM ${RUNTIME_ROLE};
+    REVOKE UPDATE ON TABLE "audit_events" FROM ${RUNTIME_ROLE};
     ALTER DEFAULT PRIVILEGES IN SCHEMA public
       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${RUNTIME_ROLE};
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${RUNTIME_ROLE};
@@ -135,7 +137,7 @@ async function provisionWith(owner: Client, runtimeUrl: string): Promise<{ warni
     throw cannotChange();
   }
   const name = escapeIdentifier(login);
-  const secret = password ? `PASSWORD ${escapeLiteral(password)}` : "";
+  const secret = password ? `PASSWORD ${escapeLiteral(scramSha256Verifier(password))}` : "";
   // Only a superuser may set SUPERUSER, BYPASSRLS or REPLICATION, even to false. A
   // CREATEROLE owner leaves them at their defaults (off), and a login that already has
   // one of them was returned above.
@@ -172,6 +174,26 @@ async function storeBypassKey(owner: Client, runtimeUrl: string): Promise<void> 
      DELETE FROM cortexai_agent_hub_private.rls_bypass_keys WHERE digest <> sha256(convert_to($1, 'UTF8'))`,
     [rlsBypassKey(runtimeUrl)],
   );
+}
+
+/**
+ * The SCRAM-SHA-256 verifier PostgreSQL would store for `password`. Sending it
+ * instead of the password keeps the plaintext out of server logs and audit trails.
+ */
+export function scramSha256Verifier(password: string, salt = randomBytes(16), iterations = 4096) {
+  // SASLprep's mappings (RFC 4013), as PostgreSQL and pg apply them.
+  const prepared = password
+    .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+    .replace(
+      /\u00AD|\u034F|\u1806|[\u180B-\u180D]|\u200C|\u200D|\u2060|[\uFE00-\uFE0F]|\uFEFF/g,
+      "",
+    )
+    .normalize("NFKC");
+  const salted = pbkdf2Sync(prepared, salt, iterations, 32, "sha256");
+  const hmac = (text: string) => createHmac("sha256", salted).update(text).digest();
+  const storedKey = createHash("sha256").update(hmac("Client Key")).digest("base64");
+  const serverKey = hmac("Server Key").toString("base64");
+  return `SCRAM-SHA-256$${iterations}:${salt.toString("base64")}$${storedKey}:${serverKey}`;
 }
 
 /** Policy on each graphile-worker table that lets the runtime role use the job queue. */

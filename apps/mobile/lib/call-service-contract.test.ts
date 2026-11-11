@@ -42,6 +42,7 @@ describe("Android call foreground service", () => {
       ru: "values-ru",
       de: "values-de",
       ja: "values-ja",
+      es: "values-es",
     } as const satisfies Record<(typeof UI_LOCALES)[number], string>;
     const keys = [
       "cortexai_agent_hub_call_channel",

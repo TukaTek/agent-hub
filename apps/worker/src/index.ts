@@ -1,21 +1,29 @@
 import { hostname } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { JobPublisher, JobWorkerHost } from "@cortexai-agent-hub/adapter-kit";
-import { ComposioConnector, IntegrationProviderSettings } from "@cortexai-agent-hub/adapters";
+import {
+  ComposioConnector,
+  IntegrationProviderSettings,
+  unwrapEnvFromKeyManager,
+} from "@cortexai-agent-hub/adapters";
 import { createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
 import { phoneCallSettings } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
-import { startWorkerHealth } from "./health.js";
+import { stopOnShutdownSignals } from "@cortexai-agent-hub/core/node/shutdown-signals";
+import { startWorkerHealth, watchEventLoopStalls } from "./health.js";
 import { createWorkerSecretStore } from "./secret-store.js";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 
 import {
+  auditLogConfig,
   ChatSdkMessagingSurface,
   CodexCatalogCache,
   contentKeyProviderFromEnv,
   createAgentHomeStore,
   createArtifactStore,
+  createAuditLogReconciler,
   createBackgroundJobHandlers,
   createCloudAgentConnection,
   createDeadJobPruner,
@@ -32,6 +40,7 @@ import {
   createRunExecutor,
   createRunSandbox,
   createRunSecretWriter,
+  createStrategicInitiativeReconciler,
   createTicketChangeNotifier,
   createWebProvider,
   databaseCapacityBackoffMs,
@@ -85,6 +94,7 @@ import {
   createSecurityEventPruner,
   createThreadEvents,
   describeRowSecurity,
+  installAuditEventStore,
   installSecurityEventStore,
   isPoolCheckoutTimeout,
   isTooManyDatabaseConnections,
@@ -105,6 +115,7 @@ const logger = createRootLogger(SERVICE_NAMES.worker);
 const HUB_POLICY_RESTART_EXIT_CODE = 75;
 
 async function main() {
+  const stopStallWatch = watchEventLoopStalls();
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   const poolMax = parsePositiveInteger(process.env.DB_POOL_MAX, 8);
@@ -133,7 +144,7 @@ async function main() {
     logger.warn("Secret storage degraded; encrypted credentials remain available");
   prisma = withSecretPersistence(prisma, secrets);
   // Bound once stop exists; a restart before then simply exits.
-  let restartForHubPolicy: () => void = () => process.exit(HUB_POLICY_RESTART_EXIT_CODE);
+  const restartForHubPolicy: () => void = () => process.exit(HUB_POLICY_RESTART_EXIT_CODE);
   const { config: hubConfig, policy: hubPolicy } = await startWorkerHubPolicy(
     process.env,
     logger,
@@ -149,6 +160,7 @@ async function main() {
     },
   );
   installSecurityEventStore(prisma);
+  installAuditEventStore(prisma);
   const unreadableMasterKeys = await verifyContentKeys(prisma);
   if (unreadableMasterKeys.length)
     logger.error("Stored space keys need master keys that are not configured", undefined, {
@@ -227,10 +239,16 @@ async function main() {
     resolveEncryptionKey(process.env),
     { composio, pipedream },
   );
+  const installedConnectors = new InstalledConnectorProvider(
+    prisma,
+    secrets,
+    {},
+    allowPrivateEndpoint,
+  );
   const stack = createIntegrationConnectorStack(
     composio,
     integrationSettings,
-    [new InstalledConnectorProvider(prisma, secrets, {}, allowPrivateEndpoint)],
+    [installedConnectors],
     [mcp],
   );
   integrationSettings.warmDirectories();
@@ -315,7 +333,6 @@ async function main() {
     ].filter(Boolean),
     secretStore: secrets,
     mcpAllowPrivateEndpoint: process.env.MCP_ALLOW_PRIVATE_ENDPOINT === "true",
-    mcpStdio,
     deploymentModelKey,
     deploymentModelConfigured,
     dataDir,
@@ -379,6 +396,7 @@ async function main() {
       prisma,
       lookup: deploymentModelUsageLookup(),
     }),
+    reconcileStrategicInitiatives: createStrategicInitiativeReconciler({ prisma, jobs }),
     reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
     reconcilePurchases: () => reconcilePurchases({ prisma, jobs, paymentWallet }),
     reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
@@ -391,39 +409,52 @@ async function main() {
       prisma,
       securityEventRetentionDays(),
     ),
+    reconcileAuditLog: createAuditLogReconciler(prisma, auditLogConfig()),
     reconcileHomeStorage: homeStorageSweeper(home),
     reconcileIdleComputers: createIdleComputerSweeper({ prisma, jobs }),
     reconcileDeadJobs: inMemoryJobs ? undefined : createDeadJobPruner(pool),
   });
   let stopHealth: (() => Promise<void>) | undefined;
   let stopping = false;
-  const stop = async () => {
-    if (stopping) return;
-    stopping = true;
-    shutdown.abort();
-    try {
-      await stopHealth?.();
-      await reconciler.stop();
-      await jobHost.stop();
-      // Jobs have stopped; let queued tool audits commit before the pool closes.
-      // Each one still waiting afterwards logs its own queue_timeout warning.
-      await toolCompletionAuditQueue.drain();
-      await jobs.close();
-      await secrets.close();
-      await realtime.close();
-      await mcp.close();
-      await prisma.$disconnect().catch(() => undefined);
-      await pool.end().catch(() => undefined);
-    } finally {
-      await analytics?.flush();
-      await shutdownPiTelemetry();
-      await logger.flush({ timeoutMs: 2_000 });
-    }
-  };
-  process.once("SIGTERM", () => void stop());
-  process.once("SIGINT", () => void stop());
-  // F3: drain, then exit non-zero so Compose or systemd restarts onto Hub's revision.
-  restartForHubPolicy = () => void stop().finally(() => process.exit(HUB_POLICY_RESTART_EXIT_CODE));
+  let stopped: Promise<void> | undefined;
+  // Every caller waits for the same shutdown, which can take as long as the running jobs do.
+  const stop = () =>
+    (stopped ??= (async () => {
+      stopping = true;
+      shutdown.abort();
+      stopStallWatch();
+      try {
+        await stopHealth?.();
+        await reconciler.stop();
+        await jobHost.stop();
+        // Jobs have stopped; let queued tool audits commit before the pool closes.
+        // Each one still waiting afterwards logs its own queue_timeout warning.
+        await toolCompletionAuditQueue.drain();
+        await jobs.close();
+        await secrets.close();
+        await realtime.close();
+        await mcp.close();
+        await installedConnectors.close();
+        await prisma.$disconnect().catch(() => undefined);
+        await pool.end().catch(() => undefined);
+      } finally {
+        await analytics?.flush();
+        await shutdownPiTelemetry();
+        await logger.flush({ timeoutMs: 2_000 });
+      }
+    })());
+  // Exit rather than wait on a hung job that was handed back, which another worker now retries.
+  // process.exitCode keeps a crash that arrives while draining from exiting as a clean stop.
+  stopOnShutdownSignals(() =>
+    stop().then(
+      () => process.exit(),
+      async (error) => {
+        logger.error("worker shutdown failed", error);
+        await logger.flush({ timeoutMs: 2_000 });
+        process.exit(1);
+      },
+    ),
+  );
   // graphile-worker fires completeJob()/failJobs() without awaiting them. When
   // pool.connect() then hits Postgres 53300 or a saturated pool's checkout timeout,
   // that rejection is unhandled. Exiting on 53300 is a crash loop: Docker restarts
@@ -433,11 +464,13 @@ async function main() {
   // process in an undefined state).
   process.on("uncaughtException", (error) => {
     logger.error("uncaughtException", error);
+    process.exitCode = 1;
     void stop().finally(() => process.exit(1));
   });
   process.on("unhandledRejection", (reason) => {
     logger.error("unhandledRejection", reason);
     if (isTooManyDatabaseConnections(reason) || isPoolCheckoutTimeout(reason)) return;
+    process.exitCode = 1;
     void stop().finally(() => process.exit(1));
   });
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { contentKeyProviderFromEnv } from "@cortexai-agent-hub/adapters";
+import { contentKeyProviderFromEnv, unwrapEnvFromKeyManager } from "@cortexai-agent-hub/adapters";
 import { createAuth, hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import { bootstrapUserSpace, createDb, runAsSystem } from "@cortexai-agent-hub/db";
 
@@ -13,6 +13,7 @@ function required(name: string): string {
 if (hubAuthFromEnv(process.env))
   throw new Error("Owner bootstrap can't be combined with Hub sign-in");
 
+await unwrapEnvFromKeyManager();
 const { prisma, pool } = createDb(required("DATABASE_URL"), {
   keyProvider: contentKeyProviderFromEnv(),
 });

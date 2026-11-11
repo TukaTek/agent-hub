@@ -37,6 +37,8 @@ export const COMPUTER_IMAGE_CONTEXT_FILES = [
   "cortexai-agent-hub-browser",
   "cortexai-agent-hub-focus-or-launch",
   "cortexai-agent-hub-page-browser",
+  "page_secrets.py",
+  "install-agent-browser.sh",
   "cortexai-agent-hub-browser.desktop",
   "cortexai-agent-hub-local-bin.sh",
   "office-requirements.txt",

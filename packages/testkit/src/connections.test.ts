@@ -405,6 +405,10 @@ describeWithDatabase("Composio catalog reconciliation", () => {
         connectionId: started.connectionId,
       }),
     ).resolves.toMatchObject({ status: "connected" });
+    const stored = await asSystem(handles.prisma).connection.findUniqueOrThrow({
+      where: { id: started.connectionId },
+    });
+    expect(stored.providerRef).toBe("account-linear");
 
     const context = {
       operationId: "pipedream-product-test",
@@ -418,13 +422,21 @@ describeWithDatabase("Composio catalog reconciliation", () => {
           connectorId: "pipedream",
           externalId: "linear",
           displayName: "Linear",
+          providerRef: stored.providerRef ?? undefined,
         },
       ],
     };
     const tool = (await handles.connectors.discoverTools(context)).find(
       (candidate) => candidate.route?.connectorId === "pipedream",
     );
-    expect(tool).toMatchObject({ name: "notes.write" });
+    expect(tool).toMatchObject({
+      name: expect.stringMatching(/^notes.write__/),
+      route: {
+        connectionId: started.connectionId,
+        resourceRevision: stored.providerRef,
+        toolName: "notes.write",
+      },
+    });
     const events = [];
     for await (const event of handles.connectors.execute(
       {

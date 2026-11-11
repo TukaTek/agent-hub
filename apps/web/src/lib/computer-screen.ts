@@ -160,6 +160,31 @@ export function screenFrameError(message: ScreenFrameMessage, fallback: string):
 }
 
 /**
+ * Cookies a screen probe may attach. The capability in the URL authorizes the screen, so a host
+ * that is not this page never receives the session cookie. A same-origin http(s) probe includes
+ * it: an identity-aware proxy in front of this app answers a cookie-less request with a redirect,
+ * and `redirect: "manual"` hides that as an opaque redirect the probe would treat as a failed
+ * screen. Other schemes, such as a Wuying login URL, stay cookie-less.
+ */
+function screenProbeCredentials(url: string): RequestCredentials {
+  const pageHref = pageLocationHref();
+  if (!pageHref) return "omit";
+  try {
+    const target = new URL(url, pageHref);
+    if (target.protocol !== "http:" && target.protocol !== "https:") return "omit";
+    return target.origin === new URL(pageHref).origin ? "same-origin" : "omit";
+  } catch {
+    return "omit";
+  }
+}
+
+function pageLocationHref(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const href = window.location?.href;
+  return typeof href === "string" ? href : undefined;
+}
+
+/**
  * Ask the proxy for the page before framing it. A frame cannot say why it failed to load, so a
  * refused or unreachable screen would otherwise stay blank.
  */
@@ -170,7 +195,7 @@ export async function probeScreen(
 ): Promise<string | null> {
   try {
     const response = await fetchImpl(url, {
-      credentials: "omit",
+      credentials: screenProbeCredentials(url),
       cache: "no-store",
       redirect: "manual",
     });
@@ -199,7 +224,7 @@ export async function probeScreenStatus(
 ): Promise<number | null> {
   try {
     const response = await fetchImpl(url, {
-      credentials: "omit",
+      credentials: screenProbeCredentials(url),
       cache: "no-store",
       redirect: "manual",
       signal,

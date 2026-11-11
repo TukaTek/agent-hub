@@ -177,13 +177,11 @@ describe("the images compose file", () => {
     }
   });
 
-  it("publishes the web UI on loopback only", () => {
+  it("defaults the configurable web bind to loopback and keeps the API private", () => {
     expect(compose.services.web?.ports).toEqual([
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
-      "127.0.0.1:${CORTEXAI_AGENT_HUB_WEB_PORT:-5173}:5173",
+      "${CORTEXAI_AGENT_HUB_WEB_BIND:-127.0.0.1}:${CORTEXAI_AGENT_HUB_WEB_PORT:-5173}:5173",
     ]);
     expect(compose.services.api?.ports).toEqual([
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Compose variable expression
       "127.0.0.1:${CORTEXAI_AGENT_HUB_API_PORT:-3100}:3100",
     ]);
     for (const key of ["BETTER_AUTH_URL", "WEB_ORIGIN", "API_URL"]) {

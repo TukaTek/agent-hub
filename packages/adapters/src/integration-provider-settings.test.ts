@@ -10,6 +10,7 @@ import { InfisicalSecretStore } from "./infisical-secret-store.js";
 import {
   createIntegrationConnectorStack,
   IntegrationProviderSettings,
+  prepareManagedConnectorForTransaction,
 } from "./integration-provider-settings.js";
 import { infisicalFake } from "./secret-store-fake.js";
 import { EncryptedSecretStore } from "./secrets.js";
@@ -140,6 +141,29 @@ describe("integration provider settings", () => {
     await settings.save({ provider: "composio", apiKey: "fake-warm-key" }, context);
     settings.warmDirectories();
     await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
+  });
+  it("exposes the prepared provider's account resolution bound to that provider", async () => {
+    const f = fixture();
+    class AccountAdapter {
+      private readonly accounts = new Map([["request-1", "account-1"]]);
+      async listConnectedExternalIds() {
+        return [];
+      }
+      async resolveConnectedAccountId(_userId: string, _slug: string, ref?: string | null) {
+        return ref ? this.accounts.get(ref) : undefined;
+      }
+    }
+    f.factory.mockReturnValue(new AccountAdapter() as unknown as ManagedConnectorProvider);
+    await f.settings.save({ provider: "composio", apiKey: "fake-key" }, context);
+    const wrapper = f.settings
+      .providers()
+      .find((provider) => provider.describe().id === "composio");
+
+    const { provider } = await prepareManagedConnectorForTransaction(wrapper!);
+    const resolve = provider?.resolveConnectedAccountId;
+
+    expect(provider?.cancelAuthorizationRequest).toBeUndefined();
+    await expect(resolve?.("user", "gmail", "request-1")).resolves.toBe("account-1");
   });
 });
 

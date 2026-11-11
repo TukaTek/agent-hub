@@ -1,6 +1,6 @@
 import type { ScratchpadItem } from "@cortexai-agent-hub/contracts";
 import { fetchFresh, writeSaved } from "@cortexai-agent-hub/core/query";
-import { Button, Checkbox, Input } from "@cortexai-agent-hub/ui-web";
+import { Button, Checkbox, Input, SectionHeading } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Plus, X } from "lucide-react";
@@ -130,7 +130,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
 
   return (
     <div className="mt-6" data-testid="bot-scratchpad">
-      <h3 className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground pe-1">
+      <SectionHeading variant="label" className="mb-2 flex items-center justify-between pe-1">
         <button
           type="button"
           aria-expanded={expanded}
@@ -157,7 +157,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
         >
           <Plus className="size-4" />
         </Button>
-      </h3>
+      </SectionHeading>
       {expanded ? (
         <div id={listId} className="rounded-xl bg-muted/50 p-4">
           <div data-testid="bot-scratchpad-list" className="max-h-80 overflow-y-auto">

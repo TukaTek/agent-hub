@@ -171,6 +171,7 @@ describe("scoped mobile outbox", () => {
       request,
       scope: () => scope,
       serverReachable: () => reachable,
+      passwordChanging: () => false,
       disk,
       errorText: (error) => (error instanceof Error ? error.message : String(error)),
       notDelivered,
@@ -211,6 +212,129 @@ describe("scoped mobile outbox", () => {
     });
     act(() => confirmEchoes("bot-1", [42]));
     expect(container.textContent).toBe("");
+  });
+  it.each(["Outbox full", "OUTBOX_STORAGE_UNAVAILABLE"])(
+    "sends from memory when saving fails with %s",
+    async (message) => {
+      disk.save.mockImplementation(() => {
+        throw new Error(message);
+      });
+      const attempt = feedback.sendAttempt(payload());
+      expect(disk.forget).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(await feedback.send(attempt)).toBe(true);
+      });
+      expect(request).toHaveBeenCalledWith("threads/send", expect.anything(), undefined, "space-a");
+      expect(attempt.payload.attachments[0]?.contentBase64).toBe("fake");
+      disk.save.mockImplementation(() => undefined);
+      act(() => confirmEchoes("bot-1", [42]));
+      expect(disk.forget).toHaveBeenCalledWith(attempt);
+    },
+  );
+  it("retries attachments from memory when admission throws", async () => {
+    disk.admit.mockImplementationOnce(() => {
+      throw new Error("OUTBOX_STORAGE_UNAVAILABLE");
+    });
+    request.mockRejectedValueOnce(new Error("Send interrupted"));
+    const attempt = feedback.sendAttempt(payload());
+    await act(async () => {
+      await feedback.send(attempt);
+    });
+    expect(attempt.state).toBe("failed");
+    expect(attempt.payload.attachments[0]?.contentBase64).toBe("fake");
+    await act(async () => {
+      expect(await feedback.send(attempt)).toBe(true);
+    });
+    expect(disk.hydrate).not.toHaveBeenCalled();
+    expect(disk.save).toHaveBeenLastCalledWith([]);
+  });
+  it("deletes a delivered message's files only after the index without it is saved", async () => {
+    const failed = feedback.sendAttempt(payload("First"));
+    await act(async () => {
+      await feedback.send(failed);
+    });
+    disk.save.mockImplementationOnce(() => {
+      throw new Error("OUTBOX_STORAGE_UNAVAILABLE");
+    });
+    act(() => confirmEchoes("bot-1", [42]));
+    expect(disk.forget).not.toHaveBeenCalled();
+    const saved = feedback.sendAttempt(payload("Second"));
+    await act(async () => {
+      await feedback.send(saved);
+    });
+    act(() => confirmEchoes("bot-1", [42]));
+    expect(disk.forget).toHaveBeenCalledWith(saved);
+    expect(disk.save.mock.lastCall).toEqual([[]]);
+    expect(disk.save.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      disk.forget.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+  it("deletes a discarded message's files once a later save drops it", () => {
+    const discarded = feedback.sendAttempt(payload("First"));
+    disk.save.mockImplementationOnce(() => {
+      throw new Error("OUTBOX_STORAGE_UNAVAILABLE");
+    });
+    act(() => feedback.discard(discarded));
+    expect(disk.forget).not.toHaveBeenCalled();
+    // The leftover files fill the disk budget until they are deleted.
+    disk.admit.mockImplementationOnce(() => disk.forget.mock.calls.length > 0);
+    const saved = feedback.sendAttempt(payload("Second"));
+    expect(disk.forget).toHaveBeenCalledWith(discarded);
+    expect(disk.save).toHaveBeenLastCalledWith([saved]);
+  });
+  it("keeps a discarded message's files when it is sent again before they are deleted", async () => {
+    const discarded = feedback.sendAttempt(payload());
+    disk.save.mockImplementationOnce(() => {
+      throw new Error("OUTBOX_STORAGE_UNAVAILABLE");
+    });
+    act(() => feedback.discard(discarded));
+    await act(async () => {
+      await feedback.send(discarded);
+    });
+    expect(disk.forget).not.toHaveBeenCalled();
+  });
+  it.each(["Read failed", "OUTBOX_STORAGE_UNAVAILABLE"])(
+    "finishes a failed restore (%s) without overwriting recoverable messages",
+    async (message) => {
+      act(() => clearFailedSends());
+      vi.clearAllMocks();
+      disk.load.mockImplementationOnce(() => {
+        throw new Error(message);
+      });
+      act(() => restoreUnsentSends());
+      const attempt = feedback.sendAttempt(payload());
+      await act(async () => {
+        expect(await feedback.send(attempt)).toBe(true);
+      });
+      expect(disk.save).not.toHaveBeenCalled();
+      expect(disk.clear).not.toHaveBeenCalled();
+      act(() => restoreUnsentSends());
+      expect(disk.load).toHaveBeenCalledOnce();
+    },
+  );
+  it("sends in a new session without loading discarded messages when clearing fails", async () => {
+    const old = feedback.sendAttempt(payload("Old"));
+    disk.load.mockReturnValueOnce([old]);
+    vi.clearAllMocks();
+    disk.clear.mockImplementation(() => {
+      throw new Error("OUTBOX_STORAGE_UNAVAILABLE");
+    });
+    act(() => clearFailedSends());
+    act(() => restoreUnsentSends());
+    const attempt = feedback.sendAttempt(payload("New"));
+    await act(async () => {
+      expect(await feedback.send(attempt)).toBe(true);
+    });
+    expect(disk.load).not.toHaveBeenCalled();
+    expect(disk.admit).not.toHaveBeenCalled();
+    expect(disk.save).not.toHaveBeenCalled();
+    expect(
+      request.mock.calls.filter(([proc]) => proc === "threads/send").map(([, body]) => body.text),
+    ).toEqual(["New"]);
+    disk.load.mockReset().mockReturnValue([]);
+    disk.clear.mockImplementation(() => undefined);
+    const saved = feedback.sendAttempt(payload());
+    expect(disk.save).toHaveBeenLastCalledWith([saved]);
   });
   it("keeps sends ordered, persisted and scoped while offline, and retries on reconnect", async () => {
     reachable = false;
@@ -538,10 +662,14 @@ describe("scoped mobile outbox", () => {
     needsModel = undefined;
   });
   it("restores old missing-model rejections as manually retryable", async () => {
+    const saved = feedback.sendAttempt(payload());
     act(() => clearFailedSends());
-    const attempt = feedback.sendAttempt(payload());
-    attempt.state = "refused";
-    attempt.error = MODEL_REQUIRED_SEND_ERROR;
+    const attempt = {
+      ...saved,
+      session: saved.session + 1,
+      state: "refused" as const,
+      error: MODEL_REQUIRED_SEND_ERROR,
+    };
     disk.load.mockReturnValueOnce([attempt]);
     act(() => restoreUnsentSends());
     expect(attempt.state).toBe("failed");
@@ -614,6 +742,91 @@ describe("scoped mobile outbox", () => {
     expect(second.state).toBe("queued");
     expect(request).toHaveBeenCalledOnce();
     expect(notDelivered).not.toHaveBeenCalled();
+  });
+  describe("a send in flight while a password change replaces the session", () => {
+    let current: typeof scope | null;
+    let refuse: (() => void) | undefined;
+    let passwordChanging: boolean;
+    beforeEach(() => {
+      current = scope;
+      refuse = undefined;
+      passwordChanging = true;
+      configureUnsentSends({
+        request,
+        scope: () => current,
+        serverReachable: () => reachable,
+        passwordChanging: () => passwordChanging,
+        disk,
+        errorText: (error) => (error instanceof Error ? error.message : String(error)),
+        notDelivered,
+      });
+      request.mockImplementation(async (proc) =>
+        proc === "artifacts/create"
+          ? { id: "artifact-a" }
+          : new Promise((_resolve, reject) => {
+              // The server already revoked the token the send used.
+              refuse = () => reject(Object.assign(new Error("Unauthorized"), { status: 401 }));
+            }),
+      );
+    });
+    async function settleAfter(change: () => void) {
+      const attempt = feedback.sendAttempt(payload());
+      let sending!: Promise<boolean>;
+      act(() => {
+        sending = feedback.send(attempt);
+      });
+      await vi.waitFor(() => expect(refuse).toBeTypeOf("function"));
+      change();
+      request.mockImplementation(async (proc) =>
+        proc === "artifacts/create" ? { id: "artifact-a" } : { seq: 42 },
+      );
+      const saves = disk.save.mock.calls.length;
+      await act(async () => {
+        refuse?.();
+        await sending;
+      });
+      return { attempt, saves };
+    }
+    it("returns it to the saved queue while the session is out of scope", async () => {
+      const { attempt, saves } = await settleAfter(() => {
+        current = null;
+      });
+      expect(attempt.state).toBe("queued");
+      expect(disk.save.mock.calls.length).toBeGreaterThan(saves);
+      expect(disk.save).toHaveBeenLastCalledWith([attempt]);
+      expect(notDelivered).not.toHaveBeenCalled();
+      current = { ...scope };
+      await act(async () => {
+        await sendWaitingMessages();
+      });
+      expect(attempt.acceptedSeq).toBe(42);
+    });
+    it("keeps it queued when the server revokes the token before the new session arrives", async () => {
+      const { attempt } = await settleAfter(() => undefined);
+      expect(attempt.state).toBe("queued");
+      expect(notDelivered).not.toHaveBeenCalled();
+      // The drain stops instead of resending with the revoked token.
+      expect(request.mock.calls.filter(([proc]) => proc !== "artifacts/create")).toHaveLength(1);
+      current = { ...scope };
+      await act(async () => {
+        await sendWaitingMessages();
+      });
+      expect(attempt.acceptedSeq).toBe(42);
+    });
+    it("refuses it as before when no password change is in progress", async () => {
+      passwordChanging = false;
+      const { attempt } = await settleAfter(() => undefined);
+      expect(attempt.state).toBe("refused");
+      expect(notDelivered).toHaveBeenCalledWith(attempt);
+    });
+    it("retries it when the new session is ready before it settles", async () => {
+      const { attempt } = await settleAfter(() => {
+        current = { ...scope };
+      });
+      expect(attempt.state).not.toBe("refused");
+      expect(attempt.acceptedSeq).toBe(42);
+      expect(notDelivered).not.toHaveBeenCalled();
+    });
   });
   it("retries after a reconnect that arrived during an in-flight send", async () => {
     let rejectUpload!: (error: unknown) => void;
@@ -790,6 +1003,7 @@ describe("a send and its echo", () => {
       request,
       scope: () => scope,
       serverReachable: () => reachable,
+      passwordChanging: () => false,
       disk,
       errorText: String,
       notDelivered: () => undefined,

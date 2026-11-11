@@ -18,6 +18,10 @@ import type {
   TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
+  INVALID_BROWSER_REQUEST,
+  SandboxRequestRejectedError,
+} from "@cortexai-agent-hub/adapter-kit";
+import {
   boundedSandboxCommandTimeoutMs,
   cancelResponseBody,
   requestDeadline,
@@ -251,7 +255,16 @@ export class DockerSandboxProvider implements SandboxProvider {
       redirect: "error",
       signal: context.signal,
     });
-    if (!res.ok) throw new Error(`page browser failed: ${res.status}`);
+    if (!res.ok) {
+      // Only the supervisor's own refusal of a malformed request proves nothing ran.
+      if (res.status === 400) {
+        const refused = await readSandboxJson<{ code?: unknown }>(res, context.signal, 4096).catch(
+          () => undefined,
+        );
+        if (refused?.code === INVALID_BROWSER_REQUEST) throw new SandboxRequestRejectedError();
+      }
+      throw new Error(`page browser failed: ${res.status}`);
+    }
     return readSandboxJson<PageBrowserResult>(res, context.signal, 512 * 1024);
   }
 

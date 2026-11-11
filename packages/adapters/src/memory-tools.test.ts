@@ -1,8 +1,9 @@
 import type { ConnectorTool, SemanticMemoryResponse } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
+import type { MemoryToolName } from "./memory-tools.js";
 import {
   appendMemoryFact,
-  type MemoryToolName,
+  editMemory,
   memoryToolAuditSummary,
   runMemoryTool,
   selectMemoryTools,
@@ -233,5 +234,56 @@ describe("multiline memory facts", () => {
     ]) {
       expect(appendMemoryFact(existing, "Office:\nBerlin")).toBe(`${existing}Office:\nBerlin\n`);
     }
+  });
+});
+
+describe("editMemory", () => {
+  const memory = "# Memory\n- Lives in London.\n- Prefers short replies.\n";
+
+  it("appends a fact when no old_text is given", () => {
+    expect(editMemory(memory, "Works at Combient.")).toEqual({
+      content: `${memory}Works at Combient.\n`,
+    });
+  });
+
+  it("replaces the whole entry that holds old_text", () => {
+    expect(editMemory(memory, "- Lives in Berlin.", "London")).toEqual({
+      content: "# Memory\n- Lives in Berlin.\n- Prefers short replies.\n",
+    });
+  });
+
+  it("removes the entry when the replacement is empty", () => {
+    expect(editMemory(memory, "", "short replies")).toEqual({
+      content: "# Memory\n- Lives in London.\n",
+    });
+    expect(editMemory("a\nlast", "", "last")).toEqual({ content: "a\n" });
+  });
+
+  it("changes nothing when old_text is missing or ambiguous", () => {
+    expect(editMemory(memory, "x", "Paris")).toEqual({
+      error: expect.stringContaining("No entry"),
+      entries: ["# Memory", "- Lives in London.", "- Prefers short replies."],
+    });
+    expect(editMemory(memory, "x", "- ")).toEqual({
+      error: expect.stringContaining("more than one"),
+      entries: ["- Lives in London.", "- Prefers short replies."],
+    });
+  });
+
+  it("treats repeats within one line as one entry", () => {
+    expect(editMemory("aaaa\nb\n", "c", "a")).toEqual({ content: "c\nb\n" });
+  });
+
+  it("refuses a save that grows memory past the cap and returns the entries", () => {
+    const full = `${"a".repeat(30)}\n`;
+    expect(editMemory(full, "b".repeat(10), "", 32)).toEqual({
+      error: expect.stringContaining("Memory is full"),
+      entries: ["a".repeat(30)],
+    });
+  });
+
+  it("lets a save that shrinks oversized memory through", () => {
+    const oversized = `${"a".repeat(40)}\n${"b".repeat(40)}\n`;
+    expect(editMemory(oversized, "", "bbb", 32)).toEqual({ content: `${"a".repeat(40)}\n` });
   });
 });

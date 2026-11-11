@@ -1,4 +1,5 @@
-import { HUB_CONFIG_INVALID, type HubSignInRefusalCode } from "@cortexai-agent-hub/core";
+import type { HubSignInRefusalCode } from "@cortexai-agent-hub/core";
+import { HUB_CONFIG_INVALID } from "@cortexai-agent-hub/core";
 
 /**
  * Hub's server-scoped Agent Hub policy (`GET /api/agent-hub/service-config`,

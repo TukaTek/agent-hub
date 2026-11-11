@@ -8,6 +8,7 @@ import {
   blocksToAgentHistoryText,
   decodeAttachmentBase64,
   inferAttachmentMimeType,
+  normalizeVoiceTranscript,
   promptTextForAttachments,
   supportedAttachmentExtensions,
   userTurnMessageForRun,
@@ -129,6 +130,24 @@ describe("attachment helpers", () => {
     ).toBe("hello\n[image: shot.png]\n[file: brief.pdf (application/pdf, 99 bytes)]");
   });
 
+  it("appends a voice note transcript after the file note", () => {
+    expect(
+      promptTextForAttachments("listen to this", [
+        { name: "voice.oga", mimeType: "audio/ogg", size: 10, transcript: "hello there" },
+      ]),
+    ).toBe(
+      'listen to this\n\nUser attached file "voice.oga" (audio/ogg, 10 bytes).' +
+        "\n[voice note transcript: hello there]",
+    );
+  });
+
+  it("normalizes and bounds a voice note transcript", () => {
+    expect(normalizeVoiceTranscript("a\u007fb\u0085c\u009fd\te\nf")).toBe("abcd\te\nf");
+    expect(normalizeVoiceTranscript(" \u0080 ")).toBe("");
+    expect(normalizeVoiceTranscript(" \r\u0000 ")).toBe("");
+    expect(normalizeVoiceTranscript("a".repeat(8000))).toHaveLength(4000);
+  });
+
   it("infers attachment mime types from extensions", () => {
     expect(inferAttachmentMimeType("photo.JPG", "")).toBe("image/jpeg");
     expect(inferAttachmentMimeType("notes.pdf", "")).toBe("application/pdf");
@@ -204,6 +223,19 @@ describe("attachment helpers", () => {
     expect(ATTACHMENT_ACCEPT.split(",")).toEqual(
       expect.arrayContaining([XLSX, DOCX, PPTX, ".xlsx", ".docx", ".pptx", ".zip"]),
     );
+  });
+
+  it("keeps a CSV a CSV when Windows reports it as an Excel file", () => {
+    expect(inferAttachmentMimeType("sales.csv", "application/vnd.ms-excel")).toBe("text/csv");
+    expect(inferAttachmentMimeType("SALES.CSV", "application/vnd.ms-excel")).toBe("text/csv");
+    expect(inferAttachmentMimeType("sales.xls", "application/vnd.ms-excel")).toBe(
+      "application/vnd.ms-excel",
+    );
+    expect(inferAttachmentMimeType("statement", "application/vnd.ms-excel")).toBe(
+      "application/vnd.ms-excel",
+    );
+    // The fork trusts a known extension over the reported type (pickers mislabel Office files).
+    expect(inferAttachmentMimeType("sales.csv", "application/pdf")).toBe("text/csv");
   });
 
   it.each([

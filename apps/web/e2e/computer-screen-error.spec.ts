@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  openBotPanelTab,
+  rpc,
+  signup,
+} from "./helpers";
 
 test(
   "screen connection failures stay visible and can be retried",
@@ -48,7 +55,7 @@ test(
       }),
     );
 
-    await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+    await openBotPanelTab(page, "Computer");
     const preview = page.getByTestId("computer-preview");
     await expect(preview.getByRole("alert")).toContainText("temporarily busy");
     await expect(preview.getByTestId("computer-preview-open")).toHaveCount(0);
@@ -107,7 +114,7 @@ test(
         body: JSON.stringify({ json: { url: null } }),
       });
     });
-    await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+    await openBotPanelTab(page, "Computer");
     const preview = page.getByTestId("computer-preview");
     await expect(preview.getByRole("alert")).toContainText("Screen not connected");
     await expect(preview.getByRole("button", { name: "Retry screen" })).toBeVisible();
@@ -159,7 +166,7 @@ test("a healthy running computer is not diagnosed while its screen URL loads", a
       body: JSON.stringify({ json: { url: screenUrl } }),
     });
   });
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Computer");
   await reading;
   const preview = page.getByTestId("computer-preview");
   await expect(preview.getByRole("alert")).toHaveCount(0);
@@ -206,7 +213,7 @@ test("a takeover failure does not diagnose a screen connection failure", async (
       }),
     }),
   );
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Computer");
   const preview = page.getByTestId("computer-preview");
   await expect(preview.locator("iframe")).toBeVisible();
   await preview.hover();
@@ -279,7 +286,7 @@ test("a framed screen that drops after connecting loads again by itself once", a
     }),
   );
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Computer");
   const preview = page.getByTestId("computer-preview");
   await expect(preview.locator("iframe")).toHaveAttribute("src", /1\.drop-test\/vnc\.html/);
   await expect.poll(() => loads).toBe(2);

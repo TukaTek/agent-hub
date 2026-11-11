@@ -1,5 +1,8 @@
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
-import { computerControlExpireJobKey } from "@cortexai-agent-hub/adapter-kit";
+import {
+  computerControlExpireJobKey,
+  SandboxAllowanceUsedError,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { ComputerUpdate } from "@cortexai-agent-hub/contracts";
 import { ComputerUpdateSchema } from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
@@ -566,7 +569,18 @@ export async function performComputerUpdate(deps: Deps, updateId: string) {
     );
     await finishUpdate(deps.prisma, updateId, update.computerId, "completed");
   } catch (error) {
-    getLogger().error("computer update failed", error, { updateId, computerId: update.computerId });
+    if (error instanceof SandboxAllowanceUsedError) {
+      getLogger().warn("computer update failed", {
+        updateId,
+        computerId: update.computerId,
+        reason: error.message,
+      });
+    } else {
+      getLogger().error("computer update failed", error, {
+        updateId,
+        computerId: update.computerId,
+      });
+    }
     // Provider errors may contain credentials or private URLs. Expose only the failed stage.
     await finishUpdate(deps.prisma, updateId, update.computerId, "failed");
   } finally {

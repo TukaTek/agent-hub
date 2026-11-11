@@ -85,6 +85,15 @@ describe("mobile i18n", () => {
       "3 Ausführungen, 12 Token",
     );
     expect(t("Delete {name}?", { name: "Scout" })).toBe("Scout löschen?");
+
+    resetI18nForTests("es");
+    expect(t("Account")).toBe("Cuenta");
+    expect(t("Sign in to CortexAI Agent Hub")).toBe("Inicia sesión en CortexAI Agent Hub");
+    expect(t("New bot")).toBe("Nuevo bot");
+    expect(t("{runs} runs, {tokens} tokens", { runs: 3, tokens: 12 })).toBe(
+      "3 ejecuciones, 12 tokens",
+    );
+    expect(t("Delete {name}?", { name: "Scout" })).toBe("¿Eliminar Scout?");
   });
 
   it("preserves interpolations in every non-English catalog", async () => {
@@ -93,7 +102,15 @@ describe("mobile i18n", () => {
     const { RU_MESSAGES } = await import("./locales/ru");
     const { DE_MESSAGES } = await import("./locales/de");
     const { JA_MESSAGES } = await import("./locales/ja");
-    for (const messages of [ZH_MESSAGES, ZH_TW_MESSAGES, RU_MESSAGES, DE_MESSAGES, JA_MESSAGES]) {
+    const { ES_MESSAGES } = await import("./locales/es");
+    for (const messages of [
+      ZH_MESSAGES,
+      ZH_TW_MESSAGES,
+      RU_MESSAGES,
+      DE_MESSAGES,
+      JA_MESSAGES,
+      ES_MESSAGES,
+    ]) {
       const empty = Object.entries(messages).filter(([, value]) => !value.trim());
       const interpolationMismatches = Object.entries(messages).filter(([id, value]) => {
         const tokens = (message: string) =>
@@ -111,6 +128,7 @@ describe("mobile i18n", () => {
     const { RU_MESSAGES } = await import("./locales/ru");
     const { DE_MESSAGES } = await import("./locales/de");
     const { JA_MESSAGES } = await import("./locales/ja");
+    const { ES_MESSAGES } = await import("./locales/es");
     const { EMPTY_PLUGIN_CATALOG_MESSAGE, SLASH_ACTIONS, RUN_ERROR_LIMIT_MESSAGES } = await import(
       "@cortexai-agent-hub/core"
     );
@@ -140,6 +158,7 @@ describe("mobile i18n", () => {
       "The model returned an unusable response. Try again.",
       "The model hit its output limit before finishing its reply.",
       "This model's context window is too small. Choose another model.",
+      "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model.",
       "This connection's request limit is too small. Choose another model.",
       "{provider} took too long to respond. Try again.",
       "{provider} is overloaded right now. Try again in a moment.",
@@ -168,7 +187,14 @@ describe("mobile i18n", () => {
         ids.add(JSON.parse(`"${match[1]}"`) as string);
       }
     }
-    for (const messages of [ZH_MESSAGES, ZH_TW_MESSAGES, RU_MESSAGES, DE_MESSAGES, JA_MESSAGES]) {
+    for (const messages of [
+      ZH_MESSAGES,
+      ZH_TW_MESSAGES,
+      RU_MESSAGES,
+      DE_MESSAGES,
+      JA_MESSAGES,
+      ES_MESSAGES,
+    ]) {
       const missing = [...ids].filter((id) => !messages[id]?.trim()).sort();
       expect(missing).toEqual([]);
     }
@@ -177,6 +203,7 @@ describe("mobile i18n", () => {
   it.each([
     ["de", "Dein Modellanbieter hat zu lange zum Antworten gebraucht. Versuche es erneut."],
     ["ja", "お使いのモデルプロバイダーの応答に時間がかかりすぎました。もう一度お試しください。"],
+    ["es", "Tu proveedor de modelos tardó demasiado en responder. Vuelve a intentarlo."],
     ["ru", "Ваш поставщик моделей не ответил вовремя. Повторите попытку."],
     ["zh-CN", "你的模型提供商响应超时。请重试。"],
   ] as const)("renders provider errors in %s", async (locale, expected) => {

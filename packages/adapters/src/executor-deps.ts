@@ -16,9 +16,8 @@ import type {
   SecretStore,
   WebProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import type { PrismaClient, RunLease, ThreadEvents } from "@cortexai-agent-hub/db";
 import type { CloudAgentConnection } from "./cloud-agent-factory.js";
-import type { McpStdioPolicy } from "./mcp-transport.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
 import type { CodexLiveCatalog } from "./pi-codex-catalog.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
@@ -72,8 +71,6 @@ export interface ExecutorDeps {
   secretHttp?: RemoteTransportDependencies;
   /** Allow RFC1918 / Docker-network MCP URLs when the operator enabled the escape. */
   mcpAllowPrivateEndpoint?: boolean;
-  /** Which stdio MCP servers this deployment runs; absent runs none. */
-  mcpStdio?: McpStdioPolicy;
   /** Remote cloud coding agents. Null/omit means tools stay uninjected. */
   cloudAgent?: CloudAgentConnection | null;
   /** The deployment's payment wallet. Null/omit means purchase tools stay uninjected. */
@@ -89,4 +86,6 @@ export interface ExecutorDeps {
   userDevices?: UserDeviceGateway;
   /** Aborted when createApp stop() begins so in-flight continueRun boot waits exit promptly. */
   shutdownSignal?: AbortSignal;
+  /** Set by withRunLease for one attempt; that run's history writes carry its lease. */
+  runLease?: RunLease & { runId: string };
 }

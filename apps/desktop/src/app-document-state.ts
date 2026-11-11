@@ -1,9 +1,13 @@
+import { t, withDetail } from "./i18n.js";
+
 /**
  * Empty `#root` shells and session-pending skeletons count as loaded HTML but are
  * not a usable app. After session resolves, wait for a bootstrapped shell
- * (`data-ready` / shell-ready mark) or an auth/welcome/onboarding surface so a
- * bare Suspense fallback or pre-bootstrap ShellPage cannot pass. Plain e2e
- * fixtures omit the CortexAI Agent Hub app-state marker. Runs in the renderer.
+ * (`data-ready` / shell-ready mark) or a route surface the web app marks with
+ * `data-cortexai-agent-hub-surface` (welcome, onboarding) so a bare Suspense fallback or
+ * pre-bootstrap ShellPage cannot pass. Only a usable page may carry that marker,
+ * never a loading state. Plain e2e fixtures omit the CortexAI Agent Hub app-state marker.
+ * Runs in the renderer.
  */
 export const APP_DOCUMENT_STATE_SCRIPT = `(() => {
   const appState =
@@ -18,19 +22,20 @@ export const APP_DOCUMENT_STATE_SCRIPT = `(() => {
     (shell && shell.getAttribute("data-ready") === "true") ||
       performance.getEntriesByName("cortexai-agent-hub:renderer:shell-ready").length > 0,
   );
-  const authOrWelcomeSurface = Boolean(
-    document.querySelector('[data-cortexai-agent-hub-surface="welcome"]') ||
+  const routeSurface = Boolean(
+    document.querySelector("[data-cortexai-agent-hub-surface]") ||
       document.querySelector(
         'form input[type="email"], form input[name="email"], form input#email',
       ) ||
       Array.from(document.querySelectorAll("button")).some((button) =>
         /sign\\s*in/i.test((button.textContent || "").trim()),
       ) ||
+      // Older servers mark only the welcome page; their onboarding is found by its English labels.
       document.querySelector(
         '[aria-label="Model"], [aria-label="Model id"], [aria-label="Models from server"]',
       ),
   );
-  const surfaceReady = shellBootstrapped || authOrWelcomeSurface;
+  const surfaceReady = shellBootstrapped || routeSurface;
   const sessionReady =
     appState === "ready" ||
     performance.getEntriesByName("cortexai-agent-hub:renderer:session-committed").length > 0;
@@ -62,7 +67,18 @@ export async function waitForMountedAppDocument(
 ): Promise<AppDocumentState> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (contents.isCrashed()) throw new Error("Renderer stopped after load.");
+    if (contents.isDestroyed()) {
+      throw withDetail(
+        new Error("The window closed before the app loaded."),
+        t("The window closed before the app loaded."),
+      );
+    }
+    if (contents.isCrashed()) {
+      throw withDetail(
+        new Error("Renderer stopped after load."),
+        t("Renderer stopped after load."),
+      );
+    }
     let state: AppDocumentState;
     try {
       state = (await contents.executeJavaScript(APP_DOCUMENT_STATE_SCRIPT)) as AppDocumentState;

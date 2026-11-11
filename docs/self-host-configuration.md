@@ -13,7 +13,7 @@ Do not commit `.env`. Never put `COMPOSIO_API_KEY`, OpenRouter keys, or provider
 
 ## Settings with names you choose
 
-The Compose files pass the API and worker only the settings each one reads, listed by name, rather than the whole `.env`. A setting whose name you choose, such as `TELEGRAM_BOT_TOKEN_<NAME>`, therefore needs its own line: add it under `api` and `worker` `environment` in an override file layered after the base file (and in `CORTEXAI_AGENT_HUB_COMPOSE_FILE` when the updater is enabled), with no value so Compose fills it from `.env`. `install-images.sh` names any `.env` setting that no container receives.
+The Compose files pass the API and worker only the settings each one reads, listed by name, rather than the whole `.env`. A setting whose name you choose, such as `TELEGRAM_BOT_TOKEN_<NAME>` or `PHOTON_PROJECT_ID_<NAME>`, therefore needs its own line: add it under `api` and `worker` `environment` in an override file layered after the base file (and in `CORTEXAI_AGENT_HUB_COMPOSE_FILE` when the updater is enabled), with no value so Compose fills it from `.env`. `install-images.sh` names any `.env` setting that no container receives.
 
 ```yaml
 # docker-compose.override.yml
@@ -138,6 +138,8 @@ The API listens on `API_HOST` (default `127.0.0.1`) and `API_PORT` (default `310
 unless a container or a trusted reverse proxy must reach it; the Compose files set this for you.
 The published-images stack publishes the web app on `127.0.0.1:5173` and the API on
 `127.0.0.1:3100`; set `CORTEXAI_AGENT_HUB_WEB_PORT` or `CORTEXAI_AGENT_HUB_API_PORT` to use other host ports.
+For LAN access, set `CORTEXAI_AGENT_HUB_WEB_BIND` as described in
+[Connecting a phone on the same network](./self-host-clients.md#connecting-a-phone-on-the-same-network).
 
 ## Outbound proxy
 

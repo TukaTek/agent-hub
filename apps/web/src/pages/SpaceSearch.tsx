@@ -1,21 +1,38 @@
 import type { SearchHit } from "@cortexai-agent-hub/contracts";
 import { searchHitListKey } from "@cortexai-agent-hub/core";
+import { Button } from "@cortexai-agent-hub/ui-web";
 import { t } from "@lingui/core/macro";
 import { Trans } from "@lingui/react/macro";
 
 export function SpaceSearchResults({
   hits,
   loading,
+  error,
+  onRetry,
   onSelect,
 }: {
   hits: SearchHit[];
   loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   onSelect: (hit: SearchHit) => void;
 }) {
   if (loading) {
     return (
       <div className="px-3 py-4 text-[14px] text-muted-foreground">
         <Trans>Searching…</Trans>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="px-3 py-4">
+        <p role="alert" className="text-[14px] text-destructive">
+          {error}
+        </p>
+        <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={onRetry}>
+          <Trans>Try again</Trans>
+        </Button>
       </div>
     );
   }

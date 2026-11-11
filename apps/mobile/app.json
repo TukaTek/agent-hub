@@ -80,8 +80,13 @@
         }
       ],
       "./plugins/with-worklets-headers",
-      "./plugins/with-scene-lifecycle"
+      "./plugins/with-scene-lifecycle",
+      "./plugins/with-lan-cleartext",
+      "./plugins/with-app-intents"
     ],
+    "locales": {
+      "es": "./locales/es.json"
+    },
     "ios": {
       "bundleIdentifier": "com.tukatek.cortexai.agenthub",
       "buildNumber": "1",
@@ -117,7 +122,19 @@
       "router": {},
       "supportsRTL": true,
       "eas": {
-        "projectId": "c5ac54e3-8365-495d-a638-51b4e0deb329"
+        "projectId": "c5ac54e3-8365-495d-a638-51b4e0deb329",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "CortexAiAgentHubWidgets",
+                  "bundleIdentifier": "com.tukatek.cortexai.agenthub.widgets"
+                }
+              ]
+            }
+          }
+        }
       }
     },
     "updates": {

@@ -32,6 +32,7 @@ const resourceDirectories = {
   ru: "values-ru",
   de: "values-de",
   ja: "values-ja",
+  es: "values-es",
 } as const satisfies Record<(typeof UI_LOCALES)[number], string>;
 
 function strings(locale: (typeof UI_LOCALES)[number]) {
@@ -51,5 +52,6 @@ describe("Android notification resources", () => {
     expect(strings("ru")).toContain("%1$s и ещё %2$d");
     expect(strings("zh-CN")).toContain("%1$s 和另外 %2$d");
     expect(strings("ja")).toContain("%1$sとほか%2$d件");
+    expect(strings("es")).toContain("%1$s y %2$d más");
   });
 });

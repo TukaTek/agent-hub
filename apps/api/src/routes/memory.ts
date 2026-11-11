@@ -1,8 +1,10 @@
 import { MEMORY_REVISION_CONFLICT_ERROR } from "@cortexai-agent-hub/adapter-kit";
 import {
+  buildAgentMemoryPrompt,
   isScratchpadStatus,
   listScratchpadItems,
   mapScratchpadItem,
+  readAgentMemory,
 } from "@cortexai-agent-hub/adapters";
 import { isDeletableMemoryDocument } from "@cortexai-agent-hub/contracts";
 import { findSpaceMemoryConfig, IsolationError } from "@cortexai-agent-hub/db";
@@ -37,6 +39,19 @@ export function memoryRoutes(ctx: RouterContext) {
           revision: doc.revision,
           updatedAt: doc.updatedAt.toISOString(),
         }));
+      }),
+      budget: authed.memory.budget.handler(async ({ context, input }) => {
+        await repos.getBot(context.actor, input.botId);
+        // Read through the store a run uses, so the numbers match what the bot receives.
+        const documents = await readAgentMemory(deps.memory, input.botId, {
+          operationId: "mem",
+          traceId: "mem",
+          spaceId: context.actor.spaceId,
+          userId: context.actor.userId,
+          botId: input.botId,
+          signal: context.signal ?? new AbortController().signal,
+        });
+        return buildAgentMemoryPrompt(documents).plan;
       }),
       update: authed.memory.update.handler(async ({ context, input }) => {
         const doc = await deps.prisma.memoryDocument.findFirst({

@@ -2,7 +2,7 @@
 // login. Everything here runs as the migration (owner) role; the API and worker
 // then connect with DATABASE_URL and only get the runtime grants.
 import { execFileSync } from "node:child_process";
-import { migrateJobQueue } from "@cortexai-agent-hub/adapters";
+import { migrateJobQueue, unwrapEnvFromKeyManager } from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import {
   databaseUrls,
@@ -13,6 +13,7 @@ import {
 } from "@cortexai-agent-hub/db";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 const urls = databaseUrls(process.env);
 await deployMigrations({
   migrationUrl: urls.migrationUrl,

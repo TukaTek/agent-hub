@@ -510,7 +510,20 @@ export default defineConfig(({ command, mode }) => {
     crisp: parseCrispWebsiteId(process.env.CRISP_WEBSITE_ID ?? rootEnv.CRISP_WEBSITE_ID) !== null,
   });
   return {
-    build: { sourcemap: true },
+    build: {
+      sourcemap: true,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            // Shared chunks that build schemas run before the entry chunk's body, so the Zod
+            // config only lands in time when it ships inside Zod's own chunk.
+            groups: [
+              { name: "zod", test: /[\\/]node_modules[\\/]zod[\\/]|[\\/]src[\\/]zod-config\.ts$/ },
+            ],
+          },
+        },
+      },
+    },
     define: { "import.meta.env.CORTEXAI_AGENT_HUB_BUILD": JSON.stringify(buildId) },
     plugins: [
       {

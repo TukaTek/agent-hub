@@ -1,3 +1,4 @@
+import type { PluginRepoFetcher } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { createRouterClient } from "@orpc/server";
 import { describe, expect, it, vi } from "vitest";
@@ -20,7 +21,7 @@ const approved = {
   hasConnector: false,
   skillCount: 1,
 };
-function setup(approvedRows: (typeof approved)[] = []) {
+function setup(approvedRows: (typeof approved)[] = [], pluginRepoFetcher?: PluginRepoFetcher) {
   const read = vi.fn(async (url: string) => {
     if (url.includes("/git/trees/"))
       return JSON.stringify({ tree: [{ path: "notes/skills/plan/SKILL.md", type: "blob" }] });
@@ -36,6 +37,7 @@ function setup(approvedRows: (typeof approved)[] = []) {
       user: { findUnique: async () => ({ email: actor.email, emailVerified: true }) },
     } as never,
     pluginMarketplaceRead: read,
+    pluginRepoFetcher,
     env: {
       webOrigin: "http://localhost:5173",
       defaultProvider: "fake",
@@ -73,6 +75,22 @@ describe("marketplace RPC", () => {
       ["CortexAI Agent Hub", "Reviewed notes."],
       ["Cursor", ""],
     ]);
+  });
+  it("keeps listing a plugin whose preview leaves out a skill repeating a built-in one", async () => {
+    const skill = (name: string) => `---\nname: ${name}\ndescription: Notes\n---\n\nUse it.\n`;
+    const { client } = setup([], async () => ({
+      resolvedSha: "c".repeat(40),
+      files: [
+        { path: "notes/.cursor-plugin/plugin.json", content: JSON.stringify({ name: "notes" }) },
+        { path: "notes/skills/plan/SKILL.md", content: skill("plan") },
+        { path: "notes/skills/interrogate/SKILL.md", content: skill("Interrogate") },
+      ],
+    }));
+    const [entry] = (await client(actor).marketplace.catalog({ query: "notes" })).entries;
+    const preview = await client(actor).capabilities.pluginPreview({ source: entry!.source });
+    expect(preview.builtinNames).toEqual(["Interrogate"]);
+    const after = await client(actor).marketplace.catalog({ query: "notes" });
+    expect(after.entries.map((row) => row.source)).toContain(entry!.source);
   });
   it("keeps submissions to admins", async () => {
     const { client } = setup();

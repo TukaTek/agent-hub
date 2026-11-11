@@ -6,6 +6,7 @@ import {
   migrateSecrets,
   PostgresRealtimeFanout,
   secretStoreOptionsFromEnv,
+  unwrapEnvFromKeyManager,
 } from "@cortexai-agent-hub/adapters";
 import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
@@ -13,6 +14,7 @@ import { createDb, runAsSystem } from "@cortexai-agent-hub/db";
 import { createSecretMigrationRepository } from "../secret-migration.js";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 
 const args = process.argv.slice(2);
 if (args.some((arg) => !["--dry-run", "--reverse"].includes(arg)))

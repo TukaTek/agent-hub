@@ -1,6 +1,6 @@
 import { matchUiLocale } from "@cortexai-agent-hub/core";
 
-export const UI_LOCALES = ["en", "zh-CN", "zh-TW", "ru", "de", "ja"] as const;
+export const UI_LOCALES = ["en", "zh-CN", "zh-TW", "ru", "de", "ja", "es"] as const;
 
 export type UiLocale = (typeof UI_LOCALES)[number];
 
@@ -13,6 +13,7 @@ export const UI_LOCALE_LABELS: Record<UiLocale, string> = {
   ru: "Русский",
   de: "Deutsch",
   ja: "日本語",
+  es: "Español",
 };
 
 export function htmlLangForLocale(locale: string): string {

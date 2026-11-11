@@ -28,6 +28,7 @@ apt-get install -y --no-install-recommends \
   audispd-plugins \
   fail2ban \
   needrestart \
+  nftables \
   ufw \
   unattended-upgrades
 
@@ -117,7 +118,16 @@ net.ipv6.conf.all.accept_source_route = 0
 net.ipv6.conf.default.accept_redirects = 0
 net.ipv6.conf.default.accept_source_route = 0
 EOF
+if [[ -e /proc/sys/net/mptcp/enabled ]]; then
+  echo 'net.mptcp.enabled = 0' >>/etc/sysctl.d/99-cortexai-agent-hub-hardening.conf
+fi
 sysctl --system >/dev/null
+
+# Internet TCP never needs IPv4 options, and the kernel's handling of them is a recurring source of remote bugs.
+install -m 0644 "$(dirname "$0")/../systemd/cortexai-agent-hub-drop-ip-options.service" /etc/systemd/system/cortexai-agent-hub-drop-ip-options.service
+systemctl daemon-reload
+systemctl enable cortexai-agent-hub-drop-ip-options.service
+systemctl restart cortexai-agent-hub-drop-ip-options.service
 
 if [[ -z "${CORTEXAI_AGENT_HUB_DEPLOY_DIR:-}" && -r /etc/cortexai-agent-hub/deploy.env ]]; then
   CORTEXAI_AGENT_HUB_DEPLOY_DIR="$(sed -n 's/^CORTEXAI_AGENT_HUB_DEPLOY_DIR=//p' /etc/cortexai-agent-hub/deploy.env | tail -1 | tr -d '"')"

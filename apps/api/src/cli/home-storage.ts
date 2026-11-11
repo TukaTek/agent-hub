@@ -3,11 +3,13 @@ import {
   contentKeyProviderFromEnv,
   createAgentHomeStore,
   ObjectAgentHomeStore,
+  unwrapEnvFromKeyManager,
 } from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { createDb } from "@cortexai-agent-hub/db";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 
 const USAGE = `Usage: home-storage migrate [--dry-run]
   migrate   Upload homes that exist only under DATA_DIR/homes to object storage and verify

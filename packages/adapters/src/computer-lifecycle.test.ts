@@ -9,7 +9,11 @@ import type {
   JobPublisher,
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import { SandboxDamagedError, SandboxUnresponsiveError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  SandboxAllowanceUsedError,
+  SandboxDamagedError,
+  SandboxUnresponsiveError,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { clearThread } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
@@ -1925,6 +1929,7 @@ describe("Team Computer wake", () => {
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
         createMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
+      $executeRaw: vi.fn().mockResolvedValue(0),
       botDeletion: { findMany },
     } as unknown as PrismaClient;
     const sandbox = {
@@ -1962,6 +1967,28 @@ describe("Team Computer wake", () => {
     const calls = vi.mocked(harness.prisma.computer.updateMany).mock.calls;
     return calls.map(([args]) => args).find((args) => args.data.state === "running")?.data;
   }
+
+  it("does not start a billed computer once its organization spent the month's allowance", async () => {
+    const harness = wakeHarness("stopped");
+    Object.assign(harness.sandbox, { billsWhileRunning: () => true });
+    Object.assign(harness.prisma, {
+      space: { findUnique: vi.fn().mockResolvedValue({ organizationId: "organization-1" }) },
+      deploymentSettings: { findUnique: vi.fn().mockResolvedValue({ modelCreditsEnabled: true }) },
+      organization: {
+        findUnique: vi.fn().mockResolvedValue({
+          modelCredits: { mode: "credits" },
+          billing: { creditAmountCents: 5000 },
+        }),
+      },
+      // $10 of a $50 plan, at the default $0.10 an hour.
+      $queryRaw: vi.fn().mockResolvedValue([{ kind: "e2b", hours: 100 }]),
+    });
+
+    await expect(boot(harness)).rejects.toBeInstanceOf(SandboxAllowanceUsedError);
+
+    expect(harness.prisma.computer.updateMany).not.toHaveBeenCalled();
+    expect(harness.sandbox.provision).not.toHaveBeenCalled();
+  });
 
   it("starts the active-lifetime clock when a stopped computer starts", async () => {
     const harness = wakeHarness("stopped", undefined, {}, { runningSince: null });
@@ -2004,10 +2031,8 @@ describe("Team Computer wake", () => {
     await boot(harness);
 
     const startedAt = activation(harness)?.runningSince as Date;
-    expect(vi.mocked(harness.prisma.computerRun.updateMany)).toHaveBeenCalledWith({
-      where: { computerId: "computer-1", endedAt: null, startedAt: { lt: startedAt } },
-      data: { endedAt: startedAt, endReason: "reconciled" },
-    });
+    // Earlier open runs end when last seen running, or at this start when never seen.
+    expect(closedRuns(harness)).toEqual([[startedAt, "reconciled", "computer-1", startedAt]]);
     expect(vi.mocked(harness.prisma.computerRun.createMany)).toHaveBeenCalledWith({
       data: [
         {
@@ -2048,6 +2073,10 @@ describe("Team Computer wake", () => {
     expect(vi.mocked(harness.prisma.computerRun.createMany)).toHaveBeenCalledWith(
       expect.objectContaining({ data: [expect.objectContaining({ startedAt: runningSince })] }),
     );
+    expect(vi.mocked(harness.prisma.computerRun.updateMany)).toHaveBeenCalledWith({
+      where: { computerId: "computer-1", startedAt: runningSince, endedAt: null },
+      data: { lastSeenAt: expect.any(Date) },
+    });
   });
 
   it("ends a run the provider stopped on its own when reconnecting has to start it again", async () => {
@@ -2061,9 +2090,7 @@ describe("Team Computer wake", () => {
     await boot(harness);
 
     const startedAt = activation(harness)?.runningSince as Date;
-    expect(vi.mocked(harness.prisma.computerRun.updateMany)).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { endedAt: startedAt, endReason: "gone" } }),
-    );
+    expect(closedRuns(harness)).toEqual([[startedAt, "gone", "computer-1", startedAt]]);
   });
 
   it("starts the computer even when the usage write fails", async () => {
@@ -2376,7 +2403,9 @@ describe("computer execution leases", () => {
       },
       run: {
         findMany: vi.fn().mockResolvedValue([{ id: "run-1", taskId: "task-1" }]),
-        updateMany: vi.fn(),
+        updateManyAndReturn: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+          where.id.in.map((id) => ({ id })),
+        ),
       },
       attempt: { updateMany: vi.fn() },
       task: { updateMany: vi.fn() },
@@ -2728,6 +2757,8 @@ describe("computer replacement", () => {
   it("exposes update availability by sandbox kind", () => {
     expect(computerSupportsUpdate("e2b")).toBe(true);
     expect(computerSupportsUpdate("desktop")).toBe(false);
+    expect(computerSupportsUpdate("wuying")).toBe(false);
+    expect(computerSupportsUpdate("none")).toBe(false);
   });
 
   it("replaces a wedged computer and restores the durable home", async () => {
@@ -3959,5 +3990,11 @@ describe("computer terminal capability", () => {
   it("allows Novita terminals through the product capability gate", () => {
     expect(computerSupportsTerminal("novita")).toBe(true);
     expect(computerSupportsTerminal("unknown")).toBe(false);
+    expect(computerSupportsTerminal("none")).toBe(false);
   });
 });
+
+/** The values of each raw run-closing statement, in order. */
+function closedRuns(harness: { prisma: PrismaClient }) {
+  return vi.mocked(harness.prisma.$executeRaw).mock.calls.map(([, ...values]) => values);
+}

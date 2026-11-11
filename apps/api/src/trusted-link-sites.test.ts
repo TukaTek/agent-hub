@@ -54,7 +54,12 @@ function setup() {
   const client = (userId: string, spaceId = "space-1") =>
     createRouterClient(createRouter(deps), {
       context: {
-        actor: { userId, spaceId, email: `${userId}@cortexai-agent-hub.test` } satisfies Actor,
+        actor: {
+          userId,
+          spaceId,
+          email: `${userId}@cortexai-agent-hub.test`,
+          isDeploymentOwner: false,
+        } satisfies Actor,
       } as never,
     }).trustedLinkSites;
   return { rows: table.rows, client };

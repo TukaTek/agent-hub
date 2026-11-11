@@ -1,4 +1,5 @@
 import type { Bot } from "@cortexai-agent-hub/contracts";
+import { botsWithOwnModel } from "@cortexai-agent-hub/core";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,13 +14,6 @@ import {
 import { Plural, Trans } from "@lingui/react/macro";
 import { useCallback, useEffect, useState } from "react";
 import { useSpaceRpc } from "../../lib/space-rpc";
-
-/** Bots that pick their own model ignore the space default and its changes. */
-export function botsWithOwnModel<T extends Pick<Bot, "modelProvider" | "modelId">>(
-  bots: readonly T[],
-): T[] {
-  return bots.filter((bot) => Boolean(bot.modelProvider && bot.modelId));
-}
 
 /**
  * Lists the bots that ignore the space default and, after a confirm, moves them all onto

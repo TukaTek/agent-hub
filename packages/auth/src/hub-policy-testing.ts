@@ -1,4 +1,5 @@
-import { createHubPolicy, type HubConfigFetch } from "./hub-policy.js";
+import type { HubConfigFetch } from "./hub-policy.js";
+import { createHubPolicy } from "./hub-policy.js";
 import {
   HUB_ASSIGNMENTS_CONTRACT,
   HUB_POLICY_PRODUCT,

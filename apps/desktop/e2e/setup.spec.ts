@@ -145,6 +145,36 @@ test("first run offers CortexAI Agent Hub Cloud first, with local and existing i
   }
 });
 
+test("setup opens in the language the app last used", async () => {
+  await writeFile(path.join(userData, "ui-locale.txt"), "es\n");
+  app = await launch();
+  const setup = await app.firstWindow();
+
+  await expect(setup.locator("html")).toHaveAttribute("lang", "es");
+  await expect(
+    setup.getByRole("heading", { name: "Te damos la bienvenida a CortexAI Agent Hub" }),
+  ).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Continuar" })).toBeEnabled();
+  await setup.screenshot({
+    path: path.join(import.meta.dirname, "screenshots", "10-setup-spanish.png"),
+  });
+});
+
+test("setup lays out right to left in Hebrew", async () => {
+  await writeFile(path.join(userData, "ui-locale.txt"), "he\n");
+  app = await launch();
+  const setup = await app.firstWindow();
+
+  await expect(setup.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(
+    setup.getByRole("heading", { name: "ברוכים הבאים ל-CortexAI Agent Hub" }),
+  ).toBeVisible();
+  await expect(setup.getByRole("button", { name: "המשך" })).toBeEnabled();
+  await setup.screenshot({
+    path: path.join(import.meta.dirname, "screenshots", "11-setup-hebrew.png"),
+  });
+});
+
 test("a hosted Cloud address is offered, saved, and reselected when saved", async () => {
   const electron = await launch();
   app = electron;

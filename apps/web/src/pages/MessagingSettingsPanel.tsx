@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
   NativeSelect,
   NativeSelectOption,
+  SectionHeading,
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -282,9 +283,9 @@ export function MessagingSettingsPanel() {
 
       {hasRequests ? (
         <section>
-          <h3 className="text-[13px] font-medium text-muted-foreground">
+          <SectionHeading variant="label">
             <Trans>Requests</Trans>
-          </h3>
+          </SectionHeading>
           <ul className="mt-3 space-y-3">
             {invitedChannels.map((channel) => (
               <Row
@@ -457,9 +458,9 @@ export function MessagingSettingsPanel() {
 
       {hasConversations ? (
         <section>
-          <h3 className="text-[13px] font-medium text-muted-foreground">
+          <SectionHeading variant="label">
             <Trans>Conversations</Trans>
-          </h3>
+          </SectionHeading>
           <ul className="mt-3 space-y-3">
             {joinedChannels.map((channel) => (
               <Row

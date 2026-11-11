@@ -19,13 +19,21 @@ import { useBilling } from "../../components/SubscriptionGate";
 import { formatBillingDate } from "../../lib/billing";
 import type { BotsSidebarDensity } from "../../lib/bots-sidebar-density-pref";
 import type { Panel } from "../../lib/right-panel-state";
-import { clearSpaceSelection } from "../../lib/rpc";
 import { useSignOut } from "../../lib/sign-out";
 import { ActivityList } from "../ActivityList";
 import { SpaceSearchResults } from "../SpaceSearch";
 import type { SettingsSection } from "../shell-overlay";
 import { SidebarHeader } from "./sidebar-header";
 import type { SidebarSearch } from "./use-sidebar-search";
+
+/** Focuses the search box once it renders, its text selected so typing replaces it. */
+export function focusSidebarSearch() {
+  requestAnimationFrame(() => {
+    const input = document.querySelector<HTMLInputElement>('input[name="sidebar-search"]');
+    input?.focus();
+    input?.select();
+  });
+}
 
 type User = { name?: string | null; email?: string; image?: string | null };
 
@@ -89,6 +97,8 @@ export function ShellSidebar({
     setSearchOpen,
     searchHits,
     searchLoading,
+    searchError,
+    retrySearch,
     showSpaceSearch,
     jumpToSearchHit,
     activityMode,
@@ -149,11 +159,7 @@ export function ShellSidebar({
                   }
                   if (mini) setCollapsedPref(false);
                   setSearchOpen(true);
-                  requestAnimationFrame(() =>
-                    document
-                      .querySelector<HTMLInputElement>('input[name="sidebar-search"]')
-                      ?.focus(),
-                  );
+                  focusSidebarSearch();
                 }
           }
           setBotsSidebarCollapsedPref={setCollapsedPref}
@@ -225,6 +231,8 @@ export function ShellSidebar({
             <SpaceSearchResults
               hits={searchHits}
               loading={searchLoading}
+              error={searchError}
+              onRetry={retrySearch}
               onSelect={(hit) => jumpToSearchHit(hit)}
             />
           ) : (
@@ -302,10 +310,11 @@ function ShellSidebarFooter({
   const [inviteOpen, setInviteOpen] = useState(false);
   const referral = billing?.referral;
   const [logOutError, setLogOutError] = useState<string | null>(null);
-  const { signingOut, logOut } = useSignOut(() => {
-    clearSpaceSelection();
-    navigate("/");
-  }, setLogOutError);
+  const { signingOut, logOut } = useSignOut("/sign-in", (message) => {
+    // A failed sign-out reloads the page: reopen the menu so its error shows.
+    setMenuOpen(true);
+    setLogOutError(message);
+  });
   // Hub accounts without a shared email carry a placeholder address that is not the user's.
   const userEmail = user?.email?.endsWith("@hub.invalid") ? undefined : user?.email;
   const { label: userName, initial: initials } = accountDisplay(

@@ -1,3 +1,4 @@
+import { useLinkPrompt } from "@cortexai-agent-hub/chat-ui/web";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { appConnectedInput, waitForConnection } from "@cortexai-agent-hub/core";
 import {
@@ -253,6 +254,7 @@ function ChartCanvas({
 }) {
   const { t } = useLingui();
   const ref = useRef<HTMLDivElement>(null);
+  const linkDialog = useLinkPrompt(ref);
   const [error, setError] = useState<string | null>(null);
   const [meta, setMeta] = useState<{
     title?: string;
@@ -319,7 +321,8 @@ function ChartCanvas({
           ))}
         </div>
       ) : null}
-      <div ref={ref} className="[&_svg]:max-w-full" />
+      <div ref={ref} className="overflow-hidden [contain:paint] [&_svg]:max-w-full" />
+      {linkDialog}
     </div>
   );
 }

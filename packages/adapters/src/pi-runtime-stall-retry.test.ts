@@ -1,10 +1,6 @@
 import type { AgentRunRequest, AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
-import {
-  createLogger,
-  createTestSink,
-  installLogger,
-  type LogEvent,
-} from "@cortexai-agent-hub/logging";
+import type { LogEvent } from "@cortexai-agent-hub/logging";
+import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import type { AssistantMessage, AssistantMessageEvent, Model } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

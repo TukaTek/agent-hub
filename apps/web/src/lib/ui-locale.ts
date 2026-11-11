@@ -1,3 +1,4 @@
+import type { AppLocaleSchema } from "@cortexai-agent-hub/contracts";
 import { matchUiLocale } from "@cortexai-agent-hub/core";
 
 export const UI_LOCALES = [
@@ -14,7 +15,7 @@ export const UI_LOCALES = [
   "fr",
   "he",
   "ja",
-] as const;
+] as const satisfies readonly (typeof AppLocaleSchema.options)[number][];
 
 export type UiLocale = (typeof UI_LOCALES)[number];
 

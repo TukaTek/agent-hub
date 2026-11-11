@@ -1,6 +1,7 @@
 import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isTerminatingReplyResult, terminatingReplyText } from "./approval-effect.js";
 import { withAutomatedLabels } from "./automated-messages.js";
 import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { withCloudflareAuth } from "./cloudflare-ai-gateway.js";
@@ -13,7 +14,7 @@ import {
 } from "./pi-runtime-errors.js";
 import type { FallbackStreamState } from "./pi-runtime-fallback.js";
 import { fallbackAwareModelStream } from "./pi-runtime-fallback.js";
-import { clipToolResultText, TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
+import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 import {
   cardOutputCeiling,
   modelForCompletion,
@@ -29,6 +30,21 @@ import { createRuntimeContextPolicy } from "./runtime-context.js";
 import { deliverFinishedShells } from "./shell-command-stream.js";
 
 export const MAX_PARALLEL_SUBAGENTS = 4;
+
+/**
+ * A helper's result within `limit` characters. A stop text (the spent-budget message or a
+ * terminating reply) stays whole when it fits and only the narration before it is shortened;
+ * clipped text ends with "…" and never goes past the limit.
+ */
+export function helperResultText(text: string, tail: string | undefined, limit: number): string {
+  // A plain cut: the parent adds its own truncation notice when the whole tool result is clipped.
+  const clipTo = (value: string, max: number) =>
+    value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value;
+  if (!tail) return clipTo(text, limit);
+  if (tail.length > limit) return clipTo(tail, limit);
+  const room = limit - tail.length - 2;
+  return text && room > 1 ? `${clipTo(text, room)}\n\n${tail}` : tail;
+}
 
 export async function executeSubagent(
   host: ToolHost,
@@ -123,6 +139,12 @@ export async function executeSubagent(
     depth: 1,
     agentNamespace: agentId,
     pendingShells: [],
+    modelResponses: undefined,
+    // A paused child or a spent shared budget stops the parent turn; a result that
+    // ends only the child's turn stops the child, and the parent reads it as the
+    // tool result, exactly as it reads a lone turn-ending result.
+    abortTurn: () =>
+      nestedHost.pausePending || host.toolCallBudget.exceeded ? host.abortTurn() : nested.abort(),
   };
   const subagentPolicy = (model: AgentRunRequest["model"], credentialScope: string | undefined) =>
     createRuntimeContextPolicy(
@@ -271,7 +293,17 @@ export async function executeSubagent(
 
   let streamed = "";
   let lastPush = 0;
+  // A tool result that ended the child's turn carries the reply the parent must read.
+  let terminatedReply: string | undefined;
   nested.subscribe((event) => {
+    if (event.type === "tool_execution_end" && isTerminatingReplyResult(event.result)) {
+      terminatedReply = terminatingReplyText(event.result) ?? terminatedReply;
+    }
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      // A later assistant turn supersedes the carried reply, except the empty aborted
+      // message of a turn the terminating result itself ended.
+      if (event.message.stopReason !== "aborted") terminatedReply = undefined;
+    }
     if (event.type === "tool_execution_start") {
       if (host.toolCallBudget.exceeded) return;
       const toolName = "toolName" in event && event.toolName ? String(event.toolName) : "a tool";
@@ -340,7 +372,14 @@ export async function executeSubagent(
     // completed stop rather than a failed subagent chip.
     const budgetExceeded = host.toolCallBudget.exceeded;
     const error = nested.state.errorMessage || providerFailureText(nested.state.messages.at(-1));
-    if (error && !budgetExceeded) {
+    // The child's own terminating result aborted it mid-batch; the reply that result
+    // carries is the helper's result, not a failure. A pause, a spent shared budget
+    // and a stop of the whole run still report as before.
+    const endedReply =
+      terminatedReply && !nestedHost.pausePending && !host.signal.aborted && !budgetExceeded
+        ? terminatedReply
+        : undefined;
+    if (error && !budgetExceeded && !endedReply) {
       const message = sanitizeProviderError(nestedHost.activeModel.model.provider, error);
       host.queue.push({
         type: "subagent",
@@ -355,11 +394,14 @@ export async function executeSubagent(
     const budgetMessage = budgetExceeded
       ? toolCallBudgetExceededMessage(host.toolCallBudget.limit)
       : undefined;
-    const result =
-      budgetMessage && streamed.trim()
-        ? `${streamed.trim()}\n\n${budgetMessage}`
-        : budgetMessage || streamed || assistantText(nested.state.messages.at(-1)) || "done.";
-    const clipped = clipToolResultText(result, TOOL_RESULT_TEXT_LIMIT);
+    const label = `Result from your helper "${name}" (not a message from the user):\n`;
+    // The parent clips label and result together, so the result gets what is left.
+    const tail = budgetMessage ?? endedReply;
+    const clipped = helperResultText(
+      tail ? streamed.trim() : streamed || assistantText(nested.state.messages.at(-1)) || "done.",
+      tail,
+      TOOL_RESULT_TEXT_LIMIT - label.length,
+    );
     host.queue.push({
       type: "subagent",
       agentId,
@@ -369,7 +411,7 @@ export async function executeSubagent(
       result: clipped,
     });
     // The parent bot reads this as a tool result; say plainly that it is the helper talking.
-    return `Result from your helper "${name}" (not a message from the user):\n${clipped}`;
+    return `${label}${clipped}`;
   } catch (error) {
     const message = sanitizeError(error instanceof Error ? error.message : String(error));
     host.queue.push({

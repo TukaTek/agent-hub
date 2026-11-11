@@ -6,12 +6,14 @@ import {
   migrateLocalArtifacts,
   migrateLocalPushTokens,
   PrismaPushTokenStore,
+  unwrapEnvFromKeyManager,
 } from "@cortexai-agent-hub/adapters";
 import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { createDb } from "@cortexai-agent-hub/db";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: { "dry-run": { type: "boolean" } },

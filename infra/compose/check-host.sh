@@ -44,6 +44,10 @@ else
   done
 fi
 
+if [[ -e /run/reboot-required ]]; then
+  report "Installed updates need a reboot to take effect"
+fi
+
 if grep -q '^CORTEXAI_AGENT_HUB_AUDIT_SINK_URL=.' /etc/cortexai-agent-hub/audit-ship.env 2>/dev/null && ! systemctl is-active --quiet cortexai-agent-hub-audit-ship.service; then
   report "Audit trail shipping is not running"
 fi

@@ -50,6 +50,7 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
+  SectionHeading,
   Spinner,
 } from "@cortexai-agent-hub/ui-web";
 import { Plural, Trans, useLingui } from "@lingui/react/macro";
@@ -816,6 +817,10 @@ export function PluginsOverlay({
                 }
                 onBlur={() => void renameAccount(row)}
                 onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                    if (event.key === "Escape") event.stopPropagation();
+                    return;
+                  }
                   if (event.key === "Enter") {
                     event.currentTarget.blur();
                   }
@@ -958,9 +963,9 @@ export function PluginsOverlay({
       <>
         {recommended.length ? (
           <section data-testid="plugin-section" className="mt-8">
-            <h2 className="mb-2 px-2.5 text-[15px] font-medium text-foreground">
+            <SectionHeading as="h2" className="mb-2 px-2.5">
               <Trans>Recommended</Trans>
-            </h2>
+            </SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {recommended.map(({ entry, item }) =>
                 item ? renderCatalogTile(item, item.name, item.logo) : renderPluginRow(entry),
@@ -971,7 +976,7 @@ export function PluginsOverlay({
         {sections.map(([name, label, entries]) => (
           <section key={name} data-testid="plugin-section" className="mt-8">
             <div className="mb-2 flex items-center justify-between px-2.5">
-              <h2 className="text-[15px] font-medium text-foreground">{label}</h2>
+              <SectionHeading as="h2">{label}</SectionHeading>
               {entries.length > SECTION_SIZE ? (
                 <Button variant="text" size="sm" onClick={() => setCategory(name)}>
                   <Trans>View all</Trans>
@@ -1377,7 +1382,6 @@ export function PluginsOverlay({
   function renderManage() {
     const appPlugins = connectorInstalls;
     const hasApps = connectedCount > 0 || Boolean(mcpError);
-    const sectionTitle = "mb-2 px-2.5 text-[14px] font-medium text-muted-foreground";
     return (
       <div data-testid="integrations-manage" className="space-y-8">
         {renderViewTitle(<Trans>Connected</Trans>, () => setView("browse"))}
@@ -1385,9 +1389,9 @@ export function PluginsOverlay({
         {hasApps ? (
           <section data-testid="connected-apps">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h3 className={sectionTitle}>
+              <SectionHeading className="px-2.5">
                 <Trans>Apps</Trans>
-              </h3>
+              </SectionHeading>
               {onOpenMcp && standaloneServers.length ? (
                 <Button variant="link" size="xs" onClick={onOpenMcp}>
                   <Trans>Manage MCP servers</Trans>
@@ -1742,9 +1746,9 @@ export function PluginsOverlay({
                 <>
                   {renderPluginSections()}
                   {catalogLoaded && catalog.length > 0 && !category ? (
-                    <h2 className="mt-8 mb-2 px-2.5 text-[15px] font-medium text-foreground">
+                    <SectionHeading as="h2" className="mt-8 mb-2 px-2.5">
                       <Trans>More apps</Trans>
-                    </h2>
+                    </SectionHeading>
                   ) : null}
                   {visible.length > 0 && !category ? (
                     <div className="grid grid-cols-2 gap-2">

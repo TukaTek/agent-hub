@@ -145,6 +145,10 @@ RUN set -eux; \
   tar -xzf "$archive" -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_${gh_arch}/bin/gh"; \
   rm -f "$archive"; \
   gh --version
+# The page browser drives the visible Chromium through agent-browser, pinned and checked by sha256.
+COPY --chmod=755 install-agent-browser.sh /tmp/install-agent-browser.sh
+RUN /tmp/install-agent-browser.sh /usr/local/bin && rm /tmp/install-agent-browser.sh \
+  && mkdir -p /usr/local/lib/cortexai-agent-hub
 ENV DISPLAY=:1
 ENV HOME=/home/cortexai-agent-hub
 # Keep UTF-8 explicit (an empty LANG broke non-ASCII file handling in the
@@ -169,6 +173,7 @@ COPY --from=capture-builder /build/libcortexai_agent_hub-xcapture.so /usr/local/
 COPY --chmod=755 cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-browser
 COPY --chmod=755 cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-focus-or-launch
 COPY --chmod=755 cortexai-agent-hub-page-browser /usr/local/bin/cortexai-agent-hub-page-browser
+COPY --chmod=644 page_secrets.py /usr/local/lib/cortexai-agent-hub/page_secrets.py
 COPY --chmod=644 cortexai-agent-hub-browser.desktop /usr/share/applications/cortexai-agent-hub-browser.desktop
 COPY --from=icon-builder /usr/share/icons/Papirus /usr/share/icons/Papirus
 COPY --from=icon-builder /usr/share/icons/Papirus-Dark /usr/share/icons/Papirus-Dark
@@ -177,6 +182,7 @@ COPY --chmod=644 desktop/xfwm4.xml desktop/xfce4-keyboard-shortcuts.xml /etc/xdg
 COPY --chmod=644 desktop/picom.conf desktop/tint2rc.in desktop/Xresources desktop/browser.desktop.in desktop/terminal.desktop /usr/local/share/cortexai-agent-hub/desktop/
 COPY --chmod=644 desktop/gtk-3.0/settings.ini /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0/settings.ini
 # CortexAI Agent Hub keeps credentials itself; the browser's save prompts would cover pages.
+# Pop-ups open: one a page opens after making a report would be blocked unseen.
 COPY --chmod=644 browser-policy.json /etc/chromium/policies/managed/cortexai-agent-hub-browser.json
 COPY --chmod=644 browser-policy.json /etc/brave/policies/managed/cortexai-agent-hub-browser.json
 COPY --chmod=644 embed.html /usr/share/novnc/embed.html
@@ -190,6 +196,7 @@ COPY --chmod=644 desktop_smoke.py /usr/local/share/cortexai-agent-hub-desktop-sm
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
   && sed -i 's/\r$//' /usr/local/bin/cortexai-agent-hub-computer /usr/local/lib/cortexai-agent-hub-user-env.sh /usr/local/bin/cortexai-agent-hub-computer-control /usr/local/bin/cortexai-agent-hub-browser /usr/local/bin/cortexai-agent-hub-focus-or-launch /usr/local/bin/cortexai-agent-hub-page-browser \
+    /usr/local/lib/cortexai-agent-hub/page_secrets.py \
     /usr/local/bin/cortexai-agent-hub-desktop-session \
     /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml \
     /usr/local/share/cortexai-agent-hub/desktop/picom.conf /usr/local/share/cortexai-agent-hub/desktop/tint2rc.in \

@@ -1,0 +1,10 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "CortexAI Agent Hub usa la cámara para que puedas adjuntar fotos a un mensaje para un bot.",
+    "NSPhotoLibraryUsageDescription": "CortexAI Agent Hub usa tu fototeca para que puedas adjuntar imágenes a un mensaje para un bot.",
+    "NSLocalNetworkUsageDescription": "CortexAI Agent Hub se conecta a un servidor de CortexAI Agent Hub autoalojado en tu red local.",
+    "NSMicrophoneUsageDescription": "CortexAI Agent Hub usa el micrófono para las llamadas de voz con tus bots.",
+    "NSSpeechRecognitionUsageDescription": "CortexAI Agent Hub convierte lo que dices en mensajes durante las llamadas de voz.",
+    "NSFaceIDUsageDescription": "Permite que CortexAI Agent Hub acceda a tus datos biométricos de Face ID."
+  }
+}

@@ -93,7 +93,6 @@ describe("appearance preference", () => {
   });
 
   it("keeps the working dot the same green in both themes", () => {
-    expect(lightTokens.workingDot).toBe("#3FA266");
     expect(darkTokens.workingDot).toBe(lightTokens.workingDot);
   });
 

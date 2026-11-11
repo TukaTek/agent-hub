@@ -3,6 +3,7 @@ import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
 import {
   connectorKindFromToolName,
   inboundRoutinePrompts,
+  SITE_SENDING_TOOLS,
   siteAlwaysAllowed,
 } from "@cortexai-agent-hub/core";
 import { sitesInText, urlSite } from "@cortexai-agent-hub/core/egress";
@@ -11,7 +12,6 @@ import {
   listApprovalRules,
   storedBatchActions,
 } from "@cortexai-agent-hub/db";
-import { SITE_SENDING_TOOLS } from "./approval-ask.js";
 import { boundDirectApprovalDetails, catalogApprovalDetails } from "./approval-effect.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import type { EffectiveModelRole } from "./model-roles.js";

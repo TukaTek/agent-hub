@@ -1,4 +1,5 @@
 import {
+  SandboxAllowanceUsedError,
   SandboxDamagedError,
   SandboxRateLimitError,
   SandboxUnavailableError,
@@ -8,8 +9,10 @@ import {
 import { MODEL_IMAGE_INPUT_ERROR } from "@cortexai-agent-hub/core";
 import { IsolationError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
+import { requestLogging } from "@cortexai-agent-hub/logging/hono";
 import { ORPCError, onError, os } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
+import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 import { handleRpcError, logUnexpectedRpcError } from "./app.js";
 
@@ -28,6 +31,52 @@ describe("logUnexpectedRpcError", () => {
     ]);
 
     expect(sink.events).toEqual([]);
+  });
+
+  it("reports a procedure's own 5xx under the procedure with its cause", () => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] }));
+    const cause = new Error("key service unreachable");
+
+    logUnexpectedRpcError(new ORPCError("SERVICE_UNAVAILABLE", { cause }), ["models", "list"]);
+
+    expect(sink.events[0]).toMatchObject({
+      level: "error",
+      message: "rpc models/list failed",
+      error: { cause: { message: "key service unreachable" } },
+    });
+  });
+
+  it("completes a request the provider outage answered with 503 as a warning", async () => {
+    const sink = createTestSink();
+    const logger = createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] });
+    installLogger(logger);
+    const rpc = new RPCHandler(
+      {
+        boot: os.handler(() => {
+          throw new SandboxUnresponsiveError("Boat API request failed (HTTP 525)");
+        }),
+      },
+      { clientInterceptors: [onError((error, { path }) => handleRpcError(error, path))] },
+    );
+    const app = new Hono();
+    app.use("*", requestLogging(logger));
+    app.post("/rpc/*", async (c) => {
+      const { response } = await rpc.handle(c.req.raw, { prefix: "/rpc", context: {} });
+      return response ?? c.notFound();
+    });
+
+    const response = await app.request("/rpc/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(503);
+    expect(sink.events.map((event) => [event.level, event.message])).toEqual([
+      ["warn", "rpc boot computer unavailable"],
+      ["warn", "http.request.completed"],
+    ]);
   });
 
   it("keeps an image send the model cannot read out of error reports", () => {
@@ -162,6 +211,24 @@ describe("logUnexpectedRpcError", () => {
         message: "rpc computer/screenUrl computer unavailable",
         reason: "Boat API request failed (HTTP 502)",
       }),
+    ]);
+  });
+
+  it("returns a spent computer allowance with its message and no error report", () => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] }));
+    const error = new SandboxAllowanceUsedError();
+
+    let thrown: unknown;
+    try {
+      handleRpcError(error, ["computer", "boot"]);
+    } catch (failure) {
+      thrown = failure;
+    }
+
+    expect(thrown).toMatchObject({ code: "FORBIDDEN", status: 403, message: error.message });
+    expect(sink.events.map((event) => [event.level, event.message])).toEqual([
+      ["warn", "rpc computer/boot computer allowance used up"],
     ]);
   });
 

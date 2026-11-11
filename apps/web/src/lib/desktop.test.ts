@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CortexAiAgentHubDesktop, CortexAiAgentHubDesktopOAuthCallback } from "./desktop.js";
 import {
-  type CortexAiAgentHubDesktop,
-  type CortexAiAgentHubDesktopOAuthCallback,
   desktopOAuthCode,
   oauthStateOf,
   onDesktopOAuthCallback,

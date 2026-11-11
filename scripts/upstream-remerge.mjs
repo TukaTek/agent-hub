@@ -3,7 +3,15 @@
 // because of our rebrand or Biome formatting, keeps files the fork deleted, rebrands upstream
 // files that merged cleanly, and leaves the rest in diff3 form for a person.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,6 +122,17 @@ function mergeFile(ours, base, theirs) {
   }
 }
 
+/** Drops directories the merge created only to hold a file the fork keeps deleted. */
+function removeEmptyParents(cwd, path) {
+  for (let dir = dirname(path); dir !== "."; dir = dirname(dir)) {
+    try {
+      rmdirSync(join(cwd, dir));
+    } catch {
+      return;
+    }
+  }
+}
+
 function noteUnresolved(report, path, text) {
   for (const value of rebrand(text).unresolved)
     report.manual.push(`${path}: resolve by hand: ${value}`);
@@ -144,6 +163,7 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
     if (!stage[2]) {
       git(cwd, ["rm", "-q", "--cached", "--", path]);
       rmSync(join(cwd, path), { force: true });
+      removeEmptyParents(cwd, path);
       report.keptDeleted.push(path);
       continue;
     }

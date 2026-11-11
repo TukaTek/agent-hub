@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
+import type { HubPolicyRestart, HubPolicyRuntime } from "@cortexai-agent-hub/auth";
 import {
   disabledHubPolicy,
-  type HubPolicyRestart,
-  type HubPolicyRuntime,
   hubAuthFromEnv,
   hubConfigFetch,
   hubNotConfiguredLogEntry,

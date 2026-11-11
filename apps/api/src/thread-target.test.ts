@@ -90,6 +90,8 @@ describe("queued run supersession", () => {
       where: {
         OR: [
           { userId: "user-1", spaceId: "space-1", kind: "run-secret:run-old" },
+          { userId: "user-1", spaceId: "space-1", kind: "run-code:run-old" },
+          { userId: "user-1", spaceId: "space-1", kind: "run-code-spent:run-old" },
           { userId: "user-1", spaceId: "space-1", kind: { startsWith: "run-login:run-old:" } },
         ],
       },
@@ -1164,7 +1166,7 @@ describe("threadSnapshot", () => {
 
     expect(snapshot.run).toEqual(expect.objectContaining({ id: "run-older-waiting" }));
     // activeRuns is unaffected by which one is chosen as primary.
-    expect(snapshot.activeRuns.map((run) => run.id)).toEqual([
+    expect(snapshot.activeRuns?.map((run) => run.id)).toEqual([
       "run-newer-busy",
       "run-older-waiting",
     ]);
@@ -1709,6 +1711,8 @@ describe("sendThreadMessage", () => {
       where: {
         OR: [
           { userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-waiting-2" },
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-code:run-waiting-2" },
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-code-spent:run-waiting-2" },
           {
             userId: "user-1",
             spaceId: "workspace-1",
@@ -2809,7 +2813,7 @@ describe("sendThreadMessage", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("persists the quote excerpt alongside the reply target", async () => {
+  it("persists quotes and namespaces a client-chosen strategic initiative nonce", async () => {
     let messageSeq = 0;
     let eventSeq = 0;
     const tx = {
@@ -2869,10 +2873,15 @@ describe("sendThreadMessage", () => {
         text: "why this?",
         replyToMessageId: "parent",
         replyQuote: "just this span",
-        clientNonce: "nonce-1",
+        clientNonce: "strategic-initiative:bot-1:1",
       },
     );
 
+    expect(tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ trigger: "user", clientNonce: "send:msg-1" }),
+      }),
+    );
     expect(result).toMatchObject({ runId: "run-1", taskId: "task-1" });
     expect(tx.message.findFirst).toHaveBeenCalledWith({
       where: { id: "parent", threadId: "thread-1" },
@@ -3242,10 +3251,8 @@ describe("sendThreadMessage", () => {
     });
   });
 
+  // Markdown rendering cases live in packages/core message-quote tests; these reach the send path.
   it.each([
-    ["table cells", "| Name | Value |\n|:-----|------:|\n| Alice | 5 |", "Alice 5", "Alice 5"],
-    ["indented code", "    2. restart()", "2. restart()", "2. restart()"],
-    ["fenced code", "```text\n2. restart()\n```", "2. restart()", "2. restart()"],
     [
       "lists after code fences",
       "```text\n1. code\n```\n1. First\n2. Second",
@@ -3254,24 +3261,6 @@ describe("sendThreadMessage", () => {
     ],
     ["tab-indented code", "\t2. restart()", "2. restart()", "2. restart()"],
     ["three-space lists", "   1. First\n   2. Second", "First\nSecond", "First\nSecond"],
-    [
-      "ordered list items",
-      "1. Review the diff\n2. Run the tests",
-      "Review the diff Run the tests",
-      "Review the diff\nRun the tests",
-    ],
-    [
-      "parenthesized list items",
-      "1) Review the diff\n2) Run the tests",
-      "Review the diff\nRun the tests",
-      "Review the diff\nRun the tests",
-    ],
-    [
-      "quoted list items",
-      "> 1. Review the diff\n> 2. Run the tests",
-      "Review the diff\nRun the tests",
-      "Review the diff\nRun the tests",
-    ],
   ])(
     "derives a quote excerpt spanning rendered %s",
     async (_name, parentText, requestedQuote, expectedQuote) => {
@@ -3628,7 +3617,7 @@ describe("sendThreadMessage", () => {
     expect(tx.message.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ replyToMessageId: "parent" }),
     });
-    expect(tx.message.create.mock.calls[0][0].data.replyQuote).toBeUndefined();
+    expect(tx.message.create.mock.calls[0]![0].data.replyQuote).toBeUndefined();
   });
 
   it("persists the quote excerpt on a group send", async () => {
@@ -4113,8 +4102,12 @@ describe("stopThreadRuns", () => {
       where: {
         OR: [
           { userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-a" },
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-code:run-a" },
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-code-spent:run-a" },
           { userId: "user-1", spaceId: "workspace-1", kind: { startsWith: "run-login:run-a:" } },
           { userId: "user-1", spaceId: "workspace-1", kind: "run-secret:run-b" },
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-code:run-b" },
+          { userId: "user-1", spaceId: "workspace-1", kind: "run-code-spent:run-b" },
           { userId: "user-1", spaceId: "workspace-1", kind: { startsWith: "run-login:run-b:" } },
         ],
       },
@@ -4174,69 +4167,72 @@ describe("stopThreadRuns", () => {
 });
 
 describe("helper snapshot settlement", () => {
-  it.each(["bot", "group"])("settles stale helpers on reload in a %s thread", async (kind) => {
-    const runs = [
-      { id: "paused", status: "waiting_input" },
-      { id: "working", status: "running" },
-    ].map((run) => ({
-      ...run,
-      botId: "bot-1",
-      threadId: "thread-1",
-      taskId: "task",
-      trigger: "user",
-      createdAt: new Date("2026-01-01T00:00:00Z"),
-      startedAt: null,
-      completedAt: null,
-    }));
-    const liveEvents = runs.map((run, seq) => ({
-      id: `event-${seq}`,
-      threadId: "thread-1",
-      runId: run.id,
-      seq,
-      type: "thread.subagent",
-      createdAt: new Date("2026-01-01T00:00:00Z"),
-      payload: { agentId: run.id, name: "Helper", task: "Check", status: "running" },
-    }));
-    const previous = liveEvents[1]!;
-    const history = [
-      liveEvents[0]!,
-      { ...previous, payload: { ...previous.payload, agentId: "before-resume" } },
-      { ...previous, seq: 2, type: "run.waiting_input", payload: {} },
-      { ...previous, seq: 3 },
-    ];
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue({ seq: 2 }),
-        findMany: vi.fn(async (input: { where: { type: { in: string[] } } }) =>
-          history.filter((event) => input.where.type.in.includes(event.type)),
-        ),
-      },
-      run: { findFirst: botRunFindFirst(runs), findMany: groupRunFindMany({ active: runs }) },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),
-    } as unknown as PrismaClient;
-    const result = await threadSnapshot({ prisma }, {
-      kind,
-      botId: "bot-1",
-      threadId: "thread-1",
-      bot: { computer: null },
-      members: [],
-    } as ThreadTarget);
-    expect(result.messages.find((m) => m.id === "subagent:paused")?.blocks[0]).toMatchObject({
-      status: "failed",
-      result: "stopped",
-    });
-    expect(result.messages.find((m) => m.id === "subagent:before-resume")?.blocks[0]).toMatchObject(
-      {
+  it.each(["bot", "group"] as const)(
+    "settles stale helpers on reload in a %s thread",
+    async (kind) => {
+      const runs = [
+        { id: "paused", status: "waiting_input" },
+        { id: "working", status: "running" },
+      ].map((run) => ({
+        ...run,
+        botId: "bot-1",
+        threadId: "thread-1",
+        taskId: "task",
+        trigger: "user",
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        startedAt: null,
+        completedAt: null,
+      }));
+      const liveEvents = runs.map((run, seq) => ({
+        id: `event-${seq}`,
+        threadId: "thread-1",
+        runId: run.id,
+        seq,
+        type: "thread.subagent",
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        payload: { agentId: run.id, name: "Helper", task: "Check", status: "running" },
+      }));
+      const previous = liveEvents[1]!;
+      const history = [
+        liveEvents[0]!,
+        { ...previous, payload: { ...previous.payload, agentId: "before-resume" } },
+        { ...previous, seq: 2, type: "run.waiting_input", payload: {} },
+        { ...previous, seq: 3 },
+      ];
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        message: { findMany: vi.fn().mockResolvedValue([]) },
+        event: {
+          findFirst: vi.fn().mockResolvedValue({ seq: 2 }),
+          findMany: vi.fn(async (input: { where: { type: { in: string[] } } }) =>
+            history.filter((event) => input.where.type.in.includes(event.type)),
+          ),
+        },
+        run: { findFirst: botRunFindFirst(runs), findMany: groupRunFindMany({ active: runs }) },
+      };
+      const prisma = {
+        $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),
+      } as unknown as PrismaClient;
+      const result = await threadSnapshot({ prisma }, {
+        kind,
+        botId: "bot-1",
+        threadId: "thread-1",
+        bot: { computer: null },
+        members: [],
+      } as unknown as ThreadTarget);
+      expect(result.messages.find((m) => m.id === "subagent:paused")?.blocks[0]).toMatchObject({
         status: "failed",
         result: "stopped",
-      },
-    );
-    expect(result.messages.find((m) => m.id === "subagent:working")?.blocks[0]).toMatchObject({
-      status: "running",
-    });
-  });
+      });
+      expect(
+        result.messages.find((m) => m.id === "subagent:before-resume")?.blocks[0],
+      ).toMatchObject({
+        status: "failed",
+        result: "stopped",
+      });
+      expect(result.messages.find((m) => m.id === "subagent:working")?.blocks[0]).toMatchObject({
+        status: "running",
+      });
+    },
+  );
 });

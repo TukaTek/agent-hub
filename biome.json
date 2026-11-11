@@ -25,6 +25,22 @@
       "!**/packages/auth/src/fixtures/hub-*.json"
     ]
   },
+  "plugins": [
+    {
+      "path": "./scripts/biome/no-hex-colors.grit",
+      "includes": [
+        "**/apps/web/src/**/*.tsx",
+        "**/packages/ui-web/src/**/*.tsx",
+        "!**/*.test.tsx",
+        "!**/packages/ui-web/src/bot-avatar.tsx",
+        "!**/apps/web/src/pages/WindowChrome.tsx"
+      ]
+    },
+    {
+      "path": "./scripts/biome/no-css-var-arbitrary-values.grit",
+      "includes": ["**/apps/web/src/**/*.tsx", "**/packages/ui-web/src/**/*.tsx"]
+    }
+  ],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -36,7 +52,8 @@
     "rules": {
       "preset": "recommended",
       "style": {
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "off",
+        "useImportType": { "level": "error", "options": { "style": "separatedType" } }
       },
       "correctness": {
         "useExhaustiveDependencies": "off"

@@ -2,6 +2,7 @@ import type {
   IntegrationCatalogResult,
   IntegrationCatalogSurface,
 } from "@cortexai-agent-hub/contracts";
+import { cancelResponseBody } from "@cortexai-agent-hub/core";
 
 const RESPONSE_LIMIT = 1_000_000;
 const SEARCH_LIMIT = 8;
@@ -34,6 +35,7 @@ export async function searchIntegrationCatalog(input: {
     signal: AbortSignal.any([input.signal, AbortSignal.timeout(5_000)]),
   });
   if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    cancelResponseBody(response);
     throw new Error("Integration catalog redirects are not allowed");
   }
   if (!response.ok) throw new Error(`Integration catalog returned HTTP ${response.status}`);
