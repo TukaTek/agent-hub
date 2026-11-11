@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rebrand } from "./upstream-rebrand.mjs";
+import { rebrand, rebrandPath } from "./upstream-rebrand.mjs";
 
 const old = ["ra", "kazo"].join("");
 const Old = old[0].toUpperCase() + old.slice(1);
@@ -58,5 +58,22 @@ describe("rebrand", () => {
 
   it("leaves the old domain for a person to resolve", () => {
     expect(rebrand(`mailto:security@${old}.com`).unresolved).toEqual([`security@${old}.com`]);
+  });
+});
+
+describe("rebrandPath", () => {
+  it("maps upstream module, package and Android resource paths to the fork's", () => {
+    expect(
+      rebrandPath(`modules/${old}-notifications/java/com/${old}/notifications/${Old}Call.kt`),
+    ).toBe(
+      "modules/cortexai-agent-hub-notifications/java/com/tukatek/cortexai/agenthub/notifications/CortexAiAgentHubCall.kt",
+    );
+    expect(rebrandPath(`res/drawable/ic_${old}_notification.xml`)).toBe(
+      "res/drawable/ic_cortexai_agent_hub_notification.xml",
+    );
+    expect(rebrandPath(`docs/${old}.md`)).toBe("docs/cortexai-agent-hub.md");
+    expect(rebrand(`package com.${old}.notifications`).text).toBe(
+      "package com.tukatek.cortexai.agenthub.notifications",
+    );
   });
 });

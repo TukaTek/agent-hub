@@ -7,6 +7,8 @@ const OLD = old.toUpperCase();
 
 const RULES = [
   [new RegExp(`com\\.${old}\\.app`, "g"), "com.tukatek.cortexai.agenthub"],
+  // Native module packages (Kotlin `com.<old>.notifications`) live under the app's package.
+  [new RegExp(`com\\.${old}\\.(?=[a-z])`, "g"), "com.tukatek.cortexai.agenthub."],
   [new RegExp(`github\\.com/elie222/${old}`, "g"), "github.com/TukaTek/agent-hub"],
   [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
   [new RegExp(`(?<![A-Za-z0-9])${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
@@ -30,6 +32,18 @@ export function rebrand(input) {
   const unresolved = [...new Set(input.match(UNRESOLVED) ?? [])];
   const text = RULES.reduce((out, [pattern, value]) => out.replace(pattern, value), input);
   return { text, unresolved };
+}
+
+const PATH_RULES = [
+  [new RegExp(`(?<=^|/)com/${old}/`, "g"), "com/tukatek/cortexai/agenthub/"],
+  // Android resource names only allow underscores.
+  [new RegExp(`(?<=_)${old}(?=_|\\.)|(?<=/|^)${old}(?=_)`, "g"), "cortexai_agent_hub"],
+];
+
+/** The fork's path for an upstream path that carries the old product name. */
+export function rebrandPath(path) {
+  return rebrand(PATH_RULES.reduce((out, [pattern, value]) => out.replace(pattern, value), path))
+    .text;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
