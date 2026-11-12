@@ -390,23 +390,19 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - name: Set up Expo
-        if: steps.token.outputs.present == 'true'
-        uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # v9
-        with:
-          eas-version: latest
-          packager: pnpm
-          token: ${{ secrets.EXPO_TOKEN }}
       - name: Install dependencies
         if: steps.token.outputs.present == 'true'
         run: pnpm install --frozen-lockfile
+      # The mobile app pins eas-cli, so this uses that version and the workspace's build approvals.
       - name: Resolve android-apk build config
         if: steps.token.outputs.present == 'true'
         working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          eas config --platform android --profile android-apk --non-interactive > /dev/null
-          eas env:exec production 'EAS_BUILD_PROFILE=android-apk pnpm exec expo config --type public > /dev/null' --non-interactive
+          pnpm exec eas config --platform android --profile android-apk --non-interactive > /dev/null
+          pnpm exec eas env:exec production 'EAS_BUILD_PROFILE=android-apk pnpm exec expo config --type public > /dev/null' --non-interactive
 
   # Publishes sha-<commit> and edge alongside the checks, so the production deploy pulls the
   # image this run built instead of building on the production host.

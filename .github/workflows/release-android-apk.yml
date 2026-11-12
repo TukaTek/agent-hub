@@ -47,7 +47,9 @@ jobs:
         run: pnpm --filter @cortexai-agent-hub/mobile check
       - name: Resolve EAS build config
         working-directory: apps/mobile
-        run: eas config --platform android --profile android-apk --non-interactive > /dev/null
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: pnpm exec eas config --platform android --profile android-apk --non-interactive > /dev/null
 
       # Without Firebase config the APK never registers for push, and an OTA update can't add it.
       - name: Require Firebase config
