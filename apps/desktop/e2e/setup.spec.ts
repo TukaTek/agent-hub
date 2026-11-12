@@ -44,6 +44,12 @@ test.beforeAll(async () => {
       response.end(JSON.stringify({ dsn: null }));
       return;
     }
+    if (request.url?.startsWith("/redirect?")) {
+      const target = new URL(request.url, serverUrl).searchParams.get("to") ?? "/";
+      response.writeHead(302, { location: target });
+      response.end();
+      return;
+    }
     if (request.url === "/rpc/health" && request.method === "POST") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ json: { ok: true, version: "0.1.0" } }));
