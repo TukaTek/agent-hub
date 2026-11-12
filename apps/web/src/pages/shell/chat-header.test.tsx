@@ -2,6 +2,7 @@
 
 import type { BillingStatus, Bot } from "@cortexai-agent-hub/contracts";
 import { BOT_COLORS } from "@cortexai-agent-hub/contracts";
+import type * as UiWeb from "@cortexai-agent-hub/ui-web";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";
@@ -20,9 +21,11 @@ vi.mock("@lingui/react/macro", () => ({
   Plural: ({ value, one, other }: { value: number; one: string; other: string }) =>
     (value === 1 ? one : other).replace("#", String(value)),
 }));
-vi.mock("@cortexai-agent-hub/ui-web", () => {
+vi.mock("@cortexai-agent-hub/ui-web", async (importOriginal) => {
+  const { useCopyText } = await importOriginal<typeof UiWeb>();
   const Plain = ({ children }: { children?: ReactNode }) => <>{children}</>;
   return {
+    useCopyText,
     BotAvatar: () => null,
     Input: (props: Record<string, unknown>) => <input {...props} />,
     GroupAvatar: () => null,

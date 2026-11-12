@@ -8,6 +8,7 @@ import { MediaGenerationError } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { messageBlockForArtifact } from "@cortexai-agent-hub/core";
 import type { ExternalEffect, Prisma, PrismaClient } from "@cortexai-agent-hub/db";
+import { isUniqueViolation } from "@cortexai-agent-hub/db";
 import { z } from "zod";
 import { mediaPromptSchema, validateGeneratedMedia } from "./media-generation-provider.js";
 
@@ -130,8 +131,7 @@ export async function generateMediaFromTool(options: {
             });
             break;
           } catch (error) {
-            if (!(error && typeof error === "object" && "code" in error && error.code === "P2002"))
-              throw error;
+            if (!isUniqueViolation(error)) throw error;
           }
         }
         if (!reservation)

@@ -2,11 +2,12 @@ import type { McpTransport, MessageBlock } from "@cortexai-agent-hub/contracts";
 import { McpRemoteEndpointSchema, McpTransportSchema } from "@cortexai-agent-hub/contracts";
 import { deriveMcpSlug } from "@cortexai-agent-hub/core";
 import type { McpServer } from "@cortexai-agent-hub/db";
+import { isUniqueViolation } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { toStringRecord } from "./memory-provider-factory.js";
 import { assertNoMcpEndpointCredential, assertSafeRemoteUrl } from "./remote-mcp.js";
-import { isUniqueViolation, persistMessageInTransaction, runLeaseFor } from "./run-messages.js";
+import { persistMessageInTransaction, runLeaseFor } from "./run-messages.js";
 
 export { deriveMcpSlug } from "@cortexai-agent-hub/core";
 

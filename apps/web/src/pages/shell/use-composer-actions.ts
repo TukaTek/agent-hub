@@ -14,6 +14,7 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import type { ComposerMention } from "@cortexai-agent-hub/core";
 import {
+  applyThreadSendReceipt,
   attachmentsForThread,
   inferAttachmentMimeType,
   isImageInputConfirmation,
@@ -35,11 +36,7 @@ import {
 import { canPrepareImage, prepareImage } from "../../lib/prepare-image";
 import type { createSpaceRpc } from "../../lib/rpc";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../../lib/run-error-storage";
-import {
-  applyThreadSendReceipt,
-  clearActiveThreadRuns,
-  threadRunError,
-} from "../../lib/thread-events";
+import { clearActiveThreadRuns, threadRunError } from "../../lib/thread-events";
 import { errorText } from "../../lib/user-error";
 import type { PendingAttachment } from "./chat-shared";
 import type { useShellNavigation } from "./use-shell-navigation";

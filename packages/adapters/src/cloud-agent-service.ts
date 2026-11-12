@@ -2,7 +2,11 @@ import type { AdapterContext, JobPublisher } from "@cortexai-agent-hub/adapter-k
 import { cloudAgentPollJob } from "@cortexai-agent-hub/adapter-kit";
 import { cloudAgentBlockFromPayload } from "@cortexai-agent-hub/core";
 import type { CloudAgent, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
-import { appendEventInTransaction, createThreadMessageInTransaction } from "@cortexai-agent-hub/db";
+import {
+  appendEventInTransaction,
+  createThreadMessageInTransaction,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
+} from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { CloudAgentConnection } from "./cloud-agent-factory.js";
 import { cloudAgentsEnabled } from "./cloud-agent-factory.js";
@@ -40,7 +44,7 @@ export async function executeCloudAgentTool(
     const result = await deps.prisma.$transaction(async (tx) => {
       // Serialize with clearThread before creating either the intent or its card.
       await tx.thread.update({
-        where: { id: run.threadId, userId: context.userId, spaceId: context.spaceId },
+        where: { id: run.threadId, spaceId: context.spaceId },
         data: { unread: false },
       });
       const existing = await tx.cloudAgent.findUnique({
@@ -95,7 +99,7 @@ export async function executeCloudAgentTool(
         seq: event.seq,
         firstResponseRunId: event.firstResponse ? run.id : undefined,
       };
-    });
+    }, THREAD_LOCK_TRANSACTION_OPTIONS);
     agent = result.agent;
     if (result.seq !== undefined)
       await deps.events

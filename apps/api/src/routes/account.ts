@@ -27,6 +27,7 @@ import {
   findDefaultVoiceCredential,
   findModelCredential,
   findModelCredentialById,
+  isRecordNotFound,
   listApprovalRules,
   listAuditEvents,
   listVoicePreferences,
@@ -40,6 +41,7 @@ import {
   saveAutoReviewPreference,
   selectVoicePreference,
   voicePreferenceTarget,
+  withTransactionRetry,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
@@ -49,7 +51,6 @@ import { aiConsentStatus, allowAiConsent } from "../ai-consent.js";
 import type { BillingService } from "../billing.js";
 import { firstModelConnectAnalytics } from "../model-connect-analytics.js";
 import type { RouterDeps } from "../router.js";
-import { withSerializableRetry } from "../serializable-retry.js";
 import {
   disconnectVoiceCredential,
   listVoiceCatalog,
@@ -65,7 +66,7 @@ import {
   voiceProviderFor,
 } from "../voice.js";
 import type { RouterContext } from "./context.js";
-import { HEARTBEAT_MS, meDto, SESSION_RECHECK_MS } from "./shared.js";
+import { HEARTBEAT, meDto, withHeartbeats } from "./shared.js";
 
 export function accountRoutes(ctx: RouterContext) {
   const { deps, os, authed } = ctx;
@@ -219,10 +220,7 @@ export function accountRoutes(ctx: RouterContext) {
                 data: { avatarSet: botAvatarSet },
               }),
             ).catch((error) => {
-              if (
-                !(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025")
-              )
-                getLogger().error("bot style restyle", error);
+              if (!isRecordNotFound(error)) getLogger().error("bot style restyle", error);
             });
           }
         }
@@ -339,81 +337,29 @@ export function accountRoutes(ctx: RouterContext) {
     },
     notifications: {
       subscribe: authed.notifications.subscribe.handler(async function* ({ context }) {
-        if (!deps.events.followChatAlerts) throw new ORPCError("NOT_FOUND");
+        const { followChatAlerts } = deps.events;
+        if (!followChatAlerts) throw new ORPCError("NOT_FOUND");
         const { spaceId, userId } = context.actor;
-        const controller = new AbortController();
-        const signal = context.signal
-          ? AbortSignal.any([context.signal, controller.signal])
-          : controller.signal;
-        const alerts = deps.events.followChatAlerts(userId, spaceId, signal);
-        let pending: Promise<IteratorResult<ChatAlert>> | undefined;
-        let authorizedAt = Date.now();
-        try {
-          while (!context.signal?.aborted) {
-            pending ??= alerts.next();
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const next = await Promise.race([
-              pending,
-              new Promise<"heartbeat">((resolve) => {
-                timer = setTimeout(() => resolve("heartbeat"), HEARTBEAT_MS);
-              }),
-            ]).finally(() => clearTimeout(timer));
-            if (context.stillAuthorized && Date.now() - authorizedAt >= SESSION_RECHECK_MS) {
-              if (!(await context.stillAuthorized())) throw new ORPCError("UNAUTHORIZED");
-              authorizedAt = Date.now();
-            }
-            if (next === "heartbeat") {
-              yield { type: "heartbeat" as const };
-              continue;
-            }
-            pending = undefined;
-            if (next.done) return;
-            if (next.value.spaceId !== spaceId) continue;
-            yield { type: "alert" as const, alert: next.value };
-          }
-        } finally {
-          controller.abort();
-          await alerts.return(undefined);
+        const alerts = withHeartbeats(context, (signal) =>
+          followChatAlerts(userId, spaceId, signal),
+        );
+        for await (const next of alerts) {
+          if (next === HEARTBEAT) yield { type: "heartbeat" as const };
+          else if (next.spaceId === spaceId) yield { type: "alert" as const, alert: next };
         }
       }),
       subscribeCalls: authed.notifications.subscribeCalls.handler(async function* ({ context }) {
-        if (!deps.env?.phoneCallsEnabled || !deps.events.followIncomingCalls)
-          throw new ORPCError("NOT_FOUND");
-        const controller = new AbortController();
-        const signal = context.signal
-          ? AbortSignal.any([context.signal, controller.signal])
-          : controller.signal;
-        const signals = deps.events.followIncomingCalls(context.actor.userId, signal);
-        let pending: Promise<IteratorResult<void>> | undefined;
-        let authorizedAt = Date.now();
-        try {
-          while (!context.signal?.aborted) {
-            pending ??= signals.next();
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const next = await Promise.race([
-              pending,
-              new Promise<"heartbeat">((resolve) => {
-                timer = setTimeout(() => resolve("heartbeat"), HEARTBEAT_MS);
-              }),
-            ]).finally(() => clearTimeout(timer));
-            if (context.stillAuthorized && Date.now() - authorizedAt >= SESSION_RECHECK_MS) {
-              if (!(await context.stillAuthorized())) throw new ORPCError("UNAUTHORIZED");
-              authorizedAt = Date.now();
-            }
-            if (next === "heartbeat") {
-              yield { type: "heartbeat" as const };
-              continue;
-            }
-            pending = undefined;
-            if (next.done) return;
-            yield {
-              type: "incoming.calls" as const,
-              payload: { calls: await loadUserIncomingCalls(deps.prisma, context.actor.userId) },
-            };
-          }
-        } finally {
-          controller.abort();
-          await signals.return(undefined);
+        const { followIncomingCalls } = deps.events;
+        if (!deps.env?.phoneCallsEnabled || !followIncomingCalls) throw new ORPCError("NOT_FOUND");
+        const { userId } = context.actor;
+        const signals = withHeartbeats(context, (signal) => followIncomingCalls(userId, signal));
+        for await (const next of signals) {
+          yield next === HEARTBEAT
+            ? { type: "heartbeat" as const }
+            : {
+                type: "incoming.calls" as const,
+                payload: { calls: await loadUserIncomingCalls(deps.prisma, userId) },
+              };
         }
       }),
       declineIncomingCall: authed.notifications.declineIncomingCall.handler(
@@ -477,8 +423,12 @@ export function accountRoutes(ctx: RouterContext) {
         return { ok: true as const };
       }),
       unregisterPush: authed.notifications.unregisterPush.handler(async ({ context }) => {
-        if (context.sessionId)
+        if (context.sessionId) {
+          // Only the calling session's registration: another device of this account,
+          // which registered from its own session, keeps its notifications.
           await deps.pushTokens.endSession(context.actor.userId, context.sessionId);
+          return { ok: true as const };
+        }
         await deps.pushTokens.remove(context.actor.userId);
         return { ok: true as const };
       }),
@@ -530,7 +480,7 @@ export function accountRoutes(ctx: RouterContext) {
         disconnectVoiceCredential(deps, context.actor, { provider: input.provider }),
       ),
       setVoice: authed.voice.setVoice.handler(async ({ context, input }) => {
-        const cred = await withSerializableRetry(() =>
+        const cred = await withTransactionRetry(() =>
           deps.prisma.$transaction(
             async (tx) => {
               await lockSpaceSettings(tx, context.actor);

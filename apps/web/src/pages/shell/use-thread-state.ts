@@ -5,11 +5,8 @@ import type {
   ThreadSnapshot,
 } from "@cortexai-agent-hub/contracts";
 import { withLiveStreamingProgress } from "@cortexai-agent-hub/core";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import {
-  getResponseStreamingEnabled,
-  subscribeResponseStreaming,
-} from "../../lib/response-streaming";
+import { useEffect, useRef, useState } from "react";
+import { responseStreamingPreference } from "../../lib/response-streaming";
 
 export type PinnedAround = {
   botId?: string;
@@ -24,11 +21,7 @@ export type PinnedAround = {
 export function useThreadState() {
   const [snapshot, setSnapshot] = useState<ThreadSnapshot | null>(null);
   const snapshotRef = useRef<ThreadSnapshot | null>(null);
-  const streamResponses = useSyncExternalStore(
-    subscribeResponseStreaming,
-    getResponseStreamingEnabled,
-    () => false,
-  );
+  const streamResponses = responseStreamingPreference.use();
   const streamResponsesRef = useRef(streamResponses);
   streamResponsesRef.current = streamResponses;
   const [routines, setRoutines] = useState<Routine[]>([]);

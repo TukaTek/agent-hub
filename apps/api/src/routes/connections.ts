@@ -4,9 +4,10 @@ import {
   pickReusableConnection,
   planLiveConnectionSync,
   prepareManagedConnectorForTransaction,
-  sanitizeComposioError,
+  sanitizeIntegrationError,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { isIntegrationProviderId } from "@cortexai-agent-hub/contracts";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import {
   IsolationError,
@@ -279,8 +280,7 @@ export function connectionsRoutes(ctx: RouterContext) {
         const connector =
           input.connectorId === "composio" && deps.composio
             ? deps.composio
-            : deps.integrationSettings &&
-                (input.connectorId === "composio" || input.connectorId === "pipedream")
+            : deps.integrationSettings && isIntegrationProviderId(input.connectorId)
               ? await deps.integrationSettings.resolve(input.connectorId)
               : deps.connectors.managed(input.connectorId);
         if (!connector) {
@@ -478,7 +478,7 @@ export function connectionsRoutes(ctx: RouterContext) {
             });
             throw new ORPCError(error.code, { status: 400, message: error.message });
           }
-          throw new ORPCError("BAD_REQUEST", { message: sanitizeComposioError(error) });
+          throw new ORPCError("BAD_REQUEST", { message: sanitizeIntegrationError(error) });
         }
       }),
       complete: authed.connections.complete.handler(async ({ context, input }) => {
@@ -639,7 +639,7 @@ export function connectionsRoutes(ctx: RouterContext) {
                 try {
                   await transactionConnector.complete({ state, code: input.code }, adapterContext);
                 } catch (error) {
-                  throw new ORPCError("BAD_REQUEST", { message: sanitizeComposioError(error) });
+                  throw new ORPCError("BAD_REQUEST", { message: sanitizeIntegrationError(error) });
                 }
               }
               const ready = await transactionConnector.connectionReady(
@@ -940,7 +940,7 @@ export function connectionsRoutes(ctx: RouterContext) {
                 );
               } catch (error) {
                 if (error instanceof ORPCError) throw error;
-                throw new ORPCError("BAD_REQUEST", { message: sanitizeComposioError(error) });
+                throw new ORPCError("BAD_REQUEST", { message: sanitizeIntegrationError(error) });
               }
               return {
                 remote: null as null | RemoteRevoke,
@@ -1001,7 +1001,7 @@ export function connectionsRoutes(ctx: RouterContext) {
               else getLogger().error(message, error, where);
             }
             if (error instanceof ORPCError) throw error;
-            throw new ORPCError("BAD_REQUEST", { message: sanitizeComposioError(error) });
+            throw new ORPCError("BAD_REQUEST", { message: sanitizeIntegrationError(error) });
           }
         }
         return { ok: true as const };

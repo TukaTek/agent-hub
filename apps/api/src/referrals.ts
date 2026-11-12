@@ -8,7 +8,7 @@ import {
   extendByokFreePeriod,
   FREE_MONTH_DAYS,
   hasBillingAccess,
-  Prisma,
+  isUniqueViolation,
   reconcileCreditPurchase,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -177,10 +177,6 @@ export function createReferrals(deps: {
       }
     },
   };
-}
-
-function isUniqueViolation(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
 function newCode() {

@@ -1,43 +1,11 @@
-import type { AppLocaleSchema } from "@cortexai-agent-hub/contracts";
+import { AppLocaleSchema } from "@cortexai-agent-hub/contracts";
 import { matchUiLocale } from "@cortexai-agent-hub/core";
 
-export const UI_LOCALES = [
-  "en",
-  "de",
-  "ko",
-  "tr",
-  "hi",
-  "pt-BR",
-  "zh-CN",
-  "zh-TW",
-  "es",
-  "ru",
-  "fr",
-  "he",
-  "ja",
-  "pl",
-] as const satisfies readonly (typeof AppLocaleSchema.options)[number][];
+export const UI_LOCALES = AppLocaleSchema.options;
 
 export type UiLocale = (typeof UI_LOCALES)[number];
 
 export const UI_LOCALE_STORAGE_KEY = "cortexai-agent-hub.uiLocale";
-
-export const UI_LOCALE_LABELS: Record<UiLocale, string> = {
-  en: "English",
-  de: "Deutsch",
-  ko: "한국어",
-  tr: "Türkçe",
-  hi: "हिन्दी",
-  "pt-BR": "Português (Brasil)",
-  "zh-CN": "简体中文",
-  "zh-TW": "繁體中文",
-  es: "Español",
-  ru: "Русский",
-  fr: "Français",
-  he: "עברית",
-  ja: "日本語",
-  pl: "Polski",
-};
 
 /** Normalize BCP-47 tags (`de-DE`, `ko-KR`, `pt-BR`, `zh-CN`, `es-ES`) to a supported UI locale, else `en`. */
 export function normalizeUiLocale(raw: string | null | undefined): UiLocale {

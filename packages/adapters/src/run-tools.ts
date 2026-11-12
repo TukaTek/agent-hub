@@ -10,6 +10,7 @@ import { auditToolCall, gateToolCall } from "./run-tool-gate.js";
 import { prepareToolRequest, resolveToolRequest } from "./run-tool-request.js";
 import { PAGE_BROWSER_TOOL_NAMES } from "./run-tool-selection.js";
 import { computerTools, pageBrowserTool } from "./run-tools-computer.js";
+import { emailTools } from "./run-tools-email.js";
 import { feedbackTools } from "./run-tools-feedback.js";
 import { fileTools, refusesForeignSpill } from "./run-tools-files.js";
 import { fleetTools } from "./run-tools-fleet.js";
@@ -48,6 +49,7 @@ const TOOL_HANDLERS = new Map<string, ToolHandler>([
   ...Object.entries(purchaseTools),
   ...Object.entries(preferenceTools),
   ...Object.entries(feedbackTools),
+  ...Object.entries(emailTools),
   ...[...PAGE_BROWSER_TOOL_NAMES].map((name) => [name, pageBrowserTool] as const),
 ]);
 
@@ -66,6 +68,16 @@ export async function applyTool(
   _route?: unknown,
   observer?: AgentToolExecutionObserver,
 ) {
+  // A bot naming itself in bot_id means its own settings. Dropping it here sends the call down
+  // the own path everywhere: preparation, the stored approval, the handler and the check below.
+  if (
+    name === "update_bot" &&
+    typeof args.bot_id === "string" &&
+    args.bot_id.trim() === ctx.bot.id
+  ) {
+    const { bot_id: _self, ...own } = args;
+    args = own;
+  }
   try {
     return await dispatchTool(ctx, name, args, executionId, observer);
   } finally {

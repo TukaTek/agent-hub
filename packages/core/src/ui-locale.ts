@@ -1,3 +1,23 @@
+import type { AppLocaleSchema } from "@cortexai-agent-hub/contracts";
+
+/** Each app language named in itself, for language pickers. */
+export const APP_LOCALE_LABELS: Record<(typeof AppLocaleSchema.options)[number], string> = {
+  en: "English",
+  de: "Deutsch",
+  ko: "한국어",
+  tr: "Türkçe",
+  hi: "हिन्दी",
+  "pt-BR": "Português (Brasil)",
+  "zh-CN": "简体中文",
+  "zh-TW": "繁體中文",
+  es: "Español",
+  ru: "Русский",
+  fr: "Français",
+  he: "עברית",
+  ja: "日本語",
+  pl: "Polski",
+};
+
 /**
  * Match a BCP-47 tag (`de-DE`, `pt`, `es-419`, `zh_Hans_CN`, legacy `iw`) to one of the
  * `supported` UI locales, else English. Each surface ships its own catalogs, so it passes its own

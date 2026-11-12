@@ -29,6 +29,13 @@ instead of a password. Some actions, such as exporting data, ask you to confirm 
 **Settings → Vault** lists the API keys and website logins your bots can use. Values are never shown.
 You can add one, replace its value, or remove it. See [Reusable credentials](./bot-secrets.md).
 
+## Organizations
+
+Keep work and personal use apart, each with its own bots and billing. Choose
+**Create organization** in **Settings → Organization**. Once you have two, switch between them from
+the account menu. Rename or delete an organization in the same place; deleting one cancels its
+plan and removes its bots and data.
+
 ## Usage
 
 **Settings → Usage** shows runs, tokens and model cost, by model.

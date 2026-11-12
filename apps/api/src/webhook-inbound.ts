@@ -9,8 +9,9 @@ import {
   messageBlockForArtifact,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { accountDeactivated } from "@cortexai-agent-hub/db";
+import { accountDeactivated, SpaceDeletionInProgressError } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import type { Context } from "hono";
 
 export const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
 export const WEBHOOK_SECRET_KIND = "webhook";
@@ -51,6 +52,8 @@ export type WebhookTarget = {
   threadId: string;
   expected: string;
 };
+
+type InboundSource = "webhook" | "github" | "messaging" | "email";
 
 export type InboundTarget = {
   bot: Pick<WebhookTarget["bot"], "id" | "spaceId" | "userId">;
@@ -257,11 +260,28 @@ export function messagingWakeIdempotencyKey(provider: string, handle: string): s
 }
 
 export function inboundDeliveryClientNonce(
-  source: "webhook" | "github" | "messaging",
+  source: InboundSource,
   botId: string,
   idempotencyKey: string,
 ): string {
   return `${source}:${botId}:${createHash("sha256").update(idempotencyKey).digest("base64url")}`;
+}
+
+/**
+ * Answers an authenticated delivery. A Space being deleted takes none: the sender gets a 409, not
+ * a server error, so the request is not reported as a failure.
+ */
+export async function webhookDeliveryResponse(
+  c: Context,
+  delivery: ReturnType<typeof deliverWebhookEvent>,
+): Promise<Response> {
+  try {
+    return c.json(await delivery);
+  } catch (error) {
+    if (error instanceof SpaceDeletionInProgressError)
+      return c.json({ error: "Space deletion in progress" }, 409);
+    throw error;
+  }
 }
 
 export async function deliverWebhookEvent(
@@ -277,7 +297,7 @@ export async function deliverWebhookEvent(
       modelId: string | null;
       thinkingLevel: string | null;
     }>;
-    source: "webhook" | "github" | "messaging";
+    source: InboundSource;
     idempotencyKey?: string;
     /** Messaging wakes share the live chat thread; keep a separate webhook run. */
     allowParallelRun?: boolean;
@@ -292,7 +312,9 @@ export async function deliverWebhookEvent(
             ? "Inbound GitHub event metadata:"
             : input.source === "messaging"
               ? "Inbound messaging event:"
-              : "Inbound webhook payload:",
+              : input.source === "email"
+                ? "Inbound email:"
+                : "Inbound webhook payload:",
           input.prompt,
         ].join("\n")
       : input.prompt;

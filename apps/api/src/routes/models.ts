@@ -1,5 +1,6 @@
 import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import {
+  compatibleEndpointPreset,
   listPiCatalog,
   ModelSignInError,
   modelCredentialDto,
@@ -19,7 +20,6 @@ import type { ThinkingLevel } from "@cortexai-agent-hub/contracts";
 import {
   backupChoiceKey,
   canonicalPiProviderId,
-  isOllamaCloudBaseUrl,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   usableModelId,
 } from "@cortexai-agent-hub/contracts";
@@ -39,6 +39,7 @@ import {
   runAsSystemInTransaction,
   saveModelPreference,
   updateModelRole,
+  withTransactionRetry,
   writeModelRole,
 } from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
@@ -51,7 +52,6 @@ import {
   throwIfAborted,
 } from "../model-credentials.js";
 import { assertCompatibleDefaultChange } from "../model-pins.js";
-import { withSerializableRetry } from "../serializable-retry.js";
 import type { RouterContext } from "./context.js";
 
 export function modelsRoutes(ctx: RouterContext) {
@@ -62,6 +62,7 @@ export function modelsRoutes(ctx: RouterContext) {
     refreshExpiredCredential,
     chatCatalog,
     withDeploymentDefault,
+    withImageInput,
     modelRoleCatalog,
     validateRoleChoices,
     authed,
@@ -151,12 +152,16 @@ export function modelsRoutes(ctx: RouterContext) {
       role: authed.models.role.handler(async ({ context, input }) => {
         if (input.expectedUserId && input.expectedUserId !== context.actor.userId)
           throw new ORPCError("FORBIDDEN");
-        return withDeploymentDefault(
+        return withImageInput(
+          context.actor,
           input.role,
-          await getModelRole(
-            deps.prisma,
-            await modelRoleTarget(deps.prisma, context.actor, input.scope),
+          await withDeploymentDefault(
             input.role,
+            await getModelRole(
+              deps.prisma,
+              await modelRoleTarget(deps.prisma, context.actor, input.scope),
+              input.role,
+            ),
           ),
         );
       }),
@@ -168,13 +173,17 @@ export function modelsRoutes(ctx: RouterContext) {
           ...(primary ? [primary] : []),
           ...(backups ?? []),
         ]);
-        return withDeploymentDefault(
+        return withImageInput(
+          context.actor,
           role,
-          await updateModelRole(
-            deps.prisma,
-            { userId: context.actor.userId, spaceId: context.actor.spaceId, scope },
+          await withDeploymentDefault(
             role,
-            { primary, backups },
+            await updateModelRole(
+              deps.prisma,
+              { userId: context.actor.userId, spaceId: context.actor.spaceId, scope },
+              role,
+              { primary, backups },
+            ),
           ),
         );
       }),
@@ -261,7 +270,7 @@ export function modelsRoutes(ctx: RouterContext) {
           try {
             const models = await probeOpenAiCompatibleModels(
               { ...input, apiKey, headers },
-              isOllamaCloudBaseUrl(input.baseUrl) ? deps.modelConnectionFetch : undefined,
+              compatibleEndpointPreset(input.baseUrl) ? deps.modelConnectionFetch : undefined,
               context.signal,
               { allowPrivate: mayUsePrivateEndpoint(deps) },
             );
@@ -435,7 +444,7 @@ export function modelsRoutes(ctx: RouterContext) {
             }),
           };
         };
-        await withSerializableRetry(async () => {
+        await withTransactionRetry(async () => {
           const preparedState = await loadModelState(deps.prisma);
           const preparedAuth = new Map(
             await Promise.all(
@@ -591,7 +600,7 @@ export function modelsRoutes(ctx: RouterContext) {
           provider: input.provider,
           credentialId: input.credentialId,
         });
-        await withSerializableRetry(() =>
+        await withTransactionRetry(() =>
           deps.prisma.$transaction(
             async (tx) => {
               const provider = modelCredentialProviderFilter(input.provider);

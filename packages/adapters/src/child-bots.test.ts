@@ -185,11 +185,8 @@ describe("spawned bot creation", () => {
   });
 });
 describe("spawned bot archival", () => {
-  it("scopes management by account and space without requiring a creator", () => {
-    expect(managedBotsWhere({ userId: "user-1", spaceId: "space-1" })).toEqual({
-      userId: "user-1",
-      spaceId: "space-1",
-    });
+  it("scopes management to the space without requiring a creator", () => {
+    expect(managedBotsWhere({ spaceId: "space-1" })).toEqual({ spaceId: "space-1" });
   });
 
   it("refuses an out-of-scope bot before stopping work", async () => {
@@ -214,7 +211,7 @@ describe("spawned bot archival", () => {
       ),
     ).toHaveProperty("error");
     expect(findMany).toHaveBeenCalledWith({
-      where: { userId: "user-1", spaceId: "space-1", id: "outside" },
+      where: { spaceId: "space-1", id: "outside" },
       take: 2,
     });
   });
@@ -278,7 +275,7 @@ describe("spawned bot archival", () => {
       ),
     ).resolves.toMatchObject({ ok: true, botId: "child-1", name: "Scout" });
     expect(prisma.bot.findMany).toHaveBeenCalledWith({
-      where: { userId: "user-1", spaceId: "workspace-1", id: "child-1" },
+      where: { spaceId: "workspace-1", id: "child-1" },
       take: 2,
     });
   });
@@ -2498,6 +2495,8 @@ function deletionPrisma(team: { id: string }) {
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     routine: { findMany: vi.fn().mockResolvedValue([]) },
+    // The Space's owner keeps its Team Computer.
+    spaceMember: { findFirst: vi.fn().mockResolvedValue({ userId: "user-1" }) },
     $transaction: transaction,
   } as unknown as PrismaClient;
 }

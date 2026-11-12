@@ -2,6 +2,7 @@ import type { TransactionalEmailProvider } from "@cortexai-agent-hub/adapter-kit
 import { emailLocale, referralEmail } from "@cortexai-agent-hub/auth";
 import { ActorSchema } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { isForeignKeyViolation } from "@cortexai-agent-hub/db";
 import { unsubscribeUrl } from "./marketing-email.js";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -60,8 +61,7 @@ export function sendReferralEmails(deps: {
         if (claim.count > 0) await deps.email.send(message);
       } catch (error) {
         // Account deletion may race the foreign-key insert.
-        if (error && typeof error === "object" && "code" in error && error.code === "P2003")
-          continue;
+        if (isForeignKeyViolation(error)) continue;
         deps.onError(error);
       }
     }

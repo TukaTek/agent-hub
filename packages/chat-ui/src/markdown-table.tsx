@@ -1,5 +1,12 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: scrollable table regions need keyboard focus
-import { Dialog, DialogClose, DialogContent, DialogTitle } from "@cortexai-agent-hub/ui-web";
+import {
+  CopyTextFallback,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+  useCopyText,
+} from "@cortexai-agent-hub/ui-web";
 import type { ComponentPropsWithoutRef, ReactElement, ReactNode } from "react";
 import {
   Children,
@@ -73,17 +80,18 @@ export const TableCard = memo(function TableCard({
   const { columns, aligns, rows, schemaKey, dataSignature, numericColumns, minWidths, rowKeys } =
     table;
   const copy = useMarkdownCopy();
+  const [copiedNow, copyText, copyFailed, resetCopy, copyFailedText] = useCopyText();
   const [sort, setSort] = useState<SortState>(null);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  // The data the copy was taken from: the check mark drops once the rows change.
   const [copiedSignature, setCopiedSignature] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
-  const copiedTimer = useRef<number | undefined>(undefined);
   const announceTimer = useRef<number | undefined>(undefined);
   const expandButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  const copied = copiedSignature === dataSignature;
+  const copied = copiedNow && copiedSignature === dataSignature;
 
   const renderedRowsBySource = useMemo(
     () => new Map(rows.map((row, index) => [row, renderedRows?.[index]])),
@@ -109,13 +117,7 @@ export const TableCard = memo(function TableCard({
     setPage(0);
     setExpanded(false);
   }, [schemaKey]);
-  useEffect(
-    () => () => {
-      window.clearTimeout(copiedTimer.current);
-      window.clearTimeout(announceTimer.current);
-    },
-    [],
-  );
+  useEffect(() => () => window.clearTimeout(announceTimer.current), []);
 
   // Clear then restore so identical successive strings still fire a live-region update.
   const announce = (text: string) => {
@@ -136,16 +138,12 @@ export const TableCard = memo(function TableCard({
   };
 
   const copyRows = () => {
-    if (!navigator.clipboard) return;
-    navigator.clipboard
-      .writeText(tableToTsv(columns, sortedRows))
-      .then(() => {
-        setCopiedSignature(dataSignature);
-        announce(copy.copied);
-        window.clearTimeout(copiedTimer.current);
-        copiedTimer.current = window.setTimeout(() => setCopiedSignature(null), 1500);
-      })
-      .catch(() => {});
+    const signature = dataSignature;
+    void copyText(tableToTsv(columns, sortedRows)).then((ok) => {
+      if (!ok) return;
+      setCopiedSignature(signature);
+      announce(copy.copied);
+    });
   };
 
   const downloadCsv = () => {
@@ -266,6 +264,12 @@ export const TableCard = memo(function TableCard({
 
   return (
     <Dialog open={expanded} onOpenChange={setExpanded}>
+      <CopyTextFallback
+        open={copyFailed}
+        onOpenChange={resetCopy}
+        text={copyFailedText}
+        label={copy.copyRows}
+      />
       <div
         className="cortexai-agent-hub-table-card cortexai-agent-hub-table-box"
         data-testid="table-card"

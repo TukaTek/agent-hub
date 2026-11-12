@@ -181,7 +181,11 @@ async function runScenario(
     artifact: { findMany: vi.fn(async () => []) },
   };
   const executor = createRunExecutor({
-    prisma: withEmptyModels(prisma),
+    prisma: withEmptyModels({
+      ...prisma,
+      $transaction: async (fn: (tx: unknown) => unknown) =>
+        fn(withEmptyModels({ ...prisma, $queryRaw: async () => [] })),
+    }),
     deploymentModelKey: "fake-deployment-key",
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox,
@@ -307,7 +311,7 @@ describe("oversized tool results spill to the bot computer", () => {
     ["createos", () => new CreateOSSandboxProvider({ apiKey: "key" })],
     ["e2b", () => new E2BSandboxProvider("key")],
     ["boat", () => new BoatSandboxProvider({ apiKey: "key" })],
-    ["daytona", () => new DaytonaSandboxProvider({ apiKey: "key" }, {} as never)],
+    ["daytona", () => new DaytonaSandboxProvider({}, {} as never)],
     ["fake", () => new FakeSandboxProvider()],
     ["desktop", () => new DesktopSandboxProvider()],
   ] as const)("opens the exact receipt path with read_file on %s computers", async (kind, make) => {
@@ -457,7 +461,10 @@ function withEmptyModels<T extends object>(prisma: T): T {
     count: async () => 0,
     updateMany: async () => ({ count: 0 }),
   };
+  // The sender is still a member unless a case says otherwise.
+  const member = { ...empty, findUnique: async () => ({ id: "member-1" }) };
   return new Proxy(prisma, {
-    get: (target, key) => (key in target ? target[key as keyof T] : empty),
+    get: (target, key) =>
+      key in target ? target[key as keyof T] : key === "spaceMember" ? member : empty,
   });
 }

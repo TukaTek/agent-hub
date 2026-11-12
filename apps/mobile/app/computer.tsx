@@ -1,4 +1,5 @@
 import type { ComputerMode, ComputerReleaseReason } from "@cortexai-agent-hub/contracts";
+import { isComputerAllowanceUsed } from "@cortexai-agent-hub/contracts";
 import type { ScreenPageState } from "@cortexai-agent-hub/core";
 import {
   createScreenReconnect,
@@ -7,7 +8,7 @@ import {
   screenProbeUrl,
   waitForScreenPage,
 } from "@cortexai-agent-hub/core";
-import { useLocalSearchParams, useNavigation } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -16,6 +17,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -75,6 +77,7 @@ export default function Computer() {
   const { t } = useI18n();
   const tokens = useMobileTokens();
   const navigation = useNavigation();
+  const router = useRouter();
   const windowSize = useWindowDimensions();
   const stacked = stacksAtTextScale(windowSize.fontScale);
   const folds = useFoldRegions();
@@ -118,7 +121,10 @@ export default function Computer() {
   const unreachableScreen =
     computer?.state === "running" && Boolean(screenUrl) && !embeddedScreenUrl;
 
-  const hasControl = computer?.controlHolder === "user" && computer.controlBotId === botId;
+  const hasControl =
+    computer?.controlHolder === "user" &&
+    computer.controlBotId === botId &&
+    !computer.controlledByOther;
   // Propped open like a laptop, the desktop stays above the fold and the keys go below it.
   const tabletop = hasControl ? tabletopLayout(windowSize.width, windowSize.height, folds) : null;
   const screenVisible =
@@ -496,7 +502,9 @@ export default function Computer() {
       : previewPlaceholder(computer?.state, booting, name, computer?.mode));
   // Booting shows in the preview; the header and Back stay, and leaving lets the boot finish.
   const bootPending = booting || computer?.state === "booting";
-  const canRetry = !bootPending && (bootFailed || computer?.state === "error");
+  // Retrying cannot help once the hours are spent; only a plan change can.
+  const allowanceUsed = computer?.state !== "running" && isComputerAllowanceUsed(error);
+  const canRetry = !allowanceUsed && !bootPending && (bootFailed || computer?.state === "error");
   const screenRetry =
     unreachableScreen ||
     (computer?.state === "running" && screenOriginError && Boolean(screenError));
@@ -541,6 +549,15 @@ export default function Computer() {
         </Text>
       ) : null}
       {retryScreenAction}
+      {allowanceUsed ? (
+        <NativeActionButton
+          label={t("Upgrade")}
+          prominence="primary"
+          size="default"
+          style={{ marginBottom: 16 }}
+          onPress={() => router.push("/billing")}
+        />
+      ) : null}
       {canRetry ? (
         <NativeActionButton
           label={t("Try again")}
@@ -772,6 +789,14 @@ export default function Computer() {
                 />
               </View>
             </SafeAreaView>
+            {hasControl && computer?.shared ? (
+              <Text
+                testID="computer-shared-browser"
+                style={[styles.sharedBrowser, { color: tokens.mutedForeground }]}
+              >
+                {t("Sites you sign in to stay signed in for everyone in this space")}
+              </Text>
+            ) : null}
             <View style={{ flex: 1, backgroundColor: tokens.card }}>
               {foreground && loadedScreenUrl ? (
                 <ScreenWebView
@@ -952,3 +977,7 @@ function ScreenWebView({
     />
   );
 }
+
+const styles = StyleSheet.create({
+  sharedBrowser: { fontSize: 12, paddingHorizontal: 14, paddingBottom: 4 },
+});

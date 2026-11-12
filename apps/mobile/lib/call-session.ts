@@ -15,6 +15,7 @@ import {
   newClientId,
   readJsonObjectWithin,
   recognitionLocaleTag,
+  reduceThreadSnapshot,
   retryDelayMs,
   spokenMemory,
 } from "@cortexai-agent-hub/core";
@@ -23,7 +24,6 @@ import { File } from "expo-file-system";
 import { useSyncExternalStore } from "react";
 import type { ApiRequestContext, MobileSnapshot } from "./api";
 import {
-  applyMobileThreadEvent,
   blockText,
   captureApiRequestContext,
   configureSessionEndHangUp,
@@ -40,6 +40,7 @@ import {
 } from "./call-sounds";
 import type { DictationGiveUp } from "./dictation";
 import * as dictation from "./dictation";
+import { hapticImpact, hapticSuccess } from "./haptics";
 import { deviceLanguage, getActiveUiLocale, t } from "./i18n";
 import { reportMobileError } from "./monitoring";
 import { fetchServer } from "./server-headers";
@@ -260,7 +261,8 @@ async function openCall(openedCallId: string, greeting?: string): Promise<void> 
   deps.waitSound("preload");
   opening = true;
   await deps.cue("start").catch(() => undefined);
-  if (!state || callId !== openedCallId) return;
+  if (!state || callId !== openedCallId || botEndedCall) return;
+  hapticSuccess();
   opening = false;
   if (greeting) speakAndListen(greeting);
   else void listen();
@@ -272,6 +274,13 @@ export function setCallProviderTranscribe(enabled: boolean, forCallId?: string):
   canTranscribe = enabled;
   // Dictation can fail before the probe returns, which leaves the mic closed.
   if (enabled && !opening && state.phase === "listening" && !micOpen && !state.muted) void listen();
+}
+
+/** The app's Hang up action; shared or system-driven cleanup stays silent. */
+export function hangUp(): void {
+  if (!state) return;
+  hapticImpact();
+  endCall();
 }
 
 export function endCall(): void {
@@ -915,7 +924,7 @@ function watchReplies(
               });
               return;
             }
-            snapshot = applyMobileThreadEvent(snapshot, event) ?? snapshot;
+            snapshot = reduceThreadSnapshot(snapshot, event) ?? snapshot;
             if (!snapshot) return;
             const message = latestSpokenCallReply(snapshot.messages, watchedCallId);
             if (!message || message.id === lastSeen) return;

@@ -8,7 +8,7 @@ import type {
   SemanticMemoryProvider,
   WebProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { ComputerMode, MessageBlock } from "@cortexai-agent-hub/contracts";
+import type { ComputerMode, MessageBlock, ReplyMode } from "@cortexai-agent-hub/contracts";
 import { createStreamingRedactor } from "@cortexai-agent-hub/core";
 import { toolEffectIdempotencyKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import type {
@@ -303,6 +303,8 @@ export interface RunContext {
   /** A group message that named no member: this member may end without replying. */
   groupReplyOptional: boolean;
   emptyResponseText: string | undefined;
+  /** Messages mode keeps working text on the steps; only message_user and the final answer reach chat. */
+  replyMode: ReplyMode;
   state: RunState;
   settleRunningHelpers: () => Promise<void>;
   stopHeartbeatAfterCompletion: () => void;

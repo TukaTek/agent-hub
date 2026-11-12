@@ -29,9 +29,11 @@ import { NativeSwitch } from "../../components/native-switch";
 import { Checkmark } from "../../components/row-accessories";
 import { mobileTokens } from "../../lib/appearance";
 import {
+  loadCallGreetingEnabled,
   loadCallSoundsEnabled,
   loadWaitSoundEnabled,
   playCallCue,
+  saveCallGreetingEnabled,
   saveCallSoundsEnabled,
   saveWaitSoundEnabled,
 } from "../../lib/call-sounds";
@@ -108,8 +110,12 @@ export default function VoiceSettings() {
   const [baseUrl, setBaseUrl] = useState(cached?.credential?.endpoint ?? "");
   const [ttsModel, setTtsModel] = useState(cached?.credential?.ttsModel ?? "");
   const [sttModel, setSttModel] = useState(cached?.credential?.sttModel ?? "");
-  // Fields typed into since the last load; an opening refresh keeps them.
+  // Fields typed into since the last load; an opening refresh keeps them only while their
+  // provider stays selected.
   const edited = useRef(new Set<VoiceField>());
+  // The provider chosen last, ahead of the render that shows it, so a field still showing the
+  // previous provider cannot type into the next one.
+  const selectedProvider = useRef(provider);
   // Every load and action bumps this, so an older refresh never lands over a newer choice.
   const loadRevision = useRef(0);
   const speechModelSave = useRef<string | null>(null);
@@ -117,6 +123,7 @@ export default function VoiceSettings() {
   const [deviceVoiceReady, setDeviceVoiceReady] = useState(!deviceSettings);
   const [callSounds, setCallSounds] = useState<boolean | null>(null);
   const [waitSound, setWaitSound] = useState<boolean | null>(null);
+  const [callGreeting, setCallGreeting] = useState<boolean | null>(null);
   // Prevent stale reads from overwriting a saved preference.
   const soundPrefsRevision = useRef(0);
   const soundPrefSaving = useRef(false);
@@ -148,9 +155,11 @@ export default function VoiceSettings() {
       if (revision !== loadRevision.current) return;
       setLoadError(null);
       const selected = pickProvider(nextCatalog, nextStatus, nextProvider);
+      if (selected !== selectedProvider.current) edited.current.clear();
       setCatalog(nextCatalog);
       setCredentials(nextCredentials);
       setStatus(nextStatus);
+      selectedProvider.current = selected;
       setProvider(selected);
       const cred = nextCredentials.find((entry) => entry.provider === selected);
       const fields: [VoiceField, (value: string) => void, string | undefined][] = [
@@ -172,6 +181,7 @@ export default function VoiceSettings() {
   );
 
   const edit = (field: VoiceField, set: (value: string) => void) => (value: string) => {
+    if (provider !== selectedProvider.current) return;
     edited.current.add(field);
     set(value);
   };
@@ -205,17 +215,20 @@ export default function VoiceSettings() {
           setError(errorText(err, t("Could not load voice settings")));
         });
       const soundRevision = soundPrefsRevision.current;
-      void Promise.allSettled([loadCallSoundsEnabled(), loadWaitSoundEnabled()]).then(
-        ([calls, waiting]) => {
-          if (soundPrefSaving.current || soundPrefsRevision.current !== soundRevision) return;
-          setCallSounds(calls.status === "fulfilled" ? calls.value : null);
-          setWaitSound(waiting.status === "fulfilled" ? waiting.value : null);
-          const failed = [calls, waiting].find((result) => result.status === "rejected");
-          if (failed?.status === "rejected") {
-            setError(errorText(failed.reason, t("Could not load voice settings")));
-          }
-        },
-      );
+      void Promise.allSettled([
+        loadCallSoundsEnabled(),
+        loadWaitSoundEnabled(),
+        loadCallGreetingEnabled(),
+      ]).then(([calls, waiting, greeting]) => {
+        if (soundPrefSaving.current || soundPrefsRevision.current !== soundRevision) return;
+        setCallSounds(calls.status === "fulfilled" ? calls.value : null);
+        setWaitSound(waiting.status === "fulfilled" ? waiting.value : null);
+        setCallGreeting(greeting.status === "fulfilled" ? greeting.value : null);
+        const failed = [calls, waiting, greeting].find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") {
+          setError(errorText(failed.reason, t("Could not load voice settings")));
+        }
+      });
     }, [deviceSettings, open, t]),
   );
 
@@ -245,6 +258,11 @@ export default function VoiceSettings() {
   async function toggleWaitSound(next: boolean) {
     if (waitSound === null) return;
     await saveSoundPref(next, setWaitSound, saveWaitSoundEnabled);
+  }
+
+  async function toggleCallGreeting(next: boolean) {
+    if (callGreeting === null) return;
+    await saveSoundPref(next, setCallGreeting, saveCallGreetingEnabled);
   }
 
   async function toggleCallSounds(next: boolean) {
@@ -293,6 +311,7 @@ export default function VoiceSettings() {
     if (status) setLoadError(null);
     try {
       if (deviceSettings && !(await saveDeviceVoice(false))) return;
+      selectedProvider.current = nextProvider;
       setProvider(nextProvider);
       const cred = credentials.find((entry) => entry.provider === nextProvider);
       if (cred?.voiceId && status?.provider !== nextProvider) {
@@ -305,6 +324,7 @@ export default function VoiceSettings() {
           setStatus(saved);
           await writeSaved(queryClient, voiceReads(target).status.queryKey, () => saved);
         } catch (err) {
+          selectedProvider.current = previousProvider;
           setProvider(previousProvider);
           if (wasDeviceVoice && !(await saveDeviceVoice(true))) return;
           setError(errorText(err, t("Could not save that voice")));
@@ -349,7 +369,7 @@ export default function VoiceSettings() {
         apiKey: apiKey.trim(),
         // The server drops this voice when the address or speech model really changed.
         voiceId: voiceId || undefined,
-        ...(selected.id === "fish-audio" ? { speechModel: speechModel.trim() } : {}),
+        ...(selected.speechModel ? { speechModel: speechModel.trim() } : {}),
         ...(selfHosted
           ? {
               baseUrl: baseUrl.trim(),
@@ -384,7 +404,7 @@ export default function VoiceSettings() {
   }
 
   async function saveSpeechModel() {
-    if (!credential || selected?.id !== "fish-audio" || pending !== null) return;
+    if (!credential || !selected?.speechModel || pending !== null) return;
     const next = speechModel.trim();
     if (next === (credential.speechModel ?? "")) return;
     if (speechModelSave.current === next) return;
@@ -613,7 +633,7 @@ export default function VoiceSettings() {
                 prominence="destructive"
               />
             ) : null}
-            {credential && selected.id === "fish-audio" ? (
+            {credential && selected.speechModel ? (
               <>
                 <Text style={styles.fieldLabel}>{t("Speech model")}</Text>
                 <TextInput
@@ -684,6 +704,17 @@ export default function VoiceSettings() {
                 value={waitSound === true}
                 disabled={waitSound === null}
                 onValueChange={(next) => void toggleWaitSound(next)}
+              />
+            </View>
+            <View style={[styles.groupRow, styles.groupDivider]}>
+              <View style={styles.rowCopy}>
+                <Text style={styles.cardTitle}>{t("Call greeting")}</Text>
+              </View>
+              <NativeSwitch
+                accessibilityLabel={t("Call greeting")}
+                value={callGreeting === true}
+                disabled={callGreeting === null}
+                onValueChange={(next) => void toggleCallGreeting(next)}
               />
             </View>
           </View>

@@ -5,14 +5,14 @@ import type {
   ModelCredentialFailedState,
   ModelCredentialRetireReason,
 } from "@cortexai-agent-hub/adapter-kit";
+import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@cortexai-agent-hub/contracts";
+import { MISSING_MODEL_RUN_ERROR } from "@cortexai-agent-hub/core";
 import {
   CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
   CLOUDFLARE_WORKERS_AI_PROVIDER_ID,
   cloudflareModelConfigMessage,
-  OPENAI_COMPATIBLE_PROVIDER_ID,
-} from "@cortexai-agent-hub/contracts";
-import { MISSING_MODEL_RUN_ERROR } from "@cortexai-agent-hub/core";
-import { cloudflareProviderEnv } from "./cloudflare-ai-gateway.js";
+  cloudflareProviderEnv,
+} from "./cloudflare-ai-gateway.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import type { FleetPrepareDeps } from "./fleet-tools.js";
@@ -517,13 +517,10 @@ export async function resolveRunModel(
     botId?: string;
   },
 ): Promise<AgentRunRequest["model"]> {
+  // The bot's model is shared config; the credential that runs it stays the run user's.
   const override = scope.botId
     ? await deps.prisma.bot.findFirst({
-        where: {
-          id: scope.botId,
-          userId: scope.userId,
-          spaceId: scope.spaceId,
-        },
+        where: { id: scope.botId, spaceId: scope.spaceId },
         select: { modelProvider: true, modelId: true, thinkingLevel: true },
       })
     : null;

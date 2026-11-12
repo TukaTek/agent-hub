@@ -8,10 +8,15 @@ import type {
   ThreadSnapshot,
 } from "@cortexai-agent-hub/contracts";
 import {
+  activeThreadRuns,
   anySignal,
   createRefreshCoalescer,
   isRunTerminalEvent,
   isRunWorking,
+  isThreadSnapshotEvent,
+  reconcileRefreshedThread,
+  reduceThreadSnapshot,
+  rememberTerminalRun,
   runThreadSubscription,
 } from "@cortexai-agent-hub/core";
 import { fetchFresh } from "@cortexai-agent-hub/core/query";
@@ -28,13 +33,9 @@ import type { SpaceQueries } from "../../lib/query";
 import { queryClient } from "../../lib/query";
 import type { createSpaceRpc } from "../../lib/rpc";
 import {
-  activeThreadRuns,
   isComputerStatusEvent,
-  isThreadSnapshotEvent,
   prependThreadMessagePage,
-  reconcileRefreshedThread,
   reduceComputerStatus,
-  reduceThreadSnapshot,
 } from "../../lib/thread-events";
 import {
   firstVisibleTranscriptRow,
@@ -360,13 +361,7 @@ export function useThreadSync({
         ),
       beforeEvent: (event) => {
         webLogoAvatarActivity.apply(avatarSource, event);
-        if (isRunTerminalEvent(event) && event.runId) {
-          terminalRunReceipts.current.add(event.runId);
-          if (terminalRunReceipts.current.size > 100) {
-            const oldest = terminalRunReceipts.current.values().next().value;
-            if (oldest !== undefined) terminalRunReceipts.current.delete(oldest);
-          }
-        }
+        rememberTerminalRun(terminalRunReceipts.current, event);
       },
       applyEvent: (event) =>
         applyThreadEvent(event, commitSnapshot, commitComputer, snapshotRef, computerRef),
@@ -411,6 +406,10 @@ export function useThreadSync({
           // waiting_input: reconcile ask cards if a stale post-send refresh raced SSE.
           void snapshotRefresh.invalidate().catch(() => undefined);
         } else if (isComputerStatusEvent(event)) {
+          // In a shared Space the event does not say who took control; the snapshot does.
+          if (event.type === "computer.takeover.granted" && computerRef.current?.shared) {
+            void snapshotRefresh.invalidate().catch(() => undefined);
+          }
           void refreshComputerScreen(active.id).catch(() => undefined);
         }
         if (isRunTerminalEvent(event)) refreshRoutineHistory(event.runId);

@@ -1,11 +1,10 @@
 import type { ProductEvent, ThreadMessage, ThreadSnapshot } from "@cortexai-agent-hub/contracts";
-import { foldPeerReplies } from "@cortexai-agent-hub/core";
+import { foldPeerReplies, reduceThreadSnapshot } from "@cortexai-agent-hub/core";
 import type { GroupAvatarMember } from "@cortexai-agent-hub/ui-web";
 import { DEFAULT_BOT_AVATAR_COLOR } from "@cortexai-agent-hub/ui-web";
 import type { ReactNode } from "react";
 import { useMemo, useRef } from "react";
 import { rpc } from "../../src/lib/rpc";
-import { reduceThreadSnapshot } from "../../src/lib/thread-events";
 import { Transcript } from "../../src/pages/shell/transcript";
 
 export const BOT = { botId: "bot-1", name: "Chief", color: DEFAULT_BOT_AVATAR_COLOR };
@@ -78,6 +77,7 @@ export function FixtureTranscript({
         scrollRequest={null}
         onScrollRequestHandled={noop}
         followRequest={0}
+        callHoldsSpeaker={false}
         artifactTarget={{ botId: BOT.botId }}
         transcript={transcript}
         showToolActivity={showToolActivity}

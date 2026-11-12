@@ -5,6 +5,7 @@ import { nextWaitUnit, WAIT_PATTERNS } from "./wait-pattern";
 
 export const CALL_SOUNDS_KEY = "cortexai-agent-hub.call-sounds";
 export const WAIT_SOUND_KEY = "cortexai-agent-hub.wait-sound";
+export const CALL_GREETING_KEY = "cortexai-agent-hub.call-greeting";
 
 export type CallCue = "start" | "end";
 
@@ -61,6 +62,15 @@ export async function loadWaitSoundEnabled(): Promise<boolean> {
 export async function saveWaitSoundEnabled(on: boolean): Promise<void> {
   if (on) await SecureStore.deleteItemAsync(WAIT_SOUND_KEY);
   else await SecureStore.setItemAsync(WAIT_SOUND_KEY, "0");
+}
+
+export async function loadCallGreetingEnabled(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(CALL_GREETING_KEY)) !== "0";
+}
+
+export async function saveCallGreetingEnabled(on: boolean): Promise<void> {
+  if (on) await SecureStore.deleteItemAsync(CALL_GREETING_KEY);
+  else await SecureStore.setItemAsync(CALL_GREETING_KEY, "0");
 }
 
 export async function playCallCue(cue: CallCue): Promise<void> {

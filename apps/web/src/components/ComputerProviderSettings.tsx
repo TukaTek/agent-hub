@@ -90,7 +90,7 @@ export function ComputerProviderSettings({
 
   if (!draft || !settings) {
     return error ? (
-      <p role="alert" className="mt-3 text-[13px] text-destructive">
+      <p role="alert" className="mt-3 text-body-sm text-destructive">
         {error}
       </p>
     ) : null;
@@ -199,7 +199,7 @@ export function ComputerProviderSettings({
           })}
         </fieldset>
         {error ? (
-          <p role="alert" className="text-[13px] text-destructive">
+          <p role="alert" className="text-body-sm text-destructive">
             {error}
           </p>
         ) : null}
@@ -213,7 +213,7 @@ export function ComputerProviderSettings({
       {scope === "deployment" &&
       settings.providers.some((provider) => provider.capabilities.perAccount) ? (
         <Collapsible className="mt-4">
-          <CollapsibleTrigger className="text-[13px] text-muted-foreground">
+          <CollapsibleTrigger className="text-body-sm text-muted-foreground">
             <Trans>My computers</Trans>
           </CollapsibleTrigger>
           <CollapsibleContent>

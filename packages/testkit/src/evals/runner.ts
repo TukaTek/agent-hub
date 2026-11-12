@@ -10,7 +10,12 @@ import {
   MessagingTeamChatEmulator,
   messageBot,
 } from "@cortexai-agent-hub/adapters";
-import type { MessageBlock, ModelConnectInput, RunStatus } from "@cortexai-agent-hub/contracts";
+import type {
+  MessageBlock,
+  ModelConnectInput,
+  ReplyMode,
+  RunStatus,
+} from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES, attachmentComputerPath, isTerminal } from "@cortexai-agent-hub/core";
 import type { createDb } from "@cortexai-agent-hub/db";
 import { createThreadEvents } from "@cortexai-agent-hub/db";
@@ -65,6 +70,7 @@ export type TrialOptions = {
   timeoutMs: number;
   judge?: EvalJudge;
   maxToolCalls: number;
+  replyMode?: ReplyMode;
   createApp: (
     services: EvalServices,
     messaging: MessagingTeamChatEmulator,
@@ -221,6 +227,7 @@ export async function runTrial(
         botId,
         modelProvider: options.connection.provider,
         modelId: options.connection.modelId,
+        replyMode: options.replyMode,
       });
       // Direct synthetic fixture state, so setup never depends on the behavior under test.
       if (scenario.botSetup)
@@ -256,6 +263,7 @@ export async function runTrial(
           botId: created.id,
           modelProvider: options.connection.provider,
           modelId: options.connection.modelId,
+          replyMode: options.replyMode,
         });
         peer = { id: created.id, name: scenario.peer.name };
       }
@@ -829,6 +837,8 @@ export async function runTrial(
               ]))
             )
               await assertToolBudget();
+            // Work that ended between two checks still counts before grading and the judge.
+            await assertToolBudget();
           }
           const runs = await prisma.run.findMany({
             where: { botId: { in: memberBotIds }, createdAt: { gte: new Date(requestStarted) } },

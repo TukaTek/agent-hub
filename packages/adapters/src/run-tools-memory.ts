@@ -12,6 +12,7 @@ import { MAX_RECALLED_MEMORIES } from "./history-compaction.js";
 import { editMemory, runMemoryTool } from "./memory-tools.js";
 import type { RunContext } from "./run-context.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
+import { argsError } from "./tool-args.js";
 
 /** Short memory text is not redacted: replacing every occurrence would garble the error. */
 const MIN_REDACTED_MEMORY_TEXT_CHARS = 8;
@@ -44,6 +45,18 @@ export function historyMyChatsAllowed(
   );
 }
 
+/**
+ * Models often fill optional fields they do not use with "" or null (botId: "", linkedRunId: "").
+ * No history field means anything when blank, so a blank field counts as not given.
+ */
+export function withoutBlankFields(args: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(args).filter(
+      ([, value]) => value !== null && !(typeof value === "string" && !value.trim()),
+    ),
+  );
+}
+
 async function readHistoryTool(ctx: RunContext, call: ToolCall) {
   const { deps, run } = ctx;
   const { name, args } = call;
@@ -56,7 +69,6 @@ async function readHistoryTool(ctx: RunContext, call: ToolCall) {
     crossChat && ctx.source.myChatsAllowed && !(await ctx.trust.receivedOutsideMessage());
   const scope = {
     spaceId: run.spaceId,
-    userId: run.userId,
     threadId: run.threadId,
     botId: run.botId,
     channelId: ctx.source.channelId,
@@ -64,10 +76,17 @@ async function readHistoryTool(ctx: RunContext, call: ToolCall) {
     allowMyChats,
     searchAt: run.createdAt,
   };
-  const response =
-    name === "search_history"
-      ? await searchHistory(deps.prisma, scope, HistorySearchInputSchema.parse(args))
-      : await readHistory(deps.prisma, scope, HistoryReadInputSchema.parse(args));
+  const given = withoutBlankFields(args);
+  let response: Awaited<ReturnType<typeof searchHistory | typeof readHistory>>;
+  if (name === "search_history") {
+    const parsed = HistorySearchInputSchema.safeParse(given);
+    if (!parsed.success) return call.finish({ error: argsError(parsed.error) });
+    response = await searchHistory(deps.prisma, scope, parsed.data);
+  } else {
+    const parsed = HistoryReadInputSchema.safeParse(given);
+    if (!parsed.success) return call.finish({ error: argsError(parsed.error) });
+    response = await readHistory(deps.prisma, scope, parsed.data);
+  }
   const redacted = redactConnectorPayload(response, ctx.secrets);
   // Redaction can expand short synthetic credentials; never let Pi clip the JSON.
   if (Buffer.byteLength(JSON.stringify(redacted), "utf8") > 11_000) {

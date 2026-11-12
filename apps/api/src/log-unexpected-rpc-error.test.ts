@@ -7,7 +7,7 @@ import {
   VoiceAccountError,
 } from "@cortexai-agent-hub/adapter-kit";
 import { MODEL_IMAGE_INPUT_ERROR } from "@cortexai-agent-hub/core";
-import { IsolationError } from "@cortexai-agent-hub/db";
+import { IsolationError, SpaceDeletionInProgressError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { requestLogging } from "@cortexai-agent-hub/logging/hono";
 import { ORPCError, onError, os } from "@orpc/server";
@@ -89,6 +89,16 @@ describe("logUnexpectedRpcError", () => {
 
     expect(() => handleRpcError(rejection, ["threads", "send"])).not.toThrow();
     expect(sink.events).toEqual([]);
+  });
+
+  it("answers work refused in a Space being deleted as a conflict, without an error report", () => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] }));
+
+    expect(() => handleRpcError(new SpaceDeletionInProgressError(), ["threads", "send"])).toThrow(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    expect(sink.events.filter((event) => event.level === "error")).toEqual([]);
   });
 
   it("names the procedure and every cause behind an opaque failure", () => {

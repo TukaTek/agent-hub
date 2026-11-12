@@ -9,8 +9,8 @@ import type {
   SharedPage,
 } from "@cortexai-agent-hub/contracts";
 import { pageShareTokenFromSlug, pageShareUrl } from "@cortexai-agent-hub/contracts";
-import type { PageShareSecret, PrismaClient } from "@cortexai-agent-hub/db";
-import { IsolationError, Prisma, runAsSystem } from "@cortexai-agent-hub/db";
+import type { PageShareSecret, Prisma, PrismaClient } from "@cortexai-agent-hub/db";
+import { IsolationError, isRecordNotFound, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
 const PAGE_SHARE_SECRET_KIND = "page_share";
@@ -55,7 +55,7 @@ async function stillThere<T>(write: Promise<T>): Promise<T> {
   try {
     return await write;
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+    if (isRecordNotFound(error)) {
       throw new IsolationError();
     }
     throw error;

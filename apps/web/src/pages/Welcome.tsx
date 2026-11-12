@@ -20,10 +20,12 @@ export function WelcomePage() {
             data-testid="cortexai-logo"
             className="h-[104px] w-[104px] object-contain"
           />
+          {/* off-scale: the branded welcome hero is sized above the app type scale. */}
           <h1 className="text-center text-[48px] leading-none tracking-[-0.03em] text-foreground sm:text-left md:text-[76px]">
             CortexAI Agent Hub
           </h1>
         </div>
+        {/* off-scale: the branded welcome hero is sized above the app type scale. */}
         <p className="max-w-[600px] text-center text-[27px] leading-[1.4] text-foreground/75">
           <Trans>
             Your team of always-on agents
@@ -35,6 +37,7 @@ export function WelcomePage() {
           <button
             type="button"
             onClick={() => navigate("/sign-up")}
+            // off-scale: the welcome buttons match the branded hero.
             className="app-no-drag rounded-full bg-brand px-[34px] py-[15px] text-[19px] font-medium text-brand-foreground transition hover:scale-[1.04] hover:bg-brand/90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brand"
           >
             <Trans>Sign up</Trans>
@@ -42,6 +45,7 @@ export function WelcomePage() {
           </button>
           <Link
             to="/sign-in"
+            // off-scale: the welcome buttons match the branded hero.
             className="app-no-drag rounded-full px-[34px] py-[15px] text-[19px] text-foreground/75 transition hover:text-foreground"
           >
             <Trans>Sign in</Trans>

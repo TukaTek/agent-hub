@@ -287,7 +287,10 @@ function withEmptyModels<T extends object>(prisma: T): T {
     count: async () => 0,
     updateMany: async () => ({ count: 0 }),
   };
+  // The sender is still a member unless a case says otherwise.
+  const member = { ...empty, findUnique: async () => ({ id: "member-1" }) };
   return new Proxy(prisma, {
-    get: (target, key) => (key in target ? target[key as keyof T] : empty),
+    get: (target, key) =>
+      key in target ? target[key as keyof T] : key === "spaceMember" ? member : empty,
   });
 }

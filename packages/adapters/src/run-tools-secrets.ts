@@ -1,7 +1,7 @@
 import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
 import { BotSecretName, botSecretSubmissionSchema } from "@cortexai-agent-hub/contracts";
 import { createStreamingRedactor, displayName, redactSecrets } from "@cortexai-agent-hub/core";
-import { runCodeKind, runLoginKind, runSecretKind } from "@cortexai-agent-hub/db";
+import { runCodeKind, runLoginKind, runSecretKind, spaceIsShared } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import {
   completeExternalEffect,
@@ -385,6 +385,9 @@ export const secretTools: ToolHandlers = {
           ...(codeOrigin ? { oneTimeCode: { origin: codeOrigin } } : {}),
           ...(replaces ? { replaces } : {}),
           ...(loginFields?.labels ? { loginFields: loginFields.labels } : {}),
+          ...(loginFields && (await spaceIsShared(deps.prisma, run.spaceId))
+            ? { sharedBrowser: true as const }
+            : {}),
           purpose: codeOrigin
             ? "otp"
             : normalizeSecretAskPurpose(args.purpose ? String(args.purpose) : undefined),

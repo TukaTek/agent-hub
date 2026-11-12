@@ -197,6 +197,7 @@ export function messageReplyPreview(
   blocks: MessageBlock[],
   role: ReplyPreview["role"],
   botId?: string,
+  author?: ReplyPreview["author"],
 ): ReplyPreview {
   const attachment = replyAttachment(blocks);
   const caption = messageReplyExcerpt(
@@ -205,5 +206,12 @@ export function messageReplyPreview(
   );
   const text = caption || (attachment?.kind === "file" ? attachment.name : "");
   const page = isPageCardMessage(blocks);
-  return { role, botId, text, ...(attachment ? { attachment } : {}), ...(page ? { page } : {}) };
+  return {
+    role,
+    botId,
+    ...(author ? { author } : {}),
+    text,
+    ...(attachment ? { attachment } : {}),
+    ...(page ? { page } : {}),
+  };
 }

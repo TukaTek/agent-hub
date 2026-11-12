@@ -59,7 +59,7 @@ export function SidebarHeader({
               alt="CortexAI logo"
               className="h-7 w-7 shrink-0 object-contain"
             />
-            <span className="truncate text-[13.5px] font-semibold tracking-tight text-foreground">
+            <span className="truncate text-body font-semibold tracking-tight text-foreground">
               Agent Hub
             </span>
           </div>

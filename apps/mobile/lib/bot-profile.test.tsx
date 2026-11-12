@@ -18,6 +18,12 @@ import { queryClient } from "./query";
 import type * as RoutineHelpers from "./routine";
 import { ROUTINES_POLL_MS, ROUTINES_RETRY_MS } from "./routine-store";
 
+vi.mock("./haptics", () => ({
+  hapticImpact: vi.fn(),
+  hapticSelection: vi.fn(),
+  hapticSuccess: vi.fn(),
+}));
+
 const {
   rpc,
   push,
@@ -231,6 +237,11 @@ vi.mock("../components/native-segmented-control", () => ({
       ),
     ),
 }));
+vi.mock("../components/routine-email-trigger", () => ({ RoutineEmailTrigger: () => null }));
+vi.mock("../components/bot-email", () => ({
+  useBotEmail: () => ({ address: null, ownerDomain: "", setAddress: () => undefined }),
+  useBotEmailRows: () => [],
+}));
 vi.mock("../components/row-accessories", () => ({ Chevron: () => null }));
 
 const routine = (id: string, name: string, partial: Partial<Routine> = {}) => ({
@@ -243,6 +254,7 @@ const routine = (id: string, name: string, partial: Partial<Routine> = {}) => ({
   webhookEnabled: false,
   githubEnabled: false,
   messageProvider: null,
+  emailSenders: null,
   nextRunAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   ...partial,

@@ -21,7 +21,15 @@ import {
 import { i18n } from "@lingui/core";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { ChevronDown, CircleAlert, Lock, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  CircleAlert,
+  Lock,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  Users,
+} from "lucide-react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Suspense } from "react";
 import { IconTooltip } from "../../components/IconTooltip";
@@ -164,7 +172,7 @@ export function SidebarRoster({
                       render={
                         group.emptySpaceId ? <button type="button" /> : <CollapsibleTrigger />
                       }
-                      className={`flex min-w-0 items-center justify-between gap-2 rounded-lg px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring ${hasSpaceActions ? "col-start-1 row-start-1 w-full" : "flex-1"}`}
+                      className={`flex min-w-0 items-center justify-between gap-2 rounded-lg px-2.5 py-1 text-label font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring ${hasSpaceActions ? "col-start-1 row-start-1 w-full" : "flex-1"}`}
                       onClick={() => {
                         if (group.emptySpaceId) {
                           openSpaceChat(group.emptySpaceId, "/onboarding");
@@ -196,7 +204,11 @@ export function SidebarRoster({
                         className={`flex min-w-0 items-center gap-1.5 truncate ${hasSpaceActions ? "pe-7" : ""}`}
                       >
                         {group.showLock ? (
-                          <Lock size={11} strokeWidth={2} aria-hidden="true" />
+                          group.shared ? (
+                            <Users size={11} strokeWidth={2} aria-hidden="true" />
+                          ) : (
+                            <Lock size={11} strokeWidth={2} aria-hidden="true" />
+                          )
                         ) : null}
                         <span className="truncate">{group.title}</span>
                         {group.subtitle ? (
@@ -453,7 +465,7 @@ export function SidebarRoster({
                             <span
                               dir="auto"
                               data-roster-bot-name={item.kind === "bot" ? "" : undefined}
-                              className={`max-w-full shrink-0 truncate text-body2 text-foreground ${
+                              className={`max-w-full shrink-0 truncate text-body-sm text-foreground ${
                                 item.chat.unread ? "font-semibold" : "font-medium"
                               }`}
                             >
@@ -494,7 +506,7 @@ export function SidebarRoster({
                                     ? item.chat.status
                                     : undefined
                               }
-                              className={`mt-0.5 flex items-center gap-1 text-[11.5px] ${
+                              className={`mt-0.5 flex items-center gap-1 text-label ${
                                 rowError
                                   ? "font-medium text-destructive"
                                   : workStatusLabel

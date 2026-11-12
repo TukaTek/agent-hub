@@ -1,4 +1,3 @@
-import path from "node:path";
 import type {
   AdapterContext,
   CommandRequest,
@@ -34,6 +33,7 @@ import {
   clampRounded,
   computerObservation,
   normalizeWorkspacePath,
+  workspaceCwd,
 } from "./computer-support.js";
 import { sandboxCommandArgv } from "./sandbox-command-environment.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
@@ -204,7 +204,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       body: JSON.stringify({
         ...request,
         argv: sandboxCommandArgv(request),
-        cwd: dockerCwd(request.cwd),
+        cwd: workspaceCwd("/home/cortexai-agent-hub", request.cwd),
         timeoutMs,
       }),
       signal: context.signal,
@@ -708,13 +708,4 @@ function parseProcessLine(line: string): ProcessEvent | undefined {
     return { type: "exit", code: record.code };
   }
   return undefined;
-}
-
-function dockerCwd(cwd: string | undefined) {
-  if (!cwd || cwd === "." || cwd === "/" || cwd === "/home/cortexai-agent-hub")
-    return "/home/cortexai-agent-hub";
-  const relative = cwd.startsWith("/home/cortexai-agent-hub/")
-    ? cwd.slice("/home/cortexai-agent-hub/".length)
-    : normalizeWorkspacePath(cwd);
-  return path.posix.join("/home/cortexai-agent-hub", relative);
 }

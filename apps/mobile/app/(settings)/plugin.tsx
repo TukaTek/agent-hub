@@ -6,7 +6,11 @@ import type {
   PluginPart,
   PluginPreview,
 } from "@cortexai-agent-hub/contracts";
-import { PluginPreviewSchema } from "@cortexai-agent-hub/contracts";
+import {
+  mcpServerConnection,
+  mcpServerNeedsSignIn,
+  PluginPreviewSchema,
+} from "@cortexai-agent-hub/contracts";
 import {
   catalogItemKey,
   connectCatalogItem,
@@ -50,7 +54,7 @@ import { loadLastBotId } from "../../lib/last-bot";
 import { native, useThemedStyles } from "../../lib/native";
 import { iosAtLeast } from "../../lib/native-controls";
 import type { PluginParams } from "../../lib/plugin-marketplace";
-import { mcpServerReady, sourceHref } from "../../lib/plugin-marketplace";
+import { sourceHref } from "../../lib/plugin-marketplace";
 import { useSideInsets } from "../../lib/side-insets";
 import { errorText } from "../../lib/user-error";
 
@@ -471,10 +475,12 @@ function PluginScreen() {
                           {server.endpoint}
                         </Text>
                       </View>
-                      {mcpServerReady(server) ? <ConnectedMark label={t("Connected")} /> : null}
+                      {mcpServerConnection(server) === "connected" ? (
+                        <ConnectedMark label={t("Connected")} />
+                      ) : null}
                     </View>
                     <View style={styles.itemActions}>
-                      {mcpServerReady(server) || noAuth.has(server.id) ? null : (
+                      {!mcpServerNeedsSignIn(server) || noAuth.has(server.id) ? null : (
                         <NativeActionButton
                           busy={pending === server.id}
                           disabled={busy}

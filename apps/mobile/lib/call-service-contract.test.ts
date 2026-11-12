@@ -34,6 +34,31 @@ describe("Android call foreground service", () => {
     expect(service).toMatch(/catch \(_: Exception\)/);
   });
 
+  it("uses the saved app locale for call notification strings and keeps a supplied title", () => {
+    const service = source(
+      "java/com/tukatek/cortexai/agenthub/notifications/CortexAiAgentHubCallService.kt",
+    );
+    expect(service).toContain(
+      "val copyContext = localizedContext(this, NotificationStorage(this).locale)",
+    );
+    expect(service).toMatch(
+      /getStringExtra\(EXTRA_TITLE\)\?\.takeIf\(String::isNotBlank\) \?: copyContext\.getString\(/,
+    );
+    expect(service).toContain("createChannel(copyContext)");
+    expect(service).toContain("startForegroundCompat(copyContext, title)");
+    expect(service).toContain("private fun createChannel(copyContext: Context)");
+    expect(service).toContain(
+      "private fun startForegroundCompat(copyContext: Context, title: String)",
+    );
+    for (const key of [
+      "cortexai_agent_hub_call_title",
+      "cortexai_agent_hub_call_text",
+      "cortexai_agent_hub_call_channel",
+    ]) {
+      expect(service).toMatch(new RegExp(`copyContext\\.getString\\(\\s*R\\.string\\.${key}`));
+    }
+  });
+
   it("provides call strings in every shipped mobile locale", () => {
     const directories = {
       en: "values",

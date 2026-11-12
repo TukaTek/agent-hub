@@ -17,12 +17,11 @@ import type {
   ComputerProviderUpdate,
 } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { Prisma, runAsSystem } from "@cortexai-agent-hub/db";
+import { Prisma, runAsSystem, withTransactionRetry } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
 import { requireAdmin } from "./admins.js";
 import type { RouterDeps } from "./router.js";
-import { withSerializableRetry } from "./serializable-retry.js";
 
 export interface ComputerProviderConfigDeps {
   prisma: PrismaClient;
@@ -191,7 +190,7 @@ export async function updateComputerProviderSettings(
   let replaced: string | null | undefined;
   try {
     // Read what this save replaces in the same transaction, so concurrent saves each remove theirs.
-    replaced = await withSerializableRetry(() =>
+    replaced = await withTransactionRetry(() =>
       runAsSystem("an admin configures computers", () =>
         deps.prisma.$transaction(
           async (tx) => {
@@ -294,7 +293,7 @@ export async function updateAccountComputerSettings(
     saved = await checkedSettings(deps, actor, input, previous, true);
     const stored = await encrypt(deps, actor, saved);
     try {
-      replaced = await withSerializableRetry(() =>
+      replaced = await withTransactionRetry(() =>
         runAsSystem("an account saves computer settings", () =>
           deps.prisma.$transaction(
             async (tx) => {

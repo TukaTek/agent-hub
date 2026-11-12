@@ -5,12 +5,13 @@ import {
   crossSpaceCommunicationAllowed,
   formatMessagingLinkCode,
   issueMessagingLinkCode,
+  isUniqueViolation,
   runAsSystem,
+  spaceIsShared,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
 import type { RouterContext } from "./context.js";
-import { isUniqueViolation } from "./shared.js";
 
 export function messagingRoutes(ctx: RouterContext) {
   const { deps, authed } = ctx;
@@ -96,9 +97,11 @@ export function messagingRoutes(ctx: RouterContext) {
             spaceId: bot.spaceId,
             botId: bot.id,
           });
+          const shared = await spaceIsShared(deps.prisma, bot.spaceId);
           return {
             code: formatMessagingLinkCode(issued.code),
             expiresAt: issued.expiresAt.toISOString(),
+            ...(shared ? { shared } : {}),
           };
         }),
       },

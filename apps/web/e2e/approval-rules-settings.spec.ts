@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
 
-test("adds a tool rule and switches it between Ask and Block", async ({ page }, testInfo) => {
+test("picks a tool for a rule and moves it from Always ask to Blocked", async ({
+  page,
+}, testInfo) => {
   await signup(
     page,
     `approval-rules-${Date.now()}@cortexai-agent-hub.test`,
@@ -12,18 +14,15 @@ test("adds a tool rule and switches it between Ask and Block", async ({ page }, 
   const settings = await openUserSettings(page);
   await settings.getByTestId("settings-nav-confirmations").click();
   await settings.getByRole("button", { name: "Add rule", exact: true }).click();
-  const toolName = settings.getByRole("textbox", { name: "Tool name" });
-  await toolName.fill("write_file");
-  await settings.getByRole("button", { name: "Save", exact: true }).click();
-  const rule = settings.getByRole("group", { name: "Write file", exact: true });
-  await expect(rule.getByRole("button", { name: "Ask", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await rule.getByRole("button", { name: "Block", exact: true }).click();
-  await expect(rule.getByRole("button", { name: "Block", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await page.getByRole("combobox", { name: "Search tools" }).fill("write");
+  await page.getByRole("option", { name: "Write file", exact: true }).click();
+  const asking = settings.getByTestId("approval-rules-require_approval");
+  await expect(asking).toContainText("Write file");
+  await settings
+    .getByRole("group", { name: "Write file", exact: true })
+    .getByRole("button", { name: "Block", exact: true })
+    .click();
+  await expect(settings.getByTestId("approval-rules-deny")).toContainText("Write file");
+  await expect(asking).toHaveCount(0);
   await captureScreenshot(page, testInfo, "approval-rules-added");
 });

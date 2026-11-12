@@ -318,7 +318,7 @@ export function WeekView({
   const days = Array.from({ length: 7 }, (_, index) => addDays(first, index));
   return (
     <section
-      className="cortexai-agent-hub-cal cortexai-agent-hub-cal-timed"
+      className="cortexai-agent-hub-cal cortexai-agent-hub-cal-timed cortexai-agent-hub-cal-week"
       aria-label={words.t("weekOf", {
         date: words.date(first.getTime(), { month: "long", day: "numeric", timeZone: "UTC" }),
       })}
@@ -444,6 +444,8 @@ export const CALENDAR_CSS = `
 .cortexai-agent-hub-cal-body{position:relative;margin:9px 0;min-width:0}
 .cortexai-agent-hub-cal-hours span{position:absolute;left:0;width:52px;transform:translateY(-50%);font-size:12px;line-height:16px;text-align:right;color:var(--cortexai-agent-hub-secondary);white-space:nowrap}
 .cortexai-agent-hub-cal-columns{position:absolute;inset:0 0 0 60px;display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));border-left:1px solid var(--cortexai-agent-hub-hairline);background:repeating-linear-gradient(to bottom,var(--cortexai-agent-hub-hairline) 0 1px,transparent 1px ${HOUR_HEIGHT}px)}
+.cortexai-agent-hub-cal-week .cortexai-agent-hub-cal-columns{grid-template-columns:repeat(7,minmax(64px,1fr))}
+.cortexai-agent-hub-cal-week .cortexai-agent-hub-cal-body{min-width:508px}
 .cortexai-agent-hub-cal-columns::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--cortexai-agent-hub-hairline)}
 .cortexai-agent-hub-cal-column{position:relative;min-width:0;border-right:1px solid var(--cortexai-agent-hub-hairline)}
 .cortexai-agent-hub-cal-column[data-today]{background:color-mix(in srgb,var(--cortexai-agent-hub-c1) 4%,transparent)}

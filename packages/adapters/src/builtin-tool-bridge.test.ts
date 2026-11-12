@@ -57,9 +57,9 @@ describe("built-in tool bridge", () => {
     ]);
     // request_secret carries the card and contact kinds; update_bot carries instructions paging;
     // the history tools point at files from earlier messages; a watch says it takes no other timing;
-    // read_file takes a line range. The fork's longer product name, Office guidance and saved
-    // tool result paging add a few hundred bytes over upstream.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(33_100);
+    // read_file takes a line range; ask_user carries the content being decided about. The fork's
+    // longer product name, Office guidance and saved tool result paging add a few hundred bytes.
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(33_224);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret", "scratchpad_add"]),
     );

@@ -14,6 +14,7 @@ import type {
   PaymentWalletProvider,
   SandboxProvider,
   SecretStore,
+  TransactionalEmailProvider,
   WebProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient, RunLease, ThreadEvents } from "@cortexai-agent-hub/db";
@@ -60,6 +61,10 @@ export interface ExecutorDeps {
   onTicketChange?: TicketChangeNotifier;
   ticketBoardEnabled?: boolean;
   phoneCallsEnabled?: boolean;
+  /** The domain bot email addresses are on; absent when this server receives no email. */
+  inboundEmailDomain?: string;
+  /** Sends a bot's email from its own address; absent when this server sends no email. */
+  email?: TransactionalEmailProvider;
   phoneCallCooldownMinutes?: number;
   phoneCallRingSeconds?: number;
   /** Messaging surface; absent means zero identity queries and no chat prompts. */
