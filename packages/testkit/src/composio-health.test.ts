@@ -4,11 +4,13 @@ import path from "node:path";
 import { ComposioConnector } from "@cortexai-agent-hub/adapters";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
+import type * as ComposioModule from "../../adapters/src/composio-connector.js";
 
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
 
-vi.mock("@cortexai-agent-hub/adapters", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@cortexai-agent-hub/adapters")>()),
+// The connector stack reads this from its own module, so mock it there rather than on the barrel.
+vi.mock("../../adapters/src/composio-connector.js", async (original) => ({
+  ...(await original<typeof ComposioModule>()),
   isComposioEnabled: (apiKey: string | undefined) => Boolean(apiKey),
 }));
 
@@ -54,7 +56,7 @@ describeWithDatabase("Composio in the API connector stack", () => {
     expect(publicHealth).toEqual({ ok: true });
     expect(handles.composio).toBeInstanceOf(ComposioConnector);
     expect(composioEntries).toEqual([handles.composio]);
-    expect(health).toMatchObject({ composio: true });
+    expect(health).toMatchObject({ integrations: ["composio"] });
   });
 
   it("reports no Composio connector without the env key", async () => {
@@ -63,6 +65,6 @@ describeWithDatabase("Composio in the API connector stack", () => {
     expect(handles.composio).toBeUndefined();
     expect(composioEntries).toHaveLength(1);
     expect(composioEntries[0]).not.toBeInstanceOf(ComposioConnector);
-    expect(health).toMatchObject({ composio: false });
+    expect(health).toMatchObject({ integrations: [] });
   });
 });
