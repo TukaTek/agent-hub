@@ -42,8 +42,8 @@ export const FR_MESSAGES: Record<string, string> = {
   "Have any questions? Reply to this email.": "Des questions ? Répondez à cet e-mail.",
   Unsubscribe: "Se désabonner",
   "Invite a friend": "Invitez un ami",
-  "Invite a friend to CortexAI Agent Hub and earn a free month when they start a qualifying subscription with a new card.":
-    "Invitez un ami sur CortexAI Agent Hub et gagnez un mois gratuit lorsqu’il souscrit un abonnement éligible avec une nouvelle carte.",
+  "Invite a friend to CortexAI Agent Hub: they get {weeks} weeks free, and you earn a free month when they start a qualifying subscription with a new card.":
+    "Invitez un ami sur CortexAI Agent Hub : il profite de {weeks} semaines gratuites, et vous gagnez un mois offert quand il démarre un abonnement éligible avec une nouvelle carte.",
   "Open CortexAI Agent Hub": "Ouvrez CortexAI Agent Hub",
   "and choose Invite friends for your link.":
     "et choisissez Inviter des amis pour obtenir votre lien.",
@@ -79,4 +79,10 @@ export const FR_MESSAGES: Record<string, string> = {
     "Vos modifications de la page {name} sont approuvées.",
   "We couldn't approve your changes to the {name} page.":
     "Nous n'avons pas pu approuver vos modifications de la page {name}.",
+  "Your saved computer files will be deleted":
+    "Les fichiers enregistrés de votre ordinateur vont être supprimés",
+  "Your saved computer files will be deleted on {date} unless you resubscribe.":
+    "Les fichiers enregistrés de votre ordinateur seront supprimés le {date}, sauf si vous vous réabonnez.",
+  "Your saved computer files will be deleted on {date} unless you choose a plan.":
+    "Les fichiers enregistrés de votre ordinateur seront supprimés le {date}, sauf si vous choisissez une offre.",
 };

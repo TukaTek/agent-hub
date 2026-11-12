@@ -30,6 +30,8 @@ export interface ExecutorDeps {
    * `HubSessionUnavailableError` when Hub can't confirm a session it kept.
    */
   authorizeUserWork?: (userId: string) => Promise<boolean>;
+  /** The present moment the agent is told; evals move it to a follow-up's due time. */
+  now?: () => Date;
   maxUploadSizeBytes?: number;
   contextStrategy?: AgentContextStrategy;
   prisma: PrismaClient;

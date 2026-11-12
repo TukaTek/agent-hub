@@ -12,9 +12,11 @@ import {
   attachmentMaxBytes,
   attachmentMaxCount,
   canonicalPiProviderId,
+  resolveBotAvatarSet,
 } from "@cortexai-agent-hub/contracts";
 import { withHubModelDefaults } from "@cortexai-agent-hub/core";
 import { isAdmin } from "../admins.js";
+import { effectiveSandboxProvider } from "../computer-provider-config.js";
 import type { RouterDeps } from "../router.js";
 
 export { createAdapterContext as computerContext } from "@cortexai-agent-hub/adapter-kit";
@@ -34,12 +36,15 @@ export async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
         name: true,
         timezone: true,
         locale: true,
+        botAvatarSet: true,
         signupSurvey: { select: { userId: true } },
       },
     }),
     modelSetup(deps, actor),
     isAdmin(deps, actor.userId),
   ]);
+  // Where the deployment runs computers once an admin's choice in Settings applies.
+  const sandboxProvider = effectiveSandboxProvider(setup.settings, deps.env.sandboxProvider);
   return {
     ticketBoardEnabled: deps.env.ticketBoardEnabled === true,
     phoneCallsEnabled: deps.env.phoneCallsEnabled === true,
@@ -62,10 +67,12 @@ export async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
         Boolean(deps.env.deploymentModelHostCredentials),
       deps.env.defaultProvider,
     ),
-    computerHost: computerHostFor(setup.settings?.computerHost, deps.env.sandboxProvider),
+    computerHost: computerHostFor(setup.settings?.computerHost, sandboxProvider),
     canChooseHostComputer:
-      Boolean(deps.env.desktopHostChoiceEnabled) && deps.env.sandboxProvider === "docker",
-    sandboxProvider: deps.env.sandboxProvider,
+      Boolean(deps.env.desktopHostChoiceEnabled) && sandboxProvider === "docker",
+    // The deployment's provider: an account's own choice covers only its Team Computers.
+    sandboxProvider,
+    computerSettingsEnabled: Boolean(deps.env.computerSettingsEnabled),
     mcpStdioEnabled:
       admin &&
       mcpStdioAvailable({
@@ -73,6 +80,7 @@ export async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
         allowedCommands: deps.env.mcpStdioAllowedCommands,
       }),
     avatarStyle: "organic",
+    botAvatarSet: resolveBotAvatarSet(user.botAvatarSet),
     timezone: user.timezone ?? null,
     locale: user.locale ?? null,
     billingEnabled: Boolean(deps.billing),

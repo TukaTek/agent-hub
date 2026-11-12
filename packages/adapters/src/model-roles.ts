@@ -34,6 +34,8 @@ export function deploymentModelRole(
       backups: [],
     };
   }
+  // No computer model means the main model works the screen itself.
+  if (role === "computer") return { primary: null, backups: [] };
   // Hub's deployment default wins over the persisted one (CAAH-36).
   const settings = withHubModelDefaults(defaults.settings);
   const provider = settings?.defaultModelProvider ?? defaults.deployment?.provider;

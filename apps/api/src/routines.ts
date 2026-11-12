@@ -10,6 +10,7 @@ import {
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
+  routineScheduleDelayed,
 } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { IsolationError } from "@cortexai-agent-hub/db";
@@ -120,6 +121,10 @@ export function mapRoutine(row: {
     watchState: parseRoutineWatchState(row.watchState),
     lastRunAt: row.lastRunAt?.toISOString() ?? null,
     nextRunAt: row.nextRunAt?.toISOString() ?? null,
+    scheduleDelayed: routineScheduleDelayed({
+      active: row.active,
+      nextRunAt: row.nextRunAt?.getTime() ?? null,
+    }),
     createdAt: row.createdAt.toISOString(),
   };
 }

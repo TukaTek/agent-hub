@@ -31,4 +31,17 @@ describe("web user message links", () => {
     expect(html).toContain('class="underline"');
     expect(html).not.toContain("text-link");
   });
+
+  it("draws a sent page link as the page chip, or its plain title without an opener", () => {
+    const text = "[Plan](page:pg_1)\nnice";
+    const chip = renderToStaticMarkup(<LinkifiedText onOpenPage={() => {}}>{text}</LinkifiedText>);
+    expect(chip).toContain('class="cortexai-agent-hub-chat-page-chip"');
+    expect(chip).toContain('<span class="cortexai-agent-hub-chat-page-chip-title">Plan</span>');
+    expect(chip).not.toContain("page:pg_1");
+
+    const plain = renderToStaticMarkup(<LinkifiedText>{text}</LinkifiedText>);
+    expect(plain).not.toContain("cortexai-agent-hub-chat-page-chip");
+    expect(plain).toContain("Plan");
+    expect(plain).not.toContain("page:pg_1");
+  });
 });

@@ -15,6 +15,7 @@ export const UI_LOCALES = [
   "fr",
   "he",
   "ja",
+  "pl",
 ] as const satisfies readonly (typeof AppLocaleSchema.options)[number][];
 
 export type UiLocale = (typeof UI_LOCALES)[number];
@@ -35,6 +36,7 @@ export const UI_LOCALE_LABELS: Record<UiLocale, string> = {
   fr: "Français",
   he: "עברית",
   ja: "日本語",
+  pl: "Polski",
 };
 
 /** Normalize BCP-47 tags (`de-DE`, `ko-KR`, `pt-BR`, `zh-CN`, `es-ES`) to a supported UI locale, else `en`. */

@@ -27,7 +27,7 @@ import { HE_MESSAGES } from "./locales/he.js";
 import { HI_MESSAGES } from "./locales/hi.js";
 import { JA_MESSAGES } from "./locales/ja.js";
 import { KO_MESSAGES } from "./locales/ko.js";
-import { NL_MESSAGES } from "./locales/nl.js";
+import { PL_MESSAGES } from "./locales/pl.js";
 import { PT_BR_MESSAGES } from "./locales/pt-BR.js";
 import { RU_MESSAGES } from "./locales/ru.js";
 import { TR_MESSAGES } from "./locales/tr.js";
@@ -43,7 +43,7 @@ export const CATALOGS: Readonly<Record<string, Readonly<Record<string, string>>>
   hi: HI_MESSAGES,
   ja: JA_MESSAGES,
   ko: KO_MESSAGES,
-  nl: NL_MESSAGES,
+  pl: PL_MESSAGES,
   "pt-BR": PT_BR_MESSAGES,
   ru: RU_MESSAGES,
   tr: TR_MESSAGES,

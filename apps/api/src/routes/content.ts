@@ -3,7 +3,7 @@ import { resolveBotWorkspacePath } from "@cortexai-agent-hub/adapters";
 import type { ExportManifest } from "@cortexai-agent-hub/contracts";
 import { attachmentMaxBytes, resolveBotAvatarSet } from "@cortexai-agent-hub/contracts";
 import { AttachmentValidationError } from "@cortexai-agent-hub/core";
-import { IsolationError, parseComputerMode } from "@cortexai-agent-hub/db";
+import { IsolationError, LISTED_ARTIFACT, parseComputerMode } from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
 import {
   ArtifactListCursorError,
@@ -35,6 +35,7 @@ export function contentRoutes(ctx: RouterContext) {
             groupId: null,
             spaceId: context.actor.spaceId,
             userId: context.actor.userId,
+            ...LISTED_ARTIFACT,
           },
         });
         return rows.map((row) => ({

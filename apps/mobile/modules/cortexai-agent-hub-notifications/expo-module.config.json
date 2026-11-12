@@ -1,6 +1,10 @@
 {
-  "platforms": ["android"],
+  "platforms": ["android", "apple"],
   "android": {
     "modules": ["com.tukatek.cortexai.agenthub.notifications.CortexAiAgentHubNotificationsModule"]
+  },
+  "apple": {
+    "modules": ["CortexAiAgentHubNotificationsModule"],
+    "appDelegateSubscribers": ["CortexAiAgentHubCallsSubscriber"]
   }
 }

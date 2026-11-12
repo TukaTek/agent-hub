@@ -108,5 +108,6 @@ it.skipIf(!testDatabase)(
       await admin.end();
     }
   },
-  60_000,
+  // A fresh migration and four CLI cold starts take up to a minute on a busy CI shard.
+  180_000,
 );

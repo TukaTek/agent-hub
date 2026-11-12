@@ -55,8 +55,11 @@ describe("built-in tool bridge", () => {
       "web_search",
       "write_file",
     ]);
-    // The fork's longer product name and Office guidance add a few hundred bytes over upstream.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(31_800);
+    // request_secret carries the card and contact kinds; update_bot carries instructions paging;
+    // the history tools point at files from earlier messages; a watch says it takes no other timing;
+    // read_file takes a line range. The fork's longer product name, Office guidance and saved
+    // tool result paging add a few hundred bytes over upstream.
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(33_100);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret", "scratchpad_add"]),
     );

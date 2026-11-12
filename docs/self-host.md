@@ -19,7 +19,7 @@ Requires Docker Engine 26+ (API 1.45+ for bot home volume subpaths), the Compose
 
 ```bash
 mkdir -p cortexai-agent-hub && cd cortexai-agent-hub &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/cortexai-agent-hub/main/infra/compose/install-images.sh &&
+curl -fsSLO https://raw.githubusercontent.com/TukaTek/agent-hub/main/infra/compose/install-images.sh &&
 bash install-images.sh
 ```
 

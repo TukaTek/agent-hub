@@ -6,6 +6,8 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import { cancelResponseBody, readBoundedJsonResponse } from "@cortexai-agent-hub/core";
 
+const MAX_RESPONSE_BYTES = 4_096;
+
 interface ResendEmailConfig {
   apiKey: string;
   from: string;
@@ -88,7 +90,7 @@ export class ResendEmailProvider implements TransactionalEmailProvider {
           signal,
         });
         if (response.ok) {
-          const result: unknown = await response.json();
+          const result: unknown = await readBoundedJsonResponse(response, MAX_RESPONSE_BYTES);
           if (
             typeof result === "object" &&
             result !== null &&
@@ -119,7 +121,7 @@ export class ResendEmailProvider implements TransactionalEmailProvider {
 
 /** Resend's error name and message, without addresses: the message can quote a recipient. */
 async function errorDetail(response: Response): Promise<string> {
-  const body: unknown = await readBoundedJsonResponse(response, 4_096).catch(() => {
+  const body: unknown = await readBoundedJsonResponse(response, MAX_RESPONSE_BYTES).catch(() => {
     cancelResponseBody(response);
     return undefined;
   });

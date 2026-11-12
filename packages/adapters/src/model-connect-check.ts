@@ -1,7 +1,7 @@
 import type { AgentRunModel } from "@cortexai-agent-hub/adapter-kit";
 import { MODEL_REQUEST_LIMIT_ERROR, normalizeRunError } from "@cortexai-agent-hub/core";
 import type { Context } from "@earendil-works/pi-ai";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { withChatCompletionsCompatibility } from "./chat-completions-compat.js";
 import { withCloudflareAuth } from "./cloudflare-ai-gateway.js";
 import { resolveRuntimeModel } from "./pi-runtime-models.js";

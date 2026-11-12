@@ -54,9 +54,20 @@
           "microphonePermission": "CortexAI Agent Hub uses the microphone for voice calls with your bots."
         }
       ],
+      "./plugins/with-share-extension",
       [
         "expo-sharing",
         {
+          "ios": {
+            "enabled": true,
+            "appGroupId": "group.com.tukatek.cortexai.agenthub",
+            "activationRule": {
+              "supportsText": true,
+              "supportsWebUrlWithMaxCount": 1,
+              "supportsImageWithMaxCount": 10,
+              "supportsFileWithMaxCount": 10
+            }
+          },
           "android": {
             "enabled": true,
             "singleShareMimeTypes": [
@@ -82,10 +93,14 @@
       "./plugins/with-worklets-headers",
       "./plugins/with-scene-lifecycle",
       "./plugins/with-lan-cleartext",
+      "./plugins/with-android-no-gwp-asan",
+      "./plugins/with-agent-notifications",
+      "./plugins/with-android-r8",
       "./plugins/with-app-intents"
     ],
     "locales": {
-      "es": "./locales/es.json"
+      "es": "./locales/es.json",
+      "pl": "./locales/pl.json"
     },
     "ios": {
       "bundleIdentifier": "com.tukatek.cortexai.agenthub",
@@ -101,7 +116,13 @@
         "NSLocalNetworkUsageDescription": "CortexAI Agent Hub connects to a self-hosted CortexAI Agent Hub server on your local network.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
-        }
+        },
+        "UIBackgroundModes": ["voip", "audio", "remote-notification"],
+        "NSUserActivityTypes": ["INSendMessageIntent"]
+      },
+      "entitlements": {
+        "com.apple.developer.usernotifications.time-sensitive": true,
+        "com.apple.developer.usernotifications.communication": true
       }
     },
     "android": {
@@ -130,6 +151,20 @@
                 {
                   "targetName": "CortexAiAgentHubWidgets",
                   "bundleIdentifier": "com.tukatek.cortexai.agenthub.widgets"
+                },
+                {
+                  "targetName": "expo-sharing-extension",
+                  "bundleIdentifier": "com.tukatek.cortexai.agenthub.expo-sharing-extension",
+                  "entitlements": {
+                    "com.apple.security.application-groups": ["group.com.tukatek.cortexai.agenthub"]
+                  }
+                },
+                {
+                  "targetName": "AgentNotifications",
+                  "bundleIdentifier": "com.tukatek.cortexai.agenthub.notifications",
+                  "entitlements": {
+                    "com.apple.developer.usernotifications.communication": true
+                  }
                 }
               ]
             }

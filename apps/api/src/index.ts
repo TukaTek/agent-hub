@@ -13,7 +13,7 @@ import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
 import { HUB_POLICY_RESTART_EXIT_CODE, startApiHubPolicy } from "./hub-policy.js";
 
-const logger = createRootLogger(SERVICE_NAMES.api);
+const logger = await createRootLogger(SERVICE_NAMES.api);
 
 try {
   // Bound once shutdown exists; a restart before then simply exits.

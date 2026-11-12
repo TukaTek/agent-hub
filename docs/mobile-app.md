@@ -5,7 +5,7 @@ Chat with your bots, answer their questions, watch their computers and take call
 ## Install
 
 - iPhone: [App Store](https://apps.apple.com/app/cortexai-agent-hub/id6801531099).
-- Android: [download the APK](https://github.com/TukaTek/agent-hub/releases/download/android/cortexai-agent-hub.apk).
+- Android: [APK](https://github.com/TukaTek/agent-hub/releases/download/android/cortexai-agent-hub.apk).
 
 You can also choose **Get the mobile app** from the account menu in the web or desktop app.
 

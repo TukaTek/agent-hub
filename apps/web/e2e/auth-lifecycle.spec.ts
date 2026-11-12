@@ -1,6 +1,12 @@
 import type { Request } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup, signupThroughForm } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  showPasswordForm,
+  signup,
+  signupThroughForm,
+} from "./helpers";
 
 test(
   "sign-up stays blank until session and sign-in options are ready",
@@ -110,7 +116,7 @@ test(
 );
 
 test(
-  "signed-out welcome fits a narrow phone and offers sign in",
+  "a new visitor opening the app lands on sign up, fits a narrow phone, and can switch to sign in",
   { tag: "@nightly" },
   async ({ page }, testInfo) => {
     await page.route("**/api/auth/get-session**", (route) => route.fulfill({ json: null }));
@@ -121,12 +127,13 @@ test(
     );
     await page.setViewportSize({ width: 320, height: 640 });
     await page.goto("/");
-    const main = page.getByRole("main");
-    await expect(main.getByRole("heading", { name: "CortexAI Agent Hub", level: 1 })).toBeVisible();
-    await expect(main.getByRole("button", { name: "Sign up", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/sign-up$/);
+    await expect(
+      page.getByRole("heading", { name: "Create your CortexAI Agent Hub" }),
+    ).toBeVisible();
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 320);
-    await captureScreenshot(page, testInfo, "logged-out-welcome-phone");
-    await main.getByRole("link", { name: "Sign in", exact: true }).click();
+    await captureScreenshot(page, testInfo, "logged-out-sign-up-phone");
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
     await expect(page).toHaveURL(/\/sign-in$/);
     await expect(
       page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" }),
@@ -134,13 +141,21 @@ test(
   },
 );
 
+test("a deactivated account's sign-in says so", async ({ page }, testInfo) => {
+  await page.route("**/api/auth/get-session**", (route) => route.fulfill({ json: null }));
+  // Where a refused SSO sign-in lands; password and code sign-in show the same text.
+  await page.goto("/sign-in?error=ACCOUNT_DEACTIVATED");
+  await expect(page.getByText("This account is deactivated")).toBeVisible();
+  await captureScreenshot(page, testInfo, "sign-in-account-deactivated");
+});
+
 test("an unknown page offers a way home", async ({ page }, testInfo) => {
   await page.route("**/api/auth/get-session**", (route) => route.fulfill({ json: null }));
   await page.goto("/no-such-page");
   await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
   await captureScreenshot(page, testInfo, "not-found");
   await page.getByRole("link", { name: "Go home" }).click();
-  await expect(page.locator('[data-cortexai-agent-hub-surface="welcome"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/sign-up$/);
 });
 
 test("logout protects bot deep links and sign-in restores the session", async ({
@@ -177,7 +192,6 @@ test("logout protects bot deep links and sign-in restores the session", async ({
 
   await page.getByRole("button", { name: new RegExp(userName, "i") }).click();
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Usage", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
   await captureScreenshot(page, testInfo, "36-account-menu");
 
@@ -207,6 +221,7 @@ test("logout protects bot deep links and sign-in restores the session", async ({
   await Promise.all(refreshes);
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 250)));
   expect(pageErrors).toEqual([]);
+  // Someone who has signed in here before reopens the app to sign in, not to a new account.
   await page.goto("/");
   await expect(page.locator('[data-cortexai-agent-hub-surface="welcome"]')).toBeVisible();
   await expect(page.getByText(/Your team of always-on agents/)).toBeVisible();

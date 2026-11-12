@@ -1,4 +1,4 @@
-/** Persisted Codex-style recency mode for the sidebar Now/Recent list. Default off. */
+/** Persisted Codex-style recency mode for the sidebar activity sections. Default off. */
 export const ACTIVITY_MODE_KEY = "cortexai-agent-hub.activity-mode";
 
 export function readActivityMode(): boolean {

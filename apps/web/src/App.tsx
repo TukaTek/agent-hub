@@ -28,6 +28,7 @@ import { markAfterPaint, markOnce } from "./lib/performance";
 import { lazyComponent } from "./lib/preload-recovery";
 import { QueryUserProvider, setQueryUser } from "./lib/query";
 import { getRemoteImagesEnabled, subscribeRemoteImages } from "./lib/remote-images-preference";
+import { rememberSignedIn } from "./lib/returning-user";
 import { rpc } from "./lib/rpc";
 import {
   holdAnonymousGate,
@@ -41,6 +42,7 @@ import { completeSsoCallback, SSO_CALLBACK_PATH } from "./lib/sso-flow";
 import { IntegrationCallbackPage } from "./pages/IntegrationCallback";
 import { IntegrationSetupPage } from "./pages/IntegrationSetup";
 import { McpOAuthCallbackPage } from "./pages/McpOAuthCallback";
+import { SharedPagePage } from "./pages/SharedPage";
 import { ShellPage } from "./pages/Shell";
 import { SlackInstallCallbackPage } from "./pages/SlackInstallCallback";
 
@@ -152,6 +154,7 @@ function SessionApp() {
     syncWebLogoAvatarIdentity(analyticsUserId ?? null);
     syncCallIdentity(analyticsUserId ?? null);
     syncLogOutFailure(gate === "authenticated");
+    if (gate === "authenticated") rememberSignedIn();
   }, [gate, analyticsUserId]);
   useEffect(() => {
     if (gate === "authenticated" || gate === "anonymous") setQueryUser(analyticsUserId ?? null);
@@ -212,6 +215,7 @@ function SessionApp() {
                 }
               />
               <Route path="/reset-password" element={<PasswordResetPage />} />
+              <Route path="/p/:slugToken" element={<SharedPagePage />} />
               <Route
                 path={MCP_OAUTH_CALLBACK_PATH}
                 element={

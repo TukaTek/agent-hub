@@ -33,6 +33,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -44,6 +45,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 private class ApiException(val status: Int) : IOException()
+private const val MAX_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 
 class CortexAiAgentHubNotificationService : Service() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -64,12 +66,12 @@ class CortexAiAgentHubNotificationService : Service() {
       manager.cancelAll()
       state.edit().putBoolean(THREAD_NOTIFICATION_IDS, true).apply()
     }
-    createChannels(localizedContext(NotificationStorage(this).locale))
+    createCortexAiAgentHubChannels(this)
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     // Channel names follow the current locale; recreating an existing channel updates its copy.
-    createChannels(localizedContext(NotificationStorage(this).locale))
+    createCortexAiAgentHubChannels(this)
     val generation = synchronized(sessionLock) {
       if (intent?.getBooleanExtra(EXTRA_RESET_TOKEN, false) == true) tokenCache.reset()
       intent?.getStringExtra(EXTRA_MUTED_BOT_ID)?.let { botId ->
@@ -123,7 +125,7 @@ class CortexAiAgentHubNotificationService : Service() {
         return
       }
       val seeded = prepareHistorySpace(generation, storage.endpoint, storage.spaceId, token) ?: return
-      val copyContext = localizedContext(storage.locale)
+      val copyContext = localizedContext(this, storage.locale)
       var recentPageBusy = true
       try {
         if (generation != sessionGeneration.get()) return
@@ -349,9 +351,7 @@ class CortexAiAgentHubNotificationService : Service() {
     manager.cancel(LIVE_NOTIFICATION_ID)
   }
 
-  private fun isOpenThread(run: RunRecord): Boolean = synchronized(sessionLock) {
-    if (openThreadId != null) openThreadId == run.threadId else openBotId == run.botId
-  }
+  private fun isOpenThread(run: RunRecord): Boolean = isOpenThread(run.botId, run.threadId)
 
   @Suppress("DEPRECATION")
   private fun builder(channel: String): Notification.Builder =
@@ -379,39 +379,6 @@ class CortexAiAgentHubNotificationService : Service() {
     )
   }
 
-  private fun localizedContext(tag: String): Context {
-    if (tag.isBlank()) return this
-    val configuration = Configuration(resources.configuration)
-    configuration.setLocale(Locale.forLanguageTag(tag))
-    return createConfigurationContext(configuration)
-  }
-
-  private fun createChannels(context: Context) {
-    if (Build.VERSION.SDK_INT < 26) return
-    listOf(
-      NotificationChannel(
-        Channels.LIVE,
-        context.getString(R.string.cortexai_agent_hub_channel_live),
-        NotificationManager.IMPORTANCE_LOW,
-      ),
-      NotificationChannel(
-        Channels.MESSAGES,
-        context.getString(R.string.cortexai_agent_hub_channel_messages),
-        NotificationManager.IMPORTANCE_DEFAULT,
-      ),
-      NotificationChannel(
-        Channels.SCHEDULED,
-        context.getString(R.string.cortexai_agent_hub_channel_scheduled),
-        NotificationManager.IMPORTANCE_DEFAULT,
-      ),
-      NotificationChannel(
-        Channels.ATTENTION,
-        context.getString(R.string.cortexai_agent_hub_channel_attention),
-        NotificationManager.IMPORTANCE_HIGH,
-      ),
-    ).forEach(manager::createNotificationChannel)
-  }
-
   private fun stop() {
     stopForeground(STOP_FOREGROUND_REMOVE)
     stopSelf()
@@ -433,7 +400,7 @@ class CortexAiAgentHubNotificationService : Service() {
     private const val SEEN_RUNS = "seen_runs"
     private const val SEEN_RUNS_SEEDED = "seen_runs_seeded"
     private const val SEEN_RUNS_SPACE_ID = "seen_runs_space_id"
-    private const val EXTRA_RUN_ID = "cortexai-agent-hub.runId"
+    internal const val EXTRA_RUN_ID = "cortexai-agent-hub.runId"
     private const val THREAD_NOTIFICATION_IDS = "thread_notification_ids"
     private val sessionLock = Any()
     private val sessionGeneration = AtomicLong()
@@ -454,13 +421,19 @@ class CortexAiAgentHubNotificationService : Service() {
       context.stopService(Intent(context, CortexAiAgentHubNotificationService::class.java))
     }
 
+    fun isOpenThread(botId: String, threadId: String): Boolean = synchronized(sessionLock) {
+      if (openThreadId != null) openThreadId == threadId else openBotId == botId
+    }
+
     fun setOpenThread(context: Context, botId: String?, threadId: String?) {
       synchronized(sessionLock) {
         openBotId = botId
         openThreadId = threadId
       }
       if (threadId != null) {
-        context.getSystemService(NotificationManager::class.java).cancel(threadId.hashCode())
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.cancel(threadId.hashCode())
+        manager.cancel(SenderPush.notificationId(threadId))
       }
       start(context, resetToken = false, action = ACTION_THREAD_CHANGED)
     }
@@ -499,7 +472,7 @@ private fun attentionCopy(context: Context, run: RunRecord): NotificationCopy = 
   )
 }
 
-private object Channels {
+internal object Channels {
   const val LIVE = "cortexai_agent_hub_live"
   const val MESSAGES = "cortexai_agent_hub_messages"
   const val SCHEDULED = "cortexai_agent_hub_scheduled"
@@ -1013,7 +986,7 @@ internal fun markdownToPreview(markdown: String): String {
   return restore(text).replace(Regex("\\s+"), " ").trim()
 }
 
-private fun rpc(
+internal fun rpc(
   endpoint: String,
   token: String,
   spaceId: String,
@@ -1043,7 +1016,17 @@ private fun rpc(
     }
     val status = connection.responseCode
     if (status !in 200..299) throw ApiException(status)
-    val body = connection.inputStream.bufferedReader().use { it.readText() }
+    val body = connection.inputStream.use { stream ->
+      val bytes = ByteArrayOutputStream()
+      val buffer = ByteArray(8_192)
+      while (true) {
+        val count = stream.read(buffer, 0, minOf(buffer.size, MAX_RPC_RESPONSE_BYTES - bytes.size() + 1))
+        if (count == -1) break
+        if (bytes.size() + count > MAX_RPC_RESPONSE_BYTES) throw IOException("Server response too large")
+        bytes.write(buffer, 0, count)
+      }
+      bytes.toString(Charsets.UTF_8.name())
+    }
     val root = try {
       JSONObject(body)
     } catch (_: JSONException) {
@@ -1073,3 +1056,37 @@ private fun JSONObject.requiredString(name: String): String =
 
 private fun JSONObject.optionalString(name: String): String? =
   if (isNull(name)) null else optString(name).takeIf(String::isNotBlank)
+
+internal fun localizedContext(base: Context, tag: String): Context {
+  if (tag.isBlank()) return base
+  val configuration = Configuration(base.resources.configuration)
+  configuration.setLocale(Locale.forLanguageTag(tag))
+  return base.createConfigurationContext(configuration)
+}
+
+internal fun createCortexAiAgentHubChannels(base: Context) {
+  if (Build.VERSION.SDK_INT < 26) return
+  val context = localizedContext(base, NotificationStorage(base).locale)
+  listOf(
+    NotificationChannel(
+      Channels.LIVE,
+      context.getString(R.string.cortexai_agent_hub_channel_live),
+      NotificationManager.IMPORTANCE_LOW,
+    ),
+    NotificationChannel(
+      Channels.MESSAGES,
+      context.getString(R.string.cortexai_agent_hub_channel_messages),
+      NotificationManager.IMPORTANCE_DEFAULT,
+    ),
+    NotificationChannel(
+      Channels.SCHEDULED,
+      context.getString(R.string.cortexai_agent_hub_channel_scheduled),
+      NotificationManager.IMPORTANCE_DEFAULT,
+    ),
+    NotificationChannel(
+      Channels.ATTENTION,
+      context.getString(R.string.cortexai_agent_hub_channel_attention),
+      NotificationManager.IMPORTANCE_HIGH,
+    ),
+  ).forEach(context.getSystemService(NotificationManager::class.java)::createNotificationChannel)
+}

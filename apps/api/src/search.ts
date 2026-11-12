@@ -12,6 +12,7 @@ import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   contentEncryptionOf,
   INDEXED_MESSAGE,
+  LISTED_ARTIFACT,
   Prisma,
   UNINDEXED_MESSAGE,
 } from "@cortexai-agent-hub/db";
@@ -195,6 +196,7 @@ export async function querySpaceSearch(
       botId: { not: null },
       name: { contains: likeQuery, mode: "insensitive" },
       bot: { archivedAt: null },
+      ...LISTED_ARTIFACT,
     },
     include: { bot: { select: { name: true } } },
     take: SEARCH_LIMIT,
@@ -235,6 +237,7 @@ export async function querySpaceSearch(
       userId: actor.userId,
       groupId: { in: openableGroupIds },
       name: { contains: likeQuery, mode: "insensitive" },
+      ...LISTED_ARTIFACT,
     },
     include: { group: { select: { name: true } } },
     take: SEARCH_LIMIT,

@@ -215,6 +215,20 @@ describeWithDatabase("structured @ mention targets", () => {
       expect(await prisma.run.count({ where: { routineId: digest.id } })).toBe(2);
     });
 
+    it("treats stop sent with a routine as a message, so the routine still runs", async () => {
+      const { cookie, bot, digest } = await owner("Stop");
+      const sent = await rpc<Receipt>(app, cookie, "threads/sendWithRoutines", {
+        botId: bot.id,
+        clientNonce: `send-stop-${stamp}`,
+        text: "stop",
+        routineIds: [digest.id],
+      });
+      const [routineRun] = sent.routineRunIds;
+      expect((await prisma.run.findUniqueOrThrow({ where: { id: routineRun! } })).status).not.toBe(
+        "cancelled",
+      );
+    });
+
     it.each([
       ["routines-only", {}],
       ["with-text", { text: "and the notes" }],
@@ -451,7 +465,7 @@ describeWithDatabase("structured @ mention targets", () => {
     expect(botHasMessage).toBe(false);
   });
 
-  it("wakes exactly one bot on an unmentioned group send", async () => {
+  it("wakes every member, each free to stay silent, on an unmentioned group send", async () => {
     const cookie = await signup(
       app,
       `mention-group-default-${stamp}@cortexai-agent-hub.test`,
@@ -479,10 +493,13 @@ describeWithDatabase("structured @ mention targets", () => {
       where: { threadId: group.threadId, trigger: "user" },
     });
     await rpc(app, cookie, "threads/send", { groupId: group.id, text: "hello team" });
-    const after = await prisma.run.count({
+    const runs = await prisma.run.findMany({
       where: { threadId: group.threadId, trigger: "user" },
+      select: { botId: true, groupReplyOptional: true },
     });
-    expect(after - before).toBe(1);
+    expect(runs.length - before).toBe(2);
+    expect(runs.map((run) => run.botId).sort()).toEqual([botA.id, botB.id].sort());
+    expect(runs.every((run) => run.groupReplyOptional)).toBe(true);
   });
 
   it("wakes a mentioned group member from typed bot chips and ignores non-members", async () => {

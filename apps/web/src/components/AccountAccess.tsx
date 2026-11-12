@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchAccountSecurity, requestAccountDeletionCode } from "../lib/account-security";
 import { authClient } from "../lib/auth";
 import { clearComposerDrafts } from "../lib/composer-draft";
+import { forgetSignedIn } from "../lib/returning-user";
 import { runSsoFlow } from "../lib/sso-flow";
 import { authErrorText } from "../lib/user-error";
 import { SettingsRow } from "./SettingsRows";
@@ -206,6 +207,7 @@ export function DeleteAccountForm({
                 if (result.error)
                   throw new Error(authErrorText(result.error, t`Could not continue`));
                 clearComposerDrafts();
+                forgetSignedIn();
                 window.location.assign("/sign-in");
               })
             }

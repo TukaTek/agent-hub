@@ -1,5 +1,6 @@
 import { posix as posixPath } from "node:path";
 import type { AgentRunRequest, ComputerRef } from "@cortexai-agent-hub/adapter-kit";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import {
   inferAttachmentMimeType,
@@ -9,11 +10,12 @@ import {
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { attachFailure, unsupportedAttachmentError } from "./attach-file-errors.js";
 import { resolveBotWorkspacePath } from "./computer-support.js";
-import { desktopProtectionGuardMessage } from "./desktop-command-guard.js";
+import { desktopGuardApplies, desktopProtectionGuardMessage } from "./desktop-command-guard.js";
 import { protectedActivateScriptWriteRefusal } from "./desktop-guard-words.js";
 import { generateMediaFromTool } from "./media-generation-tools.js";
+import { mediaDelivery, scheduleMediaPoll } from "./media-video-poll.js";
 import type { RunContext } from "./run-context.js";
-import { persistMessageInTransaction, publishMessage } from "./run-messages.js";
+import { publishMessage } from "./run-messages.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
 import { recordComputerAction } from "./run-tools-computer.js";
 import { attachWorkspaceFileToThread } from "./thread-artifacts.js";
@@ -33,6 +35,8 @@ import {
   renderPlotFromTool,
   resolveFileToolPath,
 } from "./workspace-file-tools.js";
+
+export type AttachmentBlock = Extract<MessageBlock, { kind: "image" | "file" }>;
 
 function runWorkspace(ctx: RunContext, call: Pick<ToolCall, "name">): RunWorkspace {
   return {
@@ -138,7 +142,7 @@ export function createToolResultSpill(
 
 /** Generate an image or video, or with recoverOnly, only resume a job an earlier attempt started. */
 export async function callMediaTool(ctx: RunContext, call: ToolCall, recoverOnly = false) {
-  const { deps, run, bot, thread, context } = ctx;
+  const { deps, run, thread, context } = ctx;
   const { name, args, executionId, applied } = call;
   const mediaGeneration = ctx.providers.mediaGeneration;
   if (
@@ -148,8 +152,7 @@ export async function callMediaTool(ctx: RunContext, call: ToolCall, recoverOnly
     !deps.artifacts
   )
     return { error: "Media generation is unavailable." };
-  const artifacts = deps.artifacts;
-  return generateMediaFromTool({
+  const result = await generateMediaFromTool({
     name,
     args,
     executionId: applied?.effect.id ?? executionId,
@@ -158,53 +161,23 @@ export async function callMediaTool(ctx: RunContext, call: ToolCall, recoverOnly
     prisma: deps.prisma,
     context,
     run,
-    attach: (output, fileName, job) =>
-      attachWorkspaceFileToThread(
-        { prisma: deps.prisma, artifacts, maxUploadSizeBytes: deps.maxUploadSizeBytes },
-        {
-          spaceId: run.spaceId,
-          userId: run.userId,
-          botId: bot.id,
-          groupId: thread.groupId ?? undefined,
-          runId: run.id,
-          filePath: fileName,
-          bytes: output.bytes,
-          operationId: executionId,
-          onAttached: async (tx, artifact) => {
-            const checkpointed = await tx.externalEffect.updateMany({
-              where: {
-                id: job.id,
-                status: { not: "media_completed" },
-                result: { equals: job.result },
-              },
-              data: {
-                status: "media_polling",
-                result: { ...job.result, artifactId: artifact.id },
-              },
-            });
-            if (!checkpointed.count) throw new Error("Media attachment was already checkpointed");
-          },
-        },
-      ),
-    publish: async (block, jobId, artifactId) => {
-      const committed = await deps.prisma.$transaction(async (tx) => {
-        // Commit completion with the message so a restarted poll cannot post twice.
-        const claimed = await tx.externalEffect.updateMany({
-          where: { id: jobId, status: { not: "media_completed" } },
-          data: {
-            status: "media_completed",
-            result: { provider: mediaGeneration.id, artifactId },
-          },
-        });
-        if (!claimed.count) return null;
-        return persistMessageInTransaction(tx, run, "bot", [block]);
-      });
-      if (committed)
-        await deps.events
-          .notify(run.threadId, committed.eventSeq, committed.firstResponseRunId)
-          .catch(() => undefined);
-    },
+    threadGeneration: thread.historyCompactionGeneration,
+    ...mediaDelivery({ ...deps, artifacts: deps.artifacts }, run, {
+      providerId: mediaGeneration.id,
+      groupId: thread.groupId ?? undefined,
+      operationId: executionId,
+    }),
   });
+  // The run may end before the video does, so a background poll posts it when it is ready.
+  if (
+    result &&
+    "jobId" in result &&
+    result.jobId &&
+    "status" in result &&
+    (result.status === "queued" || result.status === "running")
+  )
+    await scheduleMediaPoll(deps.jobs, result.jobId);
+  return result;
 }
 
 async function generateMedia(ctx: RunContext, call: ToolCall) {
@@ -229,7 +202,7 @@ export const fileTools: ToolHandlers = {
     const { deps, bot, context } = ctx;
     const { name, args } = call;
     const filePath = String(args.path ?? "notes/result.txt");
-    if (ctx.computer.graphical) {
+    if (desktopGuardApplies(ctx.computer)) {
       const activateRefusal = protectedActivateScriptWriteRefusal(filePath);
       if (activateRefusal) {
         return call.finish({ error: desktopProtectionGuardMessage(activateRefusal) });
@@ -261,61 +234,98 @@ export const fileTools: ToolHandlers = {
     return renderPlotFromTool(deps, run, args, executionId, workspace, call.finish);
   },
   async attach_file(ctx, call) {
-    const { deps, run, bot, thread, context } = ctx;
-    const { name, args, executionId } = call;
-    const filePath = String(args.path ?? "");
+    const { deps, run, bot, thread } = ctx;
+    const filePath = String(call.args.path ?? "");
     // The activity log shows the short reason; the model also gets the delivery guidance.
-    const failAttach = async (error: string, modelError = attachFailure(error)) => {
+    const fail = async (error: string, modelError = attachFailure(error)) => {
       await recordComputerAction(ctx, call, "attach_file", filePath, { error });
       return call.finish({ error: modelError, path: filePath });
     };
-    if (!deps.artifacts) return failAttach("artifact storage unavailable");
-    const storedPath = resolveFileToolPath(runWorkspace(ctx, call), filePath);
-    let bytes: Uint8Array;
-    const tooLarge = "file exceeds the 10 MiB attachment limit";
+    const read = await readWorkspaceFile(ctx, call, filePath);
+    if ("error" in read) return fail(read.error, read.modelError);
     try {
-      bytes = await deps.sandbox.readFile(
-        await ctx.computer.get("tool", name),
-        storedPath,
-        context,
-        { maxBytes: deps.maxUploadSizeBytes ?? ATTACHMENT_MAX_BYTES },
-      );
-    } catch (error) {
-      if (error instanceof Error && /exceeds \d+ bytes/.test(error.message)) {
-        return failAttach(tooLarge);
-      }
-      return failAttach("file not found or unreadable");
-    }
-    if (bytes.byteLength > ATTACHMENT_MAX_BYTES) return failAttach(tooLarge);
-    const mimeType = inferAttachmentMimeType(filePath);
-    if (!mimeType) {
-      return failAttach("unsupported attachment type", unsupportedAttachmentError(filePath));
-    }
-    try {
-      const attached = await attachWorkspaceFileToThread(
+      const saved = await saveWorkspaceFile(
+        ctx,
+        call,
+        filePath,
+        read.bytes,
+        { botId: bot.id, groupId: thread.groupId ?? undefined },
         {
-          prisma: deps.prisma,
-          artifacts: deps.artifacts,
-          maxUploadSizeBytes: deps.maxUploadSizeBytes,
-        },
-        {
-          spaceId: run.spaceId,
-          userId: run.userId,
-          botId: bot.id,
-          groupId: thread.groupId ?? undefined,
-          runId: run.id,
-          filePath,
-          bytes,
-          operationId: executionId,
-          name: typeof args.name === "string" ? args.name : undefined,
-          description: typeof args.description === "string" ? args.description : undefined,
+          name: typeof call.args.name === "string" ? call.args.name : undefined,
+          description:
+            typeof call.args.description === "string" ? call.args.description : undefined,
         },
       );
-      await publishMessage(deps, run, "bot", [attached.block]);
+      await publishMessage(deps, run, "bot", [saved.block]);
       await recordComputerAction(ctx, call, "attach_file", filePath);
-      return call.finish({ ok: true, artifactId: attached.artifactId, path: filePath });
+      return call.finish({ ok: true, artifactId: saved.artifactId, path: filePath });
     } catch (error) {
-      return failAttach(error instanceof Error ? error.message : "could not attach file");
+      return fail(error instanceof Error ? error.message : "could not attach file");
     }
   },
 };
+
+/** Read a file from this bot's computer that can become an attachment, without saving it. */
+export async function readWorkspaceFile(
+  ctx: RunContext,
+  call: ToolCall,
+  filePath: string,
+): Promise<{ error: string; modelError?: string } | { bytes: Uint8Array }> {
+  const { deps, context } = ctx;
+  if (!deps.artifacts) return { error: "artifact storage unavailable" };
+  const storedPath = resolveFileToolPath(runWorkspace(ctx, call), filePath);
+  const tooLarge = "file exceeds the 10 MiB attachment limit";
+  let bytes: Uint8Array;
+  try {
+    bytes = await deps.sandbox.readFile(
+      await ctx.computer.get("tool", call.name),
+      storedPath,
+      context,
+      { maxBytes: deps.maxUploadSizeBytes ?? ATTACHMENT_MAX_BYTES },
+    );
+  } catch (error) {
+    if (error instanceof Error && /exceeds \d+ bytes/.test(error.message)) {
+      return { error: tooLarge };
+    }
+    return { error: "file not found or unreadable" };
+  }
+  if (bytes.byteLength > ATTACHMENT_MAX_BYTES) return { error: tooLarge };
+  if (!inferAttachmentMimeType(filePath)) {
+    return {
+      error: "unsupported attachment type",
+      modelError: unsupportedAttachmentError(filePath),
+    };
+  }
+  return { bytes };
+}
+
+/**
+ * Save a file read from this bot's computer as an attachment of the chat that will show it:
+ * a bot's own chat, or a group's.
+ */
+export async function saveWorkspaceFile(
+  ctx: RunContext,
+  call: ToolCall,
+  filePath: string,
+  bytes: Uint8Array,
+  owner: { botId: string; groupId?: string },
+  meta: { name?: string; description?: string } = {},
+): Promise<{ artifactId: string; block: AttachmentBlock }> {
+  const { deps, run } = ctx;
+  if (!deps.artifacts) throw new Error("artifact storage unavailable");
+  return attachWorkspaceFileToThread(
+    { prisma: deps.prisma, artifacts: deps.artifacts, maxUploadSizeBytes: deps.maxUploadSizeBytes },
+    {
+      spaceId: run.spaceId,
+      userId: run.userId,
+      botId: owner.botId,
+      groupId: owner.groupId,
+      runId: run.id,
+      filePath,
+      bytes,
+      operationId: call.executionId,
+      name: meta.name,
+      description: meta.description,
+    },
+  );
+}

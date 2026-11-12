@@ -9,6 +9,7 @@ import {
   messageBlockForArtifact,
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { accountDeactivated } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
 export const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
@@ -204,7 +205,8 @@ export async function loadWebhookTarget(
     },
   });
 
-  if (!bot?.thread || !bot.webhookSecretId) {
+  // A deactivated owner's bot takes no deliveries; callers see the usual unauthorized reply.
+  if (!bot?.thread || !bot.webhookSecretId || (await accountDeactivated(deps.prisma, bot.userId))) {
     cache.delete(botId);
     return null;
   }

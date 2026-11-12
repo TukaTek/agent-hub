@@ -335,7 +335,8 @@ async function prepareChildRoutine(
   if (hidden) return refuse(hidden);
   const namedRoutine = CreateRoutineInput.shape.name.safeParse(name);
   if (!namedRoutine.success) return refuse(`name: ${issueMessage(namedRoutine.error)}`);
-  const timezone = text(args.timezone) ?? (await userTimeZone(deps.prisma, run.userId));
+  const namedTimezone = text(args.timezone);
+  const timezone = namedTimezone ?? (await userTimeZone(deps.prisma, run.userId));
   if (!TimeZoneSchema.safeParse(timezone).success) {
     return refuse(`Unknown timezone "${timezone}". Use an IANA name like Europe/Paris.`);
   }
@@ -367,6 +368,10 @@ async function prepareChildRoutine(
       name,
       prompt,
       timezone,
+      // A zone the bot did not name is the account's, re-read when the approved routine
+      // is created, so a zone change between approval and creation does not strand the
+      // routine in the old zone.
+      ...(namedTimezone === undefined ? { timezoneFromAccount: true } : {}),
       // A one-shot keeps its absolute time so a delay is not measured again at approval,
       // and a delayed repeat keeps its first run.
       schedule: resolved.oneShot
@@ -1007,6 +1012,14 @@ export async function createChildRoutine(
   const runAt = text(schedule.runAt);
   const cron = runAt ? ONCE_ROUTINE_CRON : text(schedule.cron);
   if (!cron) return { error: "The approved routine is incomplete." };
+  // A zone that came from the account is re-read under the account lock at creation,
+  // not replayed from the approval. The identical-routine lookup filters on the
+  // account's current zone for such routines — the move keeps them on it — instead of
+  // the approval's zone, which would miss a routine created or moved since, or no zone
+  // at all, which would also match an unrelated pinned routine.
+  const pinnedTimezone = canonical.timezoneFromAccount === true ? undefined : timezone;
+  const replayTimezone =
+    pinnedTimezone === undefined ? await userTimeZone(deps.prisma, run.userId) : pinnedTimezone;
   const existing = await deps.prisma.routine.findFirst({
     where: {
       spaceId: run.spaceId,
@@ -1015,7 +1028,7 @@ export async function createChildRoutine(
       threadId: child.thread.id,
       name,
       prompt,
-      timezone,
+      timezone: replayTimezone,
       crons: { equals: [cron] },
       active: true,
       ...(runAt ? { nextRunAt: new Date(runAt) } : {}),
@@ -1042,7 +1055,7 @@ export async function createChildRoutine(
     target: { botId: child.id, threadId: child.thread.id },
     name,
     prompt,
-    timezone,
+    ...(pinnedTimezone === undefined ? {} : { timezone: pinnedTimezone }),
     schedule,
   });
   return "error" in created ? created : { ...created, ...target };

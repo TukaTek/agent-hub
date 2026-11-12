@@ -14,6 +14,7 @@ import {
   createThreadMessageInTransaction,
   crossSpaceCommunicationAllowed,
   runAsSystem,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { currentBotMessageHop } from "./bot-messages.js";
@@ -448,7 +449,7 @@ async function deliverToConnectedAgent(
         targetEventSeq: inboundEvent.seq,
         senderEventSeq: outboundEvent.seq,
       };
-    });
+    }, THREAD_LOCK_TRANSACTION_OPTIONS);
   try {
     committed = await deliverTx();
   } catch (error) {

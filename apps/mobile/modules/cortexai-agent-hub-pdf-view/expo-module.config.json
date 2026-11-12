@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["CortexAiAgentHubPdfViewModule"]
+  },
+  "android": {
+    "modules": ["com.tukatek.cortexai.agenthub.pdfview.CortexAiAgentHubPdfViewModule"]
+  }
+}

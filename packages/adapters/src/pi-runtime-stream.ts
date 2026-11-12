@@ -12,10 +12,10 @@ import type {
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { codexComputeResidency } from "./pi-oauth.js";
 import {
-  MODEL_STREAM_TIMEOUT_MS,
   modelStreamFirstEventTimeoutMs,
   modelStreamIdleTimeoutMs,
   modelStreamMaxRetries,
+  modelStreamTimeoutMs,
   operatorMaxTokens,
   resolveCompletionMaxTokens,
 } from "./pi-runtime-limits.js";
@@ -348,7 +348,7 @@ export function reliableStreamOptions(
   let next: ModelsSimpleStreamOptions = {
     ...options,
     ...(cacheRetention ? { cacheRetention } : {}),
-    timeoutMs: options?.timeoutMs ?? MODEL_STREAM_TIMEOUT_MS,
+    timeoutMs: options?.timeoutMs ?? modelStreamTimeoutMs(),
     maxRetries: options?.maxRetries ?? modelStreamMaxRetries(),
     maxTokens: resolveCompletionMaxTokens(
       model.maxTokens,

@@ -206,8 +206,8 @@ Ubuntu 24.04 では `libfuse2t64`、それ以前の Ubuntu や Debian では `li
 AppImage を実行してください。
 
 ```bash
-chmod +x CortexAI Agent Hub-*.AppImage
-./CortexAI Agent Hub-*.AppImage --appimage-extract-and-run
+chmod +x CortexAI-Agent-Hub-*.AppImage
+./CortexAI-Agent-Hub-*.AppImage --appimage-extract-and-run
 ```
 
 **This computer** は `docker` CLI を探し、Podman は検出しません。`compose` コマンドに対応した別の

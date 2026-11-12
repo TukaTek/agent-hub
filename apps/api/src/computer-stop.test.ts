@@ -7,11 +7,18 @@ import {
   LocalAgentHomeStore,
   provisionComputer,
 } from "@cortexai-agent-hub/adapters";
+import type * as Db from "@cortexai-agent-hub/db";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { createRouter } from "./router.js";
+
+// The plan's size is read from billing, which these Prisma doubles do not model.
+vi.mock("@cortexai-agent-hub/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof Db>()),
+  planComputerSize: vi.fn(async () => "standard"),
+}));
 
 function deferred() {
   let resolve!: () => void;

@@ -367,7 +367,7 @@ describe("space catalog auth", () => {
     expect(load).not.toHaveBeenCalledWith("cipher-api", "secret-api");
   });
 
-  it("shows Spark from the preference that owns that model when the default is ChatGPT sign-in", async () => {
+  it("keeps a model's API-key preference when the default is ChatGPT sign-in", async () => {
     const { prisma } = authPrisma({
       credentials: [
         storedCredential("cred-api", "secret-api", "2026-02-01T00:00:00.000Z"),
@@ -404,7 +404,8 @@ describe("space catalog auth", () => {
     expect(auth.byProvider["openai-codex"]).toBe("oauth");
     expect(auth.secretIdByModel["openai-codex"]?.[spark]).toBe("secret-api");
     expect(auth.secretIdByProvider["openai-codex"]).toBe("secret-oauth");
-    expect(listsSpark(auth)).toBe(true);
+    // Pi no longer bundles Spark for Codex; an API key reaches it on the openai provider.
+    expect(listsSpark(auth)).toBe(false);
     expect(
       listAvailablePiCatalog(auth.byProvider, auth.byModel).some(
         (entry) => entry.provider === "openai-codex" && entry.id === luna,
@@ -559,7 +560,7 @@ describe("default credential selection", () => {
     ).toBe("older");
   });
 
-  it("moves the default off an auth-restricted model when another credential can call it", () => {
+  it("treats Spark as unrestricted now that Pi no longer bundles it for Codex", () => {
     expect(
       selectDefaultCredentialId({
         provider: "openai-codex",
@@ -568,7 +569,7 @@ describe("default credential selection", () => {
         readyIds: ["api", "oauth"],
         savedModelId: (id) => (id === "api" ? spark : null),
       }),
-    ).toBe("oauth");
+    ).toBe("api");
   });
 
   it("keeps the restricted binding when no other credential is ready", () => {
@@ -1316,17 +1317,14 @@ describe("bot model change validation", () => {
     ).resolves.toEqual({ ok: true, provider: "xai", model: "saved-model", thinkingLevel: null });
   });
 
-  it("rejects a model the stored credential cannot call", async () => {
+  it("rejects Spark on Codex, which Pi no longer bundles", async () => {
     const deps = changeDeps({ "openai-codex": credential("openai-codex", null) });
     const result = await validateBotModelChange(deps, {
       ...scope,
       provider: "openai-codex",
       model: "gpt-5.3-codex-spark",
     });
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/not available with your current sign-in/i),
-    });
+    expect(result).toEqual({ ok: false, error: "Unknown model for that provider" });
   });
 
   it("rejects a thinking level the model does not offer, including the default model", async () => {

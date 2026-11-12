@@ -3,4 +3,6 @@
   <string name="cortexai_agent_hub_call_channel">Llamada en curso</string>
   <string name="cortexai_agent_hub_call_title">Llamada de CortexAI Agent Hub</string>
   <string name="cortexai_agent_hub_call_text">El micrófono está activo</string>
+  <string name="cortexai_agent_hub_call_answer">Responder</string>
+  <string name="cortexai_agent_hub_call_decline">Rechazar</string>
 </resources>

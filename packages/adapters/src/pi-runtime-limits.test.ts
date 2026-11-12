@@ -7,11 +7,15 @@ import {
   clipToolResultText,
   DEFAULT_TOOL_RESULT_TEXT_LIMIT,
   effectiveOutputReserve,
+  MODEL_CONNECT_TIMEOUT_MS,
   MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
   MODEL_STREAM_IDLE_TIMEOUT_MS,
+  MODEL_STREAM_TIMEOUT_MS,
+  modelConnectTimeoutMs,
   modelStreamFirstEventTimeoutMs,
   modelStreamIdleTimeoutMs,
   modelStreamMaxRetries,
+  modelStreamTimeoutMs,
   operatorMaxTokens,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
@@ -108,6 +112,31 @@ describe("toolResultTextLimit", () => {
 
   it("keeps the CAAH-89 ceiling at or above the default", () => {
     expect(MAX_TOOL_RESULT_CHARS).toBeGreaterThanOrEqual(TOOL_RESULT_TEXT_LIMIT);
+  });
+});
+
+// The idle bound keeps the CAAH-96 range (30s to 15 min); see "model stream stall timeouts".
+describe.each([
+  ["MODEL_STREAM_TIMEOUT_MS", modelStreamTimeoutMs, MODEL_STREAM_TIMEOUT_MS],
+  ["MODEL_CONNECT_TIMEOUT_MS", modelConnectTimeoutMs, MODEL_CONNECT_TIMEOUT_MS],
+] as const)("%s", (name, read, fallback) => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("reads whole milliseconds from 1 second to 5 minutes and keeps the default otherwise", () => {
+    vi.stubEnv(name, undefined);
+    expect(read()).toBe(fallback);
+    for (const [value, expected] of [
+      ["1000", 1_000],
+      [" 240000 ", 240_000],
+      ["300000", 300_000],
+    ] as const) {
+      vi.stubEnv(name, value);
+      expect(read()).toBe(expected);
+    }
+    for (const value of ["", " ", "0", "999", "300001", "-1000", "1500.5", "Infinity", "10m"]) {
+      vi.stubEnv(name, value);
+      expect(read()).toBe(fallback);
+    }
   });
 });
 

@@ -3,6 +3,7 @@ import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_AUDIO_MIME_TYPES,
   appContract,
+  artifactPreviewKind,
   attachmentMaxCount,
   isAllowedAttachmentMimeType,
   isAttachmentAudioMimeType,
@@ -83,5 +84,17 @@ describe("attachment contracts", () => {
     expect(validateThreadsSendInput({ artifactIds: ["art_1"] })).toBe(true);
     expect(validateThreadsSendInput({})).toBe(false);
     expect(validateThreadsSendInput({ artifactIds: ["a", "b", "c", "d", "e"] })).toBe(true);
+  });
+
+  it("previews text files as text on every client", () => {
+    expect(artifactPreviewKind("text/plain")).toBe("text");
+    expect(artifactPreviewKind("text/csv; charset=utf-8")).toBe("text");
+    expect(artifactPreviewKind("application/json")).toBe("text");
+    expect(artifactPreviewKind("text/markdown")).toBe("markdown");
+    expect(artifactPreviewKind("text/html")).toBe("html");
+    expect(artifactPreviewKind("video/mp4")).toBe("video");
+    expect(artifactPreviewKind("application/pdf")).toBe("pdf");
+    expect(artifactPreviewKind("image/png")).toBe("image");
+    expect(artifactPreviewKind("application/zip")).toBe("none");
   });
 });

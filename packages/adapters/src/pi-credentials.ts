@@ -1,9 +1,11 @@
 import type {
   AgentModelOAuthCredential,
+  AgentRunRequest,
   ModelCredentialFailedState,
   ModelCredentialRetireReason,
 } from "@cortexai-agent-hub/adapter-kit";
 import { canonicalPiProviderId } from "@cortexai-agent-hub/contracts";
+import { withAbort } from "@cortexai-agent-hub/core";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type {
   AuthOperationOptions,
@@ -13,6 +15,7 @@ import type {
   OAuthCredential,
 } from "@earendil-works/pi-ai";
 import {
+  isRetiredModelCredentialError,
   OAUTH_ACCOUNT_CHANGED_ERROR,
   OAUTH_RECONNECT_REQUIRED_ERROR,
   oauthCredentialAccountId,
@@ -42,6 +45,9 @@ export class PiRuntimeCredentialStore implements CredentialStore {
       detail?: string,
       failed?: ModelCredentialFailedState,
     ) => Promise<boolean | undefined>,
+    private readonly refreshOAuth?: NonNullable<
+      NonNullable<AgentRunRequest["model"]["oauth"]>["refresh"]
+    >,
   ) {
     this.credential = credential;
     this.providerId = canonicalPiProviderId(providerId);
@@ -76,6 +82,21 @@ export class PiRuntimeCredentialStore implements CredentialStore {
     const operation = previous.then(async () => {
       options?.signal?.throwIfAborted();
       const current = this.credential;
+      if (this.refreshOAuth && current?.type === "oauth") {
+        // The stored-credential refresh owns the lock, re-read, write and retirement.
+        try {
+          const next = await this.refreshOAuth(current, async (stored, signal) => {
+            const refreshed = await withAbort(fn(toOAuthCredential(stored)), signal);
+            return refreshed?.type === "oauth" ? refreshed : undefined;
+          });
+          options?.signal?.throwIfAborted();
+          this.credential = toOAuthCredential(next);
+        } catch (error) {
+          if (isRetiredModelCredentialError(error)) this.credential = undefined;
+          throw error;
+        }
+        return this.credential;
+      }
       let next: Credential | undefined;
       try {
         next = await fn(current);

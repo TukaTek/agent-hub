@@ -8,6 +8,7 @@ import type {
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import { SandboxDamagedError } from "@cortexai-agent-hub/adapter-kit";
+import type * as Db from "@cortexai-agent-hub/db";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComputerBusyError, provisionComputer, replaceComputer } from "./computer-lifecycle.js";
@@ -17,6 +18,12 @@ import { LocalAgentHomeStore } from "./home.js";
 import type { AgentHomeRecords, StoredHome } from "./home-object-store.js";
 import { ObjectAgentHomeStore } from "./home-object-store.js";
 import { MemoryObjectStorage } from "./object-storage.test-support.js";
+
+// The plan's size is read from billing, which these Prisma doubles do not model.
+vi.mock("@cortexai-agent-hub/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof Db>()),
+  planComputerSize: vi.fn(async () => "standard"),
+}));
 
 const context = {
   operationId: "recovery",

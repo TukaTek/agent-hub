@@ -215,7 +215,7 @@ describe("tool completion audit queue", () => {
     );
 
     expect(append).toHaveBeenCalledOnce();
-    expect(sink.events).toEqual([]);
+    expect(warnings()).toEqual([]);
   });
 
   it("records a paused completion and its resumed completion separately", async () => {

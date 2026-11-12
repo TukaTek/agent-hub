@@ -17,6 +17,7 @@ await unwrapEnvFromKeyManager();
 const urls = databaseUrls(process.env);
 await deployMigrations({
   migrationUrl: urls.migrationUrl,
+  previousMigrations: process.env.CORTEXAI_AGENT_HUB_DEPLOYED_MIGRATIONS?.split(","),
   dbPackageDir: execFileSync("pnpm", ["--filter", "@cortexai-agent-hub/db", "exec", "pwd"], {
     encoding: "utf8",
   }).trim(),

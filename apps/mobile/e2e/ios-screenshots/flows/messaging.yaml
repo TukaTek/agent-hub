@@ -1,0 +1,18 @@
+appId: com.tukatek.cortexai.agenthub
+name: Messaging
+---
+- runFlow:
+    file: ../subflows/sign-in.yaml
+    env:
+      CORTEXAI_AGENT_HUB_ACTIVE_EMAIL: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
+- openLink: "cortexai-agent-hub:///messaging"
+- extendedWaitUntil:
+    visible: ".*#launch.*"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 01-messaging
+- tapOn: ".*#launch.*"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 02-team-conversation

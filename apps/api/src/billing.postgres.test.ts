@@ -8,7 +8,12 @@ import {
   createDb,
 } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { BILLING_RETURN_PATH, createBillingService, TRIAL_DAYS } from "./billing.js";
+import {
+  BILLING_RETURN_PATH,
+  createBillingService,
+  INVITED_TRIAL_DAYS,
+  TRIAL_DAYS,
+} from "./billing.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres =
@@ -261,6 +266,51 @@ describePostgres("billing service (PostgreSQL)", () => {
       expect(accounts[0]!.customerId).toBe(accounts[1]!.customerId);
     } finally {
       await prisma.organization.deleteMany({ where: { id: raced } });
+    }
+  });
+
+  it("gives an invited organization a longer first trial", async () => {
+    const invited = `${organizationId}-invited`;
+    const referrer = `${organizationId}-referrer`;
+    // A trial is once per person, so the invited organization belongs to someone new.
+    const inviteeId = `${ownerId}-invitee`;
+    const createdAt = new Date();
+    await prisma.user.create({
+      data: {
+        id: inviteeId,
+        name: "Invitee",
+        email: `${inviteeId}@cortexai-agent-hub.test`,
+        emailVerified: true,
+      },
+    });
+    for (const id of [invited, referrer])
+      await prisma.organization.create({ data: { id, name: id, slug: id, createdAt } });
+    try {
+      await prisma.space.create({
+        data: { id: invited, organizationId: invited, name: "General", isDefault: true },
+      });
+      await prisma.member.create({
+        data: { id: invited, organizationId: invited, userId: inviteeId, role: "owner", createdAt },
+      });
+      await prisma.referralCode.create({
+        data: { organizationId: referrer, code: `ref-${suffix}` },
+      });
+      const actor = {
+        ...owner,
+        userId: inviteeId,
+        email: `${inviteeId}@cortexai-agent-hub.test`,
+        spaceId: invited,
+      };
+      await billing.claimReferral(actor, `ref-${suffix}`);
+      await expect(billing.status(actor)).resolves.toMatchObject({
+        trialDays: INVITED_TRIAL_DAYS,
+      });
+      await billing.checkout(actor);
+      const account = await billingAccountForOrganization(prisma, invited);
+      expect(emulator.checkouts.get(account!.customerId)?.trialDays).toBe(INVITED_TRIAL_DAYS);
+    } finally {
+      await prisma.organization.deleteMany({ where: { id: { in: [invited, referrer] } } });
+      await prisma.user.deleteMany({ where: { id: inviteeId } });
     }
   });
 });

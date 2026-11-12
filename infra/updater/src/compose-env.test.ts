@@ -58,6 +58,8 @@ const NOT_PASSED: Record<string, string> = {
     "read by the updater sidecar, which has its own environment",
   CORTEXAI_AGENT_HUB_IMAGE_TAG:
     "read by deployment tooling and the updater sidecar, not app processes",
+  CORTEXAI_AGENT_HUB_DEPLOYED_MIGRATIONS:
+    "passed only to the migration CLI by the production deploy script",
   CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS:
     "read by the updater sidecar, which has its own environment",
   KUBERNETES_SANDBOX_COMPUTER_IMAGE: KUBERNETES_SANDBOX,

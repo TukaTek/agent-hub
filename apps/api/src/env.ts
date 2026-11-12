@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import type {
+  ApnsVoipConfig,
   PhotonProjectCredentials,
   TelegramBotCredentials,
 } from "@cortexai-agent-hub/adapters";
 import {
+  apnsVoipConfig,
   boatApiKeyFromEnv,
   boatApiUrlFromEnv,
   mcpStdioOptionsFromEnv,
@@ -42,6 +44,8 @@ export interface AppEnv {
   /** Opt-in Have I Been Pwned check for new passwords. Default off: it calls an outside service. */
   breachedPasswordCheck?: boolean;
   oidc?: OidcConfig;
+  /** Bearer token the identity provider presents to provision accounts over SCIM. */
+  scimBearerToken?: string;
   nodeEnv: string;
   desktopStackToken?: string;
   databaseUrl: string;
@@ -69,6 +73,8 @@ export interface AppEnv {
   ticketBoardEnabled: boolean;
   /** USER_DEVICES_ENABLED=false stops users connecting their own computers. Default on. */
   userDevicesEnabled: boolean;
+  /** COMPUTER_SETTINGS_ENABLED=true lets Settings choose where computers run. Default off. */
+  computerSettingsEnabled: boolean;
   /** Operator menu links that frame a same-origin page (CORTEXAI_AGENT_HUB_NAV_LINKS). */
   navLinks?: NavLink[];
   /** Verified accounts that review plugin submissions, add stdio MCP servers, and grant access
@@ -117,6 +123,7 @@ export interface AppEnv {
   sendblueSigningSecret: string | undefined;
   sendbluePhoneNumber: string | undefined;
   expoAccessToken: string | undefined;
+  apnsVoip?: ApnsVoipConfig;
   smtpUrl: string | undefined;
   emailProvider?: string;
   welcomeEmailEnabled?: boolean;
@@ -223,6 +230,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
           allowSignupBypass: source.OIDC_ALLOW_SIGNUP_BYPASS === "true",
         }
       : undefined;
+  const scimBearerToken = optional(source.SCIM_BEARER_TOKEN);
+  if (scimBearerToken && (scimBearerToken.length < 32 || /\s/.test(scimBearerToken)))
+    throw new Error("SCIM_BEARER_TOKEN must be at least 32 characters with no spaces");
+  // Hub owns every account in Hub mode; a directory provisioning its own would route around it.
+  if (scimBearerToken && hubAuth)
+    throw new Error("SCIM directory provisioning can't be combined with Hub sign-in");
   const authSecret = resolveAuthSecret(source);
   const webOrigin = resolveWebOrigin(source.WEB_ORIGIN, DEFAULT_WEB_ORIGIN, "WEB_ORIGIN");
   const sandboxProvider = resolveSandboxProvider(source);
@@ -244,6 +257,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     passwordAuth,
     breachedPasswordCheck: source.AUTH_BREACHED_PASSWORD_CHECK_ENABLED === "true",
     oidc,
+    scimBearerToken,
     nodeEnv: source.NODE_ENV ?? "",
     databaseUrl: required(source, "DATABASE_URL"),
     realtimeDatabaseUrl: source.REALTIME_DATABASE_URL ?? required(source, "DATABASE_URL"),
@@ -269,6 +283,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     piSessionRecording: source.PI_SESSION_RECORDING === "true",
     ticketBoardEnabled: source.TICKET_BOARD_ENABLED === "true",
     userDevicesEnabled: source.USER_DEVICES_ENABLED !== "false",
+    computerSettingsEnabled: source.COMPUTER_SETTINGS_ENABLED === "true",
     navLinks: parseNavLinks(source.CORTEXAI_AGENT_HUB_NAV_LINKS),
     adminEmails: list(source.CORTEXAI_AGENT_HUB_ADMIN_EMAILS).map((email) => email.toLowerCase()),
     ...phoneCallSettings(source),
@@ -310,6 +325,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     sendblueSigningSecret: optional(source.SENDBLUE_SIGNING_SECRET),
     sendbluePhoneNumber: optional(source.SENDBLUE_PHONE_NUMBER),
     expoAccessToken: optional(source.EXPO_ACCESS_TOKEN),
+    apnsVoip: apnsVoipConfig(source),
     smtpUrl: optional(source.SMTP_URL),
     emailProvider: optional(source.EMAIL_PROVIDER),
     emailApiKey: optional(source.EMAIL_API_KEY),

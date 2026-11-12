@@ -1,4 +1,4 @@
-import { isLocalhostOrLoopbackIp } from "@cortexai-agent-hub/contracts";
+import { isLocalhostOrLoopbackIp, MCP_APP_READ_TIMEOUT_MS } from "@cortexai-agent-hub/contracts";
 import { cancelResponseBody } from "@cortexai-agent-hub/core";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -9,6 +9,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 import { combineSignals } from "./connector-safety.js";
+import { MCP_APP_CLIENT_CAPABILITIES } from "./mcp-app.js";
 import { closeMcpResource } from "./mcp-close.js";
 import type { InstalledMcpBin } from "./mcp-package-installer.js";
 import {
@@ -17,7 +18,6 @@ import {
   isPackageRunnerCommand,
 } from "./mcp-package-installer.js";
 import { limitMcpResponseBody } from "./mcp-response-limit.js";
-
 import type { RemoteTransportDependencies, SafeRemoteFetch } from "./remote-mcp.js";
 import { createSafeRemoteFetch, listMcpTools } from "./remote-mcp.js";
 
@@ -354,7 +354,7 @@ export class McpSession {
         name: this.clientOptions.name ?? "cortexai-agent-hub",
         version: this.clientOptions.version ?? "0.1.0",
       },
-      this.clientOptions.capabilities,
+      this.clientOptions.capabilities ?? { capabilities: MCP_APP_CLIENT_CAPABILITIES },
     );
   }
 
@@ -475,6 +475,17 @@ export class McpSession {
     return (await this.client.callTool({ name, arguments: args }, undefined, {
       signal: options?.signal,
     })) as CallToolResult;
+  }
+
+  async readResource(
+    uri: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ contents?: unknown }> {
+    this.assertConnected();
+    return this.client.readResource(
+      { uri },
+      { signal: options?.signal, timeout: MCP_APP_READ_TIMEOUT_MS },
+    );
   }
 
   /** `afterClose` follows actual SDK shutdown, even if this call stops waiting. */

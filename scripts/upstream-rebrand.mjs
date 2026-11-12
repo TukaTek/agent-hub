@@ -12,6 +12,12 @@ const RULES = [
   [new RegExp(`com\\.${old}\\.(?=[a-z])`, "g"), "com.tukatek.cortexai.agenthub."],
   [new RegExp(`github\\.com/elie222/${old}`, "g"), "github.com/TukaTek/agent-hub"],
   [new RegExp(`ghcr\\.io/elie222/${old}`, "g"), "ghcr.io/tukatek/agent-hub"],
+  [
+    new RegExp(`raw\\.githubusercontent\\.com/elie222/${old}`, "g"),
+    "raw.githubusercontent.com/TukaTek/agent-hub",
+  ],
+  // Any other repository reference, such as an image alias without its registry host.
+  [new RegExp(`elie222/${old}`, "g"), "tukatek/agent-hub"],
   // An upper-case HTTP header prefix (`X-<OLD>-…`) keeps hyphens.
   [new RegExp(`(?<=[Xx]-)${OLD}(?=-)`, "g"), "CORTEXAI-AGENT-HUB"],
   [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
@@ -45,9 +51,16 @@ const ANDROID_RULES = [
   ],
 ];
 
+// Bare SQL identifiers cannot hold a hyphen; quoted values keep the product slug.
+const SQL_RULES = [[new RegExp(`(?<![\\w'"-])${old}(?![\\w'"-])`, "g"), "cortexai_agent_hub"]];
+
 export function rebrand(input, path = "") {
   const unresolved = [...new Set(input.match(UNRESOLVED) ?? [])];
-  const rules = ANDROID.test(path) ? [...ANDROID_RULES, ...RULES] : RULES;
+  const rules = ANDROID.test(path)
+    ? [...ANDROID_RULES, ...RULES]
+    : path.endsWith(".sql")
+      ? [...SQL_RULES, ...RULES]
+      : RULES;
   const text = rules.reduce((out, [pattern, value]) => out.replace(pattern, value), input);
   return { text, unresolved };
 }

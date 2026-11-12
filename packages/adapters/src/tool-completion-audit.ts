@@ -87,6 +87,16 @@ export async function appendToolCompletionAudit(
   completion: AgentToolCompletion,
   secrets: string[] = [],
 ): Promise<void> {
+  const payload = toolCompletionAuditPayload(completion, secrets);
+  getLogger().info("agent.tool.completed", {
+    "run.id": target.runId,
+    "space.id": target.spaceId,
+    "thread.id": target.threadId,
+    "bot.id": target.botId,
+    tool: payload.name,
+    "tool.outcome": payload.outcome,
+    "tool.duration_ms": payload.durationMs,
+  });
   const input = {
     spaceId: target.spaceId,
     threadId: target.threadId,
@@ -96,7 +106,7 @@ export async function appendToolCompletionAudit(
     // One key per completion, reused by every retry, so the events unique index
     // turns a retry of an already committed audit into a no-op. A resumed call
     // repeats its executionId, so executionId cannot be the key.
-    payload: { ...toolCompletionAuditPayload(completion, secrets), auditId: randomUUID() },
+    payload: { ...payload, auditId: randomUUID() },
   };
   const outcome = await (deps.auditQueue ?? toolCompletionAuditQueue).enqueue(target.runId, () =>
     deps.events.append(input),

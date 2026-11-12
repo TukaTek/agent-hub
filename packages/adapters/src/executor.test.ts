@@ -6,7 +6,7 @@ import {
   cloudflareModelConfigMessage,
   FLEET_TOOL_NAMES,
 } from "@cortexai-agent-hub/contracts";
-import { ONCE_ROUTINE_CRON } from "@cortexai-agent-hub/core";
+import { isOwnerStartedRun, ONCE_ROUTINE_CRON } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { RunHistoryWriteError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
@@ -35,7 +35,11 @@ import { createRunWorkspaceCheckpoint } from "./run-lifecycle.js";
 import { isTerminalModelSetupError } from "./run-model.js";
 import { runNotificationsEnabled } from "./run-notifications.js";
 import { REACTION_SILENT_REPLY_GUIDANCE } from "./run-replies.js";
-import { offeredFleetTools, selectBuiltinToolsForRun } from "./run-tool-selection.js";
+import {
+  followUpsOffered,
+  offeredFleetTools,
+  selectBuiltinToolsForRun,
+} from "./run-tool-selection.js";
 import { historyMyChatsAllowed } from "./run-tools-memory.js";
 import {
   loadCurrentTurnImages,
@@ -172,6 +176,7 @@ describe("tool completion audit", () => {
       }),
     );
     expect(sink.events).toEqual([
+      expect.objectContaining({ message: "agent.tool.completed", "tool.outcome": "error" }),
       expect.objectContaining({
         message: "agent tool completion audit append failed",
         "error.detail": "database unavailable",
@@ -192,7 +197,59 @@ describe("tool completion audit", () => {
     );
 
     expect(append).toHaveBeenCalledOnce();
-    expect(sink.events).toEqual([]);
+    expect(sink.events.map((event) => event.message)).toEqual(["agent.tool.completed"]);
+    installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
+  });
+
+  it("logs each tool completion by name, outcome and duration without its content", async () => {
+    const append = vi.fn().mockResolvedValue(undefined);
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "test", sinks: [sink] }));
+
+    await appendToolCompletionAudit(
+      { events: { append } },
+      { spaceId: "space-1", threadId: "thread-1", botId: "bot-1", runId: "run-1" },
+      {
+        name: "web_search",
+        executionId: "call-1",
+        durationMs: 12.4,
+        result: {
+          kind: "agent_tool_result",
+          content: [{ type: "text", text: "private search result" }],
+          details: {},
+        },
+      },
+    );
+    await appendToolCompletionAudit(
+      { events: { append } },
+      { spaceId: "space-1", threadId: "thread-1", botId: "bot-1", runId: "run-1" },
+      {
+        name: "mcp__notes__create",
+        executionId: "call-2",
+        durationMs: 3,
+        error: new Error("private failure detail"),
+      },
+    );
+
+    expect(sink.events).toEqual([
+      expect.objectContaining({
+        message: "agent.tool.completed",
+        "run.id": "run-1",
+        "space.id": "space-1",
+        "thread.id": "thread-1",
+        "bot.id": "bot-1",
+        tool: "web_search",
+        "tool.outcome": "succeeded",
+        "tool.duration_ms": 12,
+      }),
+      expect.objectContaining({
+        message: "agent.tool.completed",
+        tool: "mcp__notes__create",
+        "tool.outcome": "error",
+        "tool.duration_ms": 3,
+      }),
+    ]);
+    expect(JSON.stringify(sink.events)).not.toMatch(/private|call-1|call-2/);
     installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
   });
 
@@ -500,14 +557,54 @@ describe("run tool selection", () => {
     expect(withoutPage).toEqual(expect.arrayContaining(["computer_observe", "computer_act"]));
   });
 
-  it("withholds schedule creation only from routine-triggered runs", () => {
-    expect(toolNames("routine")).not.toContain("schedule_create");
+  it("offers schedule creation to routine-triggered runs", () => {
+    expect(toolNames("routine")).toContain("schedule_create");
     expect(toolNames("routine")).toContain("task_catalog");
     expect(toolNames("routine")).toEqual(
       expect.arrayContaining(["schedule_list", "schedule_cancel"]),
     );
     expect(toolNames("user")).toContain("schedule_create");
     expect(toolNames("user")).toContain("task_catalog");
+  });
+
+  it("offers self-set follow-ups only on runs the owner started, with tools to track them", () => {
+    const offered = (trigger: string, disabledBuiltinTools?: string[], followUpFromUser = true) =>
+      followUpsOffered(
+        selectBuiltinToolsForRun({
+          graphicalToolsAllowed: true,
+          pageBrowserAllowed: true,
+          groupId: null,
+          trigger,
+          semanticMemoryEnabled: false,
+          messagingChannelRun: false,
+          disabledBuiltinTools,
+        }),
+        isOwnerStartedRun(trigger, followUpFromUser),
+      );
+    expect(offered("user")).toBe(true);
+    expect(offered("follow_up")).toBe(true);
+    expect(offered("call_end")).toBe(true);
+    // A group hand-off queues a follow_up whose source message another bot wrote.
+    expect(offered("follow_up", undefined, false)).toBe(false);
+    for (const trigger of [
+      "routine",
+      "webhook",
+      "tickets",
+      "bot_message",
+      "created",
+      "messaging",
+      "spawn",
+    ]) {
+      expect(offered(trigger)).toBe(false);
+    }
+    for (const tool of [
+      "scratchpad_add",
+      "scratchpad_complete",
+      "schedule_create",
+      "schedule_cancel",
+    ]) {
+      expect(offered("user", [tool])).toBe(false);
+    }
   });
 
   it("offers bot management tools only with the switch on and only on runs the owner started", () => {
@@ -604,11 +701,11 @@ describe("run tool selection", () => {
     expect(toolNames("user")).toContain("message_bot");
   });
 
-  it("keeps schedule tools in group chats and still blocks create on routines", () => {
+  it("keeps schedule tools in group chats and offers creation to routines", () => {
     expect(toolNames("user", "group-1")).toEqual(
       expect.arrayContaining(["schedule_create", "schedule_list", "schedule_cancel"]),
     );
-    expect(toolNames("routine", "group-1")).not.toContain("schedule_create");
+    expect(toolNames("routine", "group-1")).toContain("schedule_create");
     expect(toolNames("routine", "group-1")).toEqual(
       expect.arrayContaining(["schedule_list", "schedule_cancel"]),
     );
@@ -1228,6 +1325,7 @@ function pinnedRoutineRunPrisma(modelId: string) {
     computer: { id: "computer-1", scope: "private" },
   };
   return {
+    user: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => ({ status: "leased", startedAt: null })),
@@ -1370,7 +1468,9 @@ describe("run notification preference", () => {
         userId: "user-1",
       },
       select: {
-        bot: { select: { notifyOnFinish: true } },
+        bot: {
+          select: { id: true, name: true, color: true, avatarSet: true, notifyOnFinish: true },
+        },
         thread: { select: { groupId: true } },
       },
     });
@@ -1401,9 +1501,10 @@ describe("userTurnInstructions", () => {
   const archiveBot =
     "archive_bot safely archives another bot in this space. Use it when the user asks to remove that bot or when it is finished and unused. The user can restore it or permanently delete it later. confirm_name must exactly match its name.";
   const replyGuidance =
-    "Send progress updates only when the work will take minutes — long computer tasks or multi-step jobs — never for quick replies and never to announce that you are starting. Even then send at most a few brief updates (a sentence or two each), not one per tool call, and do not narrate routine steps. Thinking stays private. message_user is capped at 500 characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. Always put the complete final answer in your normal reply, never split across message_user calls, and never assume a message_user update already delivered your content.";
+    "Send progress updates only when the work will take minutes — long computer tasks or multi-step jobs — never for quick replies and never to announce that you are starting. The one exception: once you are working in a browser or on a desktop on a task that will take a few minutes, tell the person right away with message_user that it will take a while. Even then send at most a few brief updates (a sentence or two each), not one per tool call, and do not narrate routine steps. Thinking stays private. message_user is capped at 500 characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. Always put the complete final answer in your normal reply, never split across message_user calls, and never assume a message_user update already delivered your content.";
   const stableTail = [
     'For charts and data visualization, use the render_plot tool: it renders bar, line, scatter, histogram, heatmap, faceted and many more chart types from a JSON spec and attaches the PNG to the chat. Call render_plot with {"help": true} before your first chart to read the full guide.',
+    'For a dashboard, report, tracker or comparison, build a page with save_page (call it with {"help": true} first for the kit guide). To change a page, pass its pageId with edits or new source instead of making a new page. In your reply, mention the page by its title; never paste its source.',
     "When the user asks you to add or connect an MCP server (and gives you its details), use add_mcp_server. When add_mcp_server posts an approval card, end with one short sentence asking the user to approve it. You will be told when they connect it.",
     "Never print API keys, access tokens, or secret values. Prefer tools over claiming you already did the work.",
     "Treat pagination cursors as opaque: copy the returned continuation value exactly, never calculate or guess it. When the tool reports no next page, stop; if a cursor is rejected, recheck the last successful result before retrying.",
@@ -1528,6 +1629,32 @@ describe("userTurnInstructions", () => {
       expect(text).not.toContain("search_history");
       expect(text).not.toContain("read_history");
     }
+  });
+
+  it("asks for self-set follow-ups after the scratchpad guidance only when the run offers them", () => {
+    const toolLine = (followUpsOffered?: boolean) =>
+      userTurnInstructions({
+        ...base,
+        groupContext: undefined,
+        messagingContext: undefined,
+        redactedMemoryContext: undefined,
+        redactedScratchpadContext: undefined,
+        hasHistoricalContext: false,
+        agentEnvironmentInstruction: undefined,
+        botDirectory: undefined,
+        pluginLine: undefined,
+        agentSkillsLine: undefined,
+        taughtSkillsLine: undefined,
+        followUpsOffered,
+      }).filter(Boolean)[1];
+    const offered = toolLine(true);
+    expect(offered).toContain(
+      "(not reminders — those are schedule_*). Do not wait to be asked about open loops.",
+    );
+    expect(offered).toContain("stays silent if it is done");
+    expect(offered).toContain("complete it and schedule_cancel its follow-up");
+    expect(toolLine(false)).toBe(computerLine);
+    expect(toolLine()).toBe(computerLine);
   });
 
   it("states bot management rules only when the run is offered bot management write tools", () => {
@@ -1912,6 +2039,8 @@ describe("createRunExecutor", () => {
     expect(tools.some((tool) => tool.startsWith("scratchpad_"))).toBe(false);
     expect(tools).not.toContain("board_tickets");
     expect(tools.some((tool) => tool.startsWith("ticket_"))).toBe(false);
+    expect(tools.some((tool) => tool.startsWith("schedule_"))).toBe(false);
+    expect(tools.some((tool) => tool.startsWith("skill_"))).toBe(false);
     expect(tools).toContain("web_fetch");
   });
 
@@ -2022,6 +2151,7 @@ describe("createRunExecutor", () => {
     const taskCreate = vi.fn(async () => ({ id: "task-1" }));
     const runCreate = vi.fn(async () => ({ id: "run-1" }));
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2052,6 +2182,7 @@ describe("createRunExecutor", () => {
           routine: {
             updateMany,
             findUnique: vi.fn(async () => ({
+              prompt: "say hi",
               modelProvider: null,
               modelId: null,
               thinkingLevel: null,
@@ -2094,6 +2225,7 @@ describe("createRunExecutor", () => {
     const taskCreate = vi.fn(async () => ({ id: "task-1" }));
     const runCreate = vi.fn(async () => ({ id: "run-1" }));
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2125,6 +2257,7 @@ describe("createRunExecutor", () => {
           routine: {
             updateMany,
             findUnique: vi.fn(async () => ({
+              prompt: "say hi",
               modelProvider: null,
               modelId: null,
               thinkingLevel: null,
@@ -2184,6 +2317,7 @@ describe("createRunExecutor", () => {
       claimedModel = model,
     ) {
       return {
+        user: { findUnique: vi.fn(async () => null) },
         routine: {
           findUnique: vi.fn(async () => ({
             id: "routine-1",
@@ -2207,7 +2341,8 @@ describe("createRunExecutor", () => {
           callback({
             routine: {
               updateMany: vi.fn(async () => ({ count: 1 })),
-              findUnique: vi.fn(async () => claimedModel),
+              // The claimed row carries the prompt alongside the model.
+              findUnique: vi.fn(async () => ({ prompt: "say hi", ...claimedModel })),
             },
             task: { create: taskCreate },
             run: {
@@ -2284,6 +2419,7 @@ describe("createRunExecutor", () => {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const $transaction = vi.fn();
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2331,6 +2467,7 @@ describe("createRunExecutor", () => {
     const append = vi.fn(async () => undefined);
     const findFirst = vi.fn(async () => ({ id: "group-thread-1" }));
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2358,6 +2495,7 @@ describe("createRunExecutor", () => {
           routine: {
             updateMany: vi.fn(async () => ({ count: 1 })),
             findUnique: vi.fn(async () => ({
+              prompt: "remind the group",
               modelProvider: null,
               modelId: null,
               thinkingLevel: null,
@@ -2407,6 +2545,7 @@ describe("createRunExecutor", () => {
     const append = vi.fn(async () => undefined);
     const findFirst = vi.fn(async () => ({ id: "dm-thread-1" }));
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2434,6 +2573,7 @@ describe("createRunExecutor", () => {
           routine: {
             updateMany: vi.fn(async () => ({ count: 1 })),
             findUnique: vi.fn(async () => ({
+              prompt: "remind me",
               modelProvider: null,
               modelId: null,
               thinkingLevel: null,
@@ -2492,6 +2632,7 @@ description: Prepare standup notes
 1. Summarize wins.
 `;
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2527,6 +2668,7 @@ description: Prepare standup notes
           routine: {
             updateMany: vi.fn(async () => ({ count: 1 })),
             findUnique: vi.fn(async () => ({
+              prompt: "Run @Daily standup, then email me",
               modelProvider: null,
               modelId: null,
               thinkingLevel: null,
@@ -2559,6 +2701,7 @@ description: Prepare standup notes
     });
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2587,6 +2730,7 @@ description: Prepare standup notes
           routine: {
             updateMany,
             findUnique: vi.fn(async () => ({
+              prompt: "say hi",
               modelProvider: null,
               modelId: null,
               thinkingLevel: null,
@@ -2622,6 +2766,7 @@ description: Prepare standup notes
     const deleteTaskMany = vi.fn(async () => ({ count: 1 }));
     let transactionCalls = 0;
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       routine: {
         findUnique: vi.fn(async () => ({
           id: "routine-1",
@@ -2652,6 +2797,7 @@ description: Prepare standup notes
             routine: {
               updateMany: claimUpdateMany,
               findUnique: vi.fn(async () => ({
+                prompt: "say hi",
                 modelProvider: null,
                 modelId: null,
                 thinkingLevel: null,
@@ -2684,6 +2830,7 @@ description: Prepare standup notes
   it("consumes a persisted takeover checkpoint when claiming the run", async () => {
     const updateMany = vi.fn(async () => ({ count: 0 }));
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => ({
           id: "run-1",
@@ -2737,6 +2884,7 @@ description: Prepare standup notes
       return { count: matchesClaim(args.where, row) ? 1 : 0 };
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => ({
           id: "run-1",
@@ -2764,6 +2912,41 @@ description: Prepare standup notes
     expect(row).toEqual({ status: "queued", checkpoint: "takeover" });
   });
 
+  it("claims a run after all when its owner is reactivated while it was being refused", async () => {
+    // Deactivated at the first look, active again by the time the cancel takes its lock.
+    const findUser = vi
+      .fn()
+      .mockResolvedValueOnce({ deactivatedAt: new Date() })
+      .mockResolvedValue({ deactivatedAt: null });
+    const updateMany = vi.fn(async () => ({ count: 0 }));
+    const prisma = {
+      user: { findUnique: findUser },
+      run: {
+        findUnique: vi.fn(async () => ({
+          id: "run-1",
+          botId: "bot-1",
+          threadId: "thread-1",
+          userId: "user-1",
+          status: "queued",
+          checkpoint: null,
+          leaseFence: 0,
+        })),
+        findMany: vi.fn(async () => [{ threadId: "thread-1" }]),
+        updateMany,
+      },
+      $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({ $queryRaw: vi.fn(async () => []), user: { findUnique: findUser } }),
+      ),
+    } as unknown as PrismaClient;
+    const executor = createRunExecutor({ prisma } as Parameters<typeof createRunExecutor>[0]);
+
+    await executor.continueRun("run-1", "worker-1");
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "leased" }) }),
+    );
+  });
+
   it("restores a takeover checkpoint when a switching computer requeues the run", async () => {
     const updateMany = vi.fn(
       async (args: {
@@ -2777,6 +2960,7 @@ description: Prepare standup notes
     );
     const enqueue = vi.fn(async () => undefined);
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => ({
           id: "run-1",
@@ -2945,6 +3129,7 @@ description: Prepare standup notes
     );
     const enqueue = vi.fn(async () => undefined);
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => ({
           id: "run-1",
@@ -3002,6 +3187,7 @@ description: Prepare standup notes
     );
     const enqueue = vi.fn(async () => undefined);
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => ({
           id: "run-1",
@@ -3082,6 +3268,7 @@ description: Prepare standup notes
             },
       );
       const prisma = {
+        user: { findUnique: vi.fn(async () => null) },
         run: {
           findUnique: vi.fn(async () => run),
           findUniqueOrThrow: vi.fn(async () => ({ status: "leased", startedAt: null })),
@@ -3202,6 +3389,7 @@ description: Prepare standup notes
       leaseFence: 0,
     };
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => run),
         findUniqueOrThrow: vi.fn(async () => ({ status: "leased", startedAt: null })),
@@ -3307,6 +3495,7 @@ description: Prepare standup notes
       leaseFence: 0,
     };
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => run),
         findUniqueOrThrow: vi.fn(async () => ({ status: "leased", startedAt: null })),
@@ -3423,6 +3612,7 @@ description: Prepare standup notes
       return null;
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: "xai",
@@ -3477,6 +3667,7 @@ description: Prepare standup notes
       },
     );
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       deploymentSettings: { findUnique: vi.fn(async () => null) },
       userModelPreference: { findFirst },
       userModelCredential: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
@@ -3529,6 +3720,7 @@ description: Prepare standup notes
     );
     const plaintext = compatibleSecret(["newest-model"]);
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       userModelPreference: { findFirst },
       userModelCredential: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
       secret: {
@@ -3596,6 +3788,7 @@ description: Prepare standup notes
         }),
       };
       const prisma = {
+        user: { findUnique: vi.fn(async () => null) },
         userModelPreference: {
           findMany: vi.fn(async () => [preference]),
           findFirst: vi.fn(async () => null),
@@ -3854,6 +4047,7 @@ description: Prepare standup notes
       expires: Date.now() + 60_000,
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: provider,
@@ -3898,6 +4092,7 @@ description: Prepare standup notes
       accountId: "acct-live",
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: provider,
@@ -3963,6 +4158,7 @@ description: Prepare standup notes
         accountId: "acct-live",
       });
       const prisma = {
+        user: { findUnique: vi.fn(async () => null) },
         bot: {
           findFirst: vi.fn(async () => ({
             modelProvider: provider,
@@ -4039,6 +4235,7 @@ description: Prepare standup notes
       accountId: "acct-live",
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: provider,
@@ -4088,6 +4285,7 @@ description: Prepare standup notes
       }),
     );
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: provider,
@@ -4143,6 +4341,7 @@ description: Prepare standup notes
       thinkingLevel: null,
     };
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: { findFirst: vi.fn(async () => bot) },
       userModelPreference: { findFirst },
       userModelCredential: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
@@ -4194,6 +4393,7 @@ description: Prepare standup notes
       return null;
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: "xai",
@@ -4267,6 +4467,7 @@ description: Prepare standup notes
 
   it("withholds the deployment key when settings name a different provider", async () => {
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: { findFirst: vi.fn(async () => null) },
       userModelPreference: { findFirst: vi.fn(async () => null) },
       userModelCredential: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
@@ -4300,6 +4501,7 @@ description: Prepare standup notes
       });
     });
     const prisma = {
+      user: { findUnique: vi.fn(async () => null) },
       bot: {
         findFirst: vi.fn(async () => ({
           modelProvider: null,

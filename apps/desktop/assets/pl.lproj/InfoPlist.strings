@@ -1,0 +1,2 @@
+"NSMicrophoneUsageDescription" = "CortexAI Agent Hub używa mikrofonu do dyktowania i rozmów głosowych z Twoimi botami.";
+"NSSpeechRecognitionUsageDescription" = "CortexAI Agent Hub zamienia mowę na tekst podczas dyktowania i rozmów głosowych z Twoimi botami.";

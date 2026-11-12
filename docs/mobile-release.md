@@ -77,7 +77,8 @@ alone.
 
 ## Android APK
 
-Until CortexAI Agent Hub is on Google Play, Android users can install an APK.
+Android users should install [the CortexAI Agent Hub APK](https://github.com/TukaTek/agent-hub/releases/download/android/cortexai-agent-hub.apk).
+For manual installation, an APK remains available.
 `release-mobile` publishes it, or run the `release-android-apk` workflow from
 `main` on its own. It builds the `android-apk` EAS profile, signed with the
 project's managed keystore, and replaces the rolling `android` GitHub release,

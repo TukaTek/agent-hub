@@ -9,6 +9,7 @@ import {
   openBotPanelTab,
   realSandboxTimeout,
   rpc,
+  showPasswordForm,
   signup,
 } from "./helpers";
 

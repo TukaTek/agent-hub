@@ -4,15 +4,19 @@ import type { RequestListener, Server } from "node:http";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { CortexAiAgentHubDesktop } from "@cortexai-agent-hub/contracts";
 import type { ElectronApplication } from "@playwright/test";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { prepareHostComputer } from "../src/host-computer.js";
+import { shownWindow } from "./shown-window.js";
 
 const APP_MARKER = "Local CortexAI Agent Hub stack ready";
 const IMAGE_TAG = "v9.9.9";
 const STACK_PROBE_PATH = "/.well-known/cortexai-agent-hub-desktop-stack";
 const STACK_TOKEN_HEADER = "x-cortexai-agent-hub-desktop-stack-token";
 const COMPOSE_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "infra", "compose");
+// Waits that span the fake docker's 2 s pull and the calls around it; a busy runner is slow.
+const AFTER_PULL = { timeout: 15_000 };
 
 type FakeDockerMode =
   | "ok"
@@ -263,7 +267,7 @@ test("switching to Existing instance while the stack starts keeps that choice", 
 
   // Main process still finishes the install; setup.json must stay untouched.
   await expect
-    .poll(async () => (await readLog()).some((line) => line.includes(" up -d")))
+    .poll(async () => (await readLog()).some((line) => line.includes(" up -d")), AFTER_PULL)
     .toBe(true);
   await new Promise((resolve) => setTimeout(resolve, 2500));
   expect(await savedSetup()).toBeNull();
@@ -376,7 +380,7 @@ test("a saved local stack is reused only after its private identity matches", as
   );
 
   app = await launch("ok");
-  const appWindow = await app.firstWindow();
+  const appWindow = await shownWindow(app);
   await expect(appWindow.getByText(APP_MARKER)).toBeVisible();
   expect(await readLog()).toEqual([]);
 });
@@ -451,6 +455,7 @@ test("exhausted address pools explain recovery", async () => {
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.locator("#stack-phase")).toHaveText(
     "Docker has no free network address pools. Remove unused Docker networks or expand Docker’s address pools, then retry.",
+    AFTER_PULL,
   );
   await expect(setup.getByRole("button", { name: "Retry" })).toBeEnabled();
   await setup.screenshot({
@@ -470,7 +475,7 @@ test("a port conflict opens and saves the replacement managed origin", async () 
     .poll(async () => {
       replacementUrl = await readFile(urlFile, "utf8").catch(() => "");
       return replacementUrl !== "" && replacementUrl !== serverUrl;
-    })
+    }, AFTER_PULL)
     .toBe(true);
   // Stand in for the web container Docker would bind to the selected port.
   const replacement = createServer(server.listeners("request")[0] as RequestListener);
@@ -497,6 +502,7 @@ test("repeated port conflicts stop with a retry action", async () => {
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.locator("#stack-phase")).toHaveText(
     "Could not bind a local port after retrying. Retry to choose another port.",
+    AFTER_PULL,
   );
   await expect(setup.getByRole("button", { name: "Retry" })).toBeEnabled();
   expect((await readLog()).filter((line) => line.includes(" up -d"))).toHaveLength(3);
@@ -513,7 +519,14 @@ test("the desktop never exposes server administration or account impersonation",
   await setup.getByRole("button", { name: "Continue", exact: true }).click();
   const main = await nextWindow;
   await expect(main.getByText(APP_MARKER)).toBeVisible();
-  expect(await main.evaluate(() => "localSettings" in window.cortexAiAgentHubDesktop!)).toBe(false);
+  expect(
+    await main.evaluate(
+      () =>
+        "localSettings" in
+        (window as typeof window & { cortexAiAgentHubDesktop: CortexAiAgentHubDesktop })
+          .cortexAiAgentHubDesktop,
+    ),
+  ).toBe(false);
   expect(
     await app.evaluate(({ Menu }) =>
       Boolean(Menu.getApplicationMenu()?.getMenuItemById("local-server-settings")),

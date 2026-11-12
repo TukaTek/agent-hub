@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 describe("sentry sink", () => {
-  it("reads config from the environment", () => {
+  it("reads config from the environment", async () => {
     expect(sentryConfigFromEnv({})).toEqual({});
     expect(sentryConfigFromEnv({ SENTRY_DSN: "  " })).toEqual({});
     expect(sentryConfigFromEnv({ SENTRY_DSN: "https://errors.example.com/7" }).warning).toContain(
@@ -49,12 +49,12 @@ describe("sentry sink", () => {
       undefined,
     );
     expect(
-      createSentrySinkFromEnv("cortexai-agent-hub-api", { SENTRY_DSN: "bad" }).sink,
+      (await createSentrySinkFromEnv("cortexai-agent-hub-api", { SENTRY_DSN: "bad" })).sink,
     ).toBeUndefined();
   });
 
-  it("passes the root logger service to the SDK scope", () => {
-    createRootLogger("cortexai-agent-hub-worker", { SENTRY_DSN: DSN });
+  it("passes the root logger service to the SDK scope", async () => {
+    await createRootLogger("cortexai-agent-hub-worker", { SENTRY_DSN: DSN });
     expect(Sentry.getIsolationScope().getScopeData().tags.service).toBe(
       "cortexai-agent-hub-worker",
     );
@@ -62,7 +62,7 @@ describe("sentry sink", () => {
 
   it("tags exceptions captured outside log writes with the service", async () => {
     const { events, transport } = recordingTransport();
-    const sink = createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
+    const sink = await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
     Sentry.captureException(new Error("unexpected failure"));
     await sink.flush?.();
 
@@ -72,7 +72,7 @@ describe("sentry sink", () => {
 
   it("redacts stack frame paths on exceptions the SDK captures directly", async () => {
     const { events, transport } = recordingTransport();
-    const sink = createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
+    const sink = await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
     const error = new Error("unexpected failure");
     error.stack = "Error: unexpected failure\n    at run (/home/ada@example.com/app/index.js:1:1)";
     Sentry.captureException(error);
@@ -85,7 +85,7 @@ describe("sentry sink", () => {
     const { events, transport } = recordingTransport();
     const logger = createLogger({
       service: "cortexai-agent-hub-api",
-      sinks: [createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
+      sinks: [await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
     });
     const error = new Error("cannot read /home/example-user/state.json");
     error.stack =
@@ -98,7 +98,7 @@ describe("sentry sink", () => {
 
   it("reports error logs with the exception chain, tags, and no log context", async () => {
     const { events, transport } = recordingTransport();
-    const sink = createSentrySink(
+    const sink = await createSentrySink(
       "cortexai-agent-hub-worker",
       { dsn: DSN, environment: "prod-acme", release: "abc" },
       transport,
@@ -143,7 +143,7 @@ describe("sentry sink", () => {
     const { events, transport } = recordingTransport();
     const logger = createLogger({
       service: "cortexai-agent-hub-api",
-      sinks: [createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
+      sinks: [await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
     });
     const error = Object.assign(
       new Error(
@@ -166,7 +166,7 @@ describe("sentry sink", () => {
 
   it("redacts what it copies out when handed an event directly", async () => {
     const { events, transport } = recordingTransport();
-    const sink = createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
+    const sink = await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
     sink.write({
       timestamp: new Date().toISOString(),
       level: "error",
@@ -196,7 +196,7 @@ describe("sentry sink", () => {
   it("names the user only by a keyed hash of the logged account id", async () => {
     const { events, transport } = recordingTransport();
     const secret = "test-pseudonym-secret";
-    const sink = createSentrySink(
+    const sink = await createSentrySink(
       "cortexai-agent-hub-api",
       { dsn: DSN, pseudonymSecret: secret },
       transport,
@@ -219,7 +219,7 @@ describe("sentry sink", () => {
 
   it("sends no user without a pseudonym secret", async () => {
     const { events, transport } = recordingTransport();
-    const sink = createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
+    const sink = await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
     const logger = createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] });
     logger.error("failed", new Error("boom"), { "user.id": "user-raw-2" });
     await logger.flush();
@@ -233,7 +233,7 @@ describe("sentry sink", () => {
 
   it("scrubs SDK and scope metadata before sending", async () => {
     const { events, transport } = recordingTransport();
-    const sink = createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
+    const sink = await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport);
     Sentry.withScope((scope) => {
       scope.setUser({ id: "private-user", email: "private@example.com" });
       scope.setExtra("content", "private content");
@@ -265,7 +265,7 @@ describe("sentry sink", () => {
     const { events, transport } = recordingTransport();
     const logger = createLogger({
       service: "cortexai-agent-hub-api",
-      sinks: [createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
+      sinks: [await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
     });
     logger.info("started");
     logger.warn("slow");
@@ -289,7 +289,7 @@ describe("sentry sink", () => {
     const { events, transport } = recordingTransport();
     const logger = createLogger({
       service: "cortexai-agent-hub-api",
-      sinks: [createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
+      sinks: [await createSentrySink("cortexai-agent-hub-api", { dsn: DSN }, transport)],
     });
     logger.error("http.request.completed", {
       "http.method": "POST",

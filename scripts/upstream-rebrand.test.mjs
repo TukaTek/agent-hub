@@ -21,6 +21,11 @@ describe("rebrand", () => {
     [`user@${old}.test`, "user@cortexai-agent-hub.test"],
     [`https://github.com/elie222/${old}/releases`, "https://github.com/TukaTek/agent-hub/releases"],
     [
+      `https://raw.githubusercontent.com/elie222/${old}/main/install.sh`,
+      "https://raw.githubusercontent.com/TukaTek/agent-hub/main/install.sh",
+    ],
+    [`alias: "elie222/${old}/computer:edge"`, 'alias: "tukatek/agent-hub/computer:edge"'],
+    [
       'className="cortexai-agent-hub-scroll max-h-25"',
       'className="cortexai-agent-hub-scroll max-h-25"',
     ],

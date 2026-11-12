@@ -2,7 +2,11 @@ import type { AdapterContext, ManagedConnectorProvider } from "@cortexai-agent-h
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { appConnectCard, matchAppCatalog, matchesAppConnection } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
-import { appendEventInTransaction, createThreadMessageInTransaction } from "@cortexai-agent-hub/db";
+import {
+  appendEventInTransaction,
+  createThreadMessageInTransaction,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
+} from "@cortexai-agent-hub/db";
 
 const RECENT_MESSAGES = 50;
 
@@ -87,7 +91,7 @@ export async function connectApp(
       payload: { messageId: message.id, role: "bot", blocks: [block] },
     });
     return event;
-  });
+  }, THREAD_LOCK_TRANSACTION_OPTIONS);
   if (committed)
     await deps.events.notify(
       target.threadId,

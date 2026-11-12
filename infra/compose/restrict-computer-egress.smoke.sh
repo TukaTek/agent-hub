@@ -316,7 +316,7 @@ CORTEXAI_AGENT_HUB_IPTABLES="$bin/missing-iptables" CORTEXAI_AGENT_HUB_IP6TABLES
 docs="$root/../../docs/self-host-docker-computers.md"
 grep -q 'restrict-computer-egress.sh' "$docs" || fail "self-host-docker-computers.md does not mention the script"
 grep -q 'SANDBOX_COMPUTER_EGRESS' "$docs" || fail "self-host-docker-computers.md does not document the flag"
-grep -q 'https://raw.githubusercontent.com/elie222/cortexai-agent-hub/main/infra/compose/restrict-computer-egress.sh' "$docs" ||
+grep -q 'https://raw.githubusercontent.com/TukaTek/agent-hub/main/infra/compose/restrict-computer-egress.sh' "$docs" ||
   fail "self-host-docker-computers.md does not point VM hosts at the egress script"
 grep -q 'name: cortexai-agent-hub-computer-egress' "$docs" ||
   fail "self-host-docker-computers.md does not keep the VM egress helper in its own Compose project"

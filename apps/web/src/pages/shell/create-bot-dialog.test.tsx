@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { BotAvatarSet } from "@cortexai-agent-hub/contracts";
 import { ORGANIC_AVATAR_LOOKS } from "@cortexai-agent-hub/core";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -37,9 +38,14 @@ afterEach(() => {
   container.remove();
 });
 
-async function render(onCreate: (input: CreateBotDialogInput) => Promise<void>) {
+async function render(
+  onCreate: (input: CreateBotDialogInput) => Promise<void>,
+  avatarSet: BotAvatarSet = "organic",
+) {
   await act(async () => {
-    root.render(<CreateBotDialog onCancel={() => undefined} onCreate={onCreate} />);
+    root.render(
+      <CreateBotDialog avatarSet={avatarSet} onCancel={() => undefined} onCreate={onCreate} />,
+    );
   });
 }
 
@@ -76,10 +82,10 @@ describe("CreateBotDialog", () => {
     expect(button("Create").disabled).toBe(false);
   });
 
-  it("defaults new bots to the Original set with the family the preview draws", async () => {
+  it("draws the account's set without offering another, and leaves the set to the server", async () => {
     const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
     await render(onCreate);
-    expect(button("Original").getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector('[role="tablist"]')).toBeNull();
     const family = Number(
       document
         .querySelector(".cortexai-agent-hub-organic-avatar")
@@ -87,23 +93,19 @@ describe("CreateBotDialog", () => {
     );
     await typeName("Scout");
     await click(button("Create"));
-    expect(onCreate.mock.lastCall?.[0]).toMatchObject({
-      name: "Scout",
-      avatarSet: "organic",
-      avatarFamily: family,
-    });
+    expect(onCreate.mock.lastCall?.[0]).toMatchObject({ name: "Scout", avatarFamily: family });
+    expect(onCreate.mock.lastCall?.[0]).not.toHaveProperty("avatarSet");
     expect(onCreate.mock.lastCall?.[0]).not.toHaveProperty("id");
   });
 
   it("sends the CortexAI Agent Hub preview id without an organic family", async () => {
     const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
-    await render(onCreate);
-    await click(button("CortexAI Agent Hub"));
+    await render(onCreate, "cortexai-agent-hub");
     await typeName("Scout");
     await click(button("Create"));
     const input = onCreate.mock.lastCall![0];
     const preview = document.querySelector(".cortexai-agent-hub-logo-avatar")!;
-    expect(input).toMatchObject({ name: "Scout", avatarSet: "cortexai-agent-hub" });
+    expect(input).toMatchObject({ name: "Scout" });
     expect(input).not.toHaveProperty("avatarFamily");
     expect(input.id).toMatch(/^c[a-z0-9]{24}$/);
     expect(input.color?.toUpperCase()).toBe(preview.getAttribute("data-color")?.toUpperCase());
@@ -113,36 +115,28 @@ describe("CreateBotDialog", () => {
     const onCreate = vi
       .fn(async (_input: CreateBotDialogInput) => undefined)
       .mockRejectedValueOnce(new Error("Try again"));
-    await render(onCreate);
-    await click(button("CortexAI Agent Hub"));
-    await click(button("Color #10B981"));
+    await render(onCreate, "cortexai-agent-hub");
+    await click(button("Color #00C972"));
     await typeName("Scout");
     await click(button("Create"));
-    expect(onCreate.mock.lastCall?.[0]).toMatchObject({
-      avatarSet: "cortexai-agent-hub",
-      color: "#10B981",
-    });
+    expect(onCreate.mock.lastCall?.[0]).toMatchObject({ color: "#00C972" });
     await click(button("Create"));
-    expect(onCreate.mock.lastCall?.[0]).toMatchObject({
-      avatarSet: "cortexai-agent-hub",
-      color: "#10B981",
-    });
+    expect(onCreate.mock.lastCall?.[0]).toMatchObject({ color: "#00C972" });
   });
 
   it("sends the organic family the preview draws", async () => {
     const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
     await render(onCreate);
     await click(button("Shape 2"));
-    await click(button("Color #10B981"));
+    await click(button("Color #00C972"));
     const preview = document.querySelector(".cortexai-agent-hub-organic-avatar");
     const family = Number(preview?.getAttribute("data-shape-family"));
     await typeName("Scout");
     await click(button("Create"));
     expect(onCreate).toHaveBeenCalledWith({
       name: "Scout",
-      color: "#10B981",
+      color: "#00C972",
       avatarFamily: family,
-      avatarSet: "organic",
     });
     expect(family).toBe(ORGANIC_AVATAR_LOOKS[1]);
   });
@@ -150,14 +144,13 @@ describe("CreateBotDialog", () => {
   it("sends a studio shape without an organic family", async () => {
     const onCreate = vi.fn(async (_input: CreateBotDialogInput) => undefined);
     await render(onCreate);
-    await click(button("Color #F97316"));
+    await click(button("Color #FF781C"));
     await click(button("wedge"));
     await typeName("Scout");
     await click(button("Create"));
     expect(onCreate).toHaveBeenCalledWith({
       name: "Scout",
-      color: "#F97316::shape_1",
-      avatarSet: "organic",
+      color: "#FF781C::shape_1",
     });
   });
 
@@ -174,22 +167,19 @@ describe("CreateBotDialog", () => {
   });
 });
 
-it("retains the preview identity and colour through rerenders, set toggles and a retry", async () => {
+it("retains the preview identity and colour through rerenders and a retry", async () => {
   const onCreate = vi
     .fn(async (_input: CreateBotDialogInput) => undefined)
     .mockRejectedValueOnce(new Error("Try again"));
-  await render(onCreate);
-  await click(button("CortexAI Agent Hub"));
+  await render(onCreate, "cortexai-agent-hub");
   const colour = document
     .querySelector(".cortexai-agent-hub-logo-avatar")!
     .getAttribute("data-color");
   await typeName("First name");
-  await render(onCreate);
+  await render(onCreate, "cortexai-agent-hub");
   expect(
     document.querySelector(".cortexai-agent-hub-logo-avatar")!.getAttribute("data-color"),
   ).toBe(colour);
-  await click(button("Original"));
-  await click(button("CortexAI Agent Hub"));
   await click(button("Create"));
   const first = onCreate.mock.lastCall![0];
   await typeName("Retry name");

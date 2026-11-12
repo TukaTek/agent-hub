@@ -1,6 +1,7 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { truncateReplyQuote } from "@cortexai-agent-hub/contracts";
 import { blocksToAgentHistoryText, messageReaction } from "@cortexai-agent-hub/core";
+import { isPageCardMessage } from "@cortexai-agent-hub/core/message-quote";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 
 type QuotedMessage = {
@@ -26,8 +27,12 @@ function replyContext(source: ReplyMessage, threadId: string): string | undefine
   const emoji = messageReaction({ ...source, blocks: messageBlocks(source) });
   // A selected-text excerpt narrows the reply to just that span; reactions stay
   // on the whole-message path because a reaction always targets the message.
+  // A page card is always read whole, so the bot gets the page's id, not just its title.
+  const wholePage = isPageCardMessage(messageBlocks(target));
   const excerpt =
-    !emoji && typeof source.replyQuote === "string" ? source.replyQuote.trim() : undefined;
+    !emoji && !wholePage && typeof source.replyQuote === "string"
+      ? source.replyQuote.trim()
+      : undefined;
   const targetPayload = excerpt
     ? { quotedText: truncateReplyQuote(excerpt) }
     : (() => {

@@ -119,3 +119,19 @@ describe("local model output limit on the wire", () => {
     expect(outputLimit(request)).toBe(4096);
   });
 });
+
+describe("local model reasoning on the wire", () => {
+  it("sends reasoning_effort only for a model in CORTEXAI_AGENT_HUB_LOCAL_REASONING_MODELS", async () => {
+    const plain = await wireRequest({
+      ...localServer,
+      CORTEXAI_AGENT_HUB_LOCAL_REASONING_MODELS: "other-model",
+    });
+    expect(plain).not.toHaveProperty("reasoning_effort");
+
+    const listed = await wireRequest({
+      ...localServer,
+      CORTEXAI_AGENT_HUB_LOCAL_REASONING_MODELS: "example-model",
+    });
+    expect(listed.reasoning_effort).toBe("medium");
+  });
+});

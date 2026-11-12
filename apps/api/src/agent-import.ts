@@ -617,7 +617,7 @@ export async function createImportedBot<PreparedKey>(
       instructions,
       notifyOnFinish: true,
       color: input.color,
-      avatarSet: input.avatarSet ?? "organic",
+      avatarSet: input.avatarSet,
       computerMode: input.computerMode,
       modelProvider: model?.provider ?? null,
       modelId: model?.modelId ?? null,

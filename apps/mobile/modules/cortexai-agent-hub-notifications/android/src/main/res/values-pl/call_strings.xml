@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="cortexai_agent_hub_call_channel">Trwająca rozmowa</string>
+  <string name="cortexai_agent_hub_call_title">Rozmowa w CortexAI Agent Hub</string>
+  <string name="cortexai_agent_hub_call_text">Mikrofon jest aktywny</string>
+  <string name="cortexai_agent_hub_call_answer">Odbierz</string>
+  <string name="cortexai_agent_hub_call_decline">Odrzuć</string>
+</resources>

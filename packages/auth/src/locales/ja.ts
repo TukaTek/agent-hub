@@ -41,8 +41,8 @@ export const JA_MESSAGES: Record<string, string> = {
   "Have any questions? Reply to this email.": "ご質問があれば、このメールに返信してください。",
   Unsubscribe: "配信停止",
   "Invite a friend": "友だちを招待",
-  "Invite a friend to CortexAI Agent Hub and earn a free month when they start a qualifying subscription with a new card.":
-    "友だちをCortexAI Agent Hubに招待しましょう。友だちが新しいカードで対象のサブスクリプションを始めると、1か月分が無料になります。",
+  "Invite a friend to CortexAI Agent Hub: they get {weeks} weeks free, and you earn a free month when they start a qualifying subscription with a new card.":
+    "友だちをCortexAI Agent Hubに招待しましょう。友だちは{weeks}週間無料で使え、新しいカードで対象のサブスクリプションを始めると、あなたは1か月無料になります。",
   "Open CortexAI Agent Hub": "CortexAI Agent Hubを開き",
   "and choose Invite friends for your link.": "「友だちを招待」を選ぶとリンクを取得できます。",
   "Have any questions? Just reply to this email.":
@@ -74,4 +74,9 @@ export const JA_MESSAGES: Record<string, string> = {
   "Your changes to the {name} page are approved.": "{name} ページへの変更が承認されました。",
   "We couldn't approve your changes to the {name} page.":
     "{name} ページへの変更を承認できませんでした。",
+  "Your saved computer files will be deleted": "保存されたコンピューターのファイルが削除されます",
+  "Your saved computer files will be deleted on {date} unless you resubscribe.":
+    "再登録しない場合、保存されたコンピューターのファイルは{date}に削除されます。",
+  "Your saved computer files will be deleted on {date} unless you choose a plan.":
+    "プランを選択しない場合、保存されたコンピューターのファイルは{date}に削除されます。",
 };

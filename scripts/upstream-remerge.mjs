@@ -164,6 +164,23 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
       git(cwd, ["rm", "-q", "--cached", "--", path]);
       rmSync(join(cwd, path), { force: true });
       removeEmptyParents(cwd, path);
+      // Changed upstream at the old name of a file the fork keeps under its own name: merge there.
+      const forkPath = rebrandPath(path);
+      if (stage[1] && stage[3] && forkPath !== path && existsSync(join(cwd, forkPath))) {
+        const [base, theirs] = [stage[1], stage[3]].map((blob) =>
+          git(cwd, ["cat-file", "blob", blob]).toString("utf8"),
+        );
+        content.push({
+          path: forkPath,
+          texts: {
+            base: rebrand(base, forkPath).text,
+            ours: readFileSync(join(cwd, forkPath), "utf8"),
+            theirs: rebrand(theirs, forkPath).text,
+          },
+        });
+        report.renamed.push(`${path} -> ${forkPath} (merged)`);
+        continue;
+      }
       report.keptDeleted.push(path);
       continue;
     }
