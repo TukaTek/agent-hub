@@ -553,6 +553,13 @@ describeIntegration("reusable credential lifecycle", () => {
 
     it("saves a download the same run can list, read and attach, and keeps it after commit", async () => {
       const seeded = await seedWithCredential("download-visible");
+      const readWholePdf = {
+        path: "downloads/report.pdf",
+        content: pdf,
+        totalLines: 1,
+        startLine: 1,
+        endLine: 1,
+      };
       fetch.mockImplementation(async () => pdfResponse());
       const { runId, results } = await runTools(seeded, [
         request("/v1/reports/latest"),
@@ -574,7 +581,7 @@ describeIntegration("reusable credential lifecycle", () => {
           path: "downloads",
           entries: [{ path: "downloads/report.pdf", kind: "file", size: pdf.length }],
         },
-        { path: "downloads/report.pdf", content: pdf },
+        readWholePdf,
         { ok: true, artifactId: expect.any(String), path: "downloads/report.pdf" },
       ]);
       await vi.waitFor(
@@ -592,7 +599,7 @@ describeIntegration("reusable credential lifecycle", () => {
       const next = await runTools(seeded, [
         { name: "read_file", args: { path: "downloads/report.pdf" } },
       ]);
-      expect(next.results).toEqual([{ path: "downloads/report.pdf", content: pdf }]);
+      expect(next.results).toEqual([readWholePdf]);
     });
 
     /** The bot's files as the fake computer stores them, keyed by the path the bot uses. */
