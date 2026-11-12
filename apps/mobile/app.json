@@ -91,7 +91,6 @@
         }
       ],
       "./plugins/with-worklets-headers",
-      "./plugins/with-lan-cleartext",
       "./plugins/with-android-no-gwp-asan",
       "./plugins/with-agent-notifications",
       "./plugins/with-app-intents"
