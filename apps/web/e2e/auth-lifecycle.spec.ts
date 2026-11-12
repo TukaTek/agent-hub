@@ -116,7 +116,7 @@ test(
 );
 
 test(
-  "a new visitor opening the app lands on sign up, fits a narrow phone, and can switch to sign in",
+  "a new visitor reaches sign up from the welcome page, fits a narrow phone, and can switch to sign in",
   { tag: "@nightly" },
   async ({ page }, testInfo) => {
     await page.route("**/api/auth/get-session**", (route) => route.fulfill({ json: null }));
@@ -127,6 +127,7 @@ test(
     );
     await page.setViewportSize({ width: 320, height: 640 });
     await page.goto("/");
+    await page.getByRole("button", { name: /Sign up/ }).click();
     await expect(page).toHaveURL(/\/sign-up$/);
     await expect(
       page.getByRole("heading", { name: "Create your CortexAI Agent Hub" }),
@@ -155,7 +156,9 @@ test("an unknown page offers a way home", async ({ page }, testInfo) => {
   await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
   await captureScreenshot(page, testInfo, "not-found");
   await page.getByRole("link", { name: "Go home" }).click();
-  await expect(page).toHaveURL(/\/sign-up$/);
+  // A local installation opens on the welcome page rather than straight into sign up.
+  await expect(page.locator('[data-cortexai-agent-hub-surface="welcome"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("logout protects bot deep links and sign-in restores the session", async ({

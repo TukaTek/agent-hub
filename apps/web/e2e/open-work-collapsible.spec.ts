@@ -34,12 +34,11 @@ test("Open work in bot Advanced settings collapses a long list and remembers the
   await header.scrollIntoViewIfNeeded();
   await captureScreenshot(page, testInfo, "open-work-expanded");
 
+  // The chat reopens its side panel on the Advanced tab after a reload.
   await page.reload();
-  await page
-    .locator("main")
-    .getByRole("button", { name: /^Chief/ })
-    .click();
-  await page.getByTestId("bot-settings").getByText("Advanced", { exact: true }).click();
+  await expect(
+    page.getByTestId("bot-settings").getByRole("tab", { name: "Advanced", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByTestId("bot-scratchpad").getByRole("button", { name: /Open work/ }),
   ).toHaveAttribute("aria-expanded", "true");

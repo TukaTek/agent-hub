@@ -58,7 +58,7 @@ test("opening and releasing the computer keep a view-only stream; a failed relea
   expect(takeovers).toBe(1);
   await captureScreenshot(page, testInfo, "computer-released-view-only");
   await page.getByRole("button", { name: "Close computer" }).click();
-  await expect(page.getByTitle("Bot screen preview")).toBeVisible();
+  await expect(page.getByTitle("Assistant screen preview")).toBeVisible();
   await captureScreenshot(page, testInfo, "computer-tab-running");
   await page.getByTestId("computer-preview").hover();
   await page.getByTestId("computer-preview-open").click();
