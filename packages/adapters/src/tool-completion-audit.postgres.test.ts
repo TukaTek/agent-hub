@@ -204,40 +204,43 @@ describePostgres(
           { name: "shell", executionId: "test-fake-call-starved", durationMs: 1 },
         );
 
+        // A transaction waits as long as the pool does, so the pool's checkout timeout fails it.
         expect(failures).toEqual([
-          expect.objectContaining({
-            code: "P2028",
-            message: expect.stringContaining("Unable to start a transaction in the given time"),
-          }),
+          expect.objectContaining({ message: "timeout exceeded when trying to connect" }),
         ]);
         expect(attempts).toBe(2);
         expect(warnings()).toEqual([]);
         expect(await auditRows(target.runId)).toHaveLength(1);
       }));
 
-    it("warns retries_exhausted instead of dropping silently when the pool stays starved", () =>
-      runAsSystem("test", async () => {
-        const { prisma, pool } = client(1);
-        const events = createThreadEvents(prisma);
-        const target = await runInNewThread();
-        const held = await pool.connect();
-        try {
-          await appendToolCompletionAudit(
-            {
-              events,
-              auditQueue: createToolCompletionAuditQueue({ random: () => 0 }),
-            },
-            target,
-            { name: "shell", executionId: "test-fake-call-exhausted", durationMs: 1 },
-          );
-        } finally {
-          held.release();
-        }
+    it(
+      "warns retries_exhausted instead of dropping silently when the pool stays starved",
+      () =>
+        runAsSystem("test", async () => {
+          const { prisma, pool } = client(1);
+          const events = createThreadEvents(prisma);
+          const target = await runInNewThread();
+          const held = await pool.connect();
+          try {
+            await appendToolCompletionAudit(
+              {
+                events,
+                auditQueue: createToolCompletionAuditQueue({ random: () => 0 }),
+              },
+              target,
+              { name: "shell", executionId: "test-fake-call-exhausted", durationMs: 1 },
+            );
+          } finally {
+            held.release();
+          }
 
-        expect(warnings()).toEqual([
-          expect.objectContaining({ reason: "retries_exhausted", attempts: 3 }),
-        ]);
-        expect(await auditRows(target.runId)).toHaveLength(0);
-      }));
+          expect(warnings()).toEqual([
+            expect.objectContaining({ reason: "retries_exhausted", attempts: 3 }),
+          ]);
+          expect(await auditRows(target.runId)).toHaveLength(0);
+        }),
+      // Each of the three attempts waits out the pool's 10s checkout timeout.
+      60_000,
+    );
   },
 );
