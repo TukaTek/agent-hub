@@ -22,7 +22,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { Agent, } from "undici";
+import { Agent } from "undici";
 import { composioToolBatch } from "./composio-batch.js";
 import { sensitiveQueryParameter } from "./connector-http.js";
 import { combineSignals } from "./connector-safety.js";

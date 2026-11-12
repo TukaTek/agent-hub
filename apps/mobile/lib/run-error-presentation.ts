@@ -1,8 +1,5 @@
 import type { computerHoursOut } from "@cortexai-agent-hub/contracts";
-import type {
-  normalizeRunError,
-  RunErrorRecovery,
-} from "@cortexai-agent-hub/core";
+import type { normalizeRunError, RunErrorRecovery } from "@cortexai-agent-hub/core";
 import { t } from "@lingui/core/macro";
 
 /** The label of the one action that fixes the failure; transient failures have none. */

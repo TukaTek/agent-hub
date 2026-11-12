@@ -3,7 +3,7 @@ import {
   BOT_INSTRUCTIONS_MAX_LENGTH,
   InstructionVersionSchema,
 } from "@cortexai-agent-hub/contracts";
-import type { Prisma, } from "./client.js";
+import type { Prisma } from "./client.js";
 
 export class InstructionConflictError extends Error {
   constructor(message: string) {

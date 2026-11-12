@@ -7,12 +7,7 @@ import {
   PushSessionEndedError,
   settleCallRequest,
 } from "@cortexai-agent-hub/adapters";
-import type {
-  ActionApprovalRule,
-  Actor,
-  Me,
-  SettingsScope,
-} from "@cortexai-agent-hub/contracts";
+import type { ActionApprovalRule, Actor, Me, SettingsScope } from "@cortexai-agent-hub/contracts";
 import {
   approvalModeFromPreference,
   approvalPreferenceFromMode,
