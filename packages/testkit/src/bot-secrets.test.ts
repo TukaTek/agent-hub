@@ -420,6 +420,15 @@ describeIntegration("reusable credential lifecycle", () => {
 
     async function seedWithCredential(label: string) {
       const seeded = await seedRun(label, "Save the API credential");
+      // Ask mode would pause secret_request on a card; these tests cover the request itself.
+      await db.userActionApprovalRule.create({
+        data: {
+          userId: seeded.me.userId,
+          effect: "always_allow",
+          matchKind: "tool",
+          matchValue: "secret_request",
+        },
+      });
       // A non-scripted run needs a connected model; the mocked runtime never calls it.
       await rpc(seeded.cookie, "models/connect", {
         provider: "fixture-provider",
