@@ -26,7 +26,13 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-hub-policy-off-"));
   const subject = `policy-off-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const hubPaths: string[] = [];
-  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  // Startup logs in beforeAll, and Vitest clears mock calls before each test, so record them here.
+  const logged = { info: [] as unknown[][], warn: [] as unknown[][], error: [] as unknown[][] };
+  const logger = {
+    info: (...args: unknown[]) => void logged.info.push(args),
+    warn: (...args: unknown[]) => void logged.warn.push(args),
+    error: (...args: unknown[]) => void logged.error.push(args),
+  };
   const realFetch = globalThis.fetch;
 
   beforeAll(async () => {
@@ -84,11 +90,11 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
   });
 
   it("starts with a warning and reports the disabled policy on health", async () => {
-    expect(logger.warn).toHaveBeenCalledWith(
+    expect(logged.warn).toContainEqual([
       expect.stringContaining("HUB_POLICY_ENFORCEMENT=off"),
       expect.objectContaining({ "hub.policy": "disabled" }),
-    );
-    expect(logger.error).not.toHaveBeenCalled();
+    ]);
+    expect(logged.error).toEqual([]);
     const health = await (await handles.app.request("/internal/health")).json();
     expect(health).toMatchObject({ ok: true, status: "ok", hubPolicy: { state: "disabled" } });
   });
