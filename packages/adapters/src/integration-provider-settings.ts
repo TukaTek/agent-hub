@@ -15,7 +15,8 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import type { ComposioProvider } from "./composio-connector.js";
-import { ComposioConnector, createConnectorStack } from "./composio-connector.js";
+import { ComposioConnector } from "./composio-connector.js";
+import { createConnectorStack } from "./connector-registry.js";
 import { credentialDigest } from "./credential-digest.js";
 import { PipedreamConnector } from "./pipedream-connector.js";
 

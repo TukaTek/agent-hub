@@ -1,7 +1,7 @@
 import type { ProductEvent } from "@cortexai-agent-hub/contracts";
+import { BOT_COLOR_LIST } from "@cortexai-agent-hub/contracts";
 import type { LogoAvatarActivity } from "@cortexai-agent-hub/core";
 import {
-  BOT_COLOR_LIST,
   createLogoAvatarActivityStore,
   initialLogoAvatarSignals,
   logoAvatarActivity,

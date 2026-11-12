@@ -1,5 +1,5 @@
 import type { DesktopUpdateState } from "@cortexai-agent-hub/contracts";
-import { Button, toast } from "@cortexai-agent-hub/ui-web";
+import { Button, SectionHeading, toast } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
@@ -172,9 +172,9 @@ export function DesktopUpdateSection() {
       data-testid="desktop-update-settings"
       className="mt-5 rounded-xl border border-border px-4 py-4"
     >
-      <h3 className="text-heading3 font-medium text-foreground">
+      <SectionHeading variant="heading">
         <Trans>Desktop app</Trans>
-      </h3>
+      </SectionHeading>
       <div className="mt-3 flex items-center justify-between gap-3">
         <span className="text-body text-muted-foreground">v{state.currentVersion}</span>
         <Button

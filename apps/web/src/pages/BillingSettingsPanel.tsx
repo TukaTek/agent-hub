@@ -1,5 +1,5 @@
 import type { BillingStatus } from "@cortexai-agent-hub/contracts";
-import { Button, Skeleton } from "@cortexai-agent-hub/ui-web";
+import { Button, SectionHeading, Skeleton } from "@cortexai-agent-hub/ui-web";
 import { Plural, Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useState } from "react";
 import { ModelCreditsSettings } from "../components/ModelCredits";
@@ -75,7 +75,7 @@ export function BillingSettingsPanel({ client }: { client: RpcClient }) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           {status ? (
-            <h3 className="text-heading3 font-medium text-foreground">{stateLabel}</h3>
+            <SectionHeading variant="heading">{stateLabel}</SectionHeading>
           ) : error ? null : (
             <Skeleton className="h-5 w-24" />
           )}

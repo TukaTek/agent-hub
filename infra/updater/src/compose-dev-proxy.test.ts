@@ -83,3 +83,18 @@ describe("source-checkout compose postgres hardening", () => {
     ]);
   });
 });
+
+describe("web allowed hosts passthrough", () => {
+  it("passes CORTEXAI_AGENT_HUB_ALLOWED_HOSTS to the web service in the checkout, prod, and images compose files", () => {
+    for (const rel of [
+      "infra/compose/docker-compose.yml",
+      "infra/compose/docker-compose.prod.yml",
+      "infra/compose/docker-compose.images.yml",
+    ]) {
+      const env = loadCompose(rel).services.web?.environment;
+      expect(env?.CORTEXAI_AGENT_HUB_ALLOWED_HOSTS, rel).toBe(
+        "${CORTEXAI_AGENT_HUB_ALLOWED_HOSTS:-}",
+      );
+    }
+  });
+});

@@ -14,7 +14,11 @@ import {
   WorkspaceTooLargeError,
 } from "@cortexai-agent-hub/adapter-kit";
 import { COMPUTER_ALLOWANCE_USED_ERROR } from "@cortexai-agent-hub/contracts";
-import { QUEUE_HOLDING_RUN_STATUSES, withAbort } from "@cortexai-agent-hub/core";
+import {
+  COMPUTER_USING_RUNS,
+  QUEUE_HOLDING_RUN_STATUSES,
+  withAbort,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
   appendEventInTransaction,
@@ -1030,6 +1034,7 @@ function findActiveRun(
   return prisma.run.findFirst({
     where: {
       bot: { computerId },
+      ...COMPUTER_USING_RUNS,
       status: { in: statuses as (typeof QUEUE_HOLDING_RUN_STATUSES)[number][] },
       ...(liveLeaseOnly ? { leaseExpiresAt: { gt: new Date(Date.now()) } } : {}),
     },

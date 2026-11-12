@@ -19,7 +19,11 @@ import {
 import type { HubAuthConfig, OidcConfig } from "@cortexai-agent-hub/auth";
 import { hubAuthFromEnv } from "@cortexai-agent-hub/auth";
 import type { MinimumClientBuilds, NavLink } from "@cortexai-agent-hub/contracts";
-import { parseMinimumClientBuilds, parseNavLinks } from "@cortexai-agent-hub/contracts";
+import {
+  isPrivateNetworkHost,
+  parseMinimumClientBuilds,
+  parseNavLinks,
+} from "@cortexai-agent-hub/contracts";
 import { parseCrispWebsiteId } from "@cortexai-agent-hub/contracts/content-security-policy";
 import {
   attachmentCountFromEnv,
@@ -31,7 +35,7 @@ import {
   resolveSupervisorToken,
   uploadSizeFromEnv,
 } from "@cortexai-agent-hub/core";
-import { monitoringPseudonymSecret } from "@cortexai-agent-hub/logging";
+import { getLogger, monitoringPseudonymSecret } from "@cortexai-agent-hub/logging";
 
 export { resolveCloudAgentProvider, resolveSandboxProvider } from "@cortexai-agent-hub/adapters";
 
@@ -53,6 +57,8 @@ export interface AppEnv {
   authSecret: string;
   authUrl: string;
   webOrigin: string;
+  /** Extra browser origins trusted for sign-in and CORS, from `CORTEXAI_AGENT_HUB_EXTRA_AUTH_ORIGINS`. */
+  extraAuthOrigins: string[];
   /** `<TEAM_ID>.<bundle id>` of iOS apps that may use this domain's passkeys. */
   passkeyAppleAppIds: string[];
   /** SHA-256 signing certificate fingerprints of Android apps that may use this domain's passkeys. */
@@ -131,7 +137,7 @@ export interface AppEnv {
   emailFrom: string | undefined;
   emailReplyTo?: string;
   /** Mail to bots' addresses, posted by a relay; off unless the domain and secret are both set. */
-  inboundEmail?: { domain: string; secret: string };
+  inboundEmail?: { domain: string; secret: string; relayArcDomain?: string };
   /** Billing turns on only when all three are set; self-hosted installs leave them unset. */
   stripeSecretKey: string | undefined;
   stripeWebhookSecret: string | undefined;
@@ -267,6 +273,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     authSecret,
     authUrl,
     webOrigin,
+    extraAuthOrigins: parseExtraAuthOrigins(source.CORTEXAI_AGENT_HUB_EXTRA_AUTH_ORIGINS),
     passkeyAppleAppIds: list(source.PASSKEY_APPLE_APP_IDS),
     passkeyAndroidCertFingerprints: androidCertFingerprints(source.PASSKEY_ANDROID_CERT_SHA256),
     privacyPolicyUrl: optional(source.PRIVACY_POLICY_URL),
@@ -398,6 +405,31 @@ function resolveWebOrigin(value: string | undefined, fallback: string, name: str
   return origin;
 }
 
+/**
+ * Comma-separated origins an operator adds for a second address of the same install (a tailnet
+ * or LAN URL). Only bare `https://` origins, or `http://` on loopback or a private network, are
+ * kept; anything else is dropped with a warning so a typo cannot widen trust.
+ */
+export function parseExtraAuthOrigins(value: string | undefined): string[] {
+  const origins = new Set<string>();
+  for (const raw of (value ?? "").split(/[\s,]+/).filter(Boolean)) {
+    try {
+      const url = new URL(raw);
+      const bare =
+        url.pathname === "/" && !url.search && !url.hash && !url.username && !url.password;
+      const allowed =
+        url.protocol === "https:" ||
+        (url.protocol === "http:" && isPrivateNetworkHost(url.hostname));
+      if (!bare || !allowed) throw new Error();
+      origins.add(url.origin);
+    } catch {
+      // The entry is not logged: it may carry credentials.
+      getLogger().warn("ignoring invalid CORTEXAI_AGENT_HUB_EXTRA_AUTH_ORIGINS entry");
+    }
+  }
+  return [...origins];
+}
+
 function required(source: NodeJS.ProcessEnv, key: string): string {
   const value = source[key];
   if (!value) throw new Error(`Missing ${key}`);
@@ -436,7 +468,8 @@ function inboundEmailFromEnv(source: NodeJS.ProcessEnv): AppEnv["inboundEmail"] 
     throw new Error("INBOUND_EMAIL_DOMAIN must be a domain name such as bots.example.com");
   }
   if (secret.length < 32) throw new Error("INBOUND_EMAIL_SECRET must be at least 32 characters");
-  return { domain, secret };
+  const relayArcDomain = optional(source.INBOUND_EMAIL_RELAY_ARC_DOMAIN)?.toLowerCase();
+  return { domain, secret, ...(relayArcDomain ? { relayArcDomain } : {}) };
 }
 
 function optional(value: string | undefined): string | undefined {

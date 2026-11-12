@@ -12,9 +12,9 @@ import { MarkdownMemoryStore } from "@cortexai-agent-hub/memory";
 import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { handleRpcError } from "./app.js";
 import type { RouterDeps } from "./router.js";
 import { createRouter } from "./router.js";
+import { handleRpcError } from "./rpc-errors.js";
 import { resolveThreadTarget, sendThreadMessage } from "./thread-target.js";
 
 const describePostgres =

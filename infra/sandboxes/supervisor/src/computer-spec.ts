@@ -7,6 +7,8 @@ import {
   screenPorts,
 } from "@cortexai-agent-hub/core/node/desktop-runtime";
 import type Docker from "dockerode";
+import type { ComputerLocale } from "./computer-locale.js";
+import { computerLocaleEnv } from "./computer-locale.js";
 
 /**
  * The computer image. CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG is appended the way Compose does, so a
@@ -590,6 +592,7 @@ export interface ComputerCreateInput {
   publishControlPort?: boolean;
   dns?: string[];
   mounts?: ComputerMount[];
+  locale?: ComputerLocale;
 }
 
 interface PointerInput {
@@ -623,6 +626,7 @@ export function containerCreateOptions(input: ComputerCreateInput) {
       ...(input.controlToken
         ? [`CORTEXAI_AGENT_HUB_COMPUTER_CONTROL_TOKEN=${input.controlToken}`]
         : []),
+      ...computerLocaleEnv(input.locale),
     ],
     Labels: {
       "cortexai-agent-hub.managed": "true",

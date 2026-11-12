@@ -33,6 +33,7 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { boundedComputerActions, computerObservation } from "./computer-support.js";
 import { normalizeDesktopWorkspacePath } from "./desktop-sandbox-paths.js";
 import { McpSession } from "./mcp-transport.js";
+import { sandboxNotFoundError } from "./sandbox-errors.js";
 import { shouldSkipPortableWorkspaceFile } from "./workspace-save-policy.js";
 import type { WuyingControlPlane } from "./wuying-openapi.js";
 import { WuyingOpenApi } from "./wuying-openapi.js";
@@ -1048,9 +1049,7 @@ export class WuyingSandboxProvider implements SandboxProvider {
   private async ensureRunning(signal: AbortSignal) {
     const status = await this.control.desktopStatus(this.options.desktopId, signal);
     if (status === null) {
-      const error = new Error("Wuying desktop not found");
-      error.name = "SandboxNotFoundError";
-      throw error;
+      throw sandboxNotFoundError("Wuying desktop not found");
     }
     if (status === "Running") return false;
     if (status === "Stopping") await this.waitFor("Stopped", STOP_TIMEOUT_MS, signal);

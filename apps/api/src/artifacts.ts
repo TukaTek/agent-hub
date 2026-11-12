@@ -72,6 +72,8 @@ export async function storeInboundAttachment(
     attachment: MessagingInboundAttachment;
     clientNonce: string;
     downloadDeadline?: number;
+    /** Stored as a file of its own, never as the next version of one with the same name. */
+    standalone?: boolean;
   },
 ): Promise<StoredInboundAttachment> {
   const replayed = await findReplayedArtifact(deps.prisma, owner, input);
@@ -108,6 +110,7 @@ export async function storeInboundAttachment(
     mimeType,
     bytes,
     clientNonce: input.clientNonce,
+    standalone: input.standalone,
   });
   // The replay return above carries no bytes; callers treat them as optional.
   return { ...stored, bytes };
@@ -126,6 +129,7 @@ async function storeOwnedArtifact(
     mimeType: string;
     bytes: Uint8Array;
     clientNonce?: string;
+    standalone?: boolean;
   },
 ) {
   const { mimeType, bytes } = input;
@@ -156,8 +160,9 @@ async function storeOwnedArtifact(
           size: bytes.byteLength,
           hash,
           storageKey: stored.id,
-          rootArtifactId,
-          version,
+          ...(input.standalone
+            ? { rootArtifactId: null, version: 1, standalone: true }
+            : { rootArtifactId, version }),
           clientNonce: input.clientNonce,
         },
       });

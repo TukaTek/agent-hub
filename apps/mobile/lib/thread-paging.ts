@@ -5,9 +5,10 @@ import {
 } from "@cortexai-agent-hub/core";
 import { useState } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
-import type { MobileMessage, MobileSnapshot } from "./api";
-import { prependMobileMessagePage, rpc } from "./api";
+import { rpc } from "./api";
 import { useI18n } from "./i18n";
+import type { MobileMessage, MobileSnapshot } from "./mobile-types";
+import { prependMobileMessagePage } from "./mobile-types";
 import type { ThreadHistory } from "./thread-history";
 import type { ThreadListScroll } from "./thread-list-scroll";
 import { errorText } from "./user-error";

@@ -129,6 +129,8 @@ x-app-environment: &app-environment
   TOOL_RESULT_TEXT_LIMIT:
   CORTEXAI_AGENT_HUB_LOCAL_MODELS:
   CORTEXAI_AGENT_HUB_LOCAL_MODELS_URL:
+  CORTEXAI_AGENT_HUB_LOCAL_MODELS_API_KEY:
+  CORTEXAI_AGENT_HUB_LOOPBACK_HOST:
   CORTEXAI_AGENT_HUB_LOCAL_VISION_MODELS:
   CORTEXAI_AGENT_HUB_LOCAL_REASONING_MODELS:
   CORTEXAI_AGENT_HUB_LOCAL_CONTEXT_WINDOW:
@@ -148,6 +150,9 @@ x-app-environment: &app-environment
   MEDIA_GENERATION_API_KEY:
   MEDIA_GENERATION_IMAGE_MODEL:
   MEDIA_GENERATION_VIDEO_MODEL:
+  PAID_SERVICES_PROVIDER:
+  PAID_SERVICES_API_KEY:
+  PAID_SERVICES_BASE_URL:
   # Provider keys Pi reads itself when a model has no stored credential
   AI_GATEWAY_API_KEY:
   ANTHROPIC_AUTH_TOKEN:
@@ -322,13 +327,28 @@ services:
         fi
         exec docker-entrypoint.sh "$$@"
       - postgres
-    command: ["postgres"]
+    # Sized for an 8 GB host that also runs the api, worker and web. shared_buffers lives inside
+    # mem_limit, so lower both together on a smaller host (docs/self-host-configuration.md#postgres-memory).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-2GB}
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
     restart: unless-stopped
     logging: *logging
     security_opt:
       - no-new-privileges:true
     pids_limit: 200
-    mem_limit: 2g
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-2560m}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cortexai-agent-hub}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -472,6 +492,7 @@ services:
       BETTER_AUTH_SECRET:
       BETTER_AUTH_URL:
       WEB_ORIGIN:
+      CORTEXAI_AGENT_HUB_EXTRA_AUTH_ORIGINS:
       AUTH_PASSWORD_ENABLED: ${AUTH_PASSWORD_ENABLED:-true}
       AUTH_BREACHED_PASSWORD_CHECK_ENABLED: ${AUTH_BREACHED_PASSWORD_CHECK_ENABLED:-false}
       PASSKEY_APPLE_APP_IDS:
@@ -495,6 +516,7 @@ services:
       SENTRY_BROWSER_DSN: ${SENTRY_BROWSER_DSN:-}
       PRIVACY_POLICY_URL:
       INBOUND_EMAIL_SECRET:
+      INBOUND_EMAIL_RELAY_ARC_DOMAIN:
       WELCOME_EMAIL_ENABLED:
       STRIPE_SECRET_KEY:
       STRIPE_WEBHOOK_SECRET:
@@ -609,6 +631,7 @@ services:
       RAYON_NUM_THREADS: "4"
       API_PROXY_TARGET: http://api:3100
       CORTEXAI_AGENT_HUB_HOST: ${CORTEXAI_AGENT_HUB_HOST:-app.example.com}
+      CORTEXAI_AGENT_HUB_ALLOWED_HOSTS: ${CORTEXAI_AGENT_HUB_ALLOWED_HOSTS:-}
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET in .env}
       CORTEXAI_AGENT_HUB_CSP_SCRIPT_SRC: ${CORTEXAI_AGENT_HUB_CSP_SCRIPT_SRC:-}
       CORTEXAI_AGENT_HUB_CSP_CONNECT_SRC: ${CORTEXAI_AGENT_HUB_CSP_CONNECT_SRC:-}

@@ -1,5 +1,7 @@
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
 import type { ThreadMessage } from "@cortexai-agent-hub/contracts";
+import { helperCardState } from "@cortexai-agent-hub/core";
+import { Button } from "@cortexai-agent-hub/ui-web/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -20,11 +22,18 @@ const openHelpers = new Set<string>();
  * brief or report does not fill the chat. The header opens it to the full task and the result
  * or progress.
  */
-export function SubagentCard({ block }: { block: SubagentBlock }) {
+export function SubagentCard({
+  block,
+  onStop,
+}: {
+  block: SubagentBlock;
+  /** Stops this background helper; absent for a helper inside a turn. */
+  onStop?: () => Promise<unknown>;
+}) {
   const [open, setOpen] = useState(() => openHelpers.has(block.agentId));
+  const [stopping, setStopping] = useState(false);
   const running = block.status === "running";
-  const failed = block.status === "failed";
-  const body = block.result || block.progress || "";
+  const { stopped, failed, body } = helperCardState(block);
   return (
     <Collapsible
       open={open}
@@ -49,11 +58,15 @@ export function SubagentCard({ block }: { block: SubagentBlock }) {
                 ? "bg-destructive/15 text-destructive"
                 : running
                   ? "bg-warning/15 text-warning"
-                  : "bg-success/15 text-success"
+                  : stopped
+                    ? "bg-muted-foreground/15 text-muted-foreground"
+                    : "bg-success/15 text-success"
             }`}
           >
             {running ? (
               <Trans>Running</Trans>
+            ) : stopped ? (
+              <Trans>Stopped</Trans>
             ) : failed ? (
               <Trans>Failed</Trans>
             ) : (
@@ -78,6 +91,21 @@ export function SubagentCard({ block }: { block: SubagentBlock }) {
           {block.task}
         </span>
       </CollapsibleTrigger>
+      {running && onStop ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-3"
+          disabled={stopping}
+          onClick={() => {
+            setStopping(true);
+            // The card settles from the chat's events once the helper stops.
+            onStop().catch(() => setStopping(false));
+          }}
+        >
+          <Trans>Stop</Trans>
+        </Button>
+      ) : null}
       {body ? (
         <CollapsibleContent>
           <div

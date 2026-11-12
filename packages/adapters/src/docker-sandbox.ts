@@ -36,6 +36,7 @@ import {
   workspaceCwd,
 } from "./computer-support.js";
 import { sandboxCommandArgv } from "./sandbox-command-environment.js";
+import { sandboxNotFoundError } from "./sandbox-errors.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 import { shouldSkipPortableWorkspaceFile } from "./workspace-save-policy.js";
 
@@ -98,9 +99,7 @@ function encodedFileResponseLimit(maxBytes: number | undefined): number {
 
 /** Named so the API's isSandboxGoneError recognizes it and clears the dead computer row. */
 function sandboxGoneError(computer: ComputerRef): Error {
-  return Object.assign(new Error(`sandbox ${computer.id} is not running`), {
-    name: "SandboxNotFoundError",
-  });
+  return sandboxNotFoundError(`sandbox ${computer.id} is not running`);
 }
 
 export class DockerSandboxProvider implements SandboxProvider {
@@ -149,7 +148,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async provision(
-    request: { botId: string; homePath: string },
+    request: { botId: string; homePath: string; timezone?: string; language?: string },
     context: AdapterContext,
   ): Promise<ComputerRef> {
     const res = await fetch(this.url("/computers"), {
@@ -159,6 +158,8 @@ export class DockerSandboxProvider implements SandboxProvider {
         botId: request.botId,
         homePath: request.homePath,
         spaceId: context.spaceId,
+        timezone: request.timezone,
+        language: request.language,
       }),
       signal: context.signal,
     });

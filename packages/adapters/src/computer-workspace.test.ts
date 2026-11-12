@@ -27,6 +27,8 @@ import {
   createSecretDownloadTarget,
   deletedTeamBotFolders,
   ensureComputerWorkspaceLayout,
+  PORTABLE_TRANSFER_BATCH_BYTES,
+  PortableFileBatcher,
   removeComputerWorkspaceDirectories,
   removeDeletedBotWorkspaces,
   restoreComputerWorkspace,
@@ -928,5 +930,21 @@ describe("portable workspace exclusions", () => {
     ).toBe(true);
     expect(shouldSkipPortableWorkspaceFile("notes/tool-results/x.txt")).toBe(false);
     expect(shouldSkipPortableWorkspaceFile(".cortexai/other.txt")).toBe(false);
+  });
+});
+
+describe("PortableFileBatcher", () => {
+  it("hands back a batch once a file would pass the file count or the byte budget", () => {
+    const batcher = new PortableFileBatcher<number>(2, (size) => size);
+    const sent = [1, 2, 3, PORTABLE_TRANSFER_BATCH_BYTES, 4].map((size) => batcher.add(size));
+    expect(sent).toEqual([undefined, undefined, [1, 2], [3], [PORTABLE_TRANSFER_BATCH_BYTES]]);
+    expect(batcher.take()).toEqual([4]);
+    expect(batcher.take()).toEqual([]);
+  });
+
+  it("hands back an empty batch when an oversized file comes first", () => {
+    const batcher = new PortableFileBatcher<number>(8, (size) => size);
+    expect(batcher.add(PORTABLE_TRANSFER_BATCH_BYTES + 1)).toEqual([]);
+    expect(batcher.take()).toEqual([PORTABLE_TRANSFER_BATCH_BYTES + 1]);
   });
 });

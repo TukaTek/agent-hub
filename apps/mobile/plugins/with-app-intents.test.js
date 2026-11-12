@@ -56,6 +56,11 @@ describe("withAppIntents prebuild", () => {
       modResults: {
         hasFile: (file) => files.has(file),
         pbxTargetByName: (name) => (name === "CortexAiAgentHubWidgets" ? {} : undefined),
+        pbxNativeTargetSection: () => ({
+          "app-target": { name: "CortexAI Agent Hub" },
+          "app-target_comment": "CortexAI Agent Hub",
+          "widget-target": { name: '"CortexAiAgentHubWidgets"' },
+        }),
         pbxXCBuildConfigurationSection: () => ({ widget: { buildSettings: widgetSettings } }),
       },
     };
@@ -84,7 +89,10 @@ describe("withAppIntents prebuild", () => {
               XcodeUtils: {
                 getProjectName: () => "CortexAI Agent Hub",
                 addBuildSourceFileToGroup: (input) => {
-                  added.push(input);
+                  // Like the real helper, a file already in its group is skipped.
+                  const key = `${input.groupName}/${input.filepath}`;
+                  if (!files.has(key)) added.push(input);
+                  files.add(key);
                   files.add(input.filepath);
                 },
               },
@@ -105,7 +113,16 @@ describe("withAppIntents prebuild", () => {
       "CortexAI Agent Hub/CortexAiAgentHubIntents.swift",
       "CortexAI Agent Hub/VoiceMessageRecorder.swift",
       "CortexAI Agent Hub/VoiceMessageActivity.swift",
+      "CortexAiAgentHubWidgets.swift",
+      "WorkLiveActivity.swift",
+      "VoiceMessageActivity.swift",
+      "WorkActivityAttributes.swift",
     ]);
+    // An existing widget target still gets every source, in its own group and build phase.
+    expect(added.slice(3).every((input) => input.targetUuid === "widget-target")).toBe(true);
+    expect(added.slice(3).every((input) => input.groupName === "CortexAiAgentHubWidgets")).toBe(
+      true,
+    );
     expect(widgetSettings).toMatchObject({
       CURRENT_PROJECT_VERSION: "7",
       MARKETING_VERSION: "2.0.0",

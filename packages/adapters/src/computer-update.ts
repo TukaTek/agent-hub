@@ -1,11 +1,12 @@
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import {
   computerControlExpireJobKey,
+  isSandboxProviderOutage,
   SandboxAllowanceUsedError,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { ComputerUpdate } from "@cortexai-agent-hub/contracts";
 import { ComputerUpdateSchema } from "@cortexai-agent-hub/contracts";
-import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
+import { ACTIVE_RUN_STATUSES, COMPUTER_USING_RUNS } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { spaceTakesWork } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -142,7 +143,11 @@ export async function queueComputerUpdate(
           none: {
             OR: [
               { computerSwitching: true },
-              { runs: { some: { status: { in: [...ACTIVE_RUN_STATUSES] } } } },
+              {
+                runs: {
+                  some: { status: { in: [...ACTIVE_RUN_STATUSES] }, ...COMPUTER_USING_RUNS },
+                },
+              },
             ],
           },
         },
@@ -596,7 +601,7 @@ export async function performComputerUpdate(deps: Deps, updateId: string) {
         data: { status: "queued" },
       });
     } else {
-      if (error instanceof SandboxAllowanceUsedError) {
+      if (error instanceof SandboxAllowanceUsedError || isSandboxProviderOutage(error)) {
         getLogger().warn("computer update failed", {
           updateId,
           computerId: update.computerId,

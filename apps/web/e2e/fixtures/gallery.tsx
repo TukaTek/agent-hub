@@ -1,5 +1,6 @@
 import type { MessageBlock, ThreadMessage } from "@cortexai-agent-hub/contracts";
-import { BOT_COLOR_LIST, instructionUpdateDiff } from "@cortexai-agent-hub/core";
+import { BOT_COLOR_LIST } from "@cortexai-agent-hub/contracts";
+import { instructionUpdateDiff } from "@cortexai-agent-hub/core";
 import type { GroupAvatarMember } from "@cortexai-agent-hub/ui-web";
 import { Button } from "@cortexai-agent-hub/ui-web";
 import { I18nProvider } from "@lingui/react";

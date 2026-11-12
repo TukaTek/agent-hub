@@ -8,16 +8,15 @@ import {
 } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
+import { notifyRealtime } from "./event-stream.js";
 import {
   appendEventInTransaction,
-  createPendingSteeringRun,
-  discardAnsweredSteering,
-  notifyRealtime,
   THREAD_LOCK_TRANSACTION_OPTIONS,
   transientRunEventsWhere,
 } from "./events.js";
 import { createThreadMessageInTransaction } from "./messages.js";
 import { clearEndedRunState } from "./run-secrets.js";
+import { createPendingSteeringRun, discardAnsweredSteering } from "./thread-steering.js";
 import { withTransactionRetry } from "./transaction-retry.js";
 
 export interface ExpireStuckRunInput {

@@ -87,6 +87,7 @@ function Harness({ botId, groupId }: { botId?: string; groupId?: string }) {
       activeBotId: { current: botId },
       activeGroupId: { current: groupId },
       openChat,
+      meId: "user-1",
     },
   );
   return null;

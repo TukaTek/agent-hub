@@ -11,6 +11,7 @@ import {
   BillingCheckoutCompletedError,
   BillingCustomerNotFoundError,
   BillingNoMonthlyCreditsError,
+  BillingPaymentNotCompletedError,
 } from "@cortexai-agent-hub/adapter-kit";
 import { sandboxAllowance, sandboxHoursLeft } from "@cortexai-agent-hub/adapters";
 import type { Actor, BillingStatus, ByokInterval, ByokTier } from "@cortexai-agent-hub/contracts";
@@ -753,7 +754,12 @@ export function createBillingService(deps: {
       const { organizationId } = await managedOrganization(actor);
       const account = await billingAccountForOrganization(prisma, organizationId);
       if (!account) throw new ORPCError("NOT_FOUND", { message: "No billing account" });
-      await provider.endTrial(account.customerId);
+      try {
+        await provider.endTrial(account.customerId);
+      } catch (error) {
+        if (!(error instanceof BillingPaymentNotCompletedError)) throw error;
+        throw new ORPCError("PAYMENT_REQUIRED", { status: 402, message: error.message });
+      }
       await sync(account.customerId);
     },
 

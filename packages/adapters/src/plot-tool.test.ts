@@ -1,13 +1,12 @@
+import { CHART_CATALOG, searchChartCatalog } from "@cortexai-agent-hub/core/plot-catalog";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import type { PlotSpec } from "./plot-tool.js";
 import {
   buildPlotParts,
-  CHART_CATALOG,
   parsePlotData,
   plotSvgToPng,
   renderPlotSpecToSvg,
-  searchChartCatalog,
   supportedPlotNames,
 } from "./plot-tool.js";
 

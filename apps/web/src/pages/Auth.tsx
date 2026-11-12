@@ -728,7 +728,6 @@ export function AuthFrame({
   onSubmit: (event: React.FormEvent) => void;
   children: React.ReactNode;
 }) {
-  const { t } = useLingui();
   const server = desktopBridge()?.server;
   return (
     <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-brand-surface px-5 py-10 text-brand-surface-foreground sm:px-6 sm:py-16">

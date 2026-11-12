@@ -10,6 +10,7 @@ import {
   formatFileSize,
   isApprovalAskBlock,
   memberName,
+  messagingProviderLabel,
   selectedAskActionLabel,
 } from "@cortexai-agent-hub/core";
 import { fontWeight, typeScale } from "@cortexai-agent-hub/ui-tokens";
@@ -17,8 +18,6 @@ import type { ComponentProps } from "react";
 import { memo, useContext, useMemo, useState } from "react";
 import type { TextProps } from "react-native";
 import { Alert, Pressable, Text, View } from "react-native";
-import type { MobileBot, MobileMessage, MobileSnapshot } from "../../lib/api";
-import { blockText, messagingProviderLabel } from "../../lib/api";
 import { mobileTokens } from "../../lib/appearance";
 import type { MobileArtifactTarget } from "../../lib/artifact-open";
 import { openMobileArtifact } from "../../lib/artifact-open";
@@ -33,6 +32,8 @@ import {
   userMentionTargets,
 } from "../../lib/message-mentions";
 import { messagePresentationSegments } from "../../lib/message-presentation";
+import type { MobileBot, MobileMessage, MobileSnapshot } from "../../lib/mobile-types";
+import { blockText } from "../../lib/mobile-types";
 import { useResolvedAppearance } from "../../lib/native";
 import { speakerColorFor } from "../../lib/thread-message-text";
 import type { UserBubble } from "../../lib/user-bubble";
@@ -181,6 +182,12 @@ function MessageBubbleBody(props: ComponentProps<typeof MessageBubbleContent>) {
         onOpenBot={props.onOpenBot}
         onHelperToggle={props.onHelperToggle}
         userBubble={props.userBubble}
+        // A saved running card is a background helper's; a live one belongs to this turn.
+        stopHelper={
+          first.kind === "subagent" && message.botId && !message.id.startsWith("subagent:")
+            ? { botId: message.botId, messageId: message.id }
+            : undefined
+        }
       />
     ) : (
       <MessageBubbleContent

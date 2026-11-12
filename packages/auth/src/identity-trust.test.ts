@@ -1,7 +1,11 @@
 import { createHash, createHmac, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import type { TransactionalEmail } from "@cortexai-agent-hub/adapter-kit";
 import type * as Db from "@cortexai-agent-hub/db";
-import { bootstrapUserSpace, recordSecurityEvent } from "@cortexai-agent-hub/db";
+import {
+  bootstrapUserSpace,
+  recordSecurityEvent,
+  SpaceDeletionInProgressError,
+} from "@cortexai-agent-hub/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthEnv } from "./index.js";
 import { CLIENT_IP_HEADER, createAuth } from "./index.js";
@@ -52,7 +56,10 @@ function fixture({
   requestOrigin?: string;
   /** The provider accepts the message but never settles, like a hung SMTP connection. */
   stalledDelivery?: boolean;
-} & Pick<AuthEnv, "singleAccount" | "afterDeleteSession" | "afterReplaceSession"> = {}) {
+} & Pick<
+  AuthEnv,
+  "singleAccount" | "afterDeleteSession" | "afterReplaceSession" | "beforeDeleteUser"
+> = {}) {
   const data: Record<string, Record<string, unknown>[]> = {
     user: [],
     account: [],
@@ -629,6 +636,19 @@ describe("session credentials", () => {
     const deleted = await f.request("/delete-user", { password: "offline-password12" }, token);
     expect(deleted.status).toBe(200);
     expect(f.data.user).toHaveLength(0);
+  });
+
+  it("answers a deletion already under way with a conflict and keeps the account", async () => {
+    const f = fixture({
+      delivery: false,
+      beforeDeleteUser: async () => {
+        throw new SpaceDeletionInProgressError();
+      },
+    });
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    const response = await f.request("/delete-user", { password: "offline-password12" }, token);
+    expect(response.status).toBe(409);
+    expect(f.data.user).toHaveLength(1);
   });
 });
 

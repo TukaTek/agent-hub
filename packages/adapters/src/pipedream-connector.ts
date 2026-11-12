@@ -9,8 +9,8 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { catalogToolPrefix } from "./approval-effect.js";
-import { collectPages, filterCatalog } from "./composio-connector.js";
 import { resolveAccountToolCall, scopeConnectorTools } from "./connector-accounts.js";
+import { collectPages, filterCatalog } from "./connector-catalog.js";
 import {
   combineSignals,
   redactConnectorPayload,

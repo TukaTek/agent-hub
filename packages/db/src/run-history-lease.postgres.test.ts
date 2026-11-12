@@ -5,11 +5,12 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PrismaClient } from "./client.js";
 import { createDb } from "./client.js";
-import { appendEvent, settleReleasedTakeoverCards } from "./events.js";
+import { appendEvent } from "./events.js";
 import type { RunLease } from "./messages.js";
 import { createThreadMessage, RunHistoryWriteError } from "./messages.js";
 import { provisionMessagingIdentity } from "./messaging.js";
 import { asSystem, runAsSystem, runAsTenant } from "./row-security.js";
+import { settleReleasedTakeoverCards } from "./thread-takeover.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres =

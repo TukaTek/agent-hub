@@ -1,8 +1,5 @@
-import {
-  BOT_COLORS,
-  DEFAULT_NEW_BOT_AVATAR_SET,
-  INVITED_TRIAL_WEEKS,
-} from "@cortexai-agent-hub/contracts";
+import { DEFAULT_NEW_BOT_AVATAR_SET, INVITED_TRIAL_WEEKS } from "@cortexai-agent-hub/contracts";
+import { INVITE_AVATAR_COLORS } from "@cortexai-agent-hub/core";
 import { typeScale } from "@cortexai-agent-hub/ui-tokens";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
@@ -48,8 +45,8 @@ export default function InviteScreen() {
       >
         {AVATAR_SIZES.map((size, index) => (
           <BotAvatar
-            key={BOT_COLORS[index]}
-            color={BOT_COLORS[index]!}
+            key={INVITE_AVATAR_COLORS[index]}
+            color={INVITE_AVATAR_COLORS[index]!}
             identity={`invite-${index}`}
             avatarSet={DEFAULT_NEW_BOT_AVATAR_SET}
             size={size}

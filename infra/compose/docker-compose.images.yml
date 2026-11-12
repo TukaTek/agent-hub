@@ -130,6 +130,9 @@ x-app-environment: &app-environment
   TOOL_RESULT_TEXT_LIMIT:
   CORTEXAI_AGENT_HUB_LOCAL_MODELS:
   CORTEXAI_AGENT_HUB_LOCAL_MODELS_URL:
+  CORTEXAI_AGENT_HUB_LOCAL_MODELS_API_KEY:
+  # Where a localhost model or speech URL goes: the computer running Docker.
+  CORTEXAI_AGENT_HUB_LOOPBACK_HOST: host.docker.internal
   CORTEXAI_AGENT_HUB_LOCAL_VISION_MODELS:
   CORTEXAI_AGENT_HUB_LOCAL_REASONING_MODELS:
   CORTEXAI_AGENT_HUB_LOCAL_CONTEXT_WINDOW:
@@ -149,6 +152,9 @@ x-app-environment: &app-environment
   MEDIA_GENERATION_API_KEY:
   MEDIA_GENERATION_IMAGE_MODEL:
   MEDIA_GENERATION_VIDEO_MODEL:
+  PAID_SERVICES_PROVIDER:
+  PAID_SERVICES_API_KEY:
+  PAID_SERVICES_BASE_URL:
   # Provider keys Pi reads itself when a model has no stored credential
   AI_GATEWAY_API_KEY:
   ANTHROPIC_AUTH_TOKEN:
@@ -342,7 +348,9 @@ services:
   data-init:
     # Optional Hub override; unset keeps busybox:1.
     image: ${BUSYBOX_IMAGE:-busybox:1}
-    command: ["chown", "-R", "1000:1000", "/data"]
+    # Chown only entries with the wrong owner, so recreating the app does not rewrite every inode
+    # in the volume; -h changes a symlink itself, never its target.
+    command: ["find", "/data", "!", "(", "-user", "1000", "-group", "1000", ")", "-exec", "chown", "-h", "1000:1000", "{}", "+"]
     network_mode: none
     restart: "no"
     volumes:
@@ -453,6 +461,7 @@ services:
       BETTER_AUTH_SECRET:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://127.0.0.1:5173}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5173}
+      CORTEXAI_AGENT_HUB_EXTRA_AUTH_ORIGINS:
       AUTH_PASSWORD_ENABLED: ${AUTH_PASSWORD_ENABLED:-true}
       AUTH_BREACHED_PASSWORD_CHECK_ENABLED: ${AUTH_BREACHED_PASSWORD_CHECK_ENABLED:-false}
       PASSKEY_APPLE_APP_IDS:
@@ -477,6 +486,7 @@ services:
       SENTRY_BROWSER_DSN: ${SENTRY_BROWSER_DSN:-}
       PRIVACY_POLICY_URL:
       INBOUND_EMAIL_SECRET:
+      INBOUND_EMAIL_RELAY_ARC_DOMAIN:
       WELCOME_EMAIL_ENABLED:
       STRIPE_SECRET_KEY:
       STRIPE_WEBHOOK_SECRET:
@@ -583,6 +593,7 @@ services:
       RAYON_NUM_THREADS: "4"
       API_PROXY_TARGET: http://api:3100
       CORTEXAI_AGENT_HUB_HOST: ${CORTEXAI_AGENT_HUB_HOST:-localhost}
+      CORTEXAI_AGENT_HUB_ALLOWED_HOSTS: ${CORTEXAI_AGENT_HUB_ALLOWED_HOSTS:-}
       # Set only by the packaged desktop app. Its authenticated probe prevents a
       # source dev server on the same host port from impersonating this stack.
       CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN: ${CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN:-}

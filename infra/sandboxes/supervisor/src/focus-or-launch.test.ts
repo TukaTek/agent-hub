@@ -39,7 +39,9 @@ describe("focus-or-launch desktop helper", () => {
             `#!/bin/sh\nprintf '${name} %s\\n' "$*" >> "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n`,
           );
         }
-        for (const name of ["wmctrl", "xterm", "cortexai-agent-hub-browser"]) {
+        // The listed windows are Chromium's, whatever browser the host has.
+        writeFileSync(path.join(bin, "chromium"), "#!/bin/sh\n");
+        for (const name of ["wmctrl", "xterm", "cortexai-agent-hub-browser", "chromium"]) {
           chmodSync(path.join(bin, name), 0o755);
         }
         const run = async (listing: string, argv: string[], expected: string[]) => {

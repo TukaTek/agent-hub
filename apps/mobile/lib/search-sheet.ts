@@ -1,9 +1,9 @@
 import type { SearchHit, SpaceBot, SpaceGroup } from "@cortexai-agent-hub/contracts";
 import { dedupeSearchHits, searchHitListKey } from "@cortexai-agent-hub/core";
-import type { MobileBot, MobileGroup } from "./api";
 import { t } from "./i18n";
 import { filterBots } from "./inbox";
 import type { InboxSpace } from "./inbox-spaces";
+import type { MobileBot, MobileGroup } from "./mobile-types";
 import { previewSnippet } from "./preview";
 import { mobileSearchDestination } from "./search-destination";
 import { searchHitRowPreview } from "./search-list";

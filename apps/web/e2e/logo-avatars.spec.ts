@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { BOT_AVATAR_COLORS } from "@cortexai-agent-hub/core";
+import { BOT_COLORS } from "@cortexai-agent-hub/contracts";
 import { expect, test } from "@playwright/test";
 import { captureScreenshot } from "./helpers";
 
@@ -805,7 +805,7 @@ test("seed colours persist through rerenders and reloads at actual avatar sizes"
       nodes.map((node) => node.getAttribute("data-color")),
     );
     // Seeds pick from the shared palette, so 18 bots can share colours but never all one.
-    for (const color of before) expect(BOT_AVATAR_COLORS).toContain(color);
+    for (const color of before) expect(BOT_COLORS).toContain(color);
     expect(new Set(before).size).toBeGreaterThan(1);
     for (let index = 0; index < 18; index++)
       expect(new Set(before.slice(index * 4, index * 4 + 4)).size).toBe(1);

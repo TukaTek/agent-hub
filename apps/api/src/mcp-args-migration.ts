@@ -1,5 +1,5 @@
 import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
-import { persistPreparedSecret } from "@cortexai-agent-hub/adapters";
+import { lockMcpOAuthMaterial, persistPreparedSecret } from "@cortexai-agent-hub/adapters";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { serverSecretSpace } from "./availability.js";
@@ -48,7 +48,7 @@ export async function moveMcpArgsIntoSecrets(
         });
         const moved = await persistPreparedSecret(prisma, secrets, stored, () =>
           prisma.$transaction(async (tx) => {
-            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('mcp-oauth-material'), hashtext(${row.id}))`;
+            await lockMcpOAuthMaterial(tx, row.id);
             const current = await tx.mcpServer.findUnique({ where: { id: row.id } });
             const currentSecret = current?.secretId
               ? await tx.secret.findUnique({ where: { id: current.secretId } })

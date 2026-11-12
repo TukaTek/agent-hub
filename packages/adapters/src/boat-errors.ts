@@ -1,6 +1,11 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { FetchError, ResponseError } from "@boatdev/sdk";
-import { SandboxRateLimitError, SandboxUnresponsiveError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  SandboxProviderAccountError,
+  SandboxRateLimitError,
+  SandboxUnavailableError,
+  SandboxUnresponsiveError,
+} from "@cortexai-agent-hub/adapter-kit";
 import { redactSecrets } from "@cortexai-agent-hub/core";
 import { readBodyCapped } from "./web-ssrf.js";
 
@@ -84,12 +89,20 @@ export function wrapBoatCall<Args extends unknown[], Result>(
   apiKey: string,
   idempotent = false,
   gate?: BoatRequestGate,
+  timeoutMs?: number,
 ): (...args: Args) => Promise<Result> {
   const attempt = async (...args: Args): Promise<Result> => {
-    await gate?.wait(callerSignal(args[1]));
+    const signal = callerSignal(args[1]);
+    await gate?.wait(signal);
+    const limit = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
     try {
-      return await call(...args);
+      return await call(
+        ...(limit ? withSignal(args, signal ? AbortSignal.any([signal, limit]) : limit) : args),
+      );
     } catch (error) {
+      if (limit?.aborted && !signal?.aborted) {
+        throw new SandboxUnresponsiveError("Boat did not answer in time", { cause: error });
+      }
       const { FetchError, ResponseError } = await boatSdk();
       // The connection to Boat failed without an answer. The request may have arrived, so it
       // is not resent unless it never left; background work tries again on its next pass.
@@ -107,6 +120,10 @@ export function wrapBoatCall<Args extends unknown[], Result>(
       // Boat's proxy reached the sandbox but gave up waiting for its answer.
       if (wrapped.code === "sandbox_direct_failed" && /\btimeout\b/i.test(wrapped.message)) {
         throw new SandboxUnresponsiveError(wrapped.message, { cause: wrapped });
+      }
+      // Boat has no room to start the machine now; a later start finds some.
+      if (wrapped.code === "resume_failed" && /\bat capacity\b/i.test(wrapped.message)) {
+        throw new SandboxUnavailableError({ cause: wrapped });
       }
       // Boat is still applying another change, such as a keep-alive; a later stop succeeds.
       if (wrapped.code === "stop_failed" && /\bis updating\b/i.test(wrapped.message)) {
@@ -139,12 +156,16 @@ export function wrapBoatCall<Args extends unknown[], Result>(
     try {
       return await attemptWithRetry(...args);
     } catch (error) {
-      if (failedAtBoat(error) || billingRequired(error)) {
-        throw new SandboxUnresponsiveError(error.message, { cause: error });
-      }
+      if (billingRequired(error)) throw new SandboxProviderAccountError({ cause: error });
+      if (failedAtBoat(error)) throw new SandboxUnresponsiveError(error.message, { cause: error });
       throw error;
     }
   };
+}
+
+function withSignal<Args extends unknown[]>(args: Args, signal: AbortSignal): Args {
+  const [request, init, ...rest] = args;
+  return [request, { ...(init as RequestInit | undefined), signal }, ...rest] as unknown as Args;
 }
 
 /** The `RequestInit` signal the SDK takes as each operation's second argument. */

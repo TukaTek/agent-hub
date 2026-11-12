@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import type { RequestListener, Server } from "node:http";
 import { createServer } from "node:http";
@@ -140,6 +141,8 @@ async function launch(mode: FakeDockerMode | "missing") {
   };
   // A stale CORTEXAI_AGENT_HUB_WEB_URL from the developer's shell would bypass setup entirely.
   delete env.CORTEXAI_AGENT_HUB_WEB_URL;
+  // A first launch opens CortexAI Agent Hub Cloud; these specs stay offline and start in setup instead.
+  if (!existsSync(path.join(userData, "setup.json"))) env.CORTEXAI_AGENT_HUB_FORCE_SETUP = "1";
   return electron.launch({
     args: ["."],
     cwd: path.resolve(import.meta.dirname, ".."),

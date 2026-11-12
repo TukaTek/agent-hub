@@ -1,4 +1,5 @@
-import { BOT_COLOR_LIST, contrastRatio, seededLogoAvatarColor } from "@cortexai-agent-hub/core";
+import { BOT_COLOR_LIST } from "@cortexai-agent-hub/contracts";
+import { contrastRatio, seededLogoAvatarColor } from "@cortexai-agent-hub/core";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BotAvatar } from "./bot-avatar.js";

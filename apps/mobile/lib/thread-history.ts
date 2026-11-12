@@ -1,7 +1,7 @@
 import { liveMessageComposing, withLiveStreamingProgress } from "@cortexai-agent-hub/core";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { MobileSnapshot } from "./api";
+import type { MobileSnapshot } from "./mobile-types";
 import {
   getCachedResponseStreamingEnabled,
   subscribeResponseStreaming,

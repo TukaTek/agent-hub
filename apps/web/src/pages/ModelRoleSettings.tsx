@@ -26,6 +26,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  SectionHeading,
   Spinner,
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
@@ -295,7 +296,7 @@ export function ModelRoleSettings({
   return (
     <section className="mb-8" data-testid={`model-role-${role}`}>
       <div className="mb-2.5 flex min-h-7 items-center justify-between gap-3">
-        <h3 className="text-heading3 font-medium text-foreground">{title}</h3>
+        <SectionHeading variant="heading">{title}</SectionHeading>
         {headerAction}
       </div>
       <ol className="divide-y divide-border rounded-xl border border-border">

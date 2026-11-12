@@ -14,7 +14,7 @@ import {
   TooManyRequestsError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectorRegistry } from "./composio-connector.js";
+import { ConnectorRegistry } from "./connector-registry.js";
 import { InfisicalSecretStore } from "./infisical-secret-store.js";
 import { InstalledConnectorProvider } from "./installed-connectors.js";
 import { IntegrationProviderSettings } from "./integration-provider-settings.js";

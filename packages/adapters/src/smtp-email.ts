@@ -2,6 +2,7 @@ import type {
   TransactionalEmail,
   TransactionalEmailProvider,
 } from "@cortexai-agent-hub/adapter-kit";
+import { EmailRecipientRejectedError } from "@cortexai-agent-hub/adapter-kit";
 import type { NodemailerError, Transporter } from "nodemailer";
 import nodemailer from "nodemailer";
 
@@ -130,6 +131,10 @@ export class SmtpEmailProvider implements TransactionalEmailProvider {
         return;
       } catch (error) {
         if (this.shutdown.signal.aborted) throw error;
+        const refused = refusedRecipientCode(error);
+        if (refused) {
+          throw new EmailRecipientRejectedError(`SMTP server rejected the recipient (${refused})`);
+        }
         const retryDelay = this.retryDelaysMs[attempt];
         if (retryDelay === undefined || !retrySafe(error)) throw error;
         await this.sleep(retryDelay, this.shutdown.signal);
@@ -177,6 +182,14 @@ function retrySafe(error: unknown): boolean {
     return CONNECT_ERRNOS.has(originalCode ?? "");
   }
   return false;
+}
+
+/** The permanent reply code when the server refused a recipient address, before any data. */
+function refusedRecipientCode(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const { code, command, responseCode } = error as NodemailerError;
+  if (code !== "EENVELOPE" || command !== "RCPT TO") return undefined;
+  return responseCode && responseCode >= 500 ? responseCode : undefined;
 }
 
 function wait(delayMs: number, signal: AbortSignal): Promise<void> {

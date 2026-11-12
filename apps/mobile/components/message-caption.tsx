@@ -2,12 +2,12 @@ import { ChatMarkdown, LinkifiedText } from "@cortexai-agent-hub/chat-ui/native"
 import { splitMentionText } from "@cortexai-agent-hub/core";
 import type { ColorTokens, ResolvedAppearance } from "@cortexai-agent-hub/ui-tokens";
 import { useContext } from "react";
-import type { MobileMessage } from "../lib/api";
 import {
   MessageMentionsContext,
   OpenPageContext,
   UserMentionsContext,
 } from "../lib/message-mentions";
+import type { MobileMessage } from "../lib/mobile-types";
 import { UserMention } from "./user-mention";
 
 export function MessageCaption({

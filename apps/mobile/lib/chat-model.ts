@@ -1,6 +1,6 @@
 import type { ChatModelChoice } from "@cortexai-agent-hub/core";
 import { chatModelChoices, connectedModelChoices } from "@cortexai-agent-hub/core";
-import type { MobileMe, MobileModel, MobileModelCredential } from "./api";
+import type { MobileMe, MobileModel, MobileModelCredential } from "./mobile-types";
 
 /** What a chat's model picker lists, with the space default named after its model. */
 export function chatModelPickerChoices(

@@ -1,4 +1,5 @@
 import {
+  computerScreenSize,
   computerSupportsTerminal,
   computerSupportsUpdate,
   DISK_WARNING_PERCENT,
@@ -6,7 +7,7 @@ import {
   holdsUserControl,
 } from "@cortexai-agent-hub/adapters";
 import type { ComputerStatus } from "@cortexai-agent-hub/contracts";
-import { ACTIVE_RUN_STATUSES, computerScreenSize } from "@cortexai-agent-hub/core";
+import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 
 /** Mirrors computer.takeover: an execution lease blocks user control unless a takeover is pending. */

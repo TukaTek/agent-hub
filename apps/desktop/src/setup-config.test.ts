@@ -198,6 +198,7 @@ describe("startup target", () => {
 
   it("runs setup on a first launch", () => {
     expect(resolveStartupTarget({})).toEqual({ kind: "setup" });
+    expect(resolveStartupTarget({ saved: null })).toEqual({ kind: "setup" });
   });
 
   it("opens the saved instance on later launches", () => {

@@ -173,20 +173,23 @@ class CortexAiAgentHubNotificationService : Service() {
                 }
               }) {
                 if (reply != null) {
-                  post(
-                    run,
-                    NotificationCopy(
-                      title = when {
-                        run.trigger == "routine" ->
-                          copyContext.getString(R.string.cortexai_agent_hub_scheduled_title, run.botName)
-                        run.groupName != null ->
-                          copyContext.getString(R.string.cortexai_agent_hub_replied_group, run.botName, run.groupName)
-                        else -> copyContext.getString(R.string.cortexai_agent_hub_replied, run.botName)
-                      },
-                      body = reply.ifBlank { run.prompt },
-                      channel = if (run.trigger == "routine") Channels.SCHEDULED else Channels.MESSAGES,
-                    ),
-                  )
+                  val bodyText = reply.ifBlank { run.prompt }
+                  if (bodyText.isNotBlank()) {
+                    post(
+                      run,
+                      NotificationCopy(
+                        title = when {
+                          run.trigger == "routine" ->
+                            copyContext.getString(R.string.cortexai_agent_hub_scheduled_title, run.botName)
+                          run.groupName != null ->
+                            copyContext.getString(R.string.cortexai_agent_hub_replied_group, run.botName, run.groupName)
+                          else -> copyContext.getString(R.string.cortexai_agent_hub_replied, run.botName)
+                        },
+                        body = bodyText,
+                        channel = if (run.trigger == "routine") Channels.SCHEDULED else Channels.MESSAGES,
+                      ),
+                    )
+                  }
                 }
               }
               persistCompleted(true)

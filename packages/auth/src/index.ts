@@ -18,6 +18,7 @@ import {
   bootstrapUserSpace,
   personalOrganizationIds,
   recordSecurityEvent,
+  SpaceDeletionInProgressError,
 } from "@cortexai-agent-hub/db";
 import type { BetterAuthOptions, BetterAuthPlugin } from "better-auth";
 import { betterAuth } from "better-auth";
@@ -318,7 +319,13 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     logger: env.logger,
     secret: env.secret,
     baseURL: env.baseURL,
-    trustedOrigins: [...buildTrustedOrigins(env), "cortexai-agent-hub://"],
+    trustedOrigins: [
+      ...buildTrustedOrigins({
+        origins: [env.webOrigin, env.baseURL],
+        extraOrigins: env.extraOrigins,
+      }),
+      APP_SCHEME_ORIGIN,
+    ],
     account: {
       accountLinking: { enabled: true, disableImplicitLinking: true, trustedProviders: [] },
       encryptOAuthTokens: true,
@@ -445,7 +452,13 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       deleteUser: {
         enabled: true,
         beforeDelete: async (user) => {
-          await env.beforeDeleteUser?.(user.id);
+          try {
+            await env.beforeDeleteUser?.(user.id);
+          } catch (error) {
+            if (error instanceof SpaceDeletionInProgressError)
+              throw new APIError("CONFLICT", { message: error.message });
+            throw error;
+          }
           const organizationIds = await personalOrganizationIds(prisma, user.id);
 
           await prisma.$transaction(async (tx) => {
@@ -1006,11 +1019,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** Assemble Better Auth trustedOrigins, adding localhost↔127.0.0.1 twins for loopback. */
-export function buildTrustedOrigins(env: Pick<AuthEnv, "webOrigin" | "baseURL" | "extraOrigins">) {
-  const configured = [env.webOrigin, env.baseURL, ...(env.extraOrigins ?? [])];
-  const twins = [env.webOrigin, env.baseURL].flatMap(loopbackTwinOrigins);
-  return [...new Set([...configured, ...twins])];
+export interface TrustedOriginsInput {
+  /** Trusted along with their localhost↔127.0.0.1 twins. */
+  origins: string[];
+  /** Trusted exactly as given. */
+  extraOrigins?: string[];
+  /**
+   * For matching a request's Origin header: also trust each origin's normalized form and its
+   * [::1] twin, and leave out empty values and the app scheme, which that check accepts first.
+   */
+  requestOrigins?: boolean;
+}
+
+/** The one trusted-origin list, for Better Auth and the API's request origin check. */
+export function buildTrustedOrigins({
+  origins,
+  extraOrigins = [],
+  requestOrigins = false,
+}: TrustedOriginsInput): string[] {
+  const listed = requestOrigins
+    ? origins.filter((origin) => origin && origin !== APP_SCHEME_ORIGIN)
+    : origins;
+  const variants = listed.flatMap(requestOrigins ? requestOriginVariants : loopbackTwinOrigins);
+  return [...new Set([...listed, ...extraOrigins, ...variants])];
+}
+
+const APP_SCHEME_ORIGIN = "cortexai-agent-hub://";
+
+function requestOriginVariants(origin: string): string[] {
+  const variants = loopbackTwinOrigins(origin);
+  try {
+    const url = new URL(origin);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      variants.push(url.origin);
+    }
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      const v6 = new URL(origin);
+      v6.hostname = "[::1]";
+      variants.push(v6.origin);
+    }
+  } catch {
+    return variants;
+  }
+  return variants;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -1018,7 +1069,7 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /** Same-scheme/port localhost and 127.0.0.1 variants when `origin` is loopback. */
-export function loopbackTwinOrigins(origin: string): string[] {
+function loopbackTwinOrigins(origin: string): string[] {
   try {
     const url = new URL(origin);
     if (!isLoopbackHost(url.hostname)) return [];

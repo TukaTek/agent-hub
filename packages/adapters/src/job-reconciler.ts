@@ -6,15 +6,17 @@ import {
   runContinueJob,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { stuckWorkStatusMessages } from "@cortexai-agent-hub/core";
+import { BACKGROUND_HELPER_TRIGGER, stuckWorkStatusMessages } from "@cortexai-agent-hub/core";
 import type { Pool, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { reconcileComputerRuns } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { PoolClient } from "pg";
+import { returnHelperOutcome } from "./background-helpers.js";
 import { returnBotMessageOutcome } from "./bot-messages.js";
 import { reconcileCallRequests } from "./call-request.js";
 import { scheduleComputerControlExpiry } from "./computer-control.js";
 import { findRunRecoveryBlockers } from "./run-recovery.js";
+import { messageBlocksText } from "./run-replies.js";
 import { reconcileStuckWork } from "./stuck-work.js";
 import { isLoopGuardStopText } from "./tool-loop.js";
 import { isUserProgressClientNonce } from "./user-progress.js";
@@ -236,6 +238,7 @@ export function createJobReconciler(
             status: true,
             updatedAt: true,
             botId: true,
+            trigger: true,
             bot: { select: { computerId: true } },
           },
         }),
@@ -324,6 +327,53 @@ export function createJobReconciler(
             }
           }),
         );
+        // A background helper whose result did not go back yet: a crash after it ended, or a
+        // stop. A stopped helper only settles its card; anything else answers in the chat.
+        const helpers = await deps.prisma.run.findMany({
+          where: {
+            trigger: BACKGROUND_HELPER_TRIGGER,
+            status: { in: ["completed", "failed", "cancelled"] },
+            botOutcomeReturnedAt: null,
+          },
+          orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+          take: batchSize,
+          select: {
+            id: true,
+            spaceId: true,
+            botId: true,
+            userId: true,
+            sourceMessageId: true,
+            status: true,
+            error: true,
+          },
+        });
+        for (const run of helpers) {
+          const expired =
+            run.status === "cancelled" && stuckWorkStatusMessages().includes(run.error ?? "");
+          await (async () => {
+            const outcome =
+              run.status === "completed"
+                ? {
+                    status: "completed" as const,
+                    text: (await botRunOutcomeText(deps.prisma, run.id)).text,
+                  }
+                : run.status === "failed" || expired
+                  ? { status: "failed" as const, text: run.error ?? "unknown error" }
+                  : { status: "stopped" as const, text: "" };
+            await returnHelperOutcome(
+              { prisma: deps.prisma, jobs: deps.jobs, events },
+              run,
+              outcome,
+            );
+          })().catch(async (error) => {
+            getLogger().error("background helper outcome reconciliation", error);
+            // Like a bot message outcome: retry later without holding the head of the queue.
+            await deps.prisma.run.updateMany({
+              where: { id: run.id, botOutcomeReturnedAt: null },
+              data: { updatedAt: new Date() },
+            });
+          });
+        }
       }
 
       // A queued run already has a job while it waits out failure backoff.
@@ -552,9 +602,5 @@ async function botRunOutcomeText(
 
 function messageText(blocks: unknown): string {
   if (!Array.isArray(blocks)) return "";
-  return (blocks as MessageBlock[])
-    .filter((block): block is Extract<MessageBlock, { kind: "text" }> => block.kind === "text")
-    .map((block) => block.text)
-    .join("")
-    .trim();
+  return messageBlocksText(blocks as MessageBlock[]).trim();
 }

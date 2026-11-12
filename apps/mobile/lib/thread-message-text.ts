@@ -2,8 +2,8 @@ import {
   previewMessageText as previewText,
   resolvePersonaColorDef,
 } from "@cortexai-agent-hub/core";
-import type { MobileBot, MobileMessage, MobileSnapshot } from "./api";
 import { t } from "./i18n";
+import type { MobileBot, MobileMessage, MobileSnapshot } from "./mobile-types";
 
 export function previewMessageText(message: MobileMessage): string {
   return previewText(message, {

@@ -574,6 +574,103 @@ describe("graphical computer spec", () => {
     expect(dockerfile).toMatch(/cortexai-agent-hub-focus-or-launch/);
   });
 
+  it("creates every browser policy directory before copying the policy into it", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
+    // COPY --chmod=644 gives the directories it creates that mode too, and the browser user
+    // then cannot enter them, so the browser silently runs without the policy.
+    const created = dockerfile
+      .match(/mkdir -p (\/etc\/chromium\/policies\/managed [^\\\n]+)/)?.[1]
+      ?.split(" ");
+    const targets = [...dockerfile.matchAll(/COPY --chmod=644 browser-policy\.json (\S+)\//g)].map(
+      (match) => match[1],
+    );
+    expect(targets).toEqual([
+      "/etc/chromium/policies/managed",
+      "/etc/brave/policies/managed",
+      "/etc/opt/chrome/policies/managed",
+    ]);
+    for (const target of targets) expect(created).toContain(target);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "fetches Google's signing key only for a Google Chrome build on amd64",
+    () => {
+      const root = path.resolve(import.meta.dirname, "../../computer");
+      const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
+      const stage = dockerfile.split(/^FROM /m).find((part) => / AS chrome-keyring\n/.test(part));
+      const run = stage
+        ?.replace(/\\\n/g, " ")
+        .split("\n")
+        .filter((line) => line.startsWith("RUN "))
+        .at(-1)
+        ?.slice(4);
+      expect(run).toBeTruthy();
+      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-chrome-keyring-"));
+      const bin = path.join(temp, "bin");
+      const keyring = path.join(temp, "google-chrome.gpg");
+      const calls = path.join(temp, "calls");
+      mkdirSync(bin);
+      // Every network step records itself; the download fails as if Google were unreachable.
+      for (const [name, body] of [
+        ["dpkg", 'printf "%s\\n" "$CORTEXAI_AGENT_HUB_TEST_ARCH"'],
+        ["apt-security.sh", 'printf "apt-security\\n" >> "$CORTEXAI_AGENT_HUB_TEST_CALLS"'],
+        ["apt-get", 'printf "apt-get\\n" >> "$CORTEXAI_AGENT_HUB_TEST_CALLS"'],
+        ["curl", 'printf "curl\\n" >> "$CORTEXAI_AGENT_HUB_TEST_CALLS"; exit 7'],
+        ["gpg", 'printf "gpg\\n" >> "$CORTEXAI_AGENT_HUB_TEST_CALLS"'],
+      ] as const) {
+        writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`);
+        chmodSync(path.join(bin, name), 0o755);
+      }
+      const build = (browser: string, arch: string) => {
+        rmSync(keyring, { force: true });
+        writeFileSync(calls, "");
+        const result = spawnSync(
+          "sh",
+          [
+            "-c",
+            run!
+              .replaceAll("/google-chrome.gpg", keyring)
+              .replaceAll("/tmp/apt-security.sh", path.join(bin, "apt-security.sh"))
+              .replaceAll("/tmp/google.pub", path.join(temp, "google.pub")),
+          ],
+          {
+            env: {
+              ...process.env,
+              BROWSER: browser,
+              PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+              CORTEXAI_AGENT_HUB_TEST_ARCH: arch,
+              CORTEXAI_AGENT_HUB_TEST_CALLS: calls,
+            },
+            encoding: "utf8",
+          },
+        );
+        return {
+          status: result.status,
+          calls: readFileSync(calls, "utf8").trim().split("\n").filter(Boolean),
+          stderr: result.stderr,
+        };
+      };
+      try {
+        for (const browser of ["chromium", "brave"]) {
+          // No network at all, and an empty keyring for the image's COPY.
+          expect(build(browser, "amd64"), browser).toMatchObject({ status: 0, calls: [] });
+          expect(readFileSync(keyring, "utf8")).toBe("");
+        }
+        // Google publishes no Chrome for arm64: the build says so instead of falling back.
+        const arm = build("chrome", "arm64");
+        expect(arm).toMatchObject({ status: 1, calls: [] });
+        expect(arm.stderr).toMatch(/amd64 only/);
+        expect(build("chrome", "amd64")).toMatchObject({
+          status: 7,
+          calls: ["apt-security", "apt-get", "apt-get", "curl"],
+        });
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "finds Google Chrome and passes over Ubuntu's snap chromium",
     () => {
@@ -690,6 +787,22 @@ describe("graphical computer spec", () => {
     );
   });
 
+  it("ships search and inspection tools agents reach for", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/\bripgrep\b/);
+    expect(dockerfile).toMatch(/\bfd-find\b/);
+    // "file" is a common word in the Dockerfile; anchor it to the package list.
+    expect(dockerfile).toMatch(/^ {4}file \\/m);
+    expect(dockerfile).toMatch(/\bsqlite3\b/);
+    // Debian names fd-find's binary fdfind; the image exposes it as fd.
+    expect(dockerfile).toMatch(/ln -s \/usr\/bin\/fdfind \/usr\/local\/bin\/fd/);
+    expect(dockerfile).toMatch(/rg --version/);
+    expect(dockerfile).toMatch(/fd --version/);
+    expect(dockerfile).toMatch(/file --version/);
+    expect(dockerfile).toMatch(/sqlite3 --version/);
+  });
+
   it.skipIf(process.platform === "win32")(
     "rewrites the fallback Fluxbox menu without touching its init",
     () => {
@@ -711,7 +824,10 @@ describe("graphical computer spec", () => {
           "[begin] (Desktop)\n[exec] (Browser) {/tmp/cortexai-agent-hub/browser-launch-1}\n[end]\n",
         );
         writeFileSync(initPath, init);
-        const lines = generated.replaceAll("/tmp/fluxbox-home-1", fluxHome).split("\n");
+        const lines = generated
+          .replaceAll("/tmp/fluxbox-home-1", fluxHome)
+          .replaceAll("/etc/cortexai-agent-hub/fluxbox/menu", path.join(temp, "no-image-menu"))
+          .split("\n");
         const start = lines.indexOf(`mkdir -p ${fluxHome}/.fluxbox`);
         const end = lines.findIndex((line, index) => index > start && line === "fi");
         expect(start).toBeGreaterThanOrEqual(0);
@@ -849,40 +965,48 @@ describe("graphical computer spec", () => {
   );
 
   it.skipIf(process.platform === "win32")(
-    "drops only libnss_wrapper from Chromium's preload list",
+    "offers pages the account's language on new and saved profiles",
     () => {
       const root = path.resolve(import.meta.dirname, "../../computer");
-      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-browser-preload-"));
+      const temp = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-browser-language-"));
       const bin = path.join(temp, "bin");
-      const capture = path.join(temp, "preload");
+      const capture = path.join(temp, "args");
       mkdirSync(bin);
+      const chromium = path.join(bin, "chromium");
       writeFileSync(
-        path.join(bin, "chromium"),
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
-        '#!/bin/sh\nprintf "%s" "${LD_PRELOAD-unset}" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n',
+        chromium,
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion
+        '#!/bin/sh\nprintf "LANGUAGE=%s\\n" "${LANGUAGE-unset}" > "$CORTEXAI_AGENT_HUB_TEST_ARGS"\nprintf "%s\\n" "$@" >> "$CORTEXAI_AGENT_HUB_TEST_ARGS"\n',
       );
-      chmodSync(path.join(bin, "chromium"), 0o755);
-      const preloadFor = (preload: string) => {
+      chmodSync(chromium, 0o755);
+      const run = (language: string | undefined) => {
+        const { LANGUAGE: _host, ...env } = process.env;
         const result = spawnSync("sh", [path.join(root, "cortexai-agent-hub-browser")], {
           env: {
-            ...process.env,
-            DISPLAY: ":4",
+            ...env,
+            ...(language === undefined ? {} : { LANGUAGE: language }),
+            DISPLAY: ":1",
             HOME: path.join(temp, "home"),
             PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
             CORTEXAI_AGENT_HUB_TEST_ARGS: capture,
-            // Missing preload objects only make the loader warn.
-            LD_PRELOAD: preload,
           },
           encoding: "utf8",
         });
-        expect(result.status, result.stderr).toBe(0);
-        return readFileSync(capture, "utf8");
+        expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+        const [first, ...args] = readFileSync(capture, "utf8").trim().split(/\r?\n/);
+        return { language: first, accept: args.filter((arg) => arg.startsWith("--accept-lang")) };
       };
       try {
-        expect(preloadFor("/nonexistent/libnss_wrapper.so")).toBe("unset");
-        expect(preloadFor("/nonexistent/libkeep.so:/nonexistent/libnss_wrapper.so")).toBe(
-          "/nonexistent/libkeep.so",
-        );
+        // Unknown: the browser's own default, as before.
+        expect(run(undefined)).toEqual({ language: "LANGUAGE=unset", accept: [] });
+        // Chrome reads LANGUAGE itself; --accept-lang also reaches a profile saved in English.
+        expect(run("pl")).toEqual({
+          language: "LANGUAGE=pl",
+          accept: ["--accept-lang=pl,en-US,en"],
+        });
+        expect(run("pt_BR:pt").accept).toEqual(["--accept-lang=pt-BR,pt,en-US,en"]);
+        expect(run("en-GB").accept).toEqual(["--accept-lang=en-GB,en"]);
+        for (const value of ["", "pl;id", "-x", "pl pl"]) expect(run(value).accept).toEqual([]);
       } finally {
         rmSync(temp, { recursive: true, force: true });
       }

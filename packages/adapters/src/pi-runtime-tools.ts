@@ -286,6 +286,8 @@ export function describeToolActivity(
   if (toolName === "save_shared_memory") return `Saving shared memory: ${detail(record.path)}`;
   if (toolName === "web_search") return `Searching the web: ${detail(record.query)}`;
   if (toolName === "web_fetch") return `Reading page: ${detail(redactActivityUrl(record.url))}`;
+  if (toolName === "service_search") return `Finding a service: ${detail(record.query)}`;
+  if (toolName === "service_call") return `Using service: ${detail(record.service)}`;
   if (toolName === "skill_read")
     return record.file
       ? `Reading ${detail(record.file)} from ${detail(record.name)}`
@@ -486,6 +488,7 @@ function toAgentTool(
           instructions: raw.instructions ? String(raw.instructions) : "",
           model_provider: raw.model_provider ? String(raw.model_provider) : "",
           model_id: raw.model_id ? String(raw.model_id) : "",
+          ...(raw.background === true ? { background: true } : {}),
         };
       }
       if (tool.name === "spawn_bot") {
@@ -648,7 +651,8 @@ function toAgentTool(
                   details: found,
                 };
               }
-              if (tool.name === "run_subagent") {
+              // A background helper is its own run, which the executor starts like any tool effect.
+              if (tool.name === "run_subagent" && args.background !== true) {
                 const result = await executeSubagent(host, executionId, args);
                 return {
                   content: [{ type: "text", text: result }],
@@ -1084,4 +1088,58 @@ function beginToolCall(host: ToolHost): boolean {
 function endToolCall(host: ToolHost) {
   host.toolCallBudget.inFlight = Math.max(0, host.toolCallBudget.inFlight - 1);
   maybeAbortToolCallBudget(host);
+}
+
+export function createGate(max: number) {
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  return {
+    async acquire() {
+      if (active >= max) {
+        await new Promise<void>((resolve) => {
+          waiters.push(resolve);
+        });
+      }
+      active += 1;
+    },
+    release() {
+      active = Math.max(0, active - 1);
+      waiters.shift()?.();
+    },
+  };
+}
+
+export function createQueue(): EventQueue {
+  const items: AgentRuntimeEvent[] = [];
+  let wake: (() => void) | undefined;
+  let closed = false;
+  let failure: Error | undefined;
+  return {
+    push(event) {
+      items.push(event);
+      wake?.();
+    },
+    fail(error) {
+      failure = error;
+      closed = true;
+      wake?.();
+    },
+    close() {
+      closed = true;
+      wake?.();
+    },
+    async *iterate() {
+      while (true) {
+        if (items.length) {
+          yield items.shift()!;
+          continue;
+        }
+        if (failure) throw failure;
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+    },
+  };
 }

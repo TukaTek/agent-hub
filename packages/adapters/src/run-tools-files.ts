@@ -5,8 +5,10 @@ import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import {
   inferAttachmentMimeType,
   isBackgroundRunTrigger,
+  messageBlockForArtifact,
   redactSecrets,
 } from "@cortexai-agent-hub/core";
+import type { Artifact, Prisma } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { attachFailure, unsupportedAttachmentError } from "./attach-file-errors.js";
 import { resolveBotWorkspacePath } from "./computer-support.js";
@@ -15,7 +17,7 @@ import { protectedActivateScriptWriteRefusal } from "./desktop-guard-words.js";
 import { generateMediaFromTool } from "./media-generation-tools.js";
 import { mediaDelivery, scheduleMediaPoll } from "./media-video-poll.js";
 import type { RunContext } from "./run-context.js";
-import { publishMessage } from "./run-messages.js";
+import { persistMessageInTransaction, runLeaseFor } from "./run-messages.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
 import { recordComputerAction } from "./run-tools-computer.js";
 import { attachWorkspaceFileToThread } from "./thread-artifacts.js";
@@ -244,6 +246,10 @@ export const fileTools: ToolHandlers = {
     const read = await readWorkspaceFile(ctx, call, filePath);
     if ("error" in read) return fail(read.error, read.modelError);
     try {
+      // Background runs post no message (publishMessage drops attachment blocks).
+      const background = isBackgroundRunTrigger(run.trigger);
+      const lease = runLeaseFor(deps, run.id);
+      let committed: Awaited<ReturnType<typeof persistMessageInTransaction>> | undefined;
       const saved = await saveWorkspaceFile(
         ctx,
         call,
@@ -255,8 +261,27 @@ export const fileTools: ToolHandlers = {
           description:
             typeof call.args.description === "string" ? call.args.description : undefined,
         },
+        // The message commits with the artifact row, so a post that fails leaves no artifact
+        // the user was never shown.
+        background
+          ? undefined
+          : async (tx, artifact) => {
+              committed = await persistMessageInTransaction(
+                tx,
+                run,
+                "bot",
+                [messageBlockForArtifact(artifact)],
+                run.trigger === "bot_message" ? false : undefined,
+                undefined,
+                false,
+                lease,
+              );
+            },
       );
-      await publishMessage(deps, run, "bot", [saved.block]);
+      if (committed)
+        await deps.events
+          .notify(run.threadId, committed.eventSeq, committed.firstResponseRunId)
+          .catch((error) => getLogger().error("thread message realtime notification", error));
       await recordComputerAction(ctx, call, "attach_file", filePath);
       return call.finish({ ok: true, artifactId: saved.artifactId, path: filePath });
     } catch (error) {
@@ -310,6 +335,7 @@ export async function saveWorkspaceFile(
   bytes: Uint8Array,
   owner: { botId: string; groupId?: string },
   meta: { name?: string; description?: string } = {},
+  onAttached?: (tx: Prisma.TransactionClient, artifact: Artifact) => Promise<void>,
 ): Promise<{ artifactId: string; block: AttachmentBlock }> {
   const { deps, run } = ctx;
   if (!deps.artifacts) throw new Error("artifact storage unavailable");
@@ -326,6 +352,7 @@ export async function saveWorkspaceFile(
       operationId: call.executionId,
       name: meta.name,
       description: meta.description,
+      onAttached,
     },
   );
 }
