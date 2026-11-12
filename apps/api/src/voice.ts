@@ -53,8 +53,8 @@ import type { SpeechSummarizer } from "./speech-summary.js";
 export interface VoiceDeps {
   prisma: PrismaClient;
   secrets: SecretStore;
-  /** The instance flag (`MCP_ALLOW_PRIVATE_ENDPOINT`). */
-  env?: { mcpAllowPrivateEndpoint?: boolean };
+  /** The instance flag (`MCP_ALLOW_PRIVATE_ENDPOINT`), and Hub sign-in when it is on. */
+  env?: { mcpAllowPrivateEndpoint?: boolean; hubManaged?: boolean };
   /** Set only when `VOICE_SUMMARY_MIN_CHARS` turns spoken summaries on. */
   speechSummary?: { summarize: SpeechSummarizer; minChars: number };
 }
@@ -73,12 +73,22 @@ export async function voiceProviderFor(deps: VoiceDeps, provider: string) {
   });
 }
 
+/**
+ * Whether voice may use the account's model connection (a provider sign-in) instead of a key.
+ * Hub manages accounts and keys, so under Hub a voice connection always takes its own API key.
+ */
+function voiceMayUseModelConnection(deps: VoiceDeps, provider: string) {
+  return !deps.env?.hubManaged && Boolean(voiceCatalogEntry(provider)?.modelConnection);
+}
+
 /** The catalog as this account sees it: `modelConnection` stays only where it has one. */
 export async function accountVoiceCatalog(deps: VoiceDeps, actor: Pick<Actor, "userId">) {
   const catalog = listVoiceCatalog({ allowPrivateEndpoint: deps.env?.mcpAllowPrivateEndpoint });
   return Promise.all(
     catalog.map(async ({ modelConnection, ...entry }) =>
-      modelConnection && (await findModelCredential(deps.prisma, actor, entry.id))
+      modelConnection &&
+      voiceMayUseModelConnection(deps, entry.id) &&
+      (await findModelCredential(deps.prisma, actor, entry.id))
         ? { ...entry, modelConnection }
         : entry,
     ),
@@ -209,6 +219,8 @@ export function voiceCredentialPlaintext(input: {
   /** The stored secret for this provider; blank fields keep its key and models. */
   previousPlaintext?: string;
   allowPrivateEndpoint?: boolean;
+  /** False when the deployment requires a key of its own (Hub). */
+  allowModelConnection?: boolean;
 }): string {
   if (voiceCatalogEntry(input.provider)?.keyless) {
     // The credential row is what selects the provider; it has no key to keep.
@@ -216,7 +228,11 @@ export function voiceCredentialPlaintext(input: {
   }
   if (input.provider !== OPENAI_COMPATIBLE_VOICE_PROVIDER_ID) {
     const key = input.plaintext.trim();
-    if (!key && voiceCatalogEntry(input.provider)?.modelConnection) {
+    if (
+      !key &&
+      input.allowModelConnection !== false &&
+      voiceCatalogEntry(input.provider)?.modelConnection
+    ) {
       return MODEL_CONNECTION_VOICE_SECRET;
     }
     if (key.length < 8) {
@@ -312,6 +328,8 @@ export async function loadVoiceCredential(
   const linked =
     isModelConnectionVoiceSecret(plaintext) &&
     Boolean(voiceCatalogEntry(cred.provider)?.modelConnection);
+  // A connection linked to a provider sign-in has no key Hub lets it use.
+  if (linked && !voiceMayUseModelConnection(deps, cred.provider)) return null;
   const apiKey = await withVoiceConnection(cred.provider, linked, () =>
     resolveVoiceKey(
       { prisma: deps.prisma, secretStore: deps.secrets },
@@ -374,6 +392,7 @@ export async function persistVoiceCredential(
     ...input,
     previousPlaintext: previous?.apiKey,
     allowPrivateEndpoint,
+    allowModelConnection: voiceMayUseModelConnection(deps, input.provider),
   });
   const server =
     input.provider === OPENAI_COMPATIBLE_VOICE_PROVIDER_ID

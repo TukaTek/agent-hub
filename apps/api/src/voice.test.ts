@@ -842,6 +842,24 @@ describe("synthesizeVoice", () => {
       });
       expect(synthesize).not.toHaveBeenCalled();
     });
+
+    it("never uses the model connection's key under Hub", async () => {
+      const synthesize = vi.fn();
+      vi.spyOn(adapters, "createVoiceProvider").mockReturnValue({ synthesize } as never);
+      const deps = {
+        ...modelConnectionDeps(
+          {
+            "voice-secret": adapters.MODEL_CONNECTION_VOICE_SECRET,
+            "model-secret": "xai-model-key",
+          },
+          voicePrisma,
+        ),
+        env: { hubManaged: true },
+      } as unknown as VoiceDeps;
+
+      await expect(synthesizeVoice(deps, actor, { text: "Hello" })).rejects.toThrow();
+      expect(synthesize).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -868,6 +886,12 @@ describe("voiceCredentialPlaintext", () => {
     expect(() => voiceCredentialPlaintext({ provider: "openai", plaintext: "" })).toThrow(
       "Enter an API key.",
     );
+  });
+
+  it("requires a key of its own when the deployment does not allow the model connection", () => {
+    expect(() =>
+      voiceCredentialPlaintext({ provider: "xai", plaintext: "", allowModelConnection: false }),
+    ).toThrow("Enter an API key.");
   });
 
   it("ignores any pasted key for a keyless provider", () => {

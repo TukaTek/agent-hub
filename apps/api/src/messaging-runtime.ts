@@ -95,7 +95,10 @@ export async function startMessagingRuntime({
         {
           prisma,
           secrets,
-          env: { mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint },
+          env: {
+            mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
+            hubManaged: Boolean(env.hubAuth),
+          },
         },
         { spaceId, userId },
         { audio, mimeType, signal },
