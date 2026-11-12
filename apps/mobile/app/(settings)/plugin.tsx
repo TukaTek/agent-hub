@@ -17,6 +17,8 @@ import {
   installedPluginParts,
   isCatalogItemConnected,
 } from "@cortexai-agent-hub/core";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import type { NativeStackNavigationOptions } from "expo-router";
 import {
   Redirect,
@@ -49,7 +51,6 @@ import {
 import { rpc } from "../../lib/api";
 import { useAppForeground } from "../../lib/app-foreground";
 import { mobileTokens } from "../../lib/appearance";
-import { useI18n } from "../../lib/i18n";
 import { loadLastBotId } from "../../lib/last-bot";
 import { native, useThemedStyles } from "../../lib/native";
 import { iosAtLeast } from "../../lib/native-controls";
@@ -72,7 +73,7 @@ function PluginScreen() {
   const router = useRouter();
   const sideInsets = useSideInsets();
   const styles = useThemedStyles(createStyles);
-  const { t } = useI18n();
+  const { t } = useLingui();
   const foreground = useAppForeground();
   const [installs, setInstalls] = useState<CapabilityInstall[]>([]);
   const [allServers, setAllServers] = useState<McpServer[]>([]);
@@ -125,7 +126,7 @@ function PluginScreen() {
     useCallback(() => {
       live.current = true;
       void load().catch((reason) => {
-        if (live.current) setError(errorText(reason, t("Could not load plugin")));
+        if (live.current) setError(errorText(reason, t`Could not load plugin`));
       });
       return () => {
         live.current = false;
@@ -162,7 +163,7 @@ function PluginScreen() {
         if (!cancelled) setPreview(result);
       })
       .catch((reason) => {
-        if (!cancelled) setError(errorText(reason, t("Could not preview plugin")));
+        if (!cancelled) setError(errorText(reason, t`Could not preview plugin`));
       })
       .finally(() => {
         if (!cancelled) setPreviewLoading(false);
@@ -209,9 +210,9 @@ function PluginScreen() {
       : parts.filter((value) => value !== part);
 
   const confirmRemove = (title: string, onConfirm: () => void) =>
-    Alert.alert(everywhere ? t("Remove from every space?") : title, undefined, [
-      { text: t("Cancel"), style: "cancel" },
-      { text: t("Remove"), style: "destructive", onPress: onConfirm },
+    Alert.alert(everywhere ? t`Remove from every space?` : title, undefined, [
+      { text: t`Cancel`, style: "cancel" },
+      { text: t`Remove`, style: "destructive", onPress: onConfirm },
     ]);
 
   const connectManaged = () =>
@@ -227,8 +228,8 @@ function PluginScreen() {
         });
         if (result.status === "pending")
           Alert.alert(
-            t("Connection pending"),
-            t("Finish connecting in the browser, then refresh this page."),
+            t`Connection pending`,
+            t`Finish connecting in the browser, then refresh this page.`,
           );
         else if (botId)
           void rpc("onboarding/appConnected", {
@@ -238,7 +239,7 @@ function PluginScreen() {
           }).catch(() => undefined);
         await load();
       },
-      t("Could not connect"),
+      t`Could not connect`,
     );
 
   const signIn = (server: McpServer) =>
@@ -258,7 +259,7 @@ function PluginScreen() {
           setNoAuth((current) => new Set([...current, server.id]));
         await load();
       },
-      t("Could not sign in"),
+      t`Could not sign in`,
     );
 
   const enable = (server: McpServer) =>
@@ -268,7 +269,7 @@ function PluginScreen() {
         await rpc("mcp/assignments/approve", { botId, serverId: server.id });
         await load();
       },
-      t("Could not enable tools"),
+      t`Could not enable tools`,
     );
 
   const busy = Boolean(pending);
@@ -280,9 +281,7 @@ function PluginScreen() {
     ...(detail?.skipped ?? [])
       .filter((entry) => entry.kind !== "unsupported_field")
       .map((entry) => entry.name),
-    ...(detail?.builtinNames ?? []).map((name) =>
-      t("{name} (same name as a built-in skill)", { name }),
-    ),
+    ...(detail?.builtinNames ?? []).map((name) => t`${name} (same name as a built-in skill)`),
   ];
   const connectorCount = detail?.mcpServers.length ?? 0;
   // Without a connector there is nothing to connect, so the page adds the skills instead.
@@ -297,7 +296,7 @@ function PluginScreen() {
   const action = managed
     ? managedConnected
       ? {
-          label: t("Added"),
+          label: t`Added`,
           onPress: () =>
             router.navigate({
               pathname: "/integrations",
@@ -306,29 +305,29 @@ function PluginScreen() {
           destructive: false,
         }
       : {
-          label: working ? t("Connecting…") : t("Connect"),
+          label: working ? t`Connecting…` : t`Connect`,
           onPress: () => void connectManaged(),
           destructive: false,
         }
     : headerOn
       ? {
-          label: working ? t("Removing…") : t("Remove"),
+          label: working ? t`Removing…` : t`Remove`,
           onPress: () =>
-            confirmRemove(t("Remove {name}?", { name: params.name }), () => {
-              void setParts("header", toggle(headerPart, false), t("Could not remove plugin"));
+            confirmRemove(t`Remove ${ph({ name: params.name })}?`, () => {
+              void setParts("header", toggle(headerPart, false), t`Could not remove plugin`);
             }),
           destructive: true,
         }
       : {
           label: working
             ? skillPack
-              ? t("Adding…")
-              : t("Connecting…")
+              ? t`Adding…`
+              : t`Connecting…`
             : skillPack
-              ? t("Add")
-              : t("Connect"),
+              ? t`Add`
+              : t`Connect`,
           onPress: () =>
-            void setParts("header", toggle(headerPart, true), t("Could not install plugin")),
+            void setParts("header", toggle(headerPart, true), t`Could not install plugin`),
           destructive: false,
         };
   const actionDisabled = busy || (managed ? !managedApp : !ready);
@@ -398,7 +397,7 @@ function PluginScreen() {
               }
               style={styles.sourceLink}
             >
-              <Text style={styles.secondary}>{t("View source")}</Text>
+              <Text style={styles.secondary}>{t`View source`}</Text>
               <NativeSymbol
                 android="open-outline"
                 color={native.secondaryLabel}
@@ -425,7 +424,7 @@ function PluginScreen() {
             {!installed && !preview && !previewLoading && loaded ? (
               <NativeActionButton
                 fill={false}
-                label={t("Retry")}
+                label={t`Retry`}
                 onPress={() => setAttempt((value) => value + 1)}
                 prominence="secondary"
               />
@@ -434,13 +433,13 @@ function PluginScreen() {
         ) : null}
 
         {!loaded || previewLoading ? (
-          <ActivityIndicator color={native.secondaryLabel} accessibilityLabel={t("Loading…")} />
+          <ActivityIndicator color={native.secondaryLabel} accessibilityLabel={t`Loading…`} />
         ) : null}
 
         {!skillsOnly && (managed || connectorCount) ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>
-              {t("Apps")} <Text style={styles.count}>{managed ? 1 : connectorCount}</Text>
+              {t`Apps`} <Text style={styles.count}>{managed ? 1 : connectorCount}</Text>
             </Text>
             <View style={styles.card}>
               {managed ? (
@@ -451,10 +450,10 @@ function PluginScreen() {
                       {params.name}
                     </Text>
                     <Text numberOfLines={1} style={styles.secondary}>
-                      {t("Connector")}
+                      {t`Connector`}
                     </Text>
                   </View>
-                  {managedConnected ? <ConnectedMark label={t("Connected")} /> : null}
+                  {managedConnected ? <ConnectedMark label={t`Connected`} /> : null}
                 </View>
               ) : servers.length ? (
                 servers.map((server, index) => (
@@ -476,7 +475,7 @@ function PluginScreen() {
                         </Text>
                       </View>
                       {mcpServerConnection(server) === "connected" ? (
-                        <ConnectedMark label={t("Connected")} />
+                        <ConnectedMark label={t`Connected`} />
                       ) : null}
                     </View>
                     <View style={styles.itemActions}>
@@ -485,19 +484,19 @@ function PluginScreen() {
                           busy={pending === server.id}
                           disabled={busy}
                           fill={false}
-                          label={server.oauthStatus === "reconnect" ? t("Reconnect") : t("Sign in")}
+                          label={server.oauthStatus === "reconnect" ? t`Reconnect` : t`Sign in`}
                           onPress={() => void signIn(server)}
                           prominence="secondary"
                         />
                       )}
                       {botId ? (
                         assigned.has(server.id) ? (
-                          <Text style={styles.secondary}>{t("In this bot")}</Text>
+                          <Text style={styles.secondary}>{t`In this bot`}</Text>
                         ) : (
                           <NativeActionButton
                             disabled={busy}
                             fill={false}
-                            label={t("Use in this bot")}
+                            label={t`Use in this bot`}
                             onPress={() => void enable(server)}
                             prominence="secondary"
                           />
@@ -532,24 +531,24 @@ function PluginScreen() {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>
-                {t("Skills")} <Text style={styles.count}>{skills.length}</Text>
+                {t`Skills`} <Text style={styles.count}>{skills.length}</Text>
               </Text>
               {skillPack ? null : (
                 <NativeActionButton
                   busy={pending === "skills"}
                   disabled={busy || !ready}
                   fill={false}
-                  label={skillsOn ? t("Remove skills") : t("Add skills")}
+                  label={skillsOn ? t`Remove skills` : t`Add skills`}
                   onPress={() =>
                     skillsOn
-                      ? confirmRemove(t("Remove skills"), () => {
+                      ? confirmRemove(t`Remove skills`, () => {
                           void setParts(
                             "skills",
                             toggle("skills", false),
-                            t("Could not remove skills"),
+                            t`Could not remove skills`,
                           );
                         })
-                      : void setParts("skills", toggle("skills", true), t("Could not add skills"))
+                      : void setParts("skills", toggle("skills", true), t`Could not add skills`)
                   }
                   prominence={skillsOn ? "destructive" : "secondary"}
                 />
@@ -581,7 +580,7 @@ function PluginScreen() {
                   style={[styles.item, styles.divider]}
                 >
                   <Text style={styles.more}>
-                    {t("{count} more", { count: skills.length - shownSkills.length })}
+                    {t`${ph({ count: skills.length - shownSkills.length })} more`}
                   </Text>
                 </Pressable>
               ) : null}
@@ -590,9 +589,7 @@ function PluginScreen() {
         ) : null}
 
         {notAdded.length ? (
-          <Text style={styles.secondary}>
-            {t("Not added: {list}", { list: notAdded.join(", ") })}
-          </Text>
+          <Text style={styles.secondary}>{t`Not added: ${ph({ list: notAdded.join(", ") })}`}</Text>
         ) : null}
       </ScrollView>
     </SafeAreaView>

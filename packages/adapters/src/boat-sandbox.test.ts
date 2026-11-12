@@ -15,7 +15,11 @@ import {
   SandboxUnresponsiveError,
   WorkspaceTooLargeError,
 } from "@cortexai-agent-hub/adapter-kit";
-import { screenDisplayArgv, shellQuote } from "@cortexai-agent-hub/core/node/desktop-runtime";
+import {
+  desktopWorkCommand,
+  screenDisplayArgv,
+  shellQuote,
+} from "@cortexai-agent-hub/core/node/desktop-runtime";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { parse } from "shell-quote";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1813,6 +1817,38 @@ describe("BoatSandboxProvider", () => {
     expect((error as Error).message).toBe(message);
   });
 
+  it("reports why a workspace archive failed without the paths it names", async () => {
+    const stderr = [
+      "find: './Client: Acme/notes.txt': No space left on device",
+      "find: File system loop detected; './private' is part of the same file system loop as '.'.",
+      "tar: ./private.txt: Cannot open: Input/output error",
+      "find: './other.txt': No space left on device",
+    ].join("\n");
+    const run = FakeBoatApi.prototype.command;
+    vi.spyOn(FakeBoatApi.prototype, "command").mockImplementation(async function (
+      this: FakeBoatApi,
+      request,
+    ) {
+      if (!request.commandRequest.command.includes("archive=")) return run.call(this, request);
+      return {
+        ok: true,
+        type: "command.finished",
+        success: false,
+        stdout: "",
+        stderr,
+        exitCode: 1,
+        timedOut: false,
+      };
+    });
+    const { provider, computer } = await boat();
+
+    const error = await exportAll(provider, computer).catch((failure: Error) => failure);
+
+    expect((error as Error).message).toBe(
+      "could not archive Boat workspace (exit 1: No space left on device; Input/output error)",
+    );
+  });
+
   it.each([
     ["timed out", { exitCode: 124, timedOut: true }, "timed out"],
     ["met an unreadable file", { exitCode: 3, timedOut: false }, "an entry could not be read"],
@@ -2138,8 +2174,11 @@ describe("BoatSandboxProvider", () => {
     // The saved login reaches the helper on stdin, never in a command Boat logs.
     expect(seen).toEqual([
       {
-        command: expect.stringMatching(
-          /^DISPLAY=:20 CORTEXAI_AGENT_HUB_CDP_PORT=9241 HOME='\/home\/user\/cortexai-agent-hub-home' CORTEXAI_AGENT_HUB_BROWSER_ARGS_STDIN=1 \/usr\/local\/bin\/cortexai-agent-hub-page-browser act$/,
+        command: desktopWorkCommand(
+          "bot-a",
+          undefined,
+          0,
+          "DISPLAY=:20 CORTEXAI_AGENT_HUB_CDP_PORT=9241 HOME='/home/user/cortexai-agent-hub-home' CORTEXAI_AGENT_HUB_BROWSER_ARGS_STDIN=1 /usr/local/bin/cortexai-agent-hub-page-browser act",
         ),
         input: `${JSON.stringify({ command: "act", actions: [fill] })}\n`,
       },

@@ -417,7 +417,7 @@
 
 /* Durations mirror @cortexai-agent-hub/core WORKING_AVATAR_DURATIONS_MS (avatar-motion). */
 .cortexai-agent-hub-organic-avatar[data-shape-family="0"]
-.cortexai-agent-hub-organic-avatar-body-working {
+  .cortexai-agent-hub-organic-avatar-body-working {
   animation: cortexai-agent-hub-organic-float 1.8s ease-in-out infinite;
 }
 

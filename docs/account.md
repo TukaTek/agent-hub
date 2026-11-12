@@ -49,4 +49,3 @@ In **Settings → General**:
 - **Import an agent** brings in an OpenClaw, Hermes or ChatGPT assistant. See
   [Import an agent](./import-an-agent.md).
 - **Delete account** emails you a code, then permanently deletes your account and data.
-

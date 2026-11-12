@@ -9,10 +9,11 @@ import {
   unreadDividerMessageId,
   voiceChatHoldsMessage,
 } from "@cortexai-agent-hub/core";
+import { useLingui } from "@lingui/react/macro";
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { ListRenderItemInfo } from "react-native";
 import { StyleSheet, View } from "react-native";
-import { useI18n } from "../../lib/i18n";
+import { useUiLocale } from "../../lib/i18n";
 import type { MobileBot, MobileMessage, MobileSnapshot } from "../../lib/mobile-types";
 import { threadHeaderFloats } from "../../lib/thread-edges";
 import { previewMessageText } from "../../lib/thread-message-text";
@@ -100,7 +101,8 @@ export function useThreadRows({
   markedUnreadMessageId?: string;
   highlightedMessageId: string | null;
 }) {
-  const { t, locale } = useI18n();
+  const { t } = useLingui();
+  const locale = useUiLocale();
   const { showBotSenderName, reactionView, exchanges, visibleMessages } = transcript;
   const answerableAskIds = useMemo(() => answerableAskMessageIds(snap), [snap]);
   const dismissableAskIds = useMemo(() => dismissableAskMessageIds(snap, userId), [snap, userId]);
@@ -124,11 +126,11 @@ export function useThreadRows({
       const replyBotId = message.replyPreview?.botId ?? parent?.botId;
       const replyAuthor =
         (message.replyPreview?.role ?? parent?.role) === "user"
-          ? (otherAuthor(message.replyPreview?.author ?? parent?.author, userId)?.name ?? t("You"))
+          ? (otherAuthor(message.replyPreview?.author ?? parent?.author, userId)?.name ?? t`You`)
           : (memberName(snap?.members, replyBotId) ??
             mentionBots.find((bot) => bot.id === replyBotId)?.name ??
             displayName ??
-            t("Bot"));
+            t`Bot`);
       const messageReactions = reactionView.reactions.get(message.id);
       const activityBotId =
         !inGroup && message.role === "bot" && message.id.startsWith("progress:")

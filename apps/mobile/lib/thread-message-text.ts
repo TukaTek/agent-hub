@@ -2,14 +2,14 @@ import {
   previewMessageText as previewText,
   resolvePersonaColorDef,
 } from "@cortexai-agent-hub/core";
-import { t } from "./i18n";
+import { t } from "@lingui/core/macro";
 import type { MobileBot, MobileMessage, MobileSnapshot } from "./mobile-types";
 
 export function previewMessageText(message: MobileMessage): string {
   return previewText(message, {
-    photo: t("Photo"),
-    attachment: t("Attachment"),
-    message: t("Message"),
+    photo: t`Photo`,
+    attachment: t`Attachment`,
+    message: t`Message`,
   });
 }
 

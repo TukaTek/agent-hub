@@ -6,12 +6,11 @@ import { appendEvent } from "./events.js";
 import { runAsSystem } from "./row-security.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
 const master = { id: "test-fake-audit", key: randomBytes(32) };
 
-describePostgres("tool completion audit idempotency (PostgreSQL)", () => {
+describePostgres("tool completion audit idempotency (PostgreSQL)", { concurrent: false }, () => {
   const suffix = `${process.pid}-${Date.now()}`;
   const userId = `test-fake-audit-user-${suffix}`;
   const organizationId = `test-fake-audit-org-${suffix}`;

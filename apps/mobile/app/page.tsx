@@ -7,6 +7,7 @@ import {
   pageReplyText,
 } from "@cortexai-agent-hub/core";
 import { webTokensForAppearance } from "@cortexai-agent-hub/ui-tokens";
+import { useLingui } from "@lingui/react/macro";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -16,7 +17,6 @@ import { NativeActionButton } from "../components/native-action-button";
 import { PageLoadFailure } from "../components/pages/page-load-failure";
 import { SandboxedHtmlPreview } from "../components/sandboxed-html-preview";
 import { currentApiBase } from "../lib/api";
-import { useI18n } from "../lib/i18n";
 import { useMobileTokens, useResolvedAppearance } from "../lib/native";
 import { HEADER_CONTROL_SIZE } from "../lib/native-controls";
 import {
@@ -40,7 +40,7 @@ export default function PageScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { t } = useI18n();
+  const { t } = useLingui();
   const tokens = useMobileTokens();
   const theme = useResolvedAppearance();
   // Pages paint the web palette's background; the screen around them matches it.
@@ -62,7 +62,7 @@ export default function PageScreen() {
           currentApiBase(),
           page.code,
           theme,
-          t("This page couldn't be shown."),
+          t`This page couldn't be shown.`,
           { reply: pageChat(page) !== null },
         );
         if (!active) return;
@@ -147,8 +147,8 @@ export default function PageScreen() {
         <View style={styles.center}>
           <PageLoadFailure
             error={loaded.error}
-            fallback={t("Could not load this page.")}
-            gone={t("This page isn't available")}
+            fallback={t`Could not load this page.`}
+            gone={t`This page isn't available`}
             onRetry={() => setAttempt((count) => count + 1)}
           />
         </View>
@@ -159,7 +159,7 @@ export default function PageScreen() {
       )}
       <View pointerEvents="box-none" style={[styles.controls, { top: insets.top + 6 }]}>
         <NativeActionButton
-          accessibilityLabel={t("Close")}
+          accessibilityLabel={t`Close`}
           icon={{ ios: "xmark", android: "close", size: 20 }}
           prominence="secondary"
           style={round}
@@ -167,7 +167,7 @@ export default function PageScreen() {
         />
         {loaded.status === "ready" ? (
           <NativeActionButton
-            accessibilityLabel={t("Share")}
+            accessibilityLabel={t`Share`}
             icon={{ ios: "square.and.arrow.up", android: "share-outline", size: 20 }}
             prominence="secondary"
             style={round}

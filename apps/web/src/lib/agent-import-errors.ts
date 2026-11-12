@@ -1,6 +1,6 @@
 import { agentImportErrorReason } from "@cortexai-agent-hub/contracts";
+import { translateRunError } from "@cortexai-agent-hub/i18n/run-error";
 import { t } from "@lingui/core/macro";
-import { translateRunError } from "./run-error";
 
 function errorProvider(error: unknown): string {
   const data = error && typeof error === "object" && "data" in error ? error.data : undefined;

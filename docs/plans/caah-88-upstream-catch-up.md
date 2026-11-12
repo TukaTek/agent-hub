@@ -49,22 +49,22 @@ git merge-tree --write-tree --name-only origin/main upstream/main
 
 Each entry reads as total hunks / hunks involving branding. A zero means a binary file or a modify/delete conflict.
 
-| Area | Files | Hunks (total / branding) |
-|---|---|---|
-| Branding assets (icons, favicons, OG image, hero) | 24 | 2 / 2 |
-| Auth and Hub sign-in | 12 | 44 / 18 |
-| Voice | 1 | 1 / 1 |
-| Computer, supervisor, desktop app, updater | 17 | 21 / 21 |
-| Attachments and chat markdown | 13 | 20 / 11 |
-| Secrets, integrations, MCP, model connections | 15 | 22 / 18 |
-| Mobile (other) | 17 | 24 / 18 |
-| Marketing site (`apps/www`) | 16 | 47 / 35 |
-| Web (other, including 10 Lingui catalogs) | 27 | 111 / 47 |
-| API and worker (other) | 10 | 18 / 17 |
-| Packages (other: adapters, db, testkit, ui-tokens, ui-web) | 27 | 34 / 25 |
-| CI and Compose | 3 | 4 / 3 |
-| Docs | 4 | 5 / 5 |
-| Lockfile and manifests | 7 | 9 / 7 |
+| Area                                                       | Files | Hunks (total / branding) |
+| ---------------------------------------------------------- | ----- | ------------------------ |
+| Branding assets (icons, favicons, OG image, hero)          | 24    | 2 / 2                    |
+| Auth and Hub sign-in                                       | 12    | 44 / 18                  |
+| Voice                                                      | 1     | 1 / 1                    |
+| Computer, supervisor, desktop app, updater                 | 17    | 21 / 21                  |
+| Attachments and chat markdown                              | 13    | 20 / 11                  |
+| Secrets, integrations, MCP, model connections              | 15    | 22 / 18                  |
+| Mobile (other)                                             | 17    | 24 / 18                  |
+| Marketing site (`apps/www`)                                | 16    | 47 / 35                  |
+| Web (other, including 10 Lingui catalogs)                  | 27    | 111 / 47                 |
+| API and worker (other)                                     | 10    | 18 / 17                  |
+| Packages (other: adapters, db, testkit, ui-tokens, ui-web) | 27    | 34 / 25                  |
+| CI and Compose                                             | 3     | 4 / 3                    |
+| Docs                                                       | 4     | 5 / 5                    |
+| Lockfile and manifests                                     | 7     | 9 / 7                    |
 
 Full file lists:
 
@@ -87,21 +87,21 @@ Full file lists:
 
 Upstream adds 10 Prisma migrations. Our 3 Hub migrations interleave with them by timestamp:
 
-| Migration | Side | Effect |
-|---|---|---|
-| `20260907000000_hub_auth` | ours | `hub_identity`, `hub_session` |
-| `20260907010000_hub_tenant_auth` | ours | `hub_session` columns |
-| `20261002080000_routine_model` | upstream | `routines` and `runs` model columns |
-| `20261002120000_run_model_pinned` | upstream | `runs.modelPinned` |
-| `20261002130000_steering_model_pin` | upstream | `steering_messages` model columns |
-| `20261002150000_hub_policy_snapshot` | ours | `hub_policy_snapshot` |
-| `20261007010000_history_search` | upstream | `CREATE INDEX CONCURRENTLY` on `messages` |
-| `20261007100000_complete_usage_accounting` | upstream | `usage_records` columns and a unique `callId` index |
-| `20261007120000_billing_accounts` | upstream | `billing_accounts` (FK to organizations) |
-| `20261008120000_bot_disabled_builtin_tools` | upstream | `bots.disabledBuiltinTools` |
-| `20261008190000_model_backup_list` | upstream | `space_backup_models` |
-| `20261009120000_add_boards` | upstream | `boards`, `tickets`, `ticket_comments` |
-| `20261010120000_artifact_client_nonce` | upstream | `artifacts.clientNonce` and a unique index |
+| Migration                                   | Side     | Effect                                              |
+| ------------------------------------------- | -------- | --------------------------------------------------- |
+| `20260907000000_hub_auth`                   | ours     | `hub_identity`, `hub_session`                       |
+| `20260907010000_hub_tenant_auth`            | ours     | `hub_session` columns                               |
+| `20261002080000_routine_model`              | upstream | `routines` and `runs` model columns                 |
+| `20261002120000_run_model_pinned`           | upstream | `runs.modelPinned`                                  |
+| `20261002130000_steering_model_pin`         | upstream | `steering_messages` model columns                   |
+| `20261002150000_hub_policy_snapshot`        | ours     | `hub_policy_snapshot`                               |
+| `20261007010000_history_search`             | upstream | `CREATE INDEX CONCURRENTLY` on `messages`           |
+| `20261007100000_complete_usage_accounting`  | upstream | `usage_records` columns and a unique `callId` index |
+| `20261007120000_billing_accounts`           | upstream | `billing_accounts` (FK to organizations)            |
+| `20261008120000_bot_disabled_builtin_tools` | upstream | `bots.disabledBuiltinTools`                         |
+| `20261008190000_model_backup_list`          | upstream | `space_backup_models`                               |
+| `20261009120000_add_boards`                 | upstream | `boards`, `tickets`, `ticket_comments`              |
+| `20261010120000_artifact_client_nonce`      | upstream | `artifacts.clientNonce` and a unique index          |
 
 None of them touch the same table or column, and `packages/db/prisma/schema.prisma` merges cleanly. The risk is ordering. A deployed database has `20261002150000_hub_policy_snapshot` applied but not the three upstream migrations dated earlier. `prisma migrate deploy` applies any unapplied migration regardless of order, so this works, but `prisma migrate dev` flags the history as diverged on developer databases. Upstream migrations are never renamed, because renaming them would break the next sync. Two more risks get explicit checks: `history_search` uses `CONCURRENTLY`, so it must run outside a transaction, and the `usage_records_callId_key` unique index fails if a deployed database already has duplicate `callId` values.
 
@@ -109,19 +109,19 @@ None of them touch the same table or column, and `packages/db/prisma/schema.pris
 
 Every new flag defaults to "off" or to today's behavior. A deployment that changes nothing keeps working, as long as Task 3's guard is in place.
 
-| Flag | Default | Notes |
-|---|---|---|
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | unset | Upstream OIDC SSO. All three must be set together, and the issuer must be HTTPS. **Leave them unset in Hub mode**; Task 3 makes them a startup error there. |
-| `OIDC_NAME` | `SSO` | Button label. |
-| `OIDC_SCOPES` | `openid email profile` | |
-| `OIDC_ALLOW_SIGNUP_BYPASS` | `false` | Lets OIDC sign-ups skip the signup allowlist. |
-| `AUTH_PASSWORD_ENABLED` | `true` | `false` requires OIDC. Has no effect in Hub mode, where password sign-in is already off. |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID` | unset | Upstream seat billing and web paywall. **Leave them unset** (see decision D3). |
-| `TICKET_BOARD_ENABLED` | `false` | Read by both the API and the worker. Set it on both or neither. |
-| `SECRET_STORE` | `encrypted` | `infisical` switches to Infisical. Switching back needs upstream's reverse migration. |
-| `INFISICAL_URL`, `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT`, `INFISICAL_FOLDER`, `INFISICAL_ALLOW_INSECURE_HTTP` | unset / `false` | Used only with `SECRET_STORE=infisical`. |
-| `SANDBOX_IDLE_MS` | `600000` | Existing flag. `0` now means "never put the computer to sleep" (#1115). |
-| `CORTEXAI_AGENT_HUB_ALLOWED_HOSTS` | unset | Web dev server only (upstream `<OLD>_ALLOWED_HOSTS`, #1365). Not used in production. |
+| Flag                                                                                                                                                                    | Default                | Notes                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`                                                                                                                   | unset                  | Upstream OIDC SSO. All three must be set together, and the issuer must be HTTPS. **Leave them unset in Hub mode**; Task 3 makes them a startup error there. |
+| `OIDC_NAME`                                                                                                                                                             | `SSO`                  | Button label.                                                                                                                                               |
+| `OIDC_SCOPES`                                                                                                                                                           | `openid email profile` |                                                                                                                                                             |
+| `OIDC_ALLOW_SIGNUP_BYPASS`                                                                                                                                              | `false`                | Lets OIDC sign-ups skip the signup allowlist.                                                                                                               |
+| `AUTH_PASSWORD_ENABLED`                                                                                                                                                 | `true`                 | `false` requires OIDC. Has no effect in Hub mode, where password sign-in is already off.                                                                    |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`                                                                                                         | unset                  | Upstream seat billing and web paywall. **Leave them unset** (see decision D3).                                                                              |
+| `TICKET_BOARD_ENABLED`                                                                                                                                                  | `false`                | Read by both the API and the worker. Set it on both or neither.                                                                                             |
+| `SECRET_STORE`                                                                                                                                                          | `encrypted`            | `infisical` switches to Infisical. Switching back needs upstream's reverse migration.                                                                       |
+| `INFISICAL_URL`, `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT`, `INFISICAL_FOLDER`, `INFISICAL_ALLOW_INSECURE_HTTP` | unset / `false`        | Used only with `SECRET_STORE=infisical`.                                                                                                                    |
+| `SANDBOX_IDLE_MS`                                                                                                                                                       | `600000`               | Existing flag. `0` now means "never put the computer to sleep" (#1115).                                                                                     |
+| `CORTEXAI_AGENT_HUB_ALLOWED_HOSTS`                                                                                                                                      | unset                  | Web dev server only (upstream `<OLD>_ALLOWED_HOSTS`, #1365). Not used in production.                                                                        |
 
 Existing flags that must not change: `HUB_*` (including `HUB_POLICY_ENFORCEMENT` and `HUB_SSO_ENABLED`), `ENCRYPTION_KEY`, and the PR #27 file-download limit and timeout variables in `packages/adapters/src/bot-secrets.ts`.
 
@@ -175,25 +175,27 @@ These are the defaults this plan uses. Approving the plan approves them, unless 
 ### Task 1: Rebrand sweep script, written test-first
 
 **Files:**
+
 - Create: `scripts/upstream-rebrand.mjs`
 - Test: `scripts/upstream-rebrand.test.mjs`
 - Modify: `vitest.config.ts` (add `"scripts/**/*.test.mjs"` to `test.include`, so `pnpm test` runs it in CI)
 
 **Interfaces:**
+
 - Produces: `rebrand(text: string): { text: string; unresolved: string[] }` and a CLI, `node scripts/upstream-rebrand.mjs <files…>`, that rewrites files in place and exits 1 when something needs a manual fix.
 - Gate: the existing `packages/testkit/src/product-identity.test.ts` (part of `pnpm test`). It already fails when any tracked path or file other than `LICENSE` and `NOTICE` contains the retired name, and its second case bans the old competitor positioning phrase. The script doesn't duplicate that check. Like the test, the script and its test assemble the name at runtime (`["ra", "kazo"].join("")`), so they pass the gate themselves.
 
 The mapping is ordered, so the longer forms win. Every rule comes from what our tree already uses:
 
-| Upstream | Ours |
-|---|---|
-| `com.<old>.app` | `com.tukatek.cortexai.agenthub` |
-| `github.com/elie222/<old>` | `github.com/TukaTek/agent-hub` |
-| `<OLD>_` / `<OLD>` | `CORTEXAI_AGENT_HUB_` / `CORTEXAI_AGENT_HUB` |
-| `<old>` + capital letter (`<old>BotId`) | `cortexAiAgentHub` + the same letter |
-| `<Old>` + capital letter (`<Old>NetworkCache`) | `CortexAiAgentHub` + the same letter |
-| `<Old>` (prose) | `CortexAI Agent Hub` |
-| `<old>` (`@<old>/core`, `x-<old>-space-id`, `<old>.botId`, `<old>://`, `@<old>.test`) | `cortexai-agent-hub` |
+| Upstream                                                                              | Ours                                         |
+| ------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `com.<old>.app`                                                                       | `com.tukatek.cortexai.agenthub`              |
+| `github.com/elie222/<old>`                                                            | `github.com/TukaTek/agent-hub`               |
+| `<OLD>_` / `<OLD>`                                                                    | `CORTEXAI_AGENT_HUB_` / `CORTEXAI_AGENT_HUB` |
+| `<old>` + capital letter (`<old>BotId`)                                               | `cortexAiAgentHub` + the same letter         |
+| `<Old>` + capital letter (`<Old>NetworkCache`)                                        | `CortexAiAgentHub` + the same letter         |
+| `<Old>` (prose)                                                                       | `CortexAI Agent Hub`                         |
+| `<old>` (`@<old>/core`, `x-<old>-space-id`, `<old>.botId`, `<old>://`, `@<old>.test`) | `cortexai-agent-hub`                         |
 
 `<old>.com` addresses and URLs (`hello@`, `security@`, `support@`, a personal address, sitemap and privacy URLs) are **not** rewritten mechanically. Our tree replaced them with the CortexAI contact URL or `example.com`. The script reports them as `unresolved` so each one is fixed by hand.
 
@@ -340,18 +342,18 @@ node scripts/upstream-rebrand.mjs $(git diff --cached --name-only --diff-filter=
 
 - [ ] **Step 5: Area-specific resolutions** (the behavior is reconciled in Tasks 3 to 6, but it has to compile here)
 
-| Area | Resolution |
-|---|---|
-| Auth (`packages/auth/src/index.ts`) | Keep all our Hub exports, options (`hub`, `hubPolicy`, `tokenEncryptionKey`, `onHubSsoError`) and plugin selection (`hub ? hub.plugin : localSignInPlugin`), together with upstream's `afterDeleteSession`, `afterReplaceSession`, `passwordAuth`, `oidc`, `expo()`, `accountSecurity` and account linking. `emailAndPassword.enabled = !hub && env.passwordAuth !== false`. The rate-limit rules are upstream's database storage, plus `/request-account-deletion`, plus our `HUB_SIGN_IN_RATE_LIMITS`. The before-hook runs `if (hub) rejectHubAccountMutation(ctx.path)` **before** upstream's OIDC re-authentication branch. `appName` is ours, and the trusted origin is `cortexai-agent-hub://`. |
-| API (`app.ts`, `env.ts`) | Keep both sides' fields (`hubAuth` and `passwordAuth`, `oidc`, the secret store options). Keep our `createUserWorkAuthorizer` wiring with upstream's `contextStrategy` and `runtime`, and upstream's `no-store` cache header middleware. Use upstream's `requestSession` and `actorFromMembership` refactor with our header name. Capabilities are merged in Task 4. |
-| Web `Auth.tsx`, `Welcome.tsx`, `bootstrap.ts`, mobile `sign-in.tsx`, `session.ts`, desktop `oauth-callback.ts` | Our email-first Hub flow and Hub SSO button stay. Upstream's OIDC option ("single sign-on below the form", #1277) renders only when `capabilities.sso` is non-null. `Auth.test.tsx` (add/add): keep both sets of tests in one file. |
-| Mobile `account.tsx`, `ai-data-sharing.tsx` (deleted upstream, moved to `app/(settings)/`) | Accept the deletion. Port our only edits (our "Assistant" wording, 6 lines) into `app/(settings)/account.tsx` and `app/(settings)/ai-data-sharing.tsx`. |
-| www `marketing-homepage.spec.ts` (deleted upstream) | Accept the deletion. Our edits there were branding only. |
-| `ui-tokens` | Union: keep our `brand*` tokens, and take upstream's `statusWorking` and its updated `overlay` and `scrollbar` values. Regenerate `tokens.css` with the package's generator, and don't hand-merge it. |
-| Lingui `.po` (10 files) | Resolve hunks (ours wins on branding), then run `pnpm --filter @cortexai-agent-hub/web intl:extract` and `intl:compile`. Check that no msgid lost its translation. |
-| Compose (3 files) | Our database user, image names and `HUB_*` blocks stay. Add upstream's `SECRET_STORE`/`INFISICAL_*` and `OIDC_*`/`AUTH_PASSWORD_ENABLED` entries, with empty defaults. |
-| Docs | `README.md`, `AGENTS.md` and `docs/agent-verification.md` keep ours. Add any new upstream rule to `AGENTS.md` only if it applies to us. `CHANGELOG.md`: keep ours on top, and add upstream entries rebranded. |
-| www (D4) | Remove the upstream-only pages and assets listed in D4, and resolve the remaining hunks in favor of ours. |
+| Area                                                                                                           | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Auth (`packages/auth/src/index.ts`)                                                                            | Keep all our Hub exports, options (`hub`, `hubPolicy`, `tokenEncryptionKey`, `onHubSsoError`) and plugin selection (`hub ? hub.plugin : localSignInPlugin`), together with upstream's `afterDeleteSession`, `afterReplaceSession`, `passwordAuth`, `oidc`, `expo()`, `accountSecurity` and account linking. `emailAndPassword.enabled = !hub && env.passwordAuth !== false`. The rate-limit rules are upstream's database storage, plus `/request-account-deletion`, plus our `HUB_SIGN_IN_RATE_LIMITS`. The before-hook runs `if (hub) rejectHubAccountMutation(ctx.path)` **before** upstream's OIDC re-authentication branch. `appName` is ours, and the trusted origin is `cortexai-agent-hub://`. |
+| API (`app.ts`, `env.ts`)                                                                                       | Keep both sides' fields (`hubAuth` and `passwordAuth`, `oidc`, the secret store options). Keep our `createUserWorkAuthorizer` wiring with upstream's `contextStrategy` and `runtime`, and upstream's `no-store` cache header middleware. Use upstream's `requestSession` and `actorFromMembership` refactor with our header name. Capabilities are merged in Task 4.                                                                                                                                                                                                                                                                                                                                   |
+| Web `Auth.tsx`, `Welcome.tsx`, `bootstrap.ts`, mobile `sign-in.tsx`, `session.ts`, desktop `oauth-callback.ts` | Our email-first Hub flow and Hub SSO button stay. Upstream's OIDC option ("single sign-on below the form", #1277) renders only when `capabilities.sso` is non-null. `Auth.test.tsx` (add/add): keep both sets of tests in one file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Mobile `account.tsx`, `ai-data-sharing.tsx` (deleted upstream, moved to `app/(settings)/`)                     | Accept the deletion. Port our only edits (our "Assistant" wording, 6 lines) into `app/(settings)/account.tsx` and `app/(settings)/ai-data-sharing.tsx`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| www `marketing-homepage.spec.ts` (deleted upstream)                                                            | Accept the deletion. Our edits there were branding only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ui-tokens`                                                                                                    | Union: keep our `brand*` tokens, and take upstream's `statusWorking` and its updated `overlay` and `scrollbar` values. Regenerate `tokens.css` with the package's generator, and don't hand-merge it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Lingui `.po` (10 files)                                                                                        | Resolve hunks (ours wins on branding), then run `pnpm --filter @cortexai-agent-hub/web intl:extract` and `intl:compile`. Check that no msgid lost its translation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Compose (3 files)                                                                                              | Our database user, image names and `HUB_*` blocks stay. Add upstream's `SECRET_STORE`/`INFISICAL_*` and `OIDC_*`/`AUTH_PASSWORD_ENABLED` entries, with empty defaults.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Docs                                                                                                           | `README.md`, `AGENTS.md` and `docs/agent-verification.md` keep ours. Add any new upstream rule to `AGENTS.md` only if it applies to us. `CHANGELOG.md`: keep ours on top, and add upstream entries rebranded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| www (D4)                                                                                                       | Remove the upstream-only pages and assets listed in D4, and resolve the remaining hunks in favor of ours.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 - [ ] **Step 6: No upstream names left**
 
@@ -379,10 +381,12 @@ git log -1 --format=%P | wc -w   # must be 2
 ### Task 3: Hub mode stays closed with upstream OIDC and billing
 
 **Files:**
+
 - Modify: `apps/api/src/env.ts`
 - Test: `apps/api/src/env.test.ts`, `packages/auth/src/hub.postgres.test.ts`
 
 **Interfaces:**
+
 - Consumes: `loadEnv(source)` and upstream's OIDC and Stripe parsing in `apps/api/src/env.ts`, and `createAuth(prisma, env)` plus `hubPolicyForTests` in `packages/auth`.
 - Produces: startup errors `"OIDC sign-in can't be combined with Hub sign-in"` and `"Billing can't be combined with Hub sign-in"`.
 
@@ -396,7 +400,9 @@ const oidc = {
   OIDC_CLIENT_ID: "fixture-client",
   OIDC_CLIENT_SECRET: "fixture-secret",
 };
-expect(() => loadEnv({ ...sso, ...oidc })).toThrow("OIDC sign-in can't be combined with Hub sign-in");
+expect(() => loadEnv({ ...sso, ...oidc })).toThrow(
+  "OIDC sign-in can't be combined with Hub sign-in",
+);
 expect(() => loadEnv({ ...sso, STRIPE_SECRET_KEY: "sk_test_placeholder" })).toThrow(
   "Billing can't be combined with Hub sign-in",
 );
@@ -438,7 +444,9 @@ it("rejects upstream OIDC, sign-up and account-deletion paths in Hub mode", asyn
       );
       expect(response.status, path).toBe(403);
     }
-    expect(await db.prisma.session.count({ where: { user: { email: "user@example.test" } } })).toBe(0);
+    expect(await db.prisma.session.count({ where: { user: { email: "user@example.test" } } })).toBe(
+      0,
+    );
   } finally {
     await db.prisma.$disconnect();
     await db.pool.end();
@@ -474,11 +482,13 @@ git commit -am "CAAH-88: keep Hub sign-in closed to upstream OIDC and billing"
 ### Task 4: One auth capabilities contract (D2)
 
 **Files:**
+
 - Modify: `packages/contracts/src/auth.ts` (upstream's `authCapabilitiesSchema`), `apps/api/src/app.ts` (`/api/auth/capabilities`), `apps/web/src/pages/Auth.tsx`, `apps/mobile/app/sign-in.tsx`
 - Create: `apps/api/src/auth-capabilities.ts`
 - Test: `apps/api/src/auth-capabilities.test.ts` (new), `apps/web/src/pages/Auth.test.tsx`, `apps/mobile/lib/api.test.ts`
 
 **Interfaces:**
+
 - Produces, in `packages/contracts/src/auth.ts`: `authCapabilitiesSchema` gains `mode: z.enum(["hub", "local"]).default("local")` and `hubSso: z.boolean().default(false)`. The defaults let a client parse a reply from a server that doesn't send these fields yet.
 - Produces, in `apps/api/src/auth-capabilities.ts`: `authCapabilities(input: { hub: boolean; hubSso: boolean; passwordAuth: boolean; oidc?: { name: string; availability: "available" | "unavailable" | "checking" }; resetUrl: string | null; billing: boolean }): AuthCapabilities`
 
@@ -628,10 +638,12 @@ git commit -am "CAAH-88: report Hub and OIDC sign-in in one capabilities contrac
 Upstream turned the synchronous `EncryptedSecretStore` into an async `SecretStore` contract in `@cortexai-agent-hub/adapter-kit`, and added `secret-persistence.ts` and `secret-store-factory.ts`. Our two fixes sit on the old API.
 
 **Files:**
+
 - Modify: `packages/adapters/src/bot-secrets.ts`, `packages/adapters/src/integration-provider-settings.ts`, `apps/api/src/agent-secrets.ts`
 - Test: `packages/adapters/src/bot-secrets.test.ts` (ours, already present), `packages/adapters/src/integration-provider-settings.test.ts`, `packages/testkit/src/connections.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SecretStore` (async `get`, `put`, `delete`) from `@cortexai-agent-hub/adapter-kit`, and `persistPreparedSecret` from `./secret-persistence.js`.
 - Produces: unchanged public behavior. `bot_secret_file` downloads stream to the computer with the 100 MB default cap and a 120 s default timeout. `createIntegrationConnectorStack(composio, settings, before, after)` still gives the registry exactly one `composio` provider.
 
@@ -660,6 +672,7 @@ git commit -am "CAAH-88: keep bot file downloads and the Composio stack on the a
 Upstream #1289 added zip, which we already allowed. Upstream also has no Office types, so the trial merge drops ours (the `.xlsx`/`.docx`/`.pptx`/`.xls`/`.doc`/`.ppt` hunks and `...ATTACHMENT_OFFICE_MIME_TYPES`). Upstream #1206 replaced the markdown `a` renderer with a `MarkdownAnchor` that asks for confirmation before opening an external link.
 
 **Files:**
+
 - Modify: `packages/core/src/attachments.ts`, `packages/contracts/src/attachments.ts`, `packages/chat-ui/src/markdown.web.tsx`, `packages/chat-ui/src/markdown.native.tsx`
 - Test: `packages/core/src/attachments.test.ts`, `packages/testkit/src/attachments.test.ts`, `apps/web/src/lib/chat-markdown.test.tsx`, `packages/chat-ui/src/markdown.native.test.tsx`
 
@@ -673,7 +686,12 @@ Expected: every CAAH-72 case exists and passes after Step 2: Office MIME types a
 ```tsx
 function MarkdownAnchor({ node: _node, ...props }: AnchorProps) {
   // urlTransform blanks unsafe URLs. Keep their text without a link that opens the app again.
-  if (!props.href) return <InsideLinkContext.Provider value={true}><span>{props.children}</span></InsideLinkContext.Provider>;
+  if (!props.href)
+    return (
+      <InsideLinkContext.Provider value={true}>
+        <span>{props.children}</span>
+      </InsideLinkContext.Provider>
+    );
   // ...upstream body unchanged...
 }
 ```
@@ -747,15 +765,15 @@ Run every step on the final branch head, and record the result in words in the P
 
 ## Risks
 
-| Risk | Where | Mitigation |
-|---|---|---|
-| Upstream branding leaks through files that merged cleanly | 269 files | Task 1 sweep, gated by the existing `product-identity.test.ts` in Task 2 and Task 8 |
-| OIDC or billing opens a path around Hub | `packages/auth`, `apps/api` | Allowlist (already there), Task 3 startup errors, Task 4 capabilities |
-| Better Auth 1.7.7 breaks Hub plugin internals | `packages/auth/src/hub.ts` | Typecheck plus Hub unit tests and journeys. Fix Hub code, never downgrade. |
-| PR #27 or PR #28 silently reverted by the async store refactor | `bot-secrets.ts`, `integration-provider-settings.ts` | Our existing tests are the gate (Task 5) |
-| Office types dropped by a "take theirs" hunk | `core/attachments.ts`, `contracts/attachments.ts` | Task 6 tests |
-| Migration order or unique index failure on deployed data | `usage_records_callId_key`, `history_search` | Task 8 migration run on our current schema with seeded duplicates |
-| Desktop colors shift through token changes | `ui-tokens` and the CAAH-87 token test | CAAH-87 desktop test plus image smoke |
-| Old mobile builds lose the Microsoft button | capabilities contract | D2, with email-first Hub sign-in as the fallback |
-| PR merged with squash | GitHub merge button | Callout at the top of the PR, and in this plan |
-| Upstream moves before implementation | `upstream/main` | Task 2 Step 1 checks the conflict count. If it moved, redo the inventory and get re-approval. |
+| Risk                                                           | Where                                                | Mitigation                                                                                    |
+| -------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Upstream branding leaks through files that merged cleanly      | 269 files                                            | Task 1 sweep, gated by the existing `product-identity.test.ts` in Task 2 and Task 8           |
+| OIDC or billing opens a path around Hub                        | `packages/auth`, `apps/api`                          | Allowlist (already there), Task 3 startup errors, Task 4 capabilities                         |
+| Better Auth 1.7.7 breaks Hub plugin internals                  | `packages/auth/src/hub.ts`                           | Typecheck plus Hub unit tests and journeys. Fix Hub code, never downgrade.                    |
+| PR #27 or PR #28 silently reverted by the async store refactor | `bot-secrets.ts`, `integration-provider-settings.ts` | Our existing tests are the gate (Task 5)                                                      |
+| Office types dropped by a "take theirs" hunk                   | `core/attachments.ts`, `contracts/attachments.ts`    | Task 6 tests                                                                                  |
+| Migration order or unique index failure on deployed data       | `usage_records_callId_key`, `history_search`         | Task 8 migration run on our current schema with seeded duplicates                             |
+| Desktop colors shift through token changes                     | `ui-tokens` and the CAAH-87 token test               | CAAH-87 desktop test plus image smoke                                                         |
+| Old mobile builds lose the Microsoft button                    | capabilities contract                                | D2, with email-first Hub sign-in as the fallback                                              |
+| PR merged with squash                                          | GitHub merge button                                  | Callout at the top of the PR, and in this plan                                                |
+| Upstream moves before implementation                           | `upstream/main`                                      | Task 2 Step 1 checks the conflict count. If it moved, redo the inventory and get re-approval. |

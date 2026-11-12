@@ -12,6 +12,7 @@ import {
   attachmentMaxBytes,
   attachmentMaxCount,
   canonicalPiProviderId,
+  modelCreditsUsd,
   resolveBotAvatarSet,
 } from "@cortexai-agent-hub/contracts";
 import { withHubModelDefaults } from "@cortexai-agent-hub/core";
@@ -119,8 +120,7 @@ export async function modelSetup(deps: RouterDeps, actor: Actor) {
       ? member
       : null;
   const funding = deps.billing ? await deps.billing.status(actor) : null;
-  // A balance keeps paying for the deployment model after switching to an own key.
-  const creditsAvailable = funding?.funding === "credits" || (funding?.balanceUsd ?? 0) > 0;
+  const creditsAvailable = modelCreditsUsd(funding) !== null;
   const hasDeployment =
     Boolean(deps.env.deploymentModelConfigured) &&
     (!funding?.creditPurchasesEnabled || creditsAvailable);

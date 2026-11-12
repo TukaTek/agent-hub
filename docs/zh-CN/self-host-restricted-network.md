@@ -5,12 +5,12 @@
 GitHub 或容器注册表无法访问时，可以使用自己掌控的镜像源或预先复制文件。
 这些设置只改变下载路径，模型和远程计算机提供商仍需可用的网络连接。
 
-| 失败位置 | 设置或处理方式 |
-| --- | --- |
-| 安装脚本 | 从可信镜像下载或复制到本地 |
-| Compose 文件 | `CORTEXAI_AGENT_HUB_DOWNLOAD_BASE`、`--local` 或 `CORTEXAI_AGENT_HUB_DOWNLOAD_SKIP_EXISTING=1` |
-| 应用或计算机镜像 | `CORTEXAI_AGENT_HUB_IMAGE`、`CORTEXAI_AGENT_HUB_IMAGE_TAG`、`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE`、`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG` |
-| Postgres 或 busybox 镜像 | `POSTGRES_IMAGE`、`BUSYBOX_IMAGE`，或 Docker 的 `registry-mirrors` |
+| 失败位置                 | 设置或处理方式                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 安装脚本                 | 从可信镜像下载或复制到本地                                                                                                               |
+| Compose 文件             | `CORTEXAI_AGENT_HUB_DOWNLOAD_BASE`、`--local` 或 `CORTEXAI_AGENT_HUB_DOWNLOAD_SKIP_EXISTING=1`                                           |
+| 应用或计算机镜像         | `CORTEXAI_AGENT_HUB_IMAGE`、`CORTEXAI_AGENT_HUB_IMAGE_TAG`、`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE`、`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG` |
+| Postgres 或 busybox 镜像 | `POSTGRES_IMAGE`、`BUSYBOX_IMAGE`，或 Docker 的 `registry-mirrors`                                                                       |
 
 ## 安装脚本与 Compose 文件
 

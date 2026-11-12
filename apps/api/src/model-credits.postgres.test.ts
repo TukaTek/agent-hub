@@ -6,8 +6,7 @@ import { asSystem, billingAccountForOrganization, createDb } from "@cortexai-age
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBillingService, TRIAL_DAYS } from "./billing.js";
 
-const dbTests =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
+const dbTests = process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 dbTests("model credit billing service", () => {
   const stamp = `${process.pid}-${Date.now()}`;
   const userId = `credit-owner-${stamp}`,

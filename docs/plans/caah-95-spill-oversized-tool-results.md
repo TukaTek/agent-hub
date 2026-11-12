@@ -20,16 +20,16 @@
 
 Every connector and built-in result goes through one `AgentTool.execute` in `pi-runtime.ts` (about lines 1177–1316):
 
-| Path | Code | Limit |
-| --- | --- | --- |
-| Executor returns plain data (Composio, MCP, Pipedream, GraphQL, HTTP/secret requests, most built-ins) | `serializeToolResult` → `clipToolResultText` (`current` strategy) or `shortenToolResultText` middle cut (other strategies) | `resultLimit`, otherwise `TOOL_RESULT_TEXT_LIMIT` (12,000 when planned; 100,000 after decision 4) |
-| Executor returns `{ content: [...] }` (MCP native content, computer screenshots) | `boundAgentToolResult` → `clipToolResultContent` (one budget shared by all text parts) | same |
-| `request_secret` with an executor | `serializeToolResult`, default limit | default |
-| Catalog wrapper `__catalog_execute` | Same two paths. `toolResultChars(tool, args)` picks the budget of the resolved tool ID (`lazy-tool-catalog.ts` `catalogResultBudgets`) | per resolved tool |
-| `run_subagent` | `clipToolResultText` at line 1606 | default |
-| `shell` | `shell-command-stream.ts` clips each of stdout and stderr | default, each |
-| `skill_read` | `VERBATIM_TOOL_RESULTS`, never clipped | — |
-| `read_history` / `search_history` | The executor refuses results over 11,000 bytes | — |
+| Path                                                                                                  | Code                                                                                                                                   | Limit                                                                                             |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Executor returns plain data (Composio, MCP, Pipedream, GraphQL, HTTP/secret requests, most built-ins) | `serializeToolResult` → `clipToolResultText` (`current` strategy) or `shortenToolResultText` middle cut (other strategies)             | `resultLimit`, otherwise `TOOL_RESULT_TEXT_LIMIT` (12,000 when planned; 100,000 after decision 4) |
+| Executor returns `{ content: [...] }` (MCP native content, computer screenshots)                      | `boundAgentToolResult` → `clipToolResultContent` (one budget shared by all text parts)                                                 | same                                                                                              |
+| `request_secret` with an executor                                                                     | `serializeToolResult`, default limit                                                                                                   | default                                                                                           |
+| Catalog wrapper `__catalog_execute`                                                                   | Same two paths. `toolResultChars(tool, args)` picks the budget of the resolved tool ID (`lazy-tool-catalog.ts` `catalogResultBudgets`) | per resolved tool                                                                                 |
+| `run_subagent`                                                                                        | `clipToolResultText` at line 1606                                                                                                      | default                                                                                           |
+| `shell`                                                                                               | `shell-command-stream.ts` clips each of stdout and stderr                                                                              | default, each                                                                                     |
+| `skill_read`                                                                                          | `VERBATIM_TOOL_RESULTS`, never clipped                                                                                                 | —                                                                                                 |
+| `read_history` / `search_history`                                                                     | The executor refuses results over 11,000 bytes                                                                                         | —                                                                                                 |
 
 Composio (Fathom) tools don't declare `maxResultChars`, so they take the default (12,000 when planned). The remainder is dropped.
 
@@ -120,13 +120,13 @@ Shell is optional (`disabledBuiltinTools`), and its output is clipped at the def
 
 ### 5. Isolation
 
-| Computer | Spill? | Why |
-| --- | --- | --- |
-| Private (`scope = "dedicated"`) and `computer.userId === run.userId` | Yes | Only this user's bot uses it |
-| Private, but `run.userId` isn't the owner | No → `shared-computer` | Another user's machine |
-| Team (`scope = "team"`), any number of members | Yes, under `bots/<bot-id>/.cortexai/…` | Space-trusted, like attachments (decision 1). The per-user path guard still applies in the file tools |
-| Host desktop (Electron, `kind = "desktop"`) | Yes | A single local user |
-| No computer, scripted runtime, intro (`created`) run | No → `no-computer` | — |
+| Computer                                                             | Spill?                                 | Why                                                                                                   |
+| -------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Private (`scope = "dedicated"`) and `computer.userId === run.userId` | Yes                                    | Only this user's bot uses it                                                                          |
+| Private, but `run.userId` isn't the owner                            | No → `shared-computer`                 | Another user's machine                                                                                |
+| Team (`scope = "team"`), any number of members                       | Yes, under `bots/<bot-id>/.cortexai/…` | Space-trusted, like attachments (decision 1). The per-user path guard still applies in the file tools |
+| Host desktop (Electron, `kind = "desktop"`)                          | Yes                                    | A single local user                                                                                   |
+| No computer, scripted runtime, intro (`created`) run                 | No → `no-computer`                     | —                                                                                                     |
 
 Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refuse any path under `.cortexai/tool-results/<key>/` whose key isn't the current run's `userKey` (`error: "not found"`). Tenant isolation already comes from computers being per space.
 
@@ -176,7 +176,7 @@ Defense in depth: `read_file`, `list_files`, `open_path` and `attach_file` refus
 
 - [ ] New `executor-tool-result-spill.test.ts`, following `executor-secret-pi.test.ts` (scripted Pi, fake sandbox, fake connector):
   1. **Byte-for-byte:** a 200k fake Composio result spills to `/workspace/.cortexai/tool-results/<key>/<run>/01-….txt`. Paging with `read_file` `offset`/`limit` until `next_offset` is absent and concatenating gives the redacted original exactly. The test uses non-ASCII, newlines and quotes.
-  1b. **Quote from any position.** The fixture is a deterministic fake Fathom transcript of about 240,000 characters, with no randomness. It has one numbered utterance per line, `[hh:mm:ss] Speaker N: … marker-<index> …`, mixing in accented text, emoji (surrogate pairs) and escaped quotes. A table-driven test reads `read_file({ path, offset, limit: 8_000 })` at sampled offsets:
+     1b. **Quote from any position.** The fixture is a deterministic fake Fathom transcript of about 240,000 characters, with no randomness. It has one numbered utterance per line, `[hh:mm:ss] Speaker N: … marker-<index> …`, mixing in accented text, emoji (surrogate pairs) and escaped quotes. A table-driven test reads `read_file({ path, offset, limit: 8_000 })` at sampled offsets:
      - `0` (beginning)
      - the first character after the receipt's head preview, the start of the part the model hasn't seen
      - 10%, 25%, 33%, 50% (middle), 67%, 75% and 90% of `total_chars`

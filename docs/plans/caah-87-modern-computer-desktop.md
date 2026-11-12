@@ -47,6 +47,7 @@
 ## Decisions
 
 **Dock: `tint2` styled as a centered floating dock (recommended), not Plank.** Both meet "Plank or similar". Plank looks closest to the reference, but under our constraints it costs more and carries more risk:
+
 - It needs `bamfdaemon` and GSettings/dconf for configuration. Plank's dock settings use a relocatable schema, so vendor overrides don't apply and we would need a keyfile or dconf backend.
 - It is a unique D-Bus application per session. Team desktops reached through `docker exec` don't share the primary session bus, so a second display needs its own bus, which brings another `dbus-daemon` and `bamfdaemon`.
 - It has zoom and hide animations by default.
@@ -55,6 +56,7 @@
 `tint2` is a single X11 client with one text config file, no D-Bus, about 8–12 MB RSS and about 4 MB installed. With the compositor it draws a translucent, rounded, centered panel with launcher icons, a separator and running-window icons. That looks like a dock and is easy to run once per display. If the PM wants Plank's look specifically, Task 3's config tests and Task 4's session script swap the dock binary, and the budget gets re-measured.
 
 **Dock layer: under maximized windows, reserving no screen space (recommended).** This matches today exactly. A maximized Chromium still covers all 1280x800 (xfwm4 `borderless_maximize`, tint2 `panel_layer = bottom`, `strut_policy = none`), so page viewport sizes, scroll distances and every coordinate a bot learned stay the same. The dock shows on the idle desktop and around unmaximized windows such as the terminal. I rejected two alternatives:
+
 - An always-visible dock that reserves about 64 px. It shrinks every bot's browser viewport.
 - Auto-hide. Pointer moves to the bottom edge would pop the dock over page content between a screenshot and a click.
 
@@ -63,12 +65,14 @@
 **picom backend: `xrender`, `vsync = false`, `fading = false`, `use-damage = true`, `unredir-if-possible = true`.** Xvfb has no GPU or vblank, so `glx` would use software GL. With damage tracking, xrender repaints only changed areas, so an idle screen costs nothing. `unredir-if-possible` takes the compositor out of the path whenever a window covers the full screen, which is the maximized Chromium bots use. Screenshots of a bot's browser are then pixel-identical to an uncomposited screen. I'm not adding a runtime toggle for the compositor (YAGNI). If the measured idle CPU or RAM misses budget, the fallback is to drop `picom` and turn on xfwm4's compositor, which keeps shadows but loses rounded corners. That's a two-line change in `cortexai-agent-hub-desktop-session`.
 
 **Theme, icons and fonts:**
+
 - xfwm4 decorations and the portal file chooser use **Arc-Dark** (`arc-theme`).
 - Icons are **Papirus-Dark**, trimmed in a builder stage to the sizes we use.
 - The UI font is **Inter** (titles, dock tooltips, file chooser).
 - The terminal font is **JetBrains Mono**.
 
 These apply only to desktop processes:
+
 - the GTK theme through `XDG_CONFIG_DIRS` for xfwm4 and `xdg-desktop-portal-gtk`;
 - xterm through `XTerm*` X resources;
 - never system-wide.
@@ -87,20 +91,21 @@ Chromium keeps today's GTK defaults. Strict monochrome alternative: the GTK buil
 
 `--no-install-recommends` on bookworm. GTK3, cairo, pango, Xft and most `libxcb-*` libraries are already in the image (Chromium, `xdg-desktop-portal-gtk`), so the estimates are increments. Task 1 records the real before and after numbers from `docker image inspect` and `dpkg-query -W -f '${Installed-Size}'`.
 
-| Package | What it's for | Est. added |
-| --- | --- | --- |
-| `xfwm4` (+ `libxfce4ui-2-0`, `libxfce4util7`, `libxfconf-0-3`, `xfconf`, `libwnck-3-0`, `libstartup-notification0`) | Window manager and its settings daemon | ~10 MB |
-| `picom` (+ `libconfig9`, `libev4`) | Compositor: shadows, rounded corners | ~2 MB |
-| `tint2` (+ `libimlib2`) | Dock | ~4 MB |
-| `hsetroot` | Wallpaper gradient | <0.2 MB |
-| `arc-theme` | Arc-Dark GTK and xfwm4 theme | ~4 MB |
-| `papirus-icon-theme` (builder stage, copy `Papirus` + `Papirus-Dark` at 16/22/24/32/48/64 + `symbolic` only) | Dock and file chooser icons | ≤30 MB (hard cap; if larger, keep only `apps` and `places`) |
-| `fonts-inter` | UI font | ~8 MB |
-| `fonts-jetbrains-mono` | Terminal font | ~3 MB |
-| remove `fluxbox` | | −3 MB |
-| **Total** | | **≈ +55 MB (range +40 to +75 MB), budget +150 MB** |
+| Package                                                                                                             | What it's for                          | Est. added                                                  |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+| `xfwm4` (+ `libxfce4ui-2-0`, `libxfce4util7`, `libxfconf-0-3`, `xfconf`, `libwnck-3-0`, `libstartup-notification0`) | Window manager and its settings daemon | ~10 MB                                                      |
+| `picom` (+ `libconfig9`, `libev4`)                                                                                  | Compositor: shadows, rounded corners   | ~2 MB                                                       |
+| `tint2` (+ `libimlib2`)                                                                                             | Dock                                   | ~4 MB                                                       |
+| `hsetroot`                                                                                                          | Wallpaper gradient                     | <0.2 MB                                                     |
+| `arc-theme`                                                                                                         | Arc-Dark GTK and xfwm4 theme           | ~4 MB                                                       |
+| `papirus-icon-theme` (builder stage, copy `Papirus` + `Papirus-Dark` at 16/22/24/32/48/64 + `symbolic` only)        | Dock and file chooser icons            | ≤30 MB (hard cap; if larger, keep only `apps` and `places`) |
+| `fonts-inter`                                                                                                       | UI font                                | ~8 MB                                                       |
+| `fonts-jetbrains-mono`                                                                                              | Terminal font                          | ~3 MB                                                       |
+| remove `fluxbox`                                                                                                    |                                        | −3 MB                                                       |
+| **Total**                                                                                                           |                                        | **≈ +55 MB (range +40 to +75 MB), budget +150 MB**          |
 
 **RAM estimate (idle RSS):**
+
 - Per display: `xfwm4` 18–25 MB, `picom` 8–15 MB, `tint2` 8–12 MB.
 - Once per computer: `xfconfd` about 5 MB.
 - Fluxbox today: about 7 MB.
@@ -153,41 +158,43 @@ There are no new words. The dock's two launchers carry the tooltips "Browser" an
 
 ## File Structure
 
-| File | Change |
-| --- | --- |
-| `infra/sandboxes/computer/desktop/session.sh` (new) | `cortexai-agent-hub-desktop-session :N`: wallpaper, xrdb, xfwm4, picom, tint2 |
-| `infra/sandboxes/computer/desktop/xfwm4.xml` (new) | xfwm4 defaults: Arc-Dark, Inter, compositor off, borderless maximize, one workspace |
-| `infra/sandboxes/computer/desktop/xfce4-keyboard-shortcuts.xml` (new) | Only Alt+Tab, Alt+Shift+Tab, Alt+F4 |
-| `infra/sandboxes/computer/desktop/picom.conf` (new) | xrender, shadows, 10 px corners, no fading, unredirect |
-| `infra/sandboxes/computer/desktop/tint2rc.in` (new) | Dock template (`@STATE@` placeholder) |
-| `infra/sandboxes/computer/desktop/Xresources` (new) | XTerm styling only |
-| `infra/sandboxes/computer/desktop/gtk-3.0/settings.ini` (new) | Arc-Dark, Papirus-Dark, Inter 10. Reached only through `XDG_CONFIG_DIRS` for desktop processes |
-| `infra/sandboxes/computer/desktop/browser.desktop.in`, `terminal.desktop` (new) | Dock launchers |
-| `infra/sandboxes/computer/desktop_smoke.py` (new) | Screenshot, metrics and modern-desktop assertions |
-| `infra/sandboxes/computer/Dockerfile` | Packages, icon builder stage, COPY lines, remove Fluxbox and the `fbsetbg` shim |
-| `infra/sandboxes/computer/start.sh` | Replace the Fluxbox block with the session launcher; portal-gtk gets `XDG_CONFIG_DIRS` |
-| `infra/sandboxes/computer/fluxbox.{init,apps,menu}` | Delete |
-| `infra/sandboxes/computer/test_team_desktops.py` | Assert the session and dock instead of the Fluxbox menu |
-| `infra/sandboxes/supervisor/src/index.ts` | Build-context file list |
-| `infra/sandboxes/supervisor/src/desktop-config.test.ts` (new) | Config invariants and token colors |
-| `infra/sandboxes/supervisor/src/computer-spec.test.ts`, `index.test.ts` | Replace the Fluxbox menu tests; stop patterns |
-| `infra/sandboxes/supervisor/package.json` | devDependency `@cortexai-agent-hub/ui-tokens` (test only) |
-| `packages/core/src/node/desktop-runtime.ts` (+ `.test.ts`) | Session launcher with Fluxbox fallback in ensure, stop and reset |
-| `packages/testkit/src/computer-desktop.docker.test.ts` (new), `packages/testkit/src/cli/computer-replay.ts` | Real-image click, type, scroll and upload journey |
-| `.github/workflows/publish-server-image.yml` | Desktop smoke, artifacts, size/RAM/CPU summary |
-| `.gitattributes` | LF rule for `infra/sandboxes/computer/desktop/*` instead of `fluxbox.*` |
-| `docs/computer-runtime.md` | One sentence on the desktop stack and the remote Fluxbox fallback |
+| File                                                                                                        | Change                                                                                         |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `infra/sandboxes/computer/desktop/session.sh` (new)                                                         | `cortexai-agent-hub-desktop-session :N`: wallpaper, xrdb, xfwm4, picom, tint2                  |
+| `infra/sandboxes/computer/desktop/xfwm4.xml` (new)                                                          | xfwm4 defaults: Arc-Dark, Inter, compositor off, borderless maximize, one workspace            |
+| `infra/sandboxes/computer/desktop/xfce4-keyboard-shortcuts.xml` (new)                                       | Only Alt+Tab, Alt+Shift+Tab, Alt+F4                                                            |
+| `infra/sandboxes/computer/desktop/picom.conf` (new)                                                         | xrender, shadows, 10 px corners, no fading, unredirect                                         |
+| `infra/sandboxes/computer/desktop/tint2rc.in` (new)                                                         | Dock template (`@STATE@` placeholder)                                                          |
+| `infra/sandboxes/computer/desktop/Xresources` (new)                                                         | XTerm styling only                                                                             |
+| `infra/sandboxes/computer/desktop/gtk-3.0/settings.ini` (new)                                               | Arc-Dark, Papirus-Dark, Inter 10. Reached only through `XDG_CONFIG_DIRS` for desktop processes |
+| `infra/sandboxes/computer/desktop/browser.desktop.in`, `terminal.desktop` (new)                             | Dock launchers                                                                                 |
+| `infra/sandboxes/computer/desktop_smoke.py` (new)                                                           | Screenshot, metrics and modern-desktop assertions                                              |
+| `infra/sandboxes/computer/Dockerfile`                                                                       | Packages, icon builder stage, COPY lines, remove Fluxbox and the `fbsetbg` shim                |
+| `infra/sandboxes/computer/start.sh`                                                                         | Replace the Fluxbox block with the session launcher; portal-gtk gets `XDG_CONFIG_DIRS`         |
+| `infra/sandboxes/computer/fluxbox.{init,apps,menu}`                                                         | Delete                                                                                         |
+| `infra/sandboxes/computer/test_team_desktops.py`                                                            | Assert the session and dock instead of the Fluxbox menu                                        |
+| `infra/sandboxes/supervisor/src/index.ts`                                                                   | Build-context file list                                                                        |
+| `infra/sandboxes/supervisor/src/desktop-config.test.ts` (new)                                               | Config invariants and token colors                                                             |
+| `infra/sandboxes/supervisor/src/computer-spec.test.ts`, `index.test.ts`                                     | Replace the Fluxbox menu tests; stop patterns                                                  |
+| `infra/sandboxes/supervisor/package.json`                                                                   | devDependency `@cortexai-agent-hub/ui-tokens` (test only)                                      |
+| `packages/core/src/node/desktop-runtime.ts` (+ `.test.ts`)                                                  | Session launcher with Fluxbox fallback in ensure, stop and reset                               |
+| `packages/testkit/src/computer-desktop.docker.test.ts` (new), `packages/testkit/src/cli/computer-replay.ts` | Real-image click, type, scroll and upload journey                                              |
+| `.github/workflows/publish-server-image.yml`                                                                | Desktop smoke, artifacts, size/RAM/CPU summary                                                 |
+| `.gitattributes`                                                                                            | LF rule for `infra/sandboxes/computer/desktop/*` instead of `fluxbox.*`                        |
+| `docs/computer-runtime.md`                                                                                  | One sentence on the desktop stack and the remote Fluxbox fallback                              |
 
 ---
 
 ### Task 1: Baseline harness on today's image (before screenshots and numbers)
 
 **Files:**
+
 - Create: `infra/sandboxes/computer/desktop_smoke.py`
 - Modify: `infra/sandboxes/computer/Dockerfile` (COPY + CR strip), `infra/sandboxes/supervisor/src/index.ts:1046-1061` (add `desktop_smoke.py`), `.github/workflows/publish-server-image.yml` (validate job)
 - Test: `infra/sandboxes/supervisor/src/computer-spec.test.ts`
 
 **Interfaces:**
+
 - Produces: `python3 /usr/local/share/cortexai-agent-hub-desktop-smoke.py [--out DIR] [--expect modern]`. Exit 0 on success. Prints one JSON line: `{"wm": str, "compositor": bool, "dock": bool, "ready_ms": int, "rss_kb": {name: int}, "cpu_ticks_idle": {name: int}}`. Writes `idle.png`, `chromium.png` and `terminal.png` when `--out` is given.
 
 - [ ] **Step 1: Write the failing test.** Every file the Dockerfile COPYs from the build context must be in the supervisor's build list:
@@ -383,45 +390,45 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-  `wm_name()` reads `_NET_WM_NAME` from the window manager's check window. Fluxbox reports `Fluxbox` and xfwm4 reports `Xfwm4`. Confirm the exact xfwm4 string from the first Task 4 CI run, and adjust the assertion if xfwm4 reports it differently.
+`wm_name()` reads `_NET_WM_NAME` from the window manager's check window. Fluxbox reports `Fluxbox` and xfwm4 reports `Xfwm4`. Confirm the exact xfwm4 string from the first Task 4 CI run, and adjust the assertion if xfwm4 reports it differently.
 
 - [ ] **Step 4: Bake it in.** Add `COPY --chmod=644 desktop_smoke.py /usr/local/share/cortexai-agent-hub-desktop-smoke.py` next to the Office smoke, add the path to the CR-strip `sed`, and add `"desktop_smoke.py"` to the supervisor build list.
 
 - [ ] **Step 5: Add the CI steps** to the `validate` job after "Office smoke test":
 
 ```yaml
-      - name: Desktop smoke and screenshots
-        if: matrix.name == 'computer'
-        env:
-          IMAGE: ${{ steps.meta.outputs.tags }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/desktop" && chmod 777 "$RUNNER_TEMP/desktop"
-          docker run --rm --network none -v "$RUNNER_TEMP/desktop:/out" "$IMAGE" \
-            python3 /usr/local/share/cortexai-agent-hub-desktop-smoke.py --out /out \
-            | tee "$RUNNER_TEMP/desktop/metrics.json"
-      - name: Image size and idle cost
-        if: matrix.name == 'computer'
-        env:
-          IMAGE: ${{ steps.meta.outputs.tags }}
-        run: |
-          size=$(docker image inspect -f '{{.Size}}' "$IMAGE")
-          id=$(docker run -d --network none "$IMAGE")
-          sleep 20
-          for i in $(seq 1 10); do docker stats --no-stream --format '{{.MemUsage}} {{.CPUPerc}}' "$id"; sleep 2; done > "$RUNNER_TEMP/desktop/stats.txt"
-          docker rm -f "$id" >/dev/null
-          {
-            echo "### Computer image"
-            echo "- Size: $((size / 1048576)) MB"
-            echo "- Idle samples (memory, CPU):"
-            sed 's/^/  - /' "$RUNNER_TEMP/desktop/stats.txt"
-            echo "- Desktop smoke: \`$(tail -n 1 "$RUNNER_TEMP/desktop/metrics.json")\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: matrix.name == 'computer'
-        with:
-          name: computer-desktop
-          path: ${{ runner.temp }}/desktop
-          retention-days: 14
+- name: Desktop smoke and screenshots
+  if: matrix.name == 'computer'
+  env:
+    IMAGE: ${{ steps.meta.outputs.tags }}
+  run: |
+    mkdir -p "$RUNNER_TEMP/desktop" && chmod 777 "$RUNNER_TEMP/desktop"
+    docker run --rm --network none -v "$RUNNER_TEMP/desktop:/out" "$IMAGE" \
+      python3 /usr/local/share/cortexai-agent-hub-desktop-smoke.py --out /out \
+      | tee "$RUNNER_TEMP/desktop/metrics.json"
+- name: Image size and idle cost
+  if: matrix.name == 'computer'
+  env:
+    IMAGE: ${{ steps.meta.outputs.tags }}
+  run: |
+    size=$(docker image inspect -f '{{.Size}}' "$IMAGE")
+    id=$(docker run -d --network none "$IMAGE")
+    sleep 20
+    for i in $(seq 1 10); do docker stats --no-stream --format '{{.MemUsage}} {{.CPUPerc}}' "$id"; sleep 2; done > "$RUNNER_TEMP/desktop/stats.txt"
+    docker rm -f "$id" >/dev/null
+    {
+      echo "### Computer image"
+      echo "- Size: $((size / 1048576)) MB"
+      echo "- Idle samples (memory, CPU):"
+      sed 's/^/  - /' "$RUNNER_TEMP/desktop/stats.txt"
+      echo "- Desktop smoke: \`$(tail -n 1 "$RUNNER_TEMP/desktop/metrics.json")\`"
+    } >> "$GITHUB_STEP_SUMMARY"
+- uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+  if: matrix.name == 'computer'
+  with:
+    name: computer-desktop
+    path: ${{ runner.temp }}/desktop
+    retention-days: 14
 ```
 
 - [ ] **Step 6: Run the unit test and confirm it passes.** Push. Confirm the Validate job is green on the **Fluxbox** image and that its artifact holds the three before screenshots. Save the job summary numbers as the baseline.
@@ -431,10 +438,12 @@ if __name__ == "__main__":
 ### Task 2: Real-image computer-use journey (screenshot, click, type, scroll, upload)
 
 **Files:**
+
 - Create: `packages/testkit/src/computer-desktop.docker.test.ts`
 - Modify: `packages/testkit/src/cli/computer-replay.ts:82` (add the file to the vitest list)
 
 **Interfaces:**
+
 - Consumes: `DockerSandboxProvider.observe`, `act`, `writeFile` and `execute` (adapter-kit), plus the supervisor bootstrap pattern of `computer-replay.docker.test.ts:38-79`.
 
 - [ ] **Step 1: Write the test.** It must pass on the Fluxbox image first, as a characterization test. It reuses the replay test's supervisor and provision boilerplate, extracted into a shared `withReplayComputer(fn)` helper in `computer-replay.ts` so both tests use one copy. The fixture page is served inside the computer on `127.0.0.1:8766` by `python3 -m http.server`, started through `sandbox.execute`. It reports its state in `document.title`, which `observe().activeWindow.title` returns, so no CDP is needed:
@@ -454,39 +463,92 @@ setInterval(report, 100);
 
 it("drives the real desktop: screenshot, click, type, scroll and portal upload", async () => {
   await withReplayComputer(async ({ sandbox, computer, context }) => {
-    await sandbox.writeFile(computer, { path: "Downloads/upload.txt", content: new TextEncoder().encode("hello\n") }, context);
-    await sandbox.writeFile(computer, { path: ".desktop-fixture/index.html", content: new TextEncoder().encode(PAGE) }, context);
-    await sandbox.execute(computer, { command: "cd ~/.desktop-fixture && nohup python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 &" }, context);
+    await sandbox.writeFile(
+      computer,
+      { path: "Downloads/upload.txt", content: new TextEncoder().encode("hello\n") },
+      context,
+    );
+    await sandbox.writeFile(
+      computer,
+      { path: ".desktop-fixture/index.html", content: new TextEncoder().encode(PAGE) },
+      context,
+    );
+    await sandbox.execute(
+      computer,
+      {
+        command:
+          "cd ~/.desktop-fixture && nohup python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 &",
+      },
+      context,
+    );
 
     const first = await sandbox.observe(computer, context);
     expect([first.width, first.height, first.mimeType]).toEqual([1280, 800, "image/png"]);
 
-    await sandbox.act(computer, { actions: [{ kind: "launch", application: "cortexai-agent-hub-browser", uri: "http://127.0.0.1:8766/" }] }, context);
+    await sandbox.act(
+      computer,
+      {
+        actions: [
+          {
+            kind: "launch",
+            application: "cortexai-agent-hub-browser",
+            uri: "http://127.0.0.1:8766/",
+          },
+        ],
+      },
+      context,
+    );
     const state = await waitForTitle(sandbox, computer, context, (s) => s.w > 0);
     // Maximized Chromium covers the whole screen at the origin, as under Fluxbox.
     expect([state.w, state.h, state.x, state.y]).toEqual([1280, 800, 0, 0]);
     const at = (x: number, y: number) => ({ x: state.x + x, y: state.y + state.top + y });
 
-    await sandbox.act(computer, { actions: [
-      { kind: "pointer", type: "click", ...at(250, 116) },
-      { kind: "clipboard", text: "typed by bot" },
-    ] }, context);
-    expect((await waitForTitle(sandbox, computer, context, (s) => s.typed !== "")).typed).toBe("typed by bot");
+    await sandbox.act(
+      computer,
+      {
+        actions: [
+          { kind: "pointer", type: "click", ...at(250, 116) },
+          { kind: "clipboard", text: "typed by bot" },
+        ],
+      },
+      context,
+    );
+    expect((await waitForTitle(sandbox, computer, context, (s) => s.typed !== "")).typed).toBe(
+      "typed by bot",
+    );
 
-    await sandbox.act(computer, { actions: [
-      { kind: "pointer", type: "move", ...at(250, 300) },
-      { kind: "scroll", direction: "down", amount: 5 },
-    ] }, context);
+    await sandbox.act(
+      computer,
+      {
+        actions: [
+          { kind: "pointer", type: "move", ...at(250, 300) },
+          { kind: "scroll", direction: "down", amount: 5 },
+        ],
+      },
+      context,
+    );
     expect((await waitForTitle(sandbox, computer, context, (s) => s.scrolled)).scrolled).toBe(true);
 
-    await sandbox.act(computer, { actions: [{ kind: "pointer", type: "click", ...at(140, 462) }] }, context);
+    await sandbox.act(
+      computer,
+      { actions: [{ kind: "pointer", type: "click", ...at(140, 462) }] },
+      context,
+    );
     await waitForWindow(sandbox, computer, context, /open|upload|file/i); // portal-gtk chooser
-    await sandbox.act(computer, { actions: [
-      { kind: "key", key: "l", modifiers: ["ctrl"] },
-      { kind: "clipboard", text: "/home/cortexai-agent-hub/Downloads/upload.txt" },
-      { kind: "key", key: "Return" },
-    ] }, context);
-    expect((await waitForTitle(sandbox, computer, context, (s) => s.file !== "")).file).toBe("upload.txt:6");
+    await sandbox.act(
+      computer,
+      {
+        actions: [
+          { kind: "key", key: "l", modifiers: ["ctrl"] },
+          { kind: "clipboard", text: "/home/cortexai-agent-hub/Downloads/upload.txt" },
+          { kind: "key", key: "Return" },
+        ],
+      },
+      context,
+    );
+    expect((await waitForTitle(sandbox, computer, context, (s) => s.file !== "")).file).toBe(
+      "upload.txt:6",
+    );
 
     const last = await sandbox.observe(computer, context);
     expect(last.image.byteLength).toBeGreaterThan(10_000);
@@ -494,7 +556,7 @@ it("drives the real desktop: screenshot, click, type, scroll and portal upload",
 });
 ```
 
-  `waitForTitle` polls `observe()` every 250 ms for up to 15 s and parses `activeWindow.title`. Chromium suffixes the title with " - Chromium", so it strips that before parsing. `waitForWindow` polls the same field against a regex. Both live in this test file.
+`waitForTitle` polls `observe()` every 250 ms for up to 15 s and parses `activeWindow.title`. Chromium suffixes the title with " - Chromium", so it strips that before parsing. `waitForWindow` polls the same field against a regex. Both live in this test file.
 
 - [ ] **Step 2: Run it on the Fluxbox image.** `pnpm sandbox:build && pnpm test:computer-replay`. Expected: PASS. If the geometry assertion fails on Fluxbox because of its title bar, record Fluxbox's actual values in a comment, and assert the xfwm4 values (`1280, 800, 0, 0`) in Task 4, where borderless maximize applies.
 
@@ -503,10 +565,12 @@ it("drives the real desktop: screenshot, click, type, scroll and portal upload",
 ### Task 3: Desktop config files, test-first
 
 **Files:**
+
 - Create: `infra/sandboxes/supervisor/src/desktop-config.test.ts`, and every file under `infra/sandboxes/computer/desktop/` listed in File Structure
 - Modify: `infra/sandboxes/supervisor/package.json` (devDependency `"@cortexai-agent-hub/ui-tokens": "workspace:*"`), `pnpm-lock.yaml`
 
 **Interfaces:**
+
 - Produces: `/usr/local/share/cortexai-agent-hub/desktop/{session.sh,picom.conf,tint2rc.in,Xresources,browser.desktop.in,terminal.desktop,gtk-3.0/settings.ini}` and `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/{xfwm4.xml,xfce4-keyboard-shortcuts.xml}`. Task 4 copies these in. `session.sh` is installed as `/usr/local/bin/cortexai-agent-hub-desktop-session` and takes one argument, the display (`:N`). It reads optional `BROWSER` (the dock's browser command, default `cortexai-agent-hub-browser`).
 
 - [ ] **Step 1: Write the failing tests**
@@ -545,20 +609,39 @@ describe("computer desktop config", () => {
     const keys = [...xml.matchAll(/<property name="([^"]+)" type="string" value="(\w+_key)"/g)]
       .map((m) => `${m[1]}=${m[2]}`)
       .sort();
-    expect(keys).toEqual(["&lt;Alt&gt;F4=close_window_key", "&lt;Alt&gt;Tab=cycle_windows_key", "&lt;Alt&gt;&lt;Shift&gt;Tab=cycle_reverse_windows_key"].sort());
+    expect(keys).toEqual(
+      [
+        "&lt;Alt&gt;F4=close_window_key",
+        "&lt;Alt&gt;Tab=cycle_windows_key",
+        "&lt;Alt&gt;&lt;Shift&gt;Tab=cycle_reverse_windows_key",
+      ].sort(),
+    );
     expect(xml).toContain('<property name="override" type="bool" value="true"/>');
   });
 
   it("composites cheaply and without animation under Xvfb", () => {
     const conf = read("picom.conf");
-    for (const line of ['backend = "xrender";', "vsync = false;", "fading = false;", "use-damage = true;", "unredir-if-possible = true;"])
+    for (const line of [
+      'backend = "xrender";',
+      "vsync = false;",
+      "fading = false;",
+      "use-damage = true;",
+      "unredir-if-possible = true;",
+    ])
       expect(conf).toContain(line);
     expect(conf).toMatch(/rounded-corners-exclude = \[[^\]]*_NET_WM_STATE_MAXIMIZED_VERT/s);
   });
 
   it("draws the dock under maximized windows without reserving space or animating", () => {
     const rc = read("tint2rc.in");
-    for (const line of ["panel_layer = bottom", "strut_policy = none", "autohide = 0", "startup_notifications = 0", "mouse_right = none", "launcher_icon_theme = Papirus-Dark"])
+    for (const line of [
+      "panel_layer = bottom",
+      "strut_policy = none",
+      "autohide = 0",
+      "startup_notifications = 0",
+      "mouse_right = none",
+      "launcher_icon_theme = Papirus-Dark",
+    ])
       expect(rc).toContain(line);
     expect(rc).toContain("launcher_item_app = @STATE@/applications/browser.desktop");
     expect(rc).toContain("launcher_item_app = @STATE@/applications/terminal.desktop");
@@ -567,7 +650,12 @@ describe("computer desktop config", () => {
   it("styles xterm only, never Chromium-visible X settings", () => {
     const resources = read("Xresources");
     expect(resources).not.toMatch(/^Xft\./m);
-    expect(resources.split("\n").filter(Boolean).every((line) => line.startsWith("XTerm*"))).toBe(true);
+    expect(
+      resources
+        .split("\n")
+        .filter(Boolean)
+        .every((line) => line.startsWith("XTerm*")),
+    ).toBe(true);
     expect(resources).toContain("XTerm*selectToClipboard: true");
   });
 
@@ -836,6 +924,7 @@ Exec=xterm -title Terminal
 ### Task 4: Switch the image to the new desktop
 
 **Files:**
+
 - Modify: `infra/sandboxes/computer/Dockerfile`, `infra/sandboxes/computer/start.sh`, `infra/sandboxes/supervisor/src/index.ts:1043-1061`, `.github/workflows/publish-server-image.yml` (add `--expect modern`), `.gitattributes`
 - Delete: `infra/sandboxes/computer/fluxbox.init`, `fluxbox.apps`, `fluxbox.menu`
 - Test: `infra/sandboxes/supervisor/src/computer-spec.test.ts`, `desktop_smoke.py --expect modern`, `computer-desktop.docker.test.ts`
@@ -845,12 +934,31 @@ Exec=xterm -title Terminal
 ```ts
 it("installs the modern desktop and no full XFCE or Fluxbox", () => {
   const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
-  for (const pkg of ["xfwm4", "xfconf", "picom", "tint2", "hsetroot", "arc-theme", "fonts-inter", "fonts-jetbrains-mono"])
+  for (const pkg of [
+    "xfwm4",
+    "xfconf",
+    "picom",
+    "tint2",
+    "hsetroot",
+    "arc-theme",
+    "fonts-inter",
+    "fonts-jetbrains-mono",
+  ])
     expect(dockerfile).toMatch(new RegExp(`^\\s+${pkg} \\\\$`, "m"));
-  for (const pkg of ["fluxbox", "xfce4", "xfdesktop4", "xfce4-panel", "xfce4-session", "xfce4-settings", "plank"])
+  for (const pkg of [
+    "fluxbox",
+    "xfce4",
+    "xfdesktop4",
+    "xfce4-panel",
+    "xfce4-session",
+    "xfce4-settings",
+    "plank",
+  ])
     expect(dockerfile).not.toMatch(new RegExp(`^\\s+${pkg} \\\\$`, "m"));
   expect(dockerfile).not.toContain("fbsetbg");
-  expect(readFileSync(path.join(root, "start.sh"), "utf8")).toContain("cortexai-agent-hub-desktop-session :1");
+  expect(readFileSync(path.join(root, "start.sh"), "utf8")).toContain(
+    "cortexai-agent-hub-desktop-session :1",
+  );
 });
 ```
 
@@ -871,10 +979,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends papirus-icon-th
   && du -sm Papirus Papirus-Dark
 ```
 
-  - In the runtime stage, replace `fluxbox \` with `xfwm4 xfconf picom tint2 hsetroot arc-theme fonts-inter fonts-jetbrains-mono`, one per line.
-  - Delete the `/etc/cortexai-agent-hub/fluxbox` mkdir and the `fbsetbg` shim. Keep the `xmessage` link.
-  - Add `COPY --from=icon-builder /usr/share/icons/Papirus /usr/share/icons/Papirus` and the same for `Papirus-Dark`.
-  - Add:
+- In the runtime stage, replace `fluxbox \` with `xfwm4 xfconf picom tint2 hsetroot arc-theme fonts-inter fonts-jetbrains-mono`, one per line.
+- Delete the `/etc/cortexai-agent-hub/fluxbox` mkdir and the `fbsetbg` shim. Keep the `xmessage` link.
+- Add `COPY --from=icon-builder /usr/share/icons/Papirus /usr/share/icons/Papirus` and the same for `Papirus-Dark`.
+- Add:
 
 ```dockerfile
 COPY --chmod=755 desktop/session.sh /usr/local/bin/cortexai-agent-hub-desktop-session
@@ -883,21 +991,22 @@ COPY --chmod=644 desktop/picom.conf desktop/tint2rc.in desktop/Xresources deskto
 COPY --chmod=644 desktop/gtk-3.0/settings.ini /usr/local/share/cortexai-agent-hub/desktop/gtk-3.0/settings.ini
 ```
 
-  - Replace the three `fluxbox` paths in the CR-strip `sed` with the new files.
+- Replace the three `fluxbox` paths in the CR-strip `sed` with the new files.
 
-  In `start.sh`:
-  - Replace lines 73-84 (the `xsetroot` line through the Fluxbox start) with:
+In `start.sh`:
+
+- Replace lines 73-84 (the `xsetroot` line through the Fluxbox start) with:
 
 ```bash
 /usr/local/bin/cortexai-agent-hub-desktop-session :1 >/tmp/cortexai-agent-hub/desktop.log 2>&1 &
 ```
 
-  - Start the portal backend with `XDG_CONFIG_DIRS=/usr/local/share/cortexai-agent-hub/desktop:/etc/xdg`, so the file chooser is Arc-Dark without theming Chromium.
-  - Drop `/tmp/fluxbox-home` from the `mkdir`.
+- Start the portal backend with `XDG_CONFIG_DIRS=/usr/local/share/cortexai-agent-hub/desktop:/etc/xdg`, so the file chooser is Arc-Dark without theming Chromium.
+- Drop `/tmp/fluxbox-home` from the `mkdir`.
 
-  In `index.ts`, replace the three `fluxbox.*` entries with `"desktop"`; dockerode `src` accepts directories. In `.gitattributes`, replace `infra/sandboxes/computer/fluxbox.* text eol=lf` with `infra/sandboxes/computer/desktop/* text eol=lf`. In the workflow, append `--expect modern` to the desktop smoke command.
+In `index.ts`, replace the three `fluxbox.*` entries with `"desktop"`; dockerode `src` accepts directories. In `.gitattributes`, replace `infra/sandboxes/computer/fluxbox.* text eol=lf` with `infra/sandboxes/computer/desktop/* text eol=lf`. In the workflow, append `--expect modern` to the desktop smoke command.
 
-  In `computer-desktop.docker.test.ts`, assert the xfwm4 geometry `[1280, 800, 0, 0]` if Task 2 had to relax it.
+In `computer-desktop.docker.test.ts`, assert the xfwm4 geometry `[1280, 800, 0, 0]` if Task 2 had to relax it.
 
 - [ ] **Step 4: Verify.**
   - `pnpm vitest run infra/sandboxes/supervisor/src`
@@ -911,10 +1020,12 @@ COPY --chmod=644 desktop/gtk-3.0/settings.ini /usr/local/share/cortexai-agent-hu
 ### Task 5: Team desktops use the same session
 
 **Files:**
+
 - Modify: `packages/core/src/node/desktop-runtime.ts` (`resetDesktopRuntimeCommand`, `renderStopExtraScreenCommand`, `renderEnsureScreenCommand`), `infra/sandboxes/computer/test_team_desktops.py:110-111`
 - Test: `packages/core/src/node/desktop-runtime.test.ts`, `infra/sandboxes/supervisor/src/index.test.ts:785,796`
 
 **Interfaces:**
+
 - Produces: `export const DESKTOP_SESSION = "/usr/local/bin/cortexai-agent-hub-desktop-session"` in `desktop-runtime.ts`.
 
 - [ ] **Step 1: Write the failing tests** in `desktop-runtime.test.ts`:
@@ -923,7 +1034,9 @@ COPY --chmod=644 desktop/gtk-3.0/settings.ini /usr/local/share/cortexai-agent-hu
 it("starts extra displays with the baked desktop session and keeps the Fluxbox fallback", () => {
   const ensure = ensureScreenCommand(1, "researcher", "view-token");
   expect(ensure).toContain(`if [ -x ${DESKTOP_SESSION} ]; then`);
-  expect(ensure).toContain(`BROWSER=/tmp/cortexai-agent-hub/browser-launch-2 nohup ${DESKTOP_SESSION} :2`);
+  expect(ensure).toContain(
+    `BROWSER=/tmp/cortexai-agent-hub/browser-launch-2 nohup ${DESKTOP_SESSION} :2`,
+  );
   expect(ensure).toContain("fluxbox -rc /tmp/fluxbox-home-2/.fluxbox/init");
 });
 
@@ -931,11 +1044,13 @@ it("stops both the desktop session and a fallback Fluxbox", () => {
   const stop = stopExtraScreenCommand(1, "researcher");
   expect(stop).toContain("[c]ortexai-agent-hub-desktop-session :2( |$)");
   expect(stop).toContain("[f]luxbox -rc /tmp/fluxbox-home-2/.fluxbox/init");
-  expect(resetDesktopRuntimeCommand()).toContain('[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)');
+  expect(resetDesktopRuntimeCommand()).toContain(
+    "[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)",
+  );
 });
 ```
 
-  Check the exact `browserLauncherPath(2)` string in `desktop-runtime.ts` before pinning the literal. Keep `index.test.ts:785` and add `expect(extra).toContain("[c]ortexai-agent-hub-desktop-session :2")`. Line 796 becomes `expect(stop).not.toMatch(/fluxbox|desktop-session/)`.
+Check the exact `browserLauncherPath(2)` string in `desktop-runtime.ts` before pinning the literal. Keep `index.test.ts:785` and add `expect(extra).toContain("[c]ortexai-agent-hub-desktop-session :2")`. Line 796 becomes `expect(stop).not.toMatch(/fluxbox|desktop-session/)`.
 
 - [ ] **Step 2: Run them and confirm they fail.** `pnpm vitest run packages/core/src/node/desktop-runtime.test.ts infra/sandboxes/supervisor/src/index.test.ts`
 
@@ -949,15 +1064,15 @@ it("stops both the desktop session and a fallback Fluxbox", () => {
 "  fi",
 ```
 
-  The menu rewrite before the `if` stays as is for the fallback. The session regenerates its dock launchers on every start, and the browser launcher path per display is stable. In the two stop paths, add next to the Fluxbox `pkill`:
+The menu rewrite before the `if` stays as is for the fallback. The session regenerates its dock launchers on every start, and the browser launcher path per display is stable. In the two stop paths, add next to the Fluxbox `pkill`:
 
 ```ts
 `pkill -f ${quoteLayout(`[c]ortexai-agent-hub-desktop-session ${layout.display}( |$)`)} || true`,
 ```
 
-  In `resetDesktopRuntimeCommand`, add `'pkill -f "[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)" || true'` with the same `biome-ignore` comment as its neighbor. Fix the `TERMINAL_MENU_COMMAND` comment so it no longer points to the deleted `fluxbox.menu`. It now serves only the Fluxbox fallback.
+In `resetDesktopRuntimeCommand`, add `'pkill -f "[c]ortexai-agent-hub-desktop-session :${desktop_display}( |$)" || true'` with the same `biome-ignore` comment as its neighbor. Fix the `TERMINAL_MENU_COMMAND` comment so it no longer points to the deleted `fluxbox.menu`. It now serves only the Fluxbox fallback.
 
-  In `test_team_desktops.py`, replace the menu assertion:
+In `test_team_desktops.py`, replace the menu assertion:
 
 ```python
     dock = Path(f"/tmp/cortexai-agent-hub/desktop-{commands['displayb']}/applications")
@@ -991,18 +1106,18 @@ it("stops both the desktop session and a fallback Fluxbox", () => {
 
 ## Acceptance mapping
 
-| Criterion | Covered by |
-| --- | --- |
-| Modern WM, compositor, dock, wallpaper, fonts and icons | Tasks 3-4; `--expect modern` smoke in CI |
-| Chromium launch and maximize rules | `--start-maximized` + borderless maximize; Task 2 geometry assertion |
-| `xcapture`, 1280x800 coordinates | Smoke captures through `xcapture`; Task 2 clicks at computed coordinates |
+| Criterion                                                                     | Covered by                                                                                                                           |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Modern WM, compositor, dock, wallpaper, fonts and icons                       | Tasks 3-4; `--expect modern` smoke in CI                                                                                             |
+| Chromium launch and maximize rules                                            | `--start-maximized` + borderless maximize; Task 2 geometry assertion                                                                 |
+| `xcapture`, 1280x800 coordinates                                              | Smoke captures through `xcapture`; Task 2 clicks at computed coordinates                                                             |
 | Clipboard bridge, mobile keyboard, `embed.html`, read-only `x11vnc`, takeover | Files and `x11vnc` flags unchanged; existing supervisor and clipboard tests; team-desktop Docker test opens view and control sockets |
-| File chooser through the portal and D-Bus | Task 2 upload; team-desktop test's portal check |
-| Team desktops | Task 5 unit tests + `VERIFY_DOCKER_TEAM_SCREENS` run |
-| Non-root, nothing installable, egress unchanged | No `USER`, sudo or network changes; smoke runs with `--network none` as uid 1000 |
-| Size, RAM and CPU budget reported | Task 1 baseline + Task 6 table |
-| Before/after screenshots | Task 1 artifacts (Fluxbox) and Task 4 artifacts (xfwm4) |
-| Existing tests and CI green | Task 6 |
+| File chooser through the portal and D-Bus                                     | Task 2 upload; team-desktop test's portal check                                                                                      |
+| Team desktops                                                                 | Task 5 unit tests + `VERIFY_DOCKER_TEAM_SCREENS` run                                                                                 |
+| Non-root, nothing installable, egress unchanged                               | No `USER`, sudo or network changes; smoke runs with `--network none` as uid 1000                                                     |
+| Size, RAM and CPU budget reported                                             | Task 1 baseline + Task 6 table                                                                                                       |
+| Before/after screenshots                                                      | Task 1 artifacts (Fluxbox) and Task 4 artifacts (xfwm4)                                                                              |
+| Existing tests and CI green                                                   | Task 6                                                                                                                               |
 
 ## Open questions for the PM
 

@@ -40,9 +40,9 @@
 
 **Dead links: policy plus UI hardening, without resolving workspace links into downloads.**
 
-- *Runtime policy and tool error text (chosen).* Add one sentence to the workspace instruction, plus actionable `attach_file` errors that list the supported types and tell the bot to report the failure without linking the path. This fixes the cause on every surface: web, mobile, desktop, and messaging channels such as Slack and Teams, where a workspace link can never work.
-- *Web renders unsafe or relative chat links as text (chosen, small).* A `<span>` replaces the dead `<a href="">`. This also makes web match native. It is defense-in-depth for when the model ignores the policy.
-- *Resolving workspace links into downloads (rejected):*
+- _Runtime policy and tool error text (chosen)._ Add one sentence to the workspace instruction, plus actionable `attach_file` errors that list the supported types and tell the bot to report the failure without linking the path. This fixes the cause on every surface: web, mobile, desktop, and messaging channels such as Slack and Teams, where a workspace link can never work.
+- _Web renders unsafe or relative chat links as text (chosen, small)._ A `<span>` replaces the dead `<a href="">`. This also makes web match native. It is defense-in-depth for when the model ignores the policy.
+- _Resolving workspace links into downloads (rejected):_
   - `computer.downloadFile` only works while the computer is running ("binary transfer needs the live machine"). Links in history would break whenever the computer sleeps, or when the file moves or is deleted.
   - It bypasses the artifact record, so the file gets no Artifacts tab entry, no versioning and no mobile path. It does nothing for messaging channels.
   - It turns model-authored text into a file-read capability. On a Team Computer, a prompt-injected link could point at another bot's folder or browser profile state.
@@ -58,7 +58,7 @@
 **Security.**
 
 - OOXML `.xlsx`, `.docx` and `.pptx` cannot run macros. Office refuses VBA in those extensions, and the macro-enabled variants stay off the list.
-- Legacy `.xls`, `.doc` and `.ppt` *can* carry VBA. The ticket asks for them as interchange formats, so this plan includes them. Mitigations:
+- Legacy `.xls`, `.doc` and `.ppt` _can_ carry VBA. The ticket asks for them as interchange formats, so this plan includes them. Mitigations:
   - They are never previewed.
   - They download only as files.
   - The files come from the user's own bot or the user. Office opens downloaded files in Protected View.
@@ -77,39 +77,41 @@
 
 ## File map
 
-| File | Change |
-|---|---|
-| `packages/contracts/src/attachments.ts` | Add `ATTACHMENT_OFFICE_MIME_TYPES` and the zip type to the file list |
-| `packages/contracts/src/attachments.test.ts` | Allow-list membership, plus macro types stay out |
-| `packages/core/src/attachments.ts` | Extension map, extension-first inference, `ATTACHMENT_ACCEPT`, `supportedAttachmentExtensions()` |
-| `packages/core/src/attachments.test.ts` | Mappings, round trip, consistency, CSV and zip regressions |
-| `apps/web/src/pages/Shell.tsx` | `accept` from core, plus a skip reason for unsupported types |
-| `apps/web/src/locales/*/messages.po`, `apps/web/scripts/translations-*.json` | One new string |
-| `apps/web/src/components/ArtifactFileCard.test.tsx` (new) | Office types are download-only and use `<a download>` |
-| `apps/api/src/app.ts` | `nosniff` middleware |
-| `apps/api/src/security-headers.test.ts` (new) | Header present on `/rpc/*` and `/api/*` |
-| `packages/adapters/src/executor.ts` | `attach_file` error text and the workspace delivery sentence |
-| `packages/adapters/src/attach-file-errors.ts` (new, small) | `unsupportedAttachmentError(path)`, unit-testable |
-| `packages/adapters/src/attach-file-errors.test.ts` (new) | Error text |
-| `packages/adapters/src/thread-artifacts.ts` | Reuse the same error |
-| `packages/chat-ui/src/markdown.ts`, `markdown.web.tsx` | Unsafe or relative links render as text |
-| `packages/chat-ui/src/markdown.test.ts`, `markdown.linkified.test.tsx` | Link tests |
-| `infra/sandboxes/computer/office-requirements.txt` (new) | Pinned and hashed |
-| `infra/sandboxes/computer/office_smoke.py` (new) | Builds and reopens xlsx, docx and pptx |
-| `infra/sandboxes/computer/Dockerfile` | Install the libraries, copy the smoke script |
-| `.github/workflows/publish-server-image.yml` | Run the smoke test in the computer `validate` job |
-| `apps/web/e2e/artifact-preview.spec.ts`, `apps/web/e2e/office-attachments.spec.ts` (new) | Bot attach and user upload of Office files |
-| `docs/computer-runtime.md` | One line: Office libraries are available |
+| File                                                                                     | Change                                                                                           |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/attachments.ts`                                                  | Add `ATTACHMENT_OFFICE_MIME_TYPES` and the zip type to the file list                             |
+| `packages/contracts/src/attachments.test.ts`                                             | Allow-list membership, plus macro types stay out                                                 |
+| `packages/core/src/attachments.ts`                                                       | Extension map, extension-first inference, `ATTACHMENT_ACCEPT`, `supportedAttachmentExtensions()` |
+| `packages/core/src/attachments.test.ts`                                                  | Mappings, round trip, consistency, CSV and zip regressions                                       |
+| `apps/web/src/pages/Shell.tsx`                                                           | `accept` from core, plus a skip reason for unsupported types                                     |
+| `apps/web/src/locales/*/messages.po`, `apps/web/scripts/translations-*.json`             | One new string                                                                                   |
+| `apps/web/src/components/ArtifactFileCard.test.tsx` (new)                                | Office types are download-only and use `<a download>`                                            |
+| `apps/api/src/app.ts`                                                                    | `nosniff` middleware                                                                             |
+| `apps/api/src/security-headers.test.ts` (new)                                            | Header present on `/rpc/*` and `/api/*`                                                          |
+| `packages/adapters/src/executor.ts`                                                      | `attach_file` error text and the workspace delivery sentence                                     |
+| `packages/adapters/src/attach-file-errors.ts` (new, small)                               | `unsupportedAttachmentError(path)`, unit-testable                                                |
+| `packages/adapters/src/attach-file-errors.test.ts` (new)                                 | Error text                                                                                       |
+| `packages/adapters/src/thread-artifacts.ts`                                              | Reuse the same error                                                                             |
+| `packages/chat-ui/src/markdown.ts`, `markdown.web.tsx`                                   | Unsafe or relative links render as text                                                          |
+| `packages/chat-ui/src/markdown.test.ts`, `markdown.linkified.test.tsx`                   | Link tests                                                                                       |
+| `infra/sandboxes/computer/office-requirements.txt` (new)                                 | Pinned and hashed                                                                                |
+| `infra/sandboxes/computer/office_smoke.py` (new)                                         | Builds and reopens xlsx, docx and pptx                                                           |
+| `infra/sandboxes/computer/Dockerfile`                                                    | Install the libraries, copy the smoke script                                                     |
+| `.github/workflows/publish-server-image.yml`                                             | Run the smoke test in the computer `validate` job                                                |
+| `apps/web/e2e/artifact-preview.spec.ts`, `apps/web/e2e/office-attachments.spec.ts` (new) | Bot attach and user upload of Office files                                                       |
+| `docs/computer-runtime.md`                                                               | One line: Office libraries are available                                                         |
 
 ---
 
 ### Task 1: Shared allow-list and extension-first inference
 
 **Files:**
+
 - Modify: `packages/contracts/src/attachments.ts`, `packages/core/src/attachments.ts`
 - Test: `packages/contracts/src/attachments.test.ts`, `packages/core/src/attachments.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `ATTACHMENT_OFFICE_MIME_TYPES` (contracts)
   - `ATTACHMENT_ACCEPT: string`, the comma-joined MIME types and extensions (core)
@@ -149,7 +151,9 @@ it("trusts a known extension over the browser-reported type", () => {
 
 it("falls back to an allowed reported type when the extension is unknown", () => {
   expect(inferAttachmentMimeType("scan", "application/pdf")).toBe("application/pdf");
-  expect(inferAttachmentMimeType("scan", "application/vnd.ms-excel.sheet.macroEnabled.12")).toBeNull();
+  expect(
+    inferAttachmentMimeType("scan", "application/vnd.ms-excel.sheet.macroEnabled.12"),
+  ).toBeNull();
 });
 
 it("gives every allowed type an extension that round-trips", () => {
@@ -186,7 +190,12 @@ export const ATTACHMENT_OFFICE_MIME_TYPES = [
 ] as const;
 
 export const ATTACHMENT_FILE_MIME_TYPES = [
-  "application/pdf", "text/plain", "text/markdown", "text/csv", "text/html", "application/json",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "text/html",
+  "application/json",
   ...ATTACHMENT_OFFICE_MIME_TYPES,
   "application/zip",
 ] as const;
@@ -224,6 +233,7 @@ export const ATTACHMENT_ACCEPT = [...ATTACHMENT_ALLOWED_MIME_TYPES, ...Object.ke
 ### Task 2: Upload surfaces (web and mobile)
 
 **Files:**
+
 - Modify: `apps/web/src/pages/Shell.tsx:312,2020-2023`, the web locale catalogs
 - Test: the existing web e2e (Task 7). `apps/mobile/lib/pick-attachments.test.ts` covers mobile.
 
@@ -243,6 +253,7 @@ New visible copy: **"(unsupported type)"**, appended to the existing "Skipped re
 ### Task 3: Download safety (download-only cards and `nosniff`)
 
 **Files:**
+
 - Create: `apps/web/src/components/ArtifactFileCard.test.tsx`, `apps/api/src/security-headers.test.ts`
 - Modify: `apps/api/src/app.ts:528`
 
@@ -251,8 +262,17 @@ New visible copy: **"(unsupported type)"**, appended to the existing "Skipped re
 ```tsx
 // ArtifactFileCard.test.tsx (jsdom; mock ../lib/artifact-open)
 it.each([XLSX, DOCX, PPTX, "application/vnd.ms-excel", "application/zip"])(
-  "renders %s as a download-only card", async (mimeType) => {
-    render(<ArtifactFileCard target={{ botId: "b" }} artifactId="a" name="f" mimeType={mimeType} size={10} />);
+  "renders %s as a download-only card",
+  async (mimeType) => {
+    render(
+      <ArtifactFileCard
+        target={{ botId: "b" }}
+        artifactId="a"
+        name="f"
+        mimeType={mimeType}
+        size={10}
+      />,
+    );
     expect(screen.queryByRole("button", { name: /Preview/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /f/ }));
     expect(downloadArtifact).toHaveBeenCalledWith({ botId: "b" }, "a", "f", mimeType);
@@ -289,12 +309,14 @@ export const noSniff: MiddlewareHandler = async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
 };
 ```
+
 - [ ] **Step 4: Run** `pnpm vitest run apps/api/src/security-headers.test.ts apps/web/src/components`. Expected: PASS.
 - [ ] **Step 5: Commit** with `Keep Office artifacts download-only and send nosniff from the API (CAAH-72)`.
 
 ### Task 4: `attach_file` failures steer the bot
 
 **Files:**
+
 - Create: `packages/adapters/src/attach-file-errors.ts`, `attach-file-errors.test.ts`
 - Modify: `packages/adapters/src/executor.ts:1737-1740,2691`, `packages/adapters/src/thread-artifacts.ts:54`, and the `attach_file` description in `builtin-tools.ts:268`
 
@@ -331,6 +353,7 @@ export function unsupportedAttachmentError(filePath: string): string {
 ```
 
 In `executor.ts`:
+
 - Use `failAttach(unsupportedAttachmentError(filePath))` for unsupported types.
 - Append `ATTACH_FAILURE_GUIDANCE` to the too-large, missing-file and generic attach errors.
 - Append to both branches of `workspaceInstruction`: `"Workspace paths are not links the user can open: share files with attach_file."`
@@ -344,6 +367,7 @@ In `executor.ts`:
 ### Task 5: Web chat stops rendering dead links
 
 **Files:**
+
 - Modify: `packages/chat-ui/src/markdown.web.tsx`
 - Test: `packages/chat-ui/src/markdown.linkified.test.tsx`, plus a new web render case
 
@@ -351,7 +375,11 @@ In `executor.ts`:
 
 ```tsx
 it("renders workspace paths as text, not dead links", () => {
-  render(<ChatMarkdown>{"[report](pilot_sample_2026-10-01/report.xlsx) [r](./r.xlsx) [ok](https://example.com)"}</ChatMarkdown>);
+  render(
+    <ChatMarkdown>
+      {"[report](pilot_sample_2026-10-01/report.xlsx) [r](./r.xlsx) [ok](https://example.com)"}
+    </ChatMarkdown>,
+  );
   expect(screen.queryByRole("link", { name: "report" })).toBeNull();
   expect(screen.getByText("report")).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "r" })).toBeNull();
@@ -367,6 +395,7 @@ it("renders workspace paths as text, not dead links", () => {
 ### Task 6: The computer image builds valid Office files
 
 **Files:**
+
 - Create: `infra/sandboxes/computer/office-requirements.txt`, `infra/sandboxes/computer/office_smoke.py`
 - Modify: `infra/sandboxes/computer/Dockerfile`, `.github/workflows/publish-server-image.yml` (the `validate` job), `packages/adapters/src/executor.ts` (`dockerComputerToolInstruction`), `docs/computer-runtime.md`
 
@@ -417,6 +446,7 @@ if __name__ == "__main__":
 - [ ] **Step 3: Implement.**
   - Generate `office-requirements.txt` with `uv pip compile --generate-hashes --python-version 3.11 --python-platform linux` from `openpyxl`, `python-docx` and `python-pptx`, pinned to current releases. It must include binary wheels for amd64 and arm64 (lxml, Pillow).
   - In the Dockerfile, after the `uv` stage:
+
     ```dockerfile
     COPY --chmod=644 office-requirements.txt /tmp/office-requirements.txt
     RUN uv pip install --system --break-system-packages --require-hashes --no-cache -r /tmp/office-requirements.txt \
@@ -424,6 +454,7 @@ if __name__ == "__main__":
     COPY --chmod=644 office_smoke.py /usr/local/share/cortexai-agent-hub/office_smoke.py
     ```
   - In the workflow's `validate` job, set `load: ${{ matrix.name == 'computer' }}` and add a step:
+
     ```yaml
     - if: matrix.name == 'computer'
       run: docker run --rm --network none "${{ steps.meta.outputs.tags }}" python3 /usr/local/share/cortexai-agent-hub/office_smoke.py
@@ -436,6 +467,7 @@ if __name__ == "__main__":
 ### Task 7: End-to-end coverage
 
 **Files:**
+
 - Create: `apps/web/e2e/office-attachments.spec.ts`
 - Modify: possibly `packages/adapters/src/scripted-runtime.ts`, if a prompt shape needs to be added
 
@@ -463,7 +495,7 @@ The scripted runtime's `write_file` is UTF-8 only, so the Playwright test proves
 ## Risks and open questions for the PM
 
 1. **Legacy `.xls`, `.doc` and `.ppt` can carry VBA macros.** They are included because the ticket asks for them, with the mitigations above. Approve, or drop them and keep only OOXML and zip?
-2. **The deployment and the repo image differ.** The repo's computer image has no `soffice`. Is the affected deployment on a custom or overridden image? If so, it will not get the libraries until it moves to the published image or adds them itself. I propose *not* adding LibreOffice, because of its size.
+2. **The deployment and the repo image differ.** The repo's computer image has no `soffice`. Is the affected deployment on a custom or overridden image? If so, it will not get the libraries until it moves to the published image or adds them itself. I propose _not_ adding LibreOffice, because of its size.
 3. **Relative links in chat markdown.** `allowRelative` came from an early large commit with no stated reason. Nothing I found depends on `/` or `./` links in bot messages or Markdown previews. Plan: keep `#` anchors and render the rest as text. Flag if an in-app link pattern relies on them.
 4. **"Content-Disposition" requirement.** There is no HTTP artifact route to set it on. The plan meets the intent through download-only cards, `<a download>`, the mobile share sheet and API-wide `nosniff`. A streaming route that sends `Content-Disposition` is the recommended follow-up if the 10 MiB cap becomes a problem. Confirm this is acceptable.
 5. **Electron downloads.** There is no `will-download` handler, so Electron's default save dialog handles Blob downloads. CI's desktop e2e confirms nothing regressed. I will not add a handler unless CI shows a problem.

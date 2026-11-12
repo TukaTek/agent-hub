@@ -1,6 +1,7 @@
 import type { OrganizationList } from "@cortexai-agent-hub/contracts";
 import { organizationLandingSpaceId, organizationOfSpace } from "@cortexai-agent-hub/core";
 import type { MenuAction } from "@expo/ui/community/menu";
+import { t } from "@lingui/core/macro";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { selectedSpaceId } from "./api";
@@ -10,7 +11,6 @@ import {
   rememberOrganizationSpace,
   selectSpace,
 } from "./api-server";
-import { t } from "./i18n";
 import { queryClient, removeSpaceQueries, rpcQuery } from "./query";
 
 export type Organization = OrganizationList["organizations"][number];
@@ -175,7 +175,7 @@ export async function leaveDeletedOrganization(
   const selected =
     (await selectSpace(activeSpaceId).catch(() => false)) ||
     (await adoptDeletedSpaceFallback(activeSpaceId));
-  if (!selected) throw new Error(t("Could not switch spaces"));
+  if (!selected) throw new Error(t`Could not switch spaces`);
   removeSpaceQueries(deleted.spaceIds);
   void refreshOrganizations();
   noteOrganizationSwitch();

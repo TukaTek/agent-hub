@@ -8,13 +8,13 @@ import {
   routineRunAt,
   routineRunLateness,
 } from "@cortexai-agent-hub/core";
+import { translateRunError } from "@cortexai-agent-hub/i18n/run-error";
 import { Button, SectionHeading, Spinner } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSpaceQueries } from "../lib/query";
-import { translateRunError } from "../lib/run-error";
 import { statusLabel, statusTone } from "./ActivityList";
 
 export function RoutineRunHistory({ routineId }: { routineId: string }) {

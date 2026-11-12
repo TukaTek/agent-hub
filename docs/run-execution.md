@@ -52,7 +52,7 @@ heartbeats, steering and `finalizeRun`:
 - Up to 32 audits wait per process. When that queue is full, the next audit is
   refused with `reason: "queue_overflow"`, even if another worker has room. Older
   audits are never evicted. Overflow itself never blocks the caller. Scripted
-  tools and MCP discovery-failure auditing await an *accepted* audit until it
+  tools and MCP discovery-failure auditing await an _accepted_ audit until it
   settles (up to the 30 second queue wait plus retries). An audit still waiting
   after 30 seconds, or when shutdown drains the queue (5 seconds), ends with
   `queue_timeout`.
@@ -88,13 +88,13 @@ invocations always get new ids, so the index does not coalesce two separate
 Structured logs emit `run.execution_started`, `run.first_response`, and
 `run.finished`. Timing fields contain durations in milliseconds:
 
-| Field | Meaning |
-| --- | --- |
-| `run.pre_run_wait_ms` | Source message to run creation, including steering held behind earlier work. |
-| `run.queue_wait_ms` | Run creation to its first execution start. |
-| `run.first_response_ms` | Source message to first persisted visible reply text or reply card. |
-| `run.total_ms` | Source message to run completion or failure. |
-| `run.execution_wall_ms` | First execution start to completion, including retries and human waits. |
+| Field                   | Meaning                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `run.pre_run_wait_ms`   | Source message to run creation, including steering held behind earlier work. |
+| `run.queue_wait_ms`     | Run creation to its first execution start.                                   |
+| `run.first_response_ms` | Source message to first persisted visible reply text or reply card.          |
+| `run.total_ms`          | Source message to run completion or failure.                                 |
+| `run.execution_wall_ms` | First execution start to completion, including retries and human waits.      |
 
 These are run-level measurements. Multiple steering messages can share one run;
 its selected source message defines the timing origin. When a run has no source

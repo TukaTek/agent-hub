@@ -48,6 +48,14 @@ export function modelStreamFirstEventTimeoutMs(
   );
 }
 
+/**
+ * Options for an undici `Agent` that carries model streams. undici otherwise drops a
+ * response after 5 minutes without headers or body data, which caps the timeouts
+ * above and fails as a bare "terminated". The SDK's `timeoutMs` and the stream idle
+ * watchdog bound both waits instead.
+ */
+export const MODEL_STREAM_AGENT_TIMEOUTS = { headersTimeout: 0, bodyTimeout: 0 } as const;
+
 /** More retries extend the worst-case turn; the executor heartbeat renews its leases. */
 export function modelStreamMaxRetries(): number {
   const value = process.env.MODEL_STREAM_MAX_RETRIES?.trim();

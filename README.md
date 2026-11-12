@@ -57,7 +57,7 @@ place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or wh
 disposable); `docker compose down -v` deletes all Postgres state.
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
-Local Docker computers are on by default. Optional remote providers: `e2b`, `novita`, `daytona`, `createos`, `boat`, `boxd`, or `railway`
+Local Docker computers are on by default. Optional remote providers: `e2b`, `novita`, `daytona`, `createos`, `boat`, `boxd`, `instabox`, or `railway`
 with the matching API key.
 
 Default image tag is `edge` (main builds, `linux/amd64` + `linux/arm64`). Details and tags:
@@ -89,12 +89,12 @@ Or [deploy on Railway](https://railway.com/new/template/cortexai-agent-hub-templ
 
 ## Local development (source checkout)
 
-You need Node.js 22.22.2 or newer in the 22.x line, Node.js 24.x, or Node.js 26+;
-pnpm 9; and Docker. Node.js 23.x and 25.x are not supported.
+You need Node.js 24.15.0 or newer in the 24.x line, or Node.js 26+; pnpm 12;
+and Docker. Node.js 25.x is not supported.
 
 ```bash
 git clone https://github.com/TukaTek/agent-hub.git
-cd cortexai-agent-hub
+cd agent-hub
 cp .env.example .env
 ```
 

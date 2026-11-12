@@ -1,5 +1,6 @@
 import { computerHoursOut } from "@cortexai-agent-hub/contracts";
 import { isModelRequiredSendError, normalizeRunError } from "@cortexai-agent-hub/core";
+import { translateRunError } from "@cortexai-agent-hub/i18n/run-error";
 import { Button } from "@cortexai-agent-hub/ui-web";
 import { i18n } from "@lingui/core";
 import { useLingui } from "@lingui/react/macro";
@@ -7,7 +8,6 @@ import { FileIcon, X } from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useId, useRef } from "react";
 import { useBilling } from "../../components/SubscriptionGate";
-import { translateRunError } from "../../lib/run-error";
 
 export function ComposerError({
   sendError,

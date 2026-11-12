@@ -1,9 +1,9 @@
 import type { ReplyPreview } from "@cortexai-agent-hub/contracts";
 import { replyLabel } from "@cortexai-agent-hub/core";
+import { t } from "@lingui/core/macro";
 import { Text, View } from "react-native";
 import { mobileTokens } from "../lib/appearance";
 import type { MobileArtifactTarget } from "../lib/artifact-open";
-import { t } from "../lib/i18n";
 import { ReplyThumbnail } from "./reply-thumbnail";
 
 export function ComposerReplyPreview({
@@ -26,7 +26,7 @@ export function ComposerReplyPreview({
       <View style={{ flex: 1 }}>
         <Text style={{ color: tokens.mutedForeground, fontSize: 12 }}>{author}</Text>
         <Text style={{ color: tokens.foreground, fontSize: 13 }} numberOfLines={1}>
-          {replyLabel(quote, text, attachment, { photo: t("Photo"), attachment: t("Attachment") })}
+          {replyLabel(quote, text, attachment, { photo: t`Photo`, attachment: t`Attachment` })}
         </Text>
       </View>
     </>

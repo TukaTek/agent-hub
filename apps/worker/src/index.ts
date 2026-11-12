@@ -4,7 +4,7 @@ import { unwrapEnvFromKeyManager } from "@cortexai-agent-hub/adapters";
 import { createUserWorkAuthorizer } from "@cortexai-agent-hub/auth";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { stopOnShutdownSignals } from "@cortexai-agent-hub/core/node/shutdown-signals";
-import { startWorkerHealth, watchEventLoopStalls } from "./health.js";
+import { startWorkerHealth } from "./health.js";
 import { createWorkerSecretStore } from "./secret-store.js";
 
 loadRootEnv();
@@ -60,6 +60,7 @@ import {
   UserDevices,
   userDeviceForwardSecret,
   WorkActivities,
+  withHostComputerScreen,
   withRunWorker,
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
@@ -82,6 +83,7 @@ import {
 } from "@cortexai-agent-hub/db";
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
+import { watchEventLoopStalls } from "@cortexai-agent-hub/logging/event-loop";
 import { MarkdownMemoryStore } from "@cortexai-agent-hub/memory";
 import { startWorkerHubPolicy } from "./hub-policy.js";
 
@@ -90,7 +92,7 @@ const logger = await createRootLogger(SERVICE_NAMES.worker);
 const HUB_POLICY_RESTART_EXIT_CODE = 75;
 
 async function main() {
-  const stopStallWatch = watchEventLoopStalls();
+  const stopStallWatch = watchEventLoopStalls("worker.event_loop_stalled");
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   const poolMax = parsePositiveInteger(process.env.DB_POOL_MAX, 8);
@@ -159,8 +161,9 @@ async function main() {
       ? new ScriptedAgentRuntime()
       : new PiAgentRuntime({ sessionRoot: resolvePiSessionRoot(env.dataDir) });
   const sandboxProvider = resolveSandboxProvider(process.env);
+  const sandboxOptions = sandboxProviderOptionsFromEnv(process.env);
   const sandbox = await createRunSandbox(sandboxProvider, {
-    ...sandboxProviderOptionsFromEnv(process.env),
+    ...sandboxOptions,
     supervisorUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
     supervisorToken: sandboxProvider === "docker" ? resolveSupervisorToken(process.env) : undefined,
     dataDir: env.dataDir,
@@ -261,13 +264,20 @@ async function main() {
     messaging,
     cloudAgent,
     // Device sockets live in an API process; the worker forwards to whichever one holds it.
-    userDevices:
+    userDevices: withHostComputerScreen(
       process.env.USER_DEVICES_ENABLED === "false"
         ? undefined
         : new UserDevices({
             prisma,
             forwardSecret: userDeviceForwardSecret(env.encryptionKey),
           }),
+      {
+        prisma,
+        sandboxKind: sandboxProvider,
+        url: sandboxOptions.hostComputerUrl,
+        token: sandboxOptions.hostComputerToken,
+      },
+    ),
     paymentWallet,
     shutdownSignal: shutdown.signal,
   });

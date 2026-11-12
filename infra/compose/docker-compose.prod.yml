@@ -12,8 +12,7 @@ x-logging: &logging
 # only sees what it uses instead of the whole .env. A key with no value is passed through
 # when .env (or the shell) sets it and left unset otherwise. Keep in sync with the code:
 # infra/updater/src/compose-env.test.ts fails when a read is missing here or a key is unused.
-x-app-environment: &app-environment
-  # Runtime
+x-app-environment: &app-environment # Runtime
   NODE_ENV: production
   # The app's own login, subject to row-level security (docs/self-host-configuration.md#database-roles).
   DATABASE_URL: postgres://cortexai_agent_hub_app:${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cortexai-agent-hub}
@@ -234,6 +233,7 @@ x-app-environment: &app-environment
   BOAT_API_URL:
   BOXD_API_KEY:
   BOXD_ORG:
+  INSTABOX_API_KEY:
   RAILWAY_API_TOKEN:
   RAILWAY_ENVIRONMENT_ID:
   RAILWAY_SANDBOX_REGION:
@@ -363,7 +363,11 @@ services:
     networks:
       - data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cortexai-agent-hub} -d ${POSTGRES_DB:-cortexai-agent-hub}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-cortexai-agent-hub} -d ${POSTGRES_DB:-cortexai-agent-hub}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20

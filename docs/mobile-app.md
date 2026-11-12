@@ -27,6 +27,8 @@ your local network, follow
 The first time you send something, the app asks permission to share it with the AI services your
 server uses. Review or withdraw it later in **AI data sharing** in Settings.
 
+On an iPad, an unfolded iPhone Duo or an Android tablet, the chat list stays beside the open chat.
+
 Turn off **Haptics** in Settings if you don't want touch feedback.
 
 ## What stays on web and desktop

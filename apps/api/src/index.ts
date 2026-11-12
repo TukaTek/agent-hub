@@ -8,12 +8,14 @@ await unwrapEnvFromKeyManager();
 
 import { SERVICE_NAMES } from "@cortexai-agent-hub/logging";
 import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
+import { watchEventLoopStalls } from "@cortexai-agent-hub/logging/event-loop";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
 import { HUB_POLICY_RESTART_EXIT_CODE, startApiHubPolicy } from "./hub-policy.js";
 
 const logger = await createRootLogger(SERVICE_NAMES.api);
+const stopStallWatch = watchEventLoopStalls("api.event_loop_stalled");
 
 try {
   // Bound once shutdown exists; a restart before then simply exits.
@@ -52,6 +54,7 @@ try {
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
+    stopStallWatch();
     const closed = new Promise<void>((resolve) => server.close(() => resolve()));
     const grace = setTimeout(() => {
       for (const socket of sockets) socket.destroy();

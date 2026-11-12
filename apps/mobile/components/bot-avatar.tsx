@@ -25,6 +25,7 @@ import {
   SHIPPED_BOT_AVATAR_VIEWBOX,
   usesLogoAvatar,
 } from "@cortexai-agent-hub/core";
+import { useLingui } from "@lingui/react/macro";
 import { memo, useSyncExternalStore } from "react";
 import { Image, Pressable, View } from "react-native";
 import Animated, {
@@ -36,7 +37,6 @@ import Svg, { G, Path, Rect } from "react-native-svg";
 import type { AvatarLife } from "../lib/avatar-life";
 import { useAvatarOnScreen, useLife, usePoke, useSettling } from "../lib/avatar-life";
 import { mobileBotAvatarPresentation } from "../lib/bot-avatar";
-import { useI18n } from "../lib/i18n";
 import { mobileLogoAvatarActivity } from "../lib/logo-avatar-activity";
 import { useMobileTokens } from "../lib/native";
 import { LogoAvatar } from "./logo-avatar";
@@ -177,11 +177,11 @@ function CortexAiAgentHubBotAvatar({
 
 function WorkingDot({ size, muted }: { size: number; muted: boolean }) {
   const tokens = useMobileTokens();
-  const { t } = useI18n();
+  const { t } = useLingui();
   const dot = avatarWorkingDot(size);
   return (
     <View
-      accessibilityLabel={t("Working")}
+      accessibilityLabel={t`Working`}
       style={{
         position: "absolute",
         right: muted ? undefined : dot.inset - dot.ring,
@@ -200,11 +200,11 @@ function WorkingDot({ size, muted }: { size: number; muted: boolean }) {
 
 function MutedBadge({ size }: { size: number }) {
   const tokens = useMobileTokens();
-  const { t } = useI18n();
+  const { t } = useLingui();
   return (
     <View
       accessible
-      accessibilityLabel={t("Notifications silenced")}
+      accessibilityLabel={t`Notifications silenced`}
       style={{
         position: "absolute",
         right: -2,

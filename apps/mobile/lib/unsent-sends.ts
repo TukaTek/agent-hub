@@ -1,4 +1,5 @@
 import { isModelRequiredSendError } from "@cortexai-agent-hub/core";
+import { t } from "@lingui/core/macro";
 import { Alert, AppState } from "react-native";
 import type { RpcArgs } from "./api";
 import {
@@ -11,7 +12,6 @@ import {
   subscribeServerReachable,
 } from "./api";
 import { artifactCacheSession } from "./artifact-cache-session";
-import { t } from "./i18n";
 import { integrationsCacheScope } from "./integrations-cache";
 import { askToAddModel } from "./model-settings";
 import { outboxDisk } from "./outbox-disk";
@@ -57,7 +57,7 @@ async function loadUnsentSends(): Promise<void> {
       apiBase !== currentApiBase() ||
       spaceId !== selectedSpaceId()
     )
-      throw new Error(t("Failed to send message"));
+      throw new Error(t`Failed to send message`);
     activeScope = {
       apiBase,
       spaceId: spaceId ?? verified.spaceId,
@@ -120,12 +120,12 @@ configureUnsentSends({
   passwordChanging: passwordChangeInFlight,
   scope,
   disk: outboxDisk,
-  errorText: (error) => errorText(error, t("Failed to send message")),
+  errorText: (error) => errorText(error, t`Failed to send message`),
   notDelivered: (attempt) => {
     if (isModelRequiredSendError(attempt.error)) {
       askToAddModel();
     } else if (!attempt.imageConfirmation) {
-      Alert.alert(t("Failed to send message"), attempt.error);
+      Alert.alert(t`Failed to send message`, attempt.error);
     }
   },
 });

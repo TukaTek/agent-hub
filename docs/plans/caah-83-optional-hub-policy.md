@@ -37,11 +37,11 @@
 
 **Explicit flag (recommended) vs. inferring the opt-out from "all three unset".**
 
-- *Inference: skip when all three `HUB_*` are unset, error when only some are set.*
+- _Inference: skip when all three `HUB_*` are unset, error when only some are set._
   - It needs no new setting.
   - But a registered deployment that loses its whole env, for example a dropped `.env` line, a lost secret mount plus a missing tenant, or a template reset, would silently fall back to "no policy" and admit every entitled Hub user. That is fail-open on exactly the failure CAAH-36 F1 was built to catch.
   - It also changes today's documented `not_configured` contract for the all-unset case, which is the case the existing tests and docs describe.
-- *Explicit flag (chosen).* The operator states the intent. A missing env never turns enforcement off, and the default stays fail closed. The cost is one setting, documented in one table.
+- _Explicit flag (chosen)._ The operator states the intent. A missing env never turns enforcement off, and the default stays fail closed. The cost is one setting, documented in one table.
 
 **Name and values: `HUB_POLICY_ENFORCEMENT=on|off`, default `on`.** It names what is switched (enforcement of Hub tenant policy) rather than registration, which is a Hub-side concept. `on`/`off` reads better than `true`/`false` for a mode. I considered `HUB_POLICY_ENABLED=false` to match the `true`/`false` style of `HUB_SSO_ENABLED` and `HUB_POLICY_AUTO_RESTART`, and it is an easy rename if the PM prefers it.
 
@@ -53,29 +53,31 @@
 
 ## File Structure
 
-| File | Change |
-| --- | --- |
-| `packages/auth/src/hub-client.ts` | Parse `HUB_POLICY_ENFORCEMENT`, add `policyDisabled?: true`, reject `off` together with SSO |
-| `packages/auth/src/hub-policy.ts` | `disabledHubPolicy()`, add `"disabled"` to `HubPolicyStatus["state"]` |
-| `packages/auth/src/hub-policy-runtime.ts` | `hubPolicyDisabledLogEntry()` |
-| `packages/auth/src/hub.ts` | `createHubAuth` selects `disabledHubPolicy` when `config.policyDisabled` |
-| `packages/auth/src/index.ts` | Export the two new functions |
-| `apps/api/src/hub-policy.ts` | Disabled branch: warn, no DB pool, no Hub fetch |
-| `apps/api/src/health.ts` | `disabled` counts as `ok` |
-| `apps/worker/src/hub-policy.ts` (new) | `startWorkerHubPolicy`, extracted from `index.ts`, with a disabled branch |
-| `apps/worker/src/index.ts` | Call `startWorkerHubPolicy` |
-| Tests | `hub-client.test.ts`, `hub-policy.test.ts`, `hub.test.ts`, `hub-sessions.test.ts`, `hub.postgres.test.ts`, `apps/api/src/hub-policy.test.ts`, `apps/api/src/health.test.ts`, `apps/worker/src/hub-policy.test.ts` (new) |
-| Docs | `docs/hub-auth.md`, `docs/self-host.md`, `.env.example`, `infra/compose/docker-compose.hub.yml` header |
+| File                                      | Change                                                                                                                                                                                                                  |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/auth/src/hub-client.ts`         | Parse `HUB_POLICY_ENFORCEMENT`, add `policyDisabled?: true`, reject `off` together with SSO                                                                                                                             |
+| `packages/auth/src/hub-policy.ts`         | `disabledHubPolicy()`, add `"disabled"` to `HubPolicyStatus["state"]`                                                                                                                                                   |
+| `packages/auth/src/hub-policy-runtime.ts` | `hubPolicyDisabledLogEntry()`                                                                                                                                                                                           |
+| `packages/auth/src/hub.ts`                | `createHubAuth` selects `disabledHubPolicy` when `config.policyDisabled`                                                                                                                                                |
+| `packages/auth/src/index.ts`              | Export the two new functions                                                                                                                                                                                            |
+| `apps/api/src/hub-policy.ts`              | Disabled branch: warn, no DB pool, no Hub fetch                                                                                                                                                                         |
+| `apps/api/src/health.ts`                  | `disabled` counts as `ok`                                                                                                                                                                                               |
+| `apps/worker/src/hub-policy.ts` (new)     | `startWorkerHubPolicy`, extracted from `index.ts`, with a disabled branch                                                                                                                                               |
+| `apps/worker/src/index.ts`                | Call `startWorkerHubPolicy`                                                                                                                                                                                             |
+| Tests                                     | `hub-client.test.ts`, `hub-policy.test.ts`, `hub.test.ts`, `hub-sessions.test.ts`, `hub.postgres.test.ts`, `apps/api/src/hub-policy.test.ts`, `apps/api/src/health.test.ts`, `apps/worker/src/hub-policy.test.ts` (new) |
+| Docs                                      | `docs/hub-auth.md`, `docs/self-host.md`, `.env.example`, `infra/compose/docker-compose.hub.yml` header                                                                                                                  |
 
 ---
 
 ### Task 1: Parse `HUB_POLICY_ENFORCEMENT` in `hubAuthFromEnv`
 
 **Files:**
+
 - Modify: `packages/auth/src/hub-client.ts:9-29` (interface), `:44-146` (parser)
 - Test: `packages/auth/src/hub-client.test.ts`
 
 **Interfaces:**
+
 - Produces: `HubAuthConfig.policyDisabled?: true`. When it is set, `notConfigured`, `service` and `sso` are never set, and `tenantId` is set only if `HUB_AUTH_TENANT_ID` is.
 
 - [ ] **Step 1: Write the failing tests**
@@ -91,7 +93,9 @@ describe("HUB_POLICY_ENFORCEMENT", () => {
       "HUB_SERVICE_API_ID",
       "HUB_SERVICE_SECRET_FILE",
     ]);
-    expect(hubAuthFromEnv({ ...hub, HUB_POLICY_ENFORCEMENT: "on" }, read)?.notConfigured).toBeDefined();
+    expect(
+      hubAuthFromEnv({ ...hub, HUB_POLICY_ENFORCEMENT: "on" }, read)?.notConfigured,
+    ).toBeDefined();
   });
 
   it("off needs no tenant or service credential, in the API and the worker", () => {
@@ -159,11 +163,11 @@ Add the field to `HubAuthConfig`:
 In `hubAuthFromEnv`, right after the `mode !== "hub"` check:
 
 ```ts
-  const enforcement = source.HUB_POLICY_ENFORCEMENT?.trim() || "on";
-  if (enforcement !== "on" && enforcement !== "off")
-    throw configError("HUB_POLICY_ENFORCEMENT must be on or off");
-  if (enforcement === "off" && ssoFlag === "true")
-    throw configError("HUB_SSO_ENABLED=true requires HUB_POLICY_ENFORCEMENT=on");
+const enforcement = source.HUB_POLICY_ENFORCEMENT?.trim() || "on";
+if (enforcement !== "on" && enforcement !== "off")
+  throw configError("HUB_POLICY_ENFORCEMENT must be on or off");
+if (enforcement === "off" && ssoFlag === "true")
+  throw configError("HUB_SSO_ENABLED=true requires HUB_POLICY_ENFORCEMENT=on");
 ```
 
 The origin and cache parsing stay as they are. Then, before the `missing` block:
@@ -196,12 +200,14 @@ Expected: PASS, including every existing CAAH-36 case.
 ### Task 2: `disabledHubPolicy` and its startup log entry
 
 **Files:**
+
 - Modify: `packages/auth/src/hub-policy.ts` (status union, new function after `notConfiguredHubPolicy`)
 - Modify: `packages/auth/src/hub-policy-runtime.ts` (new log entry)
 - Modify: `packages/auth/src/index.ts` (exports)
 - Test: `packages/auth/src/hub-policy.test.ts`, `packages/auth/src/hub-policy-runtime.test.ts`
 
 **Interfaces:**
+
 - Produces: `disabledHubPolicy(options: { tenantId?: string }): HubPolicy` and `hubPolicyDisabledLogEntry(): { message: string; attributes: Record<string, string> }`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -251,7 +257,10 @@ it("warns that Hub policy is off without naming any value", () => {
   const entry = hubPolicyDisabledLogEntry();
   expect(entry.message).toContain("HUB_POLICY_ENFORCEMENT=off");
   expect(entry.message).toContain("docs/hub-auth.md#running-without-hub-registration");
-  expect(entry.attributes).toEqual({ "hub.policy": "disabled", "hub.doc": "docs/hub-auth.md#running-without-hub-registration" });
+  expect(entry.attributes).toEqual({
+    "hub.policy": "disabled",
+    "hub.doc": "docs/hub-auth.md#running-without-hub-registration",
+  });
 });
 ```
 
@@ -342,10 +351,12 @@ Export both from `packages/auth/src/index.ts`, next to `notConfiguredHubPolicy` 
 ### Task 3: Sign-in and sessions use the disabled policy
 
 **Files:**
+
 - Modify: `packages/auth/src/hub.ts:202-207`
 - Test: `packages/auth/src/hub.test.ts`, `packages/auth/src/hub-sessions.test.ts`, `packages/auth/src/hub.postgres.test.ts`
 
 **Interfaces:**
+
 - Consumes: `HubAuthConfig.policyDisabled` (Task 1) and `disabledHubPolicy` (Task 2).
 
 - [ ] **Step 1: Write the failing tests**
@@ -379,11 +390,11 @@ Expected: FAIL with `Hub mode requires the Hub policy gate`.
 - [ ] **Step 3: Implement** in `createHubAuth`:
 
 ```ts
-  const policy = config.notConfigured
-    ? notConfiguredHubPolicy({ missing: config.notConfigured.missing.map((item) => item.name) })
-    : config.policyDisabled
-      ? disabledHubPolicy({ tenantId: config.tenantId })
-      : env.hubPolicy;
+const policy = config.notConfigured
+  ? notConfiguredHubPolicy({ missing: config.notConfigured.missing.map((item) => item.name) })
+  : config.policyDisabled
+    ? disabledHubPolicy({ tenantId: config.tenantId })
+    : env.hubPolicy;
 ```
 
 `hub-sessions.ts` needs no change. It already uses whatever policy it is given, and `notConfigured` is never set together with `policyDisabled`.
@@ -397,6 +408,7 @@ Run: `pnpm vitest run packages/auth`, then `VERIFY_DATABASE=1 pnpm test:integrat
 ### Task 4: API startup and health
 
 **Files:**
+
 - Modify: `apps/api/src/hub-policy.ts`, `apps/api/src/health.ts`
 - Test: `apps/api/src/hub-policy.test.ts`, `apps/api/src/health.test.ts`
 
@@ -467,10 +479,12 @@ In `hubPolicyHealth`: `status: !status || status.state === "ok" || status.state 
 ### Task 5: Worker startup
 
 **Files:**
+
 - Create: `apps/worker/src/hub-policy.ts`, `apps/worker/src/hub-policy.test.ts`
 - Modify: `apps/worker/src/index.ts:87-127`
 
 **Interfaces:**
+
 - Produces: `startWorkerHubPolicy(source, logger, prisma, options: { onRestartRequired?: (restart: HubPolicyRestart) => void }): Promise<{ config: HubAuthConfig | undefined; policy: HubPolicy | undefined }>`. It moves the existing inline branch unchanged and adds the disabled branch.
 
 - [ ] **Step 1: Write the failing tests**
@@ -481,7 +495,11 @@ const prisma = {} as PrismaClient; // the not-configured and disabled branches n
 
 it("runs work with policy off and no Hub values, warning once", async () => {
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  const { policy } = await startWorkerHubPolicy({ ...hub, HUB_POLICY_ENFORCEMENT: "off" }, logger, prisma);
+  const { policy } = await startWorkerHubPolicy(
+    { ...hub, HUB_POLICY_ENFORCEMENT: "off" },
+    logger,
+    prisma,
+  );
   expect(await policy!.workAllowed({ tenant: "t", subject: "s" })).toBe(true);
   expect(logger.warn).toHaveBeenCalledOnce();
 });
@@ -496,7 +514,11 @@ it("stays locked with policy on and no Hub values", async () => {
 
 it("refuses to start with policy off and SSO on", async () => {
   await expect(
-    startWorkerHubPolicy({ ...hub, HUB_POLICY_ENFORCEMENT: "off", HUB_SSO_ENABLED: "true" }, logger, prisma),
+    startWorkerHubPolicy(
+      { ...hub, HUB_POLICY_ENFORCEMENT: "off", HUB_SSO_ENABLED: "true" },
+      logger,
+      prisma,
+    ),
   ).rejects.toThrow("HUB_SSO_ENABLED=true requires HUB_POLICY_ENFORCEMENT=on");
 });
 ```
@@ -547,13 +569,13 @@ it("refuses to start with policy off and SSO on", async () => {
 
 ## Acceptance mapping
 
-| Criterion | Covered by |
-| --- | --- |
+| Criterion                                                                                 | Covered by                                                                                                       |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | 1. Opt-out with no `HUB_*`: API and worker start, a Hub user signs in, a bot run executes | Tasks 1, 3, 4 and 5 tests, and the Postgres journey in Task 3 (sign-in, then the work authorizer admits the run) |
-| 2. Unset, no `HUB_*`: locked as today | Existing `not_configured` tests unchanged, plus the new "defaults to on" and worker "stays locked" tests |
-| 3. Opt-out plus SSO fails startup clearly | Task 1 parser tests (both processes), and the Task 4 and Task 5 startup tests |
-| 4. Registered behavior unchanged | All existing CAAH-36 suites pass unmodified. Registered-path code changes only by the extraction in Task 5 |
-| 5. Tests and green CI | Task 7 |
+| 2. Unset, no `HUB_*`: locked as today                                                     | Existing `not_configured` tests unchanged, plus the new "defaults to on" and worker "stays locked" tests         |
+| 3. Opt-out plus SSO fails startup clearly                                                 | Task 1 parser tests (both processes), and the Task 4 and Task 5 startup tests                                    |
+| 4. Registered behavior unchanged                                                          | All existing CAAH-36 suites pass unmodified. Registered-path code changes only by the extraction in Task 5       |
+| 5. Tests and green CI                                                                     | Task 7                                                                                                           |
 
 ## Risks and open questions
 

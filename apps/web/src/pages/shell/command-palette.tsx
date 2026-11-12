@@ -1,7 +1,6 @@
 import { PageIcon } from "@cortexai-agent-hub/chat-ui/web";
 import type { Bot, PageSummary } from "@cortexai-agent-hub/contracts";
 import {
-  Badge,
   BotAvatar,
   Command,
   CommandDialog,

@@ -19,6 +19,7 @@ import type { CommandRequest, ComputerRef, SandboxProvider } from "@cortexai-age
 import { SandboxDamagedError } from "@cortexai-agent-hub/adapter-kit";
 import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import * as Logging from "@cortexai-agent-hub/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkpointAndStopComputer,
@@ -498,6 +499,36 @@ describe("mounted Kubernetes homes", () => {
 });
 
 describe("Team run checkpoints", () => {
+  it("keeps a mounted team home running while recording a checkpoint", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-mounted-checkpoint-"));
+    roots.push(root);
+    const home = new LocalAgentHomeStore(root);
+    const exportWorkspace = vi.fn();
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const deps = {
+      home,
+      sandbox: { hasMountedHome: async () => true, exportWorkspace },
+      prisma: {
+        computer: {
+          updateMany,
+          findFirst: async () => ({ state: "running", restorePending: false, screenGeneration: 0 }),
+        },
+      },
+    };
+    const revision = await checkpointRunComputerWorkspace(
+      deps as never,
+      { id: "team", homeKey: "team", scope: "team", spaceId: "space" },
+      { id: "pod", providerRef: "pod", kind: "kubernetes", botId: "team" },
+      context,
+    );
+    expect(revision).toMatch(/^rev-/);
+    expect(exportWorkspace).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "team" },
+      data: { homeRevision: revision, homeRevisionAt: expect.any(Date) },
+    });
+  });
+
   it("defers a remote export when another run prevents an exclusive checkpoint", async () => {
     const { checkpointRunComputerWorkspace } = await import("./computer-workspace.js");
     const exportWorkspace = vi.fn();
@@ -863,6 +894,41 @@ describe("Team bot folder cleanup", () => {
       ),
     ).resolves.toBeUndefined();
     expect(commandSignal?.aborted).toBe(true);
+  });
+
+  it("does not report a removal the cleanup deadline cut short as an error", async () => {
+    const { prisma } = deletedBots("deleted-bot");
+    const execute = vi.fn((_computer: ComputerRef, request: CommandRequest, commandContext) => {
+      const { signal } = commandContext as typeof context;
+      return (async function* () {
+        if (!request.argv.includes("deleted-bot")) {
+          yield { type: "stdout" as const, data: "bots/deleted-bot\n" };
+          yield { type: "exit" as const, code: 0 };
+          return;
+        }
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        yield { type: "stderr" as const, data: "command aborted\n" };
+        yield { type: "exit" as const, code: 130 };
+      })();
+    });
+    const warn = vi.fn();
+    const error = vi.fn();
+    const logger = vi.spyOn(Logging, "getLogger").mockReturnValue({ warn, error } as never);
+    try {
+      await removeDeletedBotWorkspaces(
+        { prisma, sandbox: { execute } as unknown as SandboxProvider },
+        computer,
+        "workspace",
+        context,
+        20,
+      );
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      logger.mockRestore();
+    }
+    expect(warn).toHaveBeenCalledWith("computer cleanup ran out of time");
+    expect(error).not.toHaveBeenCalled();
   });
 
   it.each([

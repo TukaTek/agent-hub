@@ -228,7 +228,7 @@ import {
   recentThreadFilesInstruction,
 } from "./thread-artifacts.js";
 import { loadAgentTicketContext } from "./ticket-context.js";
-import { appendToolCompletionAudit } from "./tool-completion-audit.js";
+import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
 import { restoreTurnCheckpoint } from "./turn-checkpoint.js";
 import { createWebProvider } from "./web-provider-factory.js";
@@ -1268,6 +1268,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           botUserId: bot.userId,
         });
         let userComputer: UserComputerState;
+        let userComputerShell = false;
         let userComputerScreen = false;
         if (
           userComputerOwnerId &&
@@ -1277,6 +1278,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           const device = await deps.userDevices.connected(userComputerOwnerId).catch(() => null);
           if (device) {
             userComputer = "connected";
+            userComputerShell = !device.screenOnly;
             // The macOS and Windows desktops fetch a screen driver; Linux has none yet.
             userComputerScreen = device.platform === "darwin" || device.platform === "win32";
           } else userComputer = "offline";
@@ -1307,7 +1309,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               : bot.disabledBuiltinTools,
             fleetManagement: bot.fleetManagement,
             followUpFromUser: sourceMessage?.role === "user",
-            userComputer: userComputer === "connected",
+            userComputer: userComputerShell,
             userComputerScreen,
             emailInbox,
             emailClaimable:
@@ -1379,6 +1381,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const dockerToolInstruction = dockerComputerToolInstruction(
           computerKind,
           disabledBuiltinTools,
+          new Set(tools.map((tool) => tool.name)),
         );
         const hostEnvironment =
           computerKind && usesNativeShell(computerKind)
@@ -1959,6 +1962,8 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                   effects.restoredPending = undefined;
                 if (!completion.paused)
                   effects.pendingTurnCheckpoints.delete(completion.executionId);
+                const outcome = toolCompletionOutcome(completion);
+                if (outcome) state.reply.toolOutcomes.set(completion.executionId, outcome);
                 const audited = appendToolCompletionAudit(
                   deps,
                   {
