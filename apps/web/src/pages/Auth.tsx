@@ -12,6 +12,7 @@ import {
   MIN_PASSWORD_LENGTH,
   readBoundedJsonResponse,
   signupRequiresEmailVerification,
+  suggestEmailCorrection,
 } from "@cortexai-agent-hub/core";
 import {
   Button,
@@ -83,6 +84,8 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
       : authErrorText({ code }, "") || null;
   });
   const [pending, setPending] = useState(false);
+  const [emailBlurred, setEmailBlurred] = useState(false);
+  const [warnedEmail, setWarnedEmail] = useState<string | null>(null);
   const entering = useRef(false);
   const [resetSent, setResetSent] = useState(false);
   // Signup triggers a session refresh that remounts the anonymous auth page.
@@ -90,6 +93,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
   const [reset, setReset] = useState<AuthCapabilities | null>(null);
   const hubMode = reset?.mode === "hub";
   const mode = hubMode || requestedMode === "entry" ? "in" : requestedMode;
+  const emailSuggestion = mode === "up" ? suggestEmailCorrection(email) : null;
   // Hub mode always signs in with an email first, then Hub picks the method.
   const passwordForm = Boolean(reset?.passwordAuth || hubMode);
   const [capabilityError, setCapabilityError] = useState(false);
@@ -168,6 +172,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     });
     if (issue) {
       setError(credentialIssueText(issue));
+      return;
+    }
+    if (emailSuggestion && warnedEmail !== email) {
+      setWarnedEmail(email);
+      setEmailBlurred(true);
       return;
     }
     setPending(true);
@@ -462,7 +471,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 name="email"
                 autoComplete={signInStep === "email" && !hubMode ? "username webauthn" : "username"}
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailBlurred(false);
+                }}
+                onBlur={() => setEmailBlurred(true)}
                 placeholder={t`Your email address`}
                 type="email"
                 required
@@ -473,6 +486,21 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 }
                 className={fieldClass}
               />
+              {emailSuggestion && emailBlurred ? (
+                <p role="status" className="mt-2 text-body text-warning">
+                  <Trans>
+                    Did you mean{" "}
+                    <button
+                      type="button"
+                      className="font-medium underline"
+                      onClick={() => setEmail(emailSuggestion)}
+                    >
+                      {emailSuggestion}
+                    </button>
+                    ?
+                  </Trans>
+                </p>
+              ) : null}
               {signInStep === "password" || signInUnavailable ? (
                 <div className="mt-2 text-right text-body">
                   <Button
