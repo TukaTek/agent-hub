@@ -116,6 +116,22 @@ describe("extractTable", () => {
     ]);
   });
 
+  it.each([
+    '<img alt="Chart" data-alt="Decorative">',
+    '<img title="1 > 0" alt="Chart">',
+    '<img alt="Chart" title="alt=Decorative">',
+  ])("uses the real image description for copied and exported rows: %s", (html) => {
+    const extracted = extractTable(
+      table([
+        row(cell("th", "Description")),
+        row({ tagName: "td", children: [{ type: "raw", value: html }] }),
+      ]),
+    );
+    expect(extracted?.rows).toEqual([["Chart"]]);
+    expect(tableToTsv(extracted!.columns, extracted!.rows)).toBe("Description\nChart");
+    expect(tableToCsv(extracted!.columns, extracted!.rows)).toBe("Description\nChart");
+  });
+
   it("returns null for malformed nodes", () => {
     expect(extractTable(undefined)).toBeNull();
     expect(extractTable({})).toBeNull();
@@ -187,6 +203,51 @@ describe("parseNumericText", () => {
     expect(parseNumericText("(-12)")).toBe(-12);
   });
 
+  it("parses decimals without a leading zero", () => {
+    for (const [text, expected] of [
+      [".5", 0.5],
+      [".25", 0.25],
+      ["-.5", -0.5],
+      ["(.25)", -0.25],
+      ["$.50", 0.5],
+      [".5%", 0.5],
+    ] as const) {
+      expect(parseNumericText(text)).toBe(expected);
+    }
+  });
+
+  it("parses an explicit plus sign and the typographic minus", () => {
+    for (const [text, expected] of [
+      ["+5", 5],
+      ["+12%", 12],
+      ["+$5", 5],
+      ["+1,234.5", 1234.5],
+      ["+.5", 0.5],
+      ["\u22125", -5],
+      ["\u22123.2%", -3.2],
+      ["$\u22125", -5],
+    ] as const) {
+      expect(parseNumericText(text)).toBe(expected);
+    }
+  });
+
+  it("treats a delta column with signs as numeric", () => {
+    const rows = [["+12%"], ["-3%"], ["+5%"], ["\u22122%"]];
+    expect(isNumericColumn(rows, 0)).toBe(true);
+  });
+
+  it("rejects a stray or doubled sign", () => {
+    for (const text of ["+", "++5", "+-5", "-+5", "5+", "\u2212", "+(5)"]) {
+      expect(parseNumericText(text)).toBeNull();
+    }
+  });
+
+  it("rejects incomplete or malformed decimals", () => {
+    for (const text of [".", "-.", "(.)", "1.", "..5", ".5.0", "1,23.5"]) {
+      expect(parseNumericText(text)).toBeNull();
+    }
+  });
+
   it("rejects non-numeric text", () => {
     for (const value of ["", "  ", "abc", "1,2,3,4,5", "NaN", "1.2.3", "-", "$", "12px"]) {
       expect(parseNumericText(value)).toBeNull();
@@ -203,6 +264,10 @@ describe("isNumericColumn", () => {
 
   it("is true when every non-empty cell is numeric", () => {
     expect(isNumericColumn(rows, 0)).toBe(true);
+  });
+
+  it("recognizes leading-dot decimals in numeric columns", () => {
+    expect(isNumericColumn([[".5"], ["-.25"], [""], ["1"]], 0)).toBe(true);
   });
 
   it("is false when a cell is not numeric or all cells are empty", () => {
@@ -228,6 +293,12 @@ describe("sortRows", () => {
     expect(sortRows(rows, 1, "asc").at(-1)).toEqual(["Gamma", ""]);
   });
 
+  it("sorts leading-dot decimals with other numbers in both directions", () => {
+    const values = [[".5"], [""], ["2"], ["-.5"], [".25"], ["0.1"]];
+    expect(sortRows(values, 0, "asc")).toEqual([["-.5"], ["0.1"], [".25"], [".5"], ["2"], [""]]);
+    expect(sortRows(values, 0, "desc")).toEqual([["2"], [".5"], [".25"], ["0.1"], ["-.5"], [""]]);
+  });
+
   it("sorts text columns with locale compare", () => {
     expect(sortRows(rows, 0, "asc").map((r) => r[0])).toEqual(["Alpha", "Beta", "Delta", "Gamma"]);
   });
@@ -243,6 +314,22 @@ describe("nextSort", () => {
 });
 
 describe("columnSortLabel", () => {
+  it("localizes generated names and collisions while preserving literal headers", () => {
+    const copy = {
+      columnFallback: (index: number) => `Spalte ${index}`,
+      columnDuplicate: (header: string, index: number) => `${header}, Spalte ${index}`,
+      columnCollision: (label: string) => `${label}, leer`,
+    };
+    expect(columnSortLabel(["", "Spalte 1", "Spalte 1, leer"], 0, copy)).toBe(
+      "Spalte 1, leer, leer",
+    );
+    expect(columnSortLabel(["", "Spalte 1"], 1, copy)).toBe("Spalte 1");
+    expect(columnSortLabel(["Name", "Name", "Name, Spalte 1"], 0, copy)).toBe(
+      "Name, Spalte 1, leer",
+    );
+    expect(columnSortLabel(["Name", "Name"], 1, copy)).toBe("Name, Spalte 2");
+  });
+
   it("returns the header when unique and non-empty", () => {
     expect(columnSortLabel(["Item", "Qty"], 0)).toBe("Item");
   });
@@ -302,10 +389,38 @@ describe("serialization", () => {
     expect(tableToTsv(["A"], [["\t=cmd"]])).toBe("A\n' =cmd");
   });
 
+  it.each([
+    ['"draft"', '"""draft"""'],
+    ['"draft', '"""draft"'],
+    ['say "hi"', '"say ""hi"""'],
+    ['a""b', '"a""""b"'],
+    ['"', '""""'],
+  ])("preserves quotes in TSV headers and cells: %s", (value, encoded) => {
+    expect(tableToTsv([value], [[value]])).toBe(`${encoded}\n${encoded}`);
+  });
+
+  it("closes quoted TSV cells before subsequent columns and rows", () => {
+    expect(
+      tableToTsv(
+        ["Name", "Note"],
+        [
+          ['"draft', "pending"],
+          ["next", "done"],
+        ],
+      ),
+    ).toBe('Name\tNote\n"""draft"\tpending\nnext\tdone');
+  });
+
+  it("keeps TSV whitespace normalization and formula neutralization when quoting", () => {
+    expect(tableToTsv(["Note"], [['say\t"hi"\r\nthere'], ['\t="draft"']])).toBe(
+      'Note\n"say ""hi""  there"\n"\' =""draft"""',
+    );
+  });
+
   it("strips tabs/newlines in TSV and neutralizes formulas", () => {
     const tsv = tableToTsv(columns, rows);
     expect(tsv.split("\n")).toHaveLength(3);
-    expect(tsv).toContain('a,b\tsay "hi"');
+    expect(tsv).toContain('a,b\t"say ""hi"""');
     expect(tsv).toContain("'=cmd\tline break");
     expect(tableToTsv(["=A", "+B"], [["@x", "-9"]])).toBe("'=A\t'+B\n'@x\t'-9");
   });

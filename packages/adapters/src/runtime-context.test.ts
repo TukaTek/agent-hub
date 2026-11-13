@@ -4,7 +4,10 @@ import { getLogger } from "@cortexai-agent-hub/logging";
 import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { ContextBudgetError, ContextCacheTracker } from "./context-selection.js";
+import { toHistory } from "./pi-runtime-history.js";
 import { createRuntimeContextPolicy } from "./runtime-context.js";
+
+const OFFERED = new Set(["shell", "SLACK_FIND_CHANNELS", "read_file"]);
 
 const model = {
   id: "synthetic-model",
@@ -18,7 +21,7 @@ function fixture(count = 30) {
     id: `message-${index}`,
     createdAt: "2026-01-01T00:00:00Z",
     role: "user" as const,
-    content: `Original discussion ${index}: ${"synthetic history ".repeat(30)}`,
+    content: `Original discussion ${index}: ${"synthetic history ".repeat(100)}`,
   }));
   const request: AgentRunRequest = {
     botId: "bot",
@@ -51,7 +54,7 @@ function enableHistoryRetrieval(request: AgentRunRequest) {
 }
 function connectorPages() {
   const { request, context } = fixture(0);
-  const bodies = Array.from({ length: 14 }, (_, index) => `Page ${index}: ${"e".repeat(9500)}`);
+  const bodies = Array.from({ length: 14 }, (_, index) => `Page ${index}: ${"0".repeat(9500)}`);
   context.messages.push({
     role: "assistant",
     content: bodies.map((_, index) => ({
@@ -119,6 +122,82 @@ describe("runtime context policy", () => {
           );
       }
       expect(policy.getDecision()!.estimatedInputTokens).toBeLessThanOrEqual(contextWindow - 4096);
+    },
+  );
+
+  it.each([0, 100])("keeps fitting recent results with %i earlier messages", (historyCount) => {
+    const { request, context } = fixture(historyCount);
+    const bodies = ["first ".repeat(1000), "second ".repeat(1000), "ok"];
+    for (const [index, body] of bodies.entries()) {
+      context.messages.push(
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: `step-${index}`, name: "shell", arguments: {} }],
+          timestamp: 101,
+        } as Message,
+        {
+          role: "toolResult",
+          toolCallId: `step-${index}`,
+          toolName: "shell",
+          content: [{ type: "text", text: body }],
+          isError: false,
+          timestamp: 102,
+        },
+      );
+    }
+    const policy = createRuntimeContextPolicy({ ...request, contextStrategy: "retrieval" });
+    const prepared = policy.prepareContext(context, { ...model, contextWindow: 20_000 });
+    expect(
+      prepared.messages
+        .filter((message) => message.role === "toolResult")
+        .map((message) => message.content),
+    ).toEqual(bodies.map((text) => [{ type: "text", text }]));
+    expect(policy.getDecision()!.estimatedInputTokens).toBeLessThanOrEqual(20_000 - 4096);
+    if (historyCount) expect(prepared.messages.length).toBeLessThan(context.messages.length);
+  });
+
+  it.each(["retrieval", "snapshots", "cache-aware"] as const)(
+    "shortens recent results rather than discarding active progress under %s",
+    (strategy) => {
+      const { request, context } = fixture(100);
+      const bodies = [
+        "earlier progress",
+        "evidence ".repeat(4000),
+        "more evidence ".repeat(3000),
+        "ok",
+      ];
+      for (const [index, body] of bodies.entries()) {
+        context.messages.push(
+          {
+            role: "assistant",
+            content: [{ type: "toolCall", id: `step-${index}`, name: "shell", arguments: {} }],
+            timestamp: 101,
+          } as Message,
+          {
+            role: "toolResult",
+            toolCallId: `step-${index}`,
+            toolName: "shell",
+            content: [{ type: "text", text: body }],
+            isError: false,
+            timestamp: 102,
+          },
+        );
+      }
+      const policy = createRuntimeContextPolicy({ ...request, contextStrategy: strategy });
+      const prepared = policy.prepareContext(context, { ...model, contextWindow: 12_000 });
+      const results = prepared.messages.filter((message) => message.role === "toolResult");
+      expect(results.map((message) => message.toolCallId)).toEqual(
+        bodies.map((_, index) => `step-${index}`),
+      );
+      expect(results[0]!.content).toEqual([{ type: "text", text: bodies[0] }]);
+      expect(JSON.stringify(results[1]!.content)).toContain(
+        "Earlier result shortened after you read it",
+      );
+      expect(JSON.stringify(results[2]!.content)).toContain(
+        "Earlier result shortened after you read it",
+      );
+      expect(results[3]!.content).toEqual([{ type: "text", text: "ok" }]);
+      expect(policy.getDecision()!.estimatedInputTokens).toBeLessThanOrEqual(12_000 - 4096);
     },
   );
 
@@ -313,7 +392,7 @@ describe("runtime context policy", () => {
       readOnly: false,
       content: `---\nname: daily-brief\n---\n${"1. Step kept for skill_update.\n".repeat(80)}`,
     });
-    const shellOutput = "synthetic shell output ".repeat(900);
+    const shellOutput = "synthetic shell output ".repeat(3000);
     context.messages.push(
       call("read", "skill_read"),
       result("read", "skill_read", skill),
@@ -321,7 +400,7 @@ describe("runtime context policy", () => {
       result(
         "fleet",
         "list_fleet",
-        JSON.stringify({ bot: { instructionsVersion: "v2", instructions: "x".repeat(20_000) } }),
+        JSON.stringify({ bot: { instructionsVersion: "v2", instructions: "0".repeat(20_000) } }),
       ),
       call("shell-1", "shell"),
       result("shell-1", "shell", shellOutput),
@@ -344,7 +423,7 @@ describe("runtime context policy", () => {
       return message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
     };
     expect(body("fleet")).toBe(
-      JSON.stringify({ bot: { instructionsVersion: "v2", instructions: "x".repeat(20_000) } }),
+      JSON.stringify({ bot: { instructionsVersion: "v2", instructions: "0".repeat(20_000) } }),
     );
     expect(skill.length).toBeGreaterThan(2500);
     expect(body("read")).toBe(skill);
@@ -354,11 +433,58 @@ describe("runtime context policy", () => {
       expect(body(id)).toBe(shellOutput);
     }
   });
+  it("does not cut the middle of an older MCP result that must stay whole", () => {
+    const { request, context } = fixture(2);
+    const link = "https://sessions.example.test/join/abc";
+    const mail = `${"header ".repeat(400)}${link}${" footer".repeat(400)}`;
+    const call = (id: string, name: string, args: Record<string, unknown> = {}) =>
+      ({
+        role: "assistant",
+        content: [{ type: "toolCall", id, name, arguments: args }],
+        timestamp: 101,
+      }) as unknown as Message;
+    const result = (id: string, name: string, body: string) =>
+      ({
+        role: "toolResult",
+        toolCallId: id,
+        toolName: name,
+        content: [{ type: "text", text: body }],
+        isError: false,
+        timestamp: 102,
+      }) as Message;
+    const shellOutput = "synthetic shell output ".repeat(3000);
+    context.messages.push(
+      call("mail", "mcp__mail__get_message"),
+      result("mail", "mcp__mail__get_message", mail),
+      call("shell-1", "shell"),
+      result("shell-1", "shell", shellOutput),
+      call("shell-2", "shell"),
+      result("shell-2", "shell", shellOutput),
+      call("shell-3", "shell"),
+      result("shell-3", "shell", shellOutput),
+      call("shell-4", "shell"),
+      result("shell-4", "shell", shellOutput),
+    );
+    const policy = createRuntimeContextPolicy({
+      ...request,
+      contextStrategy: DEFAULT_CONTEXT_STRATEGY,
+      verbatimMcpServers: { ids: ["srv_mail"], slugs: ["mail"] },
+    });
+    const prepared = policy.prepareContext(context, { ...model, contextWindow: 100_000 });
+    const text = (id: string) => {
+      const message = prepared.messages.find(
+        (message) => message.role === "toolResult" && message.toolCallId === id,
+      ) as Extract<Message, { role: "toolResult" }>;
+      return message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+    };
+    expect(text("mail")).toBe(mail);
+    expect(text("shell-1")).toContain("[Earlier result shortened after you read it");
+  });
   it.each([65_536, 10_000])(
     "retains individual parallel results within a %i budget",
     (contextWindow) => {
       const { request, context } = fixture(0);
-      const bodies = Array.from({ length: 4 }, (_, i) => `${i}: ${"evidence ".repeat(400)}`);
+      const bodies = Array.from({ length: 4 }, (_, i) => `${i}: ${"evidence ".repeat(1333)}`);
       context.messages.push({
         role: "assistant",
         content: bodies.slice(0, 3).map((_, i) => ({
@@ -563,6 +689,112 @@ describe("runtime context policy", () => {
     expect(first).toContain("read_history");
     expect(prepared.messages.at(-1)).toEqual(context.messages.at(-1));
     expect(policy.getDecision()!.estimatedInputTokens).toBeLessThan(32768);
+  });
+  it("shows who spoke in navigation snapshots of a group thread", () => {
+    const { request, context } = fixture();
+    // Replayed as the new history shapes: another bot as a labelled user turn, own reply as assistant.
+    request.history[10] = { ...request.history[10]!, role: "assistant", speaker: "Anya" };
+    request.history[11] = { ...request.history[11]!, role: "assistant" };
+    Object.assign(context.messages[10]!, {
+      content: `[Anya]: ${request.history[10]!.content}`,
+    });
+    context.messages[11] = {
+      role: "assistant",
+      content: [{ type: "text", text: request.history[11]!.content }],
+      cortexAiAgentHubHistory: true,
+      cortexAiAgentHubMessageId: "message-11",
+    } as unknown as Message;
+    const prepared = createRuntimeContextPolicy({
+      ...request,
+      contextStrategy: "snapshots",
+    }).prepareContext(context, model);
+    const catalog = String(prepared.messages[0]!.content);
+    expect(catalog).toContain("message message-10 at 2026-01-01T00:00:00Z; Anya]");
+    expect(catalog).toContain("message message-11 at 2026-01-01T00:00:00Z; assistant]");
+    expect(catalog).toContain("message message-12 at 2026-01-01T00:00:00Z; user]");
+  });
+  it("keeps a reply replayed with its tool calls whole at the edge of the recent window", () => {
+    const { request } = fixture(30);
+    // The eighth message from the end used tools, so it replays as several messages.
+    request.history[22] = {
+      ...request.history[22]!,
+      role: "assistant",
+      segments: [
+        {
+          steps: [
+            {
+              label: "Shell",
+              tool: "shell",
+              count: 3,
+              note: "Checking.",
+              calls: ["a", "b", "c"].map((name) => ({
+                arguments: JSON.stringify({ command: `test -f ${name}` }),
+                result: JSON.stringify({ stdout: "", stderr: "", code: 0 }),
+              })),
+              outcomes: { succeeded: 3 },
+            },
+          ],
+        },
+        { text: "All three checks passed." },
+      ],
+    };
+    const context: Context = {
+      systemPrompt: request.instructions,
+      tools: [],
+      messages: [
+        ...toHistory(request.history, "", undefined, OFFERED),
+        { role: "user", content: request.prompt, timestamp: 100 },
+      ],
+    };
+    const prepared = createRuntimeContextPolicy({
+      ...request,
+      contextStrategy: "snapshots",
+    }).prepareContext(context, model);
+    const reply = prepared.messages.filter(
+      (message) =>
+        (message as Message & { cortexAiAgentHubMessageId?: string }).cortexAiAgentHubMessageId ===
+        "message-22",
+    );
+    expect(reply.map((message) => message.role)).toEqual([
+      "assistant",
+      "toolResult",
+      "toolResult",
+      "toolResult",
+      "assistant",
+    ]);
+    // An earlier reply with tool calls is listed once in the catalogue, not once per message.
+    request.history[15] = { ...request.history[22]!, id: "message-15" };
+    const withOld = createRuntimeContextPolicy({
+      ...request,
+      contextStrategy: "snapshots",
+    }).prepareContext(
+      {
+        ...context,
+        messages: [
+          ...toHistory(request.history, "", undefined, OFFERED),
+          { role: "user", content: request.prompt, timestamp: 100 },
+        ],
+      },
+      model,
+    );
+    const catalog = String(withOld.messages[0]!.content);
+    expect(catalog.match(/\[message message-15 /g)).toHaveLength(1);
+  });
+  it("still matches a legacy checkpoint's replayed own reply to its stored message", () => {
+    const { request, context } = fixture(12);
+    request.history[3] = { ...request.history[3]!, role: "assistant" };
+    context.messages[3] = {
+      role: "user",
+      content: `Assistant: ${request.history[3]!.content}`,
+      timestamp: 0,
+      cortexAiAgentHubHistory: true,
+    } as Message;
+    const prepared = createRuntimeContextPolicy({
+      ...request,
+      contextStrategy: "snapshots",
+    }).prepareContext(context, { ...model, contextWindow: 8000 });
+    expect(String(prepared.messages[0]!.content)).toContain("message message-3 at");
+    expect(String(prepared.messages[0]!.content)).toContain("; assistant]");
   });
   it("uses fake-clock warmth from matching model requests, expiry only selects existing snapshots", () => {
     let now = 0;

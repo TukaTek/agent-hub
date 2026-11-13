@@ -1,12 +1,11 @@
 ---
 import Footer from "../components/Footer.astro";
 import Header from "../components/Header.astro";
-import { fetchGithubStars, formatStarCount } from "../github";
+import { githubStarsLabel } from "../github";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { CORTEXAI_CONTACT_URL, DOCS_URL, GITHUB_URL, SECURITY_URL } from "../site";
 
-const stars = await fetchGithubStars();
-const starsLabel = stars === null ? "Star" : formatStarCount(stars);
+const starsLabel = await githubStarsLabel();
 ---
 
 <BaseLayout title="Support · CortexAI Agent Hub" description="Get help with the CortexAI Agent Hub app and self-hosted CortexAI Agent Hub.">

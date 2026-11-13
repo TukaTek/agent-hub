@@ -9,11 +9,24 @@
  * app policy the way a srcdoc frame would; its own meta CSP governs it and its nested preview. */
 export const HTML_VIEWER_PATH = "/html-viewer.html";
 
+/** Static shell for MCP app cards; see `MCP_APP_SHELL_HTML` in core. Framed only by the app. */
+export const MCP_APP_VIEWER_PATH = "/mcp-app-viewer.html";
+
+/** Embedded computer screen and its local runtime assets. */
+export const COMPUTER_SCREEN_PATH = "/computer-screen/screen.html";
+export const COMPUTER_SCREEN_PREFIX = "/computer-screen/";
+export const COMPUTER_SCREEN_RUNTIME_PATH = "/computer-screen/sdk/ASP/container.html";
+
+/** Adapter-owned policies for the embedded page and its opaque nested runtime. */
+export interface EmbeddedComputerScreenPolicy {
+  screen: string;
+  runtime: string;
+}
+
 /** Same-origin endpoint browsers send violation reports to, so a blocked resource is not silent. */
 export const CSP_REPORT_PATH = "/api/csp-report";
 const CSP_REPORT_GROUP = "csp";
 
-/** The `Reporting-Endpoints` header that names the policy's `report-to` group. */
 export const CSP_REPORTING_ENDPOINTS = `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`;
 
 const APP_DIRECTIVES: Record<string, string[]> = {
@@ -48,6 +61,30 @@ function serialize(directives: Record<string, string[]>) {
 export interface ContentSecurityPolicyExtensions {
   scriptSrc?: readonly string[];
   connectSrc?: readonly string[];
+  /** Allows the Crisp chat widget the paywall loads when `CRISP_WEBSITE_ID` is set. */
+  crisp?: boolean;
+}
+
+// The required origins from Crisp's domain list; images already pass the https: img-src.
+const CRISP = "https://client.crisp.chat";
+const CRISP_DIRECTIVES: Record<string, string[]> = {
+  "script-src": [CRISP],
+  "connect-src": [CRISP, "https://storage.crisp.chat", "wss://client.relay.crisp.chat"],
+  "style-src": [CRISP],
+  "font-src": [CRISP],
+  "media-src": [CRISP],
+  // Its bot checks run in workers loaded from blob: URLs.
+  "worker-src": ["'self'", "blob:", CRISP],
+};
+
+const CRISP_WEBSITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `CRISP_WEBSITE_ID` is optional; a malformed one throws so the server refuses to start. */
+export function parseCrispWebsiteId(value: string | undefined): string | null {
+  const id = value?.trim();
+  if (!id) return null;
+  if (!CRISP_WEBSITE_ID.test(id)) throw new Error("CRISP_WEBSITE_ID must be a Crisp website ID");
+  return id.toLowerCase();
 }
 
 // An https origin with an optional port and no path. A wildcard covers subdomains of a base with at
@@ -80,11 +117,17 @@ export function parseContentSecuritySources(setting: string, value: string | und
 }
 
 export function appContentSecurityPolicy(extensions: ContentSecurityPolicyExtensions = {}) {
-  return serialize({
+  const directives: Record<string, string[]> = {
     ...APP_DIRECTIVES,
     "script-src": ["'self'", ...(extensions.scriptSrc ?? [])],
     "connect-src": ["'self'", ...(extensions.connectSrc ?? [])],
-  });
+  };
+  if (extensions.crisp) {
+    for (const [name, sources] of Object.entries(CRISP_DIRECTIVES)) {
+      directives[name] = [...new Set([...(directives[name] ?? []), ...sources])];
+    }
+  }
+  return serialize(directives);
 }
 
 export const APP_CONTENT_SECURITY_POLICY = appContentSecurityPolicy();
@@ -99,11 +142,18 @@ const PASSTHROUGH_PREFIXES = ["/api", "/rpc", "/novnc"];
 export function contentSecurityPolicyFor(
   pathname: string,
   appPolicy = APP_CONTENT_SECURITY_POLICY,
+  screenPolicy?: EmbeddedComputerScreenPolicy,
 ): string | null {
   if (
     PASSTHROUGH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
   )
     return null;
-  if (pathname === HTML_VIEWER_PATH) return HTML_VIEWER_CONTENT_SECURITY_POLICY;
+  if (pathname === HTML_VIEWER_PATH || pathname === MCP_APP_VIEWER_PATH)
+    return HTML_VIEWER_CONTENT_SECURITY_POLICY;
+  // The nested runtime has an opaque ancestor, which cannot match 'self'. Its sandbox
+  // policy still prevents access to the app even when visited directly.
+  if (screenPolicy && pathname === COMPUTER_SCREEN_RUNTIME_PATH) return screenPolicy.runtime;
+  if (pathname.startsWith(COMPUTER_SCREEN_PREFIX))
+    return screenPolicy?.screen ?? "default-src 'none'; sandbox; frame-ancestors 'self'";
   return appPolicy;
 }

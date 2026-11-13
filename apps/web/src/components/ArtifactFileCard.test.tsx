@@ -15,15 +15,15 @@ vi.mock("../lib/artifact-open", () => ({
   downloadArtifact: mocks.download,
   downloadArtifactBytes: vi.fn(),
 }));
-vi.mock("@lingui/core/macro", () => ({
-  t: (strings: TemplateStringsArray, ...values: unknown[]) =>
-    strings.reduce((text, part, index) => text + part + (values[index] ?? ""), ""),
-}));
 vi.mock("@lingui/react/macro", () => {
   const t = (strings: TemplateStringsArray, ...values: unknown[]) =>
     strings.reduce((text, part, index) => text + part + (values[index] ?? ""), "");
   return { useLingui: () => ({ t }), Trans: ({ children }: { children: ReactNode }) => children };
 });
+vi.mock("@lingui/core/macro", () => ({
+  t: (strings: TemplateStringsArray, ...values: unknown[]) =>
+    `«${strings.reduce((text, part, index) => text + part + (values[index] ?? ""), "")}»`,
+}));
 vi.mock("./PdfViewer", () => ({ PdfViewer: () => null }));
 vi.mock("@cortexai-agent-hub/chat-ui/web", () => ({ ChatMarkdown: () => null }));
 
@@ -229,7 +229,7 @@ it.each(DOWNLOAD_ONLY_TYPES)("renders %s as a download-only card", async (mimeTy
   );
   expect(container.querySelector("iframe, embed, object, audio")).toBeNull();
   expect(buttons).toHaveLength(1);
-  expect(buttons[0]?.textContent).toBe("report10 B");
+  expect(buttons[0]?.textContent).toBe("report«10 B»");
   await act(async () => buttons[0]?.click());
   expect(mocks.download).toHaveBeenCalledWith({ botId: "bot_1" }, "art_1", "report", mimeType);
 });
@@ -237,4 +237,50 @@ it.each(DOWNLOAD_ONLY_TYPES)("renders %s as a download-only card", async (mimeTy
 it("still previews PDFs", async () => {
   await act(async () => renderReport("application/pdf"));
   expect(container.querySelector('button[aria-label="Preview report"]')).not.toBeNull();
+});
+
+it("translates every size unit and rolls up instead of 1,024.0 KB or 1,536.0 MB", async () => {
+  await act(async () =>
+    root?.render(
+      <>
+        {[512, 1024, 1048575, 1610612736, 1.5 * 1024 ** 4].map((size) => (
+          <ArtifactFileCard
+            key={size}
+            target={{ botId: "b" }}
+            artifactId={`a${size}`}
+            name={`f${size}.zip`}
+            mimeType="application/zip"
+            size={size}
+          />
+        ))}
+      </>,
+    ),
+  );
+  const sizes = [...container.querySelectorAll("button div:last-child")].map(
+    (el) => el.textContent,
+  );
+  expect(sizes).toEqual(["«512 B»", "«1 KB»", "«1 MB»", "«1.5 GB»", "«1.5 TB»"]);
+});
+
+it("previews plain text in the app instead of only offering a download", async () => {
+  mocks.fetch.mockResolvedValue(new TextEncoder().encode("1. Confirm the pricing page copy."));
+  await act(async () =>
+    root?.render(
+      <ArtifactFileCard
+        target={{ botId: "bot-1" }}
+        artifactId="notes-1"
+        name="notes.txt"
+        mimeType="text/plain"
+        size={33}
+      />,
+    ),
+  );
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('button[aria-label="Preview notes.txt"]')?.click(),
+  );
+  await vi.waitFor(() =>
+    expect(document.body.querySelector("pre")?.textContent).toBe(
+      "1. Confirm the pricing page copy.",
+    ),
+  );
 });

@@ -1,12 +1,18 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, expectCardWidth, signup } from "./helpers";
+import {
+  captureScreenshot,
+  completeOnboarding,
+  expectCardWidth,
+  openBotPanelTab,
+  signup,
+} from "./helpers";
 
 test("teach a task records interaction and saves a draft", async ({ page }, testInfo) => {
   const stamp = Date.now();
   await signup(page, `teach-${stamp}@cortexai-agent-hub.test`, "password12", "Teach");
   await completeOnboarding(page);
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Computer");
   const sidePanel = page.getByTestId("side-panel");
   await expect(sidePanel).toHaveAttribute("data-panel", "computer");
   await expect(sidePanel.getByText("Teach a task")).toHaveCount(0);
@@ -15,32 +21,20 @@ test("teach a task records interaction and saves a draft", async ({ page }, test
   await expect(sidePanel.getByRole("button", { name: "Reset computer" })).toHaveCount(0);
   await expect(sidePanel.getByRole("button", { name: "Update computer" })).toHaveCount(0);
   await expect(sidePanel.getByRole("button", { name: "Take control" })).toHaveCount(0);
-  await expect(sidePanel.getByTestId("computer-more-button")).toHaveCount(0);
   await expect(sidePanel.getByTestId("computer-preview")).toBeVisible();
   await captureScreenshot(page, testInfo, "teach-sidepanel-simple");
 
-  const preview = sidePanel.getByTestId("computer-preview");
-  await preview.hover();
   const openButton = sidePanel.getByTestId("computer-preview-open");
-  await expect(openButton).toBeVisible();
-  await expect(openButton.getByText("Open", { exact: true })).toBeVisible();
-  await captureScreenshot(page, testInfo, "teach-sidepanel-open-hover");
+  await expect(openButton).toHaveText("Wake");
 
   await openButton.click();
   await expect(page.getByRole("button", { name: "Close computer" })).toBeVisible();
   const chrome = page.getByTestId("computer-chrome");
   await chrome.getByRole("button", { name: "Take control", exact: true }).click();
-  await expect(chrome.getByText("You have control", { exact: true })).toBeVisible();
-  await expect(chrome.getByRole("button", { name: "Release control", exact: true })).toBeVisible();
+  await expect(
+    chrome.getByRole("button", { name: "Hand back control", exact: true }),
+  ).toBeVisible();
   await expect(chrome.getByTestId("teach-start-button")).toBeVisible();
-  const more = chrome.getByTestId("computer-more-button");
-  if (await more.isVisible().catch(() => false)) {
-    await more.click();
-    await expect(page.getByTestId("computer-more-menu")).toBeVisible();
-    // Close via the More control again (Escape must not close the computer overlay).
-    await more.click();
-    await expect(page.getByTestId("computer-more-menu")).toHaveCount(0);
-  }
   await captureScreenshot(page, testInfo, "teach-computer-chrome");
 
   const teachStart = chrome.getByTestId("teach-start-button");
@@ -67,4 +61,45 @@ test("teach a task records interaction and saves a draft", async ({ page }, test
   await expect(
     page.getByTestId("skill-draft-card").getByRole("button", { name: "Saved" }),
   ).toBeVisible({ timeout: 10_000 });
+
+  // Each card labels its own fields.
+  const nameId = await draftCard.getByRole("textbox", { name: "Name" }).getAttribute("id");
+  expect(nameId).not.toBe("skill-draft-name");
+  await expect(draftCard.getByText("Name", { exact: true })).toHaveAttribute("for", nameId ?? "");
+
+  // Any edit after saving is unsaved until saved again.
+  const save = draftCard.getByRole("button", { name: "Save", exact: true });
+  const saved = draftCard.getByRole("button", { name: "Saved", exact: true });
+  await draftCard.getByLabel("Steps").fill("Open the CRM\nExport the weekly list");
+  await expect(save).toBeVisible();
+  await save.click();
+  await expect(saved).toBeVisible();
+  await draftCard.getByLabel("Name").fill("Weekly CRM export");
+  await expect(save).toBeVisible();
+
+  // Failed writes say so, and a successful retry clears the error.
+  await page.route("**/rpc/skills/updateDraft", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        json: {
+          defined: false,
+          code: "INTERNAL_SERVER_ERROR",
+          status: 500,
+          message: "INTERNAL_SERVER_ERROR",
+        },
+      }),
+    }),
+  );
+  await save.click();
+  await expect(draftCard.getByText("Could not save skill")).toBeVisible();
+  await captureScreenshot(page, testInfo, "teach-skill-draft-save-failed");
+  await draftCard.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(draftCard.getByText("Something went wrong. Try again.")).toBeVisible();
+  await page.unroute("**/rpc/skills/updateDraft");
+  // Testing a saved skill writes the edit too, so the card reads Saved again.
+  await draftCard.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(saved).toBeVisible();
+  await expect(draftCard.getByText("Something went wrong. Try again.")).toHaveCount(0);
 });

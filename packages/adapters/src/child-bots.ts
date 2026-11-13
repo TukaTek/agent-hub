@@ -1,13 +1,18 @@
-import { lstat, realpath, rm, unlink } from "node:fs/promises";
-import path from "node:path";
 import type {
   AdapterContext,
   AgentHomeStore,
   ArtifactStore,
+  ComputerRef,
   JobPublisher,
   SandboxProvider,
+  SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
-import { routineJobKey, runContinueJob, runJobKey } from "@cortexai-agent-hub/adapter-kit";
+import {
+  isSandboxProviderOutage,
+  routineJobKey,
+  runContinueJob,
+  runJobKey,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { Actor, Bot, ComputerMode } from "@cortexai-agent-hub/contracts";
 import {
   BOT_DESCRIPTION_MAX_LENGTH,
@@ -15,16 +20,20 @@ import {
   GROUP_MEMBER_MIN,
 } from "@cortexai-agent-hub/contracts";
 import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
-
+import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import {
   cancelRunsInTransaction,
-  clearRunTurnCheckpoints,
+  clearEndedRunState,
   computerScopeKey,
   createRepos,
   createThreadMessageInTransaction,
+  deletePageShareSecrets,
+  draftRecordingsOfLeaseInTransaction,
   expireComputerExecutionLeases,
-  type Prisma,
-  type PrismaClient,
+  legacyTeamHomeKey,
+  recordComputerRunEnd,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
+  teamComputerUserId,
   withTransactionRetry,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -32,14 +41,18 @@ import { BrowserStoppedReleaseError } from "./computer-screens.js";
 
 import { toComputerRef } from "./computer-support.js";
 import {
-  checkpointAndRecordComputerWorkspace,
+  checkpointAndStopComputer,
   isTeamBotFolderName,
   removeComputerWorkspaceDirectories,
   teamBrowserProfileName,
   withCleanupDeadline,
 } from "./computer-workspace.js";
-import { resolveAgentHomePath } from "./home.js";
+import { purgeClearedConversationMemory } from "./conversation-memory-cleanup.js";
+import { removeAgentHome, removeAgentHomeFolders } from "./home.js";
+import type { MemoryProviderResolver } from "./memory-provider-factory.js";
+import { forgetPageShareSecrets } from "./page-share-secrets.js";
 import { removePiBotSessions } from "./pi-session.js";
+import { isSandboxGoneError } from "./sandbox-errors.js";
 
 export function confirmSpawnedBotName(confirmName: string, botName: string) {
   if (confirmName !== botName) {
@@ -66,7 +79,6 @@ export async function spawnBot(
     runId: string;
     spawnKey: string;
     name: string;
-    title?: string;
     description?: string;
     instructions?: string;
     prompt?: string;
@@ -83,11 +95,10 @@ export async function spawnBot(
     isDeploymentOwner: false,
   };
   let duplicate = false;
-  let created: Pick<Bot, "id" | "name" | "title" | "threadId">;
+  let created: Pick<Bot, "id" | "name" | "threadId">;
   try {
     created = await createRepos(deps.prisma).createBot(actor, {
       name,
-      title: (input.title ?? "").trim(),
       description: (input.description ?? "").trim().slice(0, BOT_DESCRIPTION_MAX_LENGTH),
       instructions: (input.instructions ?? "").trim().slice(0, BOT_INSTRUCTIONS_MAX_LENGTH),
       notifyOnFinish: true,
@@ -117,7 +128,6 @@ export async function spawnBot(
     created = {
       id: existing.id,
       name: existing.name,
-      title: existing.title,
       threadId: existing.thread.id,
     };
   }
@@ -143,7 +153,6 @@ export async function spawnBot(
     ...(duplicate ? { duplicate: true as const } : {}),
     botId: created.id,
     name: created.name,
-    title: created.title,
     threadId: created.threadId,
   };
 }
@@ -214,7 +223,13 @@ type BotLifecycleDeps = {
   home: AgentHomeStore;
   jobs: JobPublisher;
   dataDir?: string;
+  memoryProviders?: MemoryProviderResolver;
   artifacts?: ArtifactStore;
+  /** Removes deleted page links' sealed tokens from a remote secret store. */
+  secretStore?: Pick<SecretStore, "delete">;
+  messagingInstallations?: {
+    removeForBot(bot: { id: string; spaceId: string; userId: string }): Promise<void>;
+  };
 };
 
 type LifecycleBot = {
@@ -227,21 +242,17 @@ type LifecycleBot = {
   webhookSecretId?: string | null;
 };
 
-/** Management stays within the current user's space, regardless of who created the bot. */
-export function managedBotsWhere(caller: {
-  userId: string;
-  spaceId: string;
-}): Prisma.BotWhereInput {
-  return { userId: caller.userId, spaceId: caller.spaceId };
+/** Management stays within the current space, whichever member created the bot. */
+export function managedBotsWhere(caller: { spaceId: string }): Prisma.BotWhereInput {
+  return { spaceId: caller.spaceId };
 }
 
-/** Creation provenance for the roster metadata; this does not grant management permissions. */
-export function createdByWhere(caller: {
-  botId: string;
-  userId: string;
-  spaceId: string;
-}): Prisma.BotWhereInput {
-  return { parentBotId: caller.botId, userId: caller.userId, spaceId: caller.spaceId };
+/**
+ * Creation provenance for the roster metadata, whichever member's run spawned the bot; this
+ * does not grant management permissions.
+ */
+export function createdByWhere(caller: { botId: string; spaceId: string }): Prisma.BotWhereInput {
+  return { parentBotId: caller.botId, spaceId: caller.spaceId };
 }
 
 export async function archiveSpawnedBot(
@@ -310,39 +321,38 @@ export async function archiveBot(
     }),
     deps.prisma.run.findMany({
       where: { botId: bot.id, status: { in: [...ACTIVE_RUN_STATUSES] } },
-      select: { id: true },
+      select: { id: true, taskId: true, userId: true, spaceId: true },
     }),
     deps.prisma.routine.findMany({
       where: { botId: bot.id, active: true },
       select: { id: true },
     }),
   ]);
-  const runIds = activeRuns.map((run) => run.id);
   const now = new Date();
-  await deps.prisma.$transaction(async (tx) => {
-    await tx.run.updateMany({
-      where: { id: { in: runIds } },
-      data: { status: "cancelled", completedAt: now },
-    });
-    await clearRunTurnCheckpoints(tx, runIds);
-    await tx.task.updateMany({
-      where: { runs: { some: { id: { in: runIds } } } },
-      data: { status: "cancelled" },
-    });
+  const cancelledRuns = await deps.prisma.$transaction(async (tx) => {
+    const cancelled = await cancelRunsInTransaction(tx, activeRuns, now);
     await tx.routine.updateMany({
       where: { botId: bot.id },
       data: { active: false, nextRunAt: null },
     });
     await expireComputerExecutionLeases(tx, { botId: bot.id });
+    // Archiving ends a person's control of the bot's screen, and the recording made under it.
+    const held = await tx.computer.findMany({
+      where: { controlBotId: bot.id, controlLeaseId: { not: null } },
+      select: { spaceId: true, controlLeaseId: true },
+    });
     await tx.computer.updateMany({
       where: {
         OR: [{ controlBotId: bot.id }, { executionBotId: bot.id }],
       },
       data: releasedComputerLease(),
     });
+    for (const { spaceId, controlLeaseId } of held) {
+      await draftRecordingsOfLeaseInTransaction(tx, { spaceId, leaseId: controlLeaseId! });
+    }
     if (dedicated) {
       await tx.computer.updateMany({
-        where: { id: dedicated.id, state: { not: "running" } },
+        where: { id: dedicated.id, state: { notIn: ["running", "quarantined"] } },
         data: { state: "stopped" },
       });
     }
@@ -350,9 +360,10 @@ export async function archiveBot(
       where: { id: bot.id },
       data: { archivedAt: bot.archivedAt ?? now, pinned: false },
     });
+    return cancelled;
   });
   await Promise.allSettled([
-    ...activeRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
+    ...cancelledRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
     ...activeRoutines.map((routine) => deps.jobs.cancel(routineJobKey(routine.id))),
   ]);
   await releaseTeamComputerScreen(deps, bot, dedicated?.id, context);
@@ -361,8 +372,7 @@ export async function archiveBot(
     : null;
   if (currentDedicated?.providerRef && currentDedicated.state === "running") {
     const ref = toComputerRef(currentDedicated);
-    await checkpointAndRecordComputerWorkspace(deps, currentDedicated, ref, context);
-    await deps.sandbox.stop(ref, context);
+    await checkpointAndStopComputer(deps, currentDedicated, ref, context);
     await deps.prisma.computer.updateMany({
       where: {
         id: currentDedicated.id,
@@ -371,6 +381,7 @@ export async function archiveBot(
       },
       data: { state: "stopped" },
     });
+    await recordComputerRunEnd(deps.prisma, currentDedicated, "stopped");
   }
 }
 
@@ -378,8 +389,14 @@ export async function destroyBot(
   deps: BotLifecycleDeps,
   bot: LifecycleBot,
   context: AdapterContext,
-  options: { deleteMemories: boolean },
+  options: {
+    deleteMemories: boolean;
+    /** Fail before deleting anything when the provider cannot confirm the sandbox is gone,
+     * so the computer row keeps its handle for a retry. */
+    strictTeardown?: boolean;
+  },
 ) {
+  await deps.messagingInstallations?.removeForBot(bot);
   const [dedicated, activeRuns, routines] = await Promise.all([
     deps.prisma.computer.findUnique({
       where: {
@@ -402,7 +419,7 @@ export async function destroyBot(
     where: { id: { in: runIds } },
     data: { status: "cancelled", completedAt: new Date() },
   });
-  await clearRunTurnCheckpoints(deps.prisma, runIds);
+  await clearEndedRunState(deps.prisma, runIds);
   await Promise.allSettled([
     ...activeRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
     ...routines.map((routine) => deps.jobs.cancel(routineJobKey(routine.id))),
@@ -411,10 +428,12 @@ export async function destroyBot(
     cancelRunWork: true,
   });
   if (dedicated?.providerRef) {
-    await deps.sandbox.destroy(toComputerRef(dedicated), context).catch(() => undefined);
+    const destroyed = deps.sandbox.destroy(toComputerRef(dedicated), context);
+    await (options.strictTeardown ? destroyed : destroyed.catch(() => undefined));
   }
   // Keep the bot deletion transaction from committing if raw transcript cleanup fails.
   await removePiBotSessions(deps.dataDir, bot.userId, bot.id);
+  // Deleting the bot deletes its thread, so this waits out snapshot reads holding that row.
   const deletion = await withTransactionRetry(() =>
     deps.prisma.$transaction(async (tx) => {
       const locked = await tx.$queryRaw<Array<{ id: string; webhookSecretId: string | null }>>`
@@ -423,7 +442,19 @@ export async function destroyBot(
         WHERE id = ${bot.id} AND "spaceId" = ${bot.spaceId}
         FOR UPDATE
       `;
+      // A concurrent removal of the same bot committed while this one waited for the lock;
+      // it owns the deletion and the cleanup that follows.
+      if (locked.length === 0) return null;
       const webhookSecretId = locked[0]?.webhookSecretId ?? bot.webhookSecretId ?? null;
+      const { deleteMemories } = options;
+      // The thread cascades with the bot; retain its namespace only when deletion was requested.
+      const directMemory =
+        deleteMemories && deps.memoryProviders
+          ? await tx.thread.findUnique({
+              where: { botId: bot.id },
+              select: { id: true, historyCompactionGeneration: true },
+            })
+          : null;
       const botArtifacts = await tx.artifact.findMany({
         where: { botId: bot.id, groupId: null, spaceId: bot.spaceId },
         select: { storageKey: true },
@@ -431,7 +462,21 @@ export async function destroyBot(
       await tx.artifact.deleteMany({
         where: { botId: bot.id, groupId: null, spaceId: bot.spaceId },
       });
+      // Like its files, the bot's own pages and their links go with it; group pages stay.
+      const botPages = { botId: bot.id, groupId: null, spaceId: bot.spaceId };
+      const pageShareSecrets = await deletePageShareSecrets(tx, botPages);
+      await tx.page.deleteMany({ where: botPages });
       const groupCleanup = await detachBotFromGroups(tx, bot.id);
+      // Membership can have ended earlier; recorded runs still name every surviving group
+      // whose learned sessions belong to this bot, until the bot's cascade removes those runs.
+      const groupMemberMemory =
+        deleteMemories && deps.memoryProviders
+          ? await tx.run.findMany({
+              where: { botId: bot.id, thread: { groupId: { not: null } } },
+              distinct: ["threadId"],
+              select: { thread: { select: { id: true, historyCompactionGeneration: true } } },
+            })
+          : [];
       await tx.computerExecutionLease.deleteMany({ where: { botId: bot.id } });
       await tx.computer.updateMany({
         where: {
@@ -440,7 +485,7 @@ export async function destroyBot(
         },
         data: releasedComputerLease(),
       });
-      if (!options.deleteMemories) {
+      if (!deleteMemories) {
         const directory = archivedMemoryDirectory(bot.name, bot.id);
         await tx.$executeRaw`
           UPDATE "memory_documents"
@@ -457,7 +502,7 @@ export async function destroyBot(
           spaceId: bot.spaceId,
           name: bot.name,
           deletedByUserId: context.userId,
-          memoriesPreserved: !options.deleteMemories,
+          memoriesPreserved: !deleteMemories,
         },
       });
       await tx.bot.delete({ where: { id: bot.id } });
@@ -472,10 +517,15 @@ export async function destroyBot(
           ...botArtifacts.map((artifact) => artifact.storageKey),
           ...groupCleanup.artifactKeys,
         ],
+        directMemory,
+        groupMemberMemory: groupMemberMemory.map((run) => run.thread),
+        groupMemory: groupCleanup.memory,
         cancelledGroupRuns: groupCleanup.cancelledRuns,
+        pageShareSecrets: [...pageShareSecrets, ...groupCleanup.pageShareSecrets],
       };
-    }),
+    }, THREAD_LOCK_TRANSACTION_OPTIONS),
   );
+  if (!deletion) return;
   await Promise.allSettled(
     deletion.cancelledGroupRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
   );
@@ -499,11 +549,48 @@ export async function destroyBot(
         .catch(() => undefined);
     }),
   );
+  if (deps.memoryProviders) {
+    const memory = { prisma: deps.prisma, memoryProviders: deps.memoryProviders, jobs: deps.jobs };
+    await Promise.all(
+      deletion.groupMemory.map((group) =>
+        purgeClearedConversationMemory(
+          memory,
+          context,
+          {
+            kind: "group",
+            threadId: group.threadId,
+            memberBotIds: group.botIds,
+          },
+          group.generation,
+        ).catch((error) => getLogger().error("dissolved group memory cleanup", error)),
+      ),
+    );
+    await Promise.all(
+      deletion.groupMemberMemory.map((thread) =>
+        purgeClearedConversationMemory(
+          memory,
+          context,
+          {
+            kind: "group-member",
+            botId: bot.id,
+            threadId: thread.id,
+          },
+          thread.historyCompactionGeneration,
+        ).catch((error) => getLogger().error("deleted bot group memory cleanup", error)),
+      ),
+    );
+    if (deletion.directMemory) {
+      await purgeClearedConversationMemory(
+        memory,
+        context,
+        { kind: "bot", botId: bot.id, threadId: deletion.directMemory.id },
+        deletion.directMemory.historyCompactionGeneration,
+      ).catch((error) => getLogger().error("deleted bot conversation memory cleanup", error));
+    }
+  }
   if (dedicated) {
-    await rm(resolveAgentHomePath(deps.home, dedicated.homeKey, deps.dataDir ?? "./data"), {
-      recursive: true,
-      force: true,
-    }).catch(() => undefined);
+    await recordComputerRunEnd(deps.prisma, { id: dedicated.id }, "deleted");
+    await removeAgentHome(deps.home, dedicated.homeKey, deps.dataDir).catch(() => undefined);
   }
   await removeTeamBrowserProfile(deps, bot.id, sharedComputer, context);
   await removeTeamBotWorkspace(deps, bot, context).catch((error) => {
@@ -513,6 +600,44 @@ export async function destroyBot(
   if (artifactStore) {
     await removeStoredArtifacts(artifactStore, deletion.artifactKeys, context);
   }
+  if (deps.secretStore) await forgetPageShareSecrets(deps.secretStore, deletion.pageShareSecrets);
+}
+
+type DissolvableGroup = {
+  members: ReadonlyArray<{ botId: string; bot: { archivedAt: Date | null } }>;
+};
+
+/**
+ * Groups left with fewer than two active bots once `botId` is gone.
+ * Removal and its preview both decide here, so the warning names what the delete removes.
+ */
+function groupsDissolvedByRemovingBot<T extends DissolvableGroup>(
+  groups: readonly T[],
+  botId: string,
+): T[] {
+  return groups.filter((group) => {
+    const activeMembersAfterDeletion = group.members.filter(
+      (member) => member.botId !== botId && member.bot.archivedAt === null,
+    ).length;
+    return activeMembersAfterDeletion < GROUP_MEMBER_MIN;
+  });
+}
+
+/** The groups `destroyBot` dissolves for this bot, as `{ id, name }`. Read-only. */
+export async function groupsRemovedByDeletingBot(prisma: PrismaClient, botId: string) {
+  const groups = await prisma.chatGroup.findMany({
+    where: { members: { some: { botId } } },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      members: { select: { botId: true, bot: { select: { archivedAt: true } } } },
+    },
+  });
+  return groupsDissolvedByRemovingBot(groups, botId).map((group) => ({
+    id: group.id,
+    name: group.name,
+  }));
 }
 
 async function detachBotFromGroups(tx: Prisma.TransactionClient, botId: string) {
@@ -530,22 +655,44 @@ async function detachBotFromGroups(tx: Prisma.TransactionClient, botId: string) 
       members: {
         select: { botId: true, bot: { select: { archivedAt: true } } },
       },
-      thread: { select: { id: true } },
+      thread: { select: { id: true, historyCompactionGeneration: true } },
     },
   });
-  const dissolvedGroupIds: string[] = [];
-  for (const group of affectedGroups) {
-    const activeMembersAfterDeletion = group.members.filter(
-      (member) => member.botId !== botId && member.bot.archivedAt === null,
-    ).length;
-    if (activeMembersAfterDeletion < GROUP_MEMBER_MIN) {
-      dissolvedGroupIds.push(group.id);
-    }
-  }
+  const dissolvedGroupIds = groupsDissolvedByRemovingBot(affectedGroups, botId).map(
+    (group) => group.id,
+  );
   const dissolvedGroupIdSet = new Set(dissolvedGroupIds);
   const dissolvedThreadIds = affectedGroups
     .filter((group) => dissolvedGroupIdSet.has(group.id))
     .flatMap((group) => (group.thread ? [group.thread.id] : []));
+  // Capture all learners before the group cascades away, including bots no longer in it.
+  const learners = dissolvedThreadIds.length
+    ? await tx.run.findMany({
+        where: { threadId: { in: dissolvedThreadIds } },
+        distinct: ["threadId", "botId"],
+        select: { threadId: true, botId: true },
+      })
+    : [];
+  const memory = affectedGroups
+    .filter((group) => dissolvedGroupIdSet.has(group.id))
+    .flatMap((group) =>
+      group.thread
+        ? [
+            {
+              threadId: group.thread.id,
+              generation: group.thread.historyCompactionGeneration,
+              botIds: [
+                ...new Set([
+                  ...group.members.map((member) => member.botId),
+                  ...learners
+                    .filter((run) => run.threadId === group.thread!.id)
+                    .map((run) => run.botId),
+                ]),
+              ],
+            },
+          ]
+        : [],
+    );
   const activeRuns = dissolvedThreadIds.length
     ? await tx.run.findMany({
         where: {
@@ -555,6 +702,8 @@ async function detachBotFromGroups(tx: Prisma.TransactionClient, botId: string) 
         select: {
           id: true,
           taskId: true,
+          userId: true,
+          spaceId: true,
           botId: true,
           bot: {
             select: {
@@ -564,10 +713,9 @@ async function detachBotFromGroups(tx: Prisma.TransactionClient, botId: string) 
         },
       })
     : [];
-  if (activeRuns.length) {
-    const now = new Date();
-    const runIds = activeRuns.map((run) => run.id);
-    await cancelRunsInTransaction(tx, activeRuns, now);
+  const cancelledRuns = await cancelRunsInTransaction(tx, activeRuns, new Date());
+  if (cancelledRuns.length) {
+    const runIds = cancelledRuns.map((run) => run.id);
     await expireComputerExecutionLeases(tx, { runId: { in: runIds } });
     await tx.computer.updateMany({
       where: { executionRunId: { in: runIds } },
@@ -587,12 +735,17 @@ async function detachBotFromGroups(tx: Prisma.TransactionClient, botId: string) 
         select: { storageKey: true },
       })
     : [];
+  const pageShareSecrets = dissolvedGroupIds.length
+    ? await deletePageShareSecrets(tx, { groupId: { in: dissolvedGroupIds } })
+    : [];
   if (dissolvedGroupIds.length) {
     await tx.chatGroup.deleteMany({ where: { id: { in: dissolvedGroupIds } } });
   }
   return {
+    memory,
     artifactKeys: groupArtifacts.map((artifact) => artifact.storageKey),
-    cancelledRuns: activeRuns.map((run) => ({
+    pageShareSecrets,
+    cancelledRuns: cancelledRuns.map((run) => ({
       id: run.id,
       botId: run.botId,
       computer: run.bot.computer,
@@ -623,9 +776,9 @@ function releasedComputerLease() {
   return {
     controlHolder: "none" as const,
     controlLeaseId: null,
+    controlUserId: null,
     controlLeaseExpiresAt: null,
     controlBotId: null,
-    controlRunId: null,
     executionRunId: null,
     executionBotId: null,
     executionLeaseExpiresAt: null,
@@ -655,7 +808,10 @@ async function releaseTeamComputerScreen(
       ...(options?.cancelRunWork ? { cancelRunWork: true } : {}),
     });
   } catch (error) {
-    getLogger().error("team screen release", error);
+    // No browser runs on a sandbox that is gone, so only its stored profile is left to remove.
+    if (isSandboxGoneError(error)) return { ...computer, providerRef: null };
+    if (isSandboxProviderOutage(error)) getLogger().warn("team screen release", { error });
+    else getLogger().error("team screen release", error);
     if (error instanceof BrowserStoppedReleaseError) return computer;
     return null;
   }
@@ -673,7 +829,26 @@ async function sharedTeamComputer(
   return computer;
 }
 
-const REMOTE_TEAM_SANDBOX_KINDS = new Set(["e2b", "daytona", "boat", "createos"]);
+const REMOTE_TEAM_SANDBOX_KINDS = new Set([
+  "e2b",
+  "novita",
+  "instabox",
+  "daytona",
+  "boat",
+  "createos",
+  "kubernetes",
+  "incus",
+  "local-vm",
+]);
+
+/**
+ * Whether only the server writes this computer's stored home. A Kubernetes computer that
+ * mounts the server's home directory writes it itself, like a Docker computer.
+ */
+function serverOwnsTeamHome(sandbox: SandboxProvider, kind: string) {
+  if (!REMOTE_TEAM_SANDBOX_KINDS.has(kind)) return false;
+  return !(kind === "kubernetes" && sandbox.describe().capabilities.persistentHome);
+}
 // The bot is already deleted; whatever this misses is removed when the computer next boots.
 const LIVE_CLEANUP_BUDGET_MS = 10_000;
 
@@ -698,22 +873,61 @@ async function removeTeamBrowserProfile(
   // the server. See removeTeamBotWorkspace.
   if (computer.providerRef && deps.sandbox.releaseScreen && computer.state === "running") {
     await withCleanupDeadline(profileContext, LIVE_CLEANUP_BUDGET_MS, (cleanupContext) =>
-      removeComputerWorkspaceDirectories(
-        deps.sandbox,
-        toComputerRef(computer),
-        ".browser-profiles",
-        [name],
-        cleanupContext,
-      ),
+      removeProfileOnceClosed(deps.sandbox, toComputerRef(computer), name, cleanupContext),
     ).catch((error) => {
+      // Chromium's helpers can hold the profile's databases open briefly after the stop.
+      if (isBusyError(error)) {
+        getLogger().warn("team browser profile still open; removed on next boot");
+        return;
+      }
       getLogger().error("team browser profile cleanup", error);
     });
   }
-  if (!REMOTE_TEAM_SANDBOX_KINDS.has(computer.kind)) return;
-  const homeDir = resolveAgentHomePath(deps.home, computer.homeKey, deps.dataDir ?? "./data");
-  await removeContainedDirectory(homeDir, ".browser-profiles", name).catch((error) => {
+  if (!serverOwnsTeamHome(deps.sandbox, computer.kind)) return;
+  await removeAgentHomeFolders(
+    deps.home,
+    computer.homeKey,
+    ".browser-profiles",
+    [name],
+    deps.dataDir,
+  ).catch((error) => {
     getLogger().error("team browser profile cleanup", error);
   });
+}
+
+const PROFILE_BUSY_ATTEMPTS = 3;
+const PROFILE_BUSY_RETRY_MS = 1_000;
+
+function isBusyError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return (
+    (error as NodeJS.ErrnoException).code === "EBUSY" ||
+    error.message.includes("Device or resource busy")
+  );
+}
+
+async function removeProfileOnceClosed(
+  sandbox: SandboxProvider,
+  computer: ComputerRef,
+  name: string,
+  context: AdapterContext,
+) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await removeComputerWorkspaceDirectories(
+        sandbox,
+        computer,
+        ".browser-profiles",
+        [name],
+        context,
+      );
+      return;
+    } catch (error) {
+      if (!isBusyError(error) || attempt >= PROFILE_BUSY_ATTEMPTS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, PROFILE_BUSY_RETRY_MS));
+      context.signal.throwIfAborted();
+    }
+  }
 }
 
 /** A Team Computer that is not running removes the folder when it next boots. */
@@ -723,72 +937,88 @@ async function removeTeamBotWorkspace(
   context: AdapterContext,
 ) {
   if (!isTeamBotFolderName(bot.id)) return;
-  // Look the owner's Team Computer up by scope: a bot moved to its own computer can still have
-  // a folder there. Any other team computer in the space drops it on boot (botDeletion).
-  const computer = await deps.prisma.computer.findUnique({
-    where: {
-      scopeKey: computerScopeKey({ mode: "team", spaceId: bot.spaceId, userId: bot.userId }),
-    },
+  // Look the Space's Team Computer up by scope: a bot moved to its own computer can still have
+  // a folder there. The space's Team Computer from before each person got their own still holds
+  // the folders and browser profiles of every member's bots from then. Any other team computer
+  // in the space drops them on boot (botDeletion).
+  const teamUserId = await teamComputerUserId(deps.prisma, bot);
+  const [own, legacy] = await Promise.all([
+    deps.prisma.computer.findUnique({
+      where: {
+        scopeKey: computerScopeKey({ mode: "team", spaceId: bot.spaceId, userId: teamUserId }),
+      },
+    }),
+    deps.prisma.computer.findUnique({ where: { homeKey: legacyTeamHomeKey(bot.spaceId) } }),
+  ]);
+  const profile = teamBrowserProfileName(bot.id);
+  if (own) await removeBotFolders(deps, bot.id, own, [["bots", bot.id]], context);
+  if (legacy && legacy.id !== own?.id && legacy.scope === "team") {
+    await removeBotFolders(
+      deps,
+      bot.id,
+      legacy,
+      [["bots", bot.id], ...(profile ? [[".browser-profiles", profile] as const] : [])],
+      context,
+    );
+  }
+}
+
+/**
+ * Remove deleted bots' folders and browser profiles from the stored home of the space's Team
+ * Computer from before each person got their own. Throws when the stored copy could not be
+ * saved; bot_deletions keeps the ids, so the caller can retry.
+ */
+export async function removeDeletedBotsFromLegacyTeamHome(
+  deps: Pick<BotLifecycleDeps, "prisma" | "home" | "sandbox" | "dataDir">,
+  spaceId: string,
+  botIds: readonly string[],
+) {
+  const legacy = await deps.prisma.computer.findUnique({
+    where: { homeKey: legacyTeamHomeKey(spaceId) },
   });
-  if (!computer) return;
+  // Only a remote provider's stored copy is written by the server alone; see removeBotFolders.
+  if (legacy?.scope !== "team" || !serverOwnsTeamHome(deps.sandbox, legacy.kind)) return;
+  const folders = botIds.filter(isTeamBotFolderName);
+  const profiles = botIds.flatMap((id) => teamBrowserProfileName(id) ?? []);
+  if (folders.length)
+    await removeAgentHomeFolders(deps.home, legacy.homeKey, "bots", folders, deps.dataDir);
+  if (profiles.length)
+    await removeAgentHomeFolders(
+      deps.home,
+      legacy.homeKey,
+      ".browser-profiles",
+      profiles,
+      deps.dataDir,
+    );
+}
+
+async function removeBotFolders(
+  deps: BotLifecycleDeps,
+  botId: string,
+  computer: { homeKey: string; kind: string; providerRef: string | null; state: string },
+  folders: ReadonlyArray<readonly [".browser-profiles" | "bots", string]>,
+  context: AdapterContext,
+) {
   // Remote providers keep a stored copy that only the server writes, and replacement computers
   // restore from it. Any other home may be mounted by a running computer, where a bot could
   // swap bots/ for a symlink between the checks and rm, so it is only cleaned inside the computer.
-  if (REMOTE_TEAM_SANDBOX_KINDS.has(computer.kind)) {
-    const homeDir = resolveAgentHomePath(deps.home, computer.homeKey, deps.dataDir ?? "./data");
-    await removeContainedDirectory(homeDir, "bots", bot.id).catch((error) => {
-      getLogger().error("team bot folder cleanup", error);
-    });
+  if (serverOwnsTeamHome(deps.sandbox, computer.kind)) {
+    for (const [parent, name] of folders) {
+      await removeAgentHomeFolders(deps.home, computer.homeKey, parent, [name], deps.dataDir).catch(
+        (error) => {
+          getLogger().error("team bot folder cleanup", error);
+        },
+      );
+    }
   }
   if (computer.state !== "running" || !computer.providerRef) return;
-  const folderContext = { ...context, botId: bot.id, screenLeaseId: undefined };
-  await withCleanupDeadline(folderContext, LIVE_CLEANUP_BUDGET_MS, (cleanupContext) =>
-    removeComputerWorkspaceDirectories(
-      deps.sandbox,
-      toComputerRef(computer),
-      "bots",
-      [bot.id],
-      cleanupContext,
-    ),
-  ).catch((error) => {
+  const folderContext = { ...context, botId, screenLeaseId: undefined };
+  const ref = toComputerRef(computer);
+  await withCleanupDeadline(folderContext, LIVE_CLEANUP_BUDGET_MS, async (cleanupContext) => {
+    for (const [parent, name] of folders) {
+      await removeComputerWorkspaceDirectories(deps.sandbox, ref, parent, [name], cleanupContext);
+    }
+  }).catch((error) => {
     getLogger().error("team bot folder cleanup", error);
   });
-}
-
-/** Delete one folder in the team home. A symlinked parent is refused; a final symlink is unlinked. */
-async function removeContainedDirectory(root: string, parent: string, name: string) {
-  const target = path.join(root, parent, name);
-  const info = await lstat(target).catch((error: unknown) => {
-    if (isMissing(error)) return null;
-    throw error;
-  });
-  if (!info) return;
-  const parentInfo = await lstat(path.dirname(target)).catch((error: unknown) => {
-    if (isMissing(error)) return null;
-    throw error;
-  });
-  if (!parentInfo || parentInfo.isSymbolicLink() || !parentInfo.isDirectory()) {
-    throw new Error("folder escapes the team home");
-  }
-  if (info.isSymbolicLink()) {
-    await unlink(target);
-    return;
-  }
-  const resolvedRoot = await realpath(root);
-  const resolvedTarget = await realpath(target);
-  const relative = path.relative(resolvedRoot, resolvedTarget);
-  if (
-    path.dirname(resolvedTarget) !== path.join(resolvedRoot, parent) ||
-    path.basename(resolvedTarget) !== name ||
-    relative === "" ||
-    relative.startsWith("..") ||
-    path.isAbsolute(relative)
-  ) {
-    throw new Error("folder escapes the team home");
-  }
-  await rm(resolvedTarget, { recursive: true, force: true });
-}
-
-function isMissing(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }

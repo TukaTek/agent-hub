@@ -7,9 +7,14 @@ import {
   toStringRecord,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
-import { findSpaceMemoryConfig, Prisma, type PrismaClient } from "@cortexai-agent-hub/db";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
+import {
+  findSpaceMemoryConfig,
+  Prisma,
+  requireSpaceOwner,
+  withTransactionRetry,
+} from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
-import { withSerializableRetry } from "./serializable-retry.js";
 
 export interface MemoryProviderConfigDeps {
   prisma: PrismaClient;
@@ -26,15 +31,6 @@ export interface MemoryProviderConfigDeps {
   ) => ReturnType<typeof prepareMemoryProviderConnection>;
 }
 
-async function requireSpaceOwner(prisma: PrismaClient, actor: Actor): Promise<void> {
-  const member = await prisma.spaceMember.findUnique({
-    where: { spaceId_userId: { spaceId: actor.spaceId, userId: actor.userId } },
-    select: { role: true },
-  });
-  const roles = member?.role.split(",").map((role) => role.trim());
-  if (!roles?.includes("owner")) throw new ORPCError("FORBIDDEN");
-}
-
 export async function persistMemoryProviderConfig(
   deps: MemoryProviderConfigDeps,
   actor: Actor,
@@ -48,7 +44,6 @@ export async function persistMemoryProviderConfig(
   await requireSpaceOwner(deps.prisma, actor);
   let prepared: Awaited<ReturnType<typeof prepareMemoryProviderConnection>>;
   try {
-    // Fast-path known private endpoints before probing.
     if (
       memoryProviderRequiresPrivateEndpoint(input.provider, input.settings) &&
       deps.env?.mcpAllowPrivateEndpoint !== true
@@ -93,7 +88,7 @@ export async function persistMemoryProviderConfig(
     userId: actor.userId,
     signal: new AbortController().signal,
   });
-  const config = await withSerializableRetry(() =>
+  const config = await withTransactionRetry(() =>
     deps.prisma.$transaction(
       async (tx) => {
         const existing = await findSpaceMemoryConfig(tx, actor.spaceId);
@@ -166,7 +161,7 @@ export function serializeSpaceMemoryConfig(config: {
 
 export async function disconnectMemoryProvider(deps: MemoryProviderConfigDeps, actor: Actor) {
   await requireSpaceOwner(deps.prisma, actor);
-  await withSerializableRetry(() =>
+  await withTransactionRetry(() =>
     deps.prisma.$transaction(
       async (tx) => {
         const existing = await findSpaceMemoryConfig(tx, actor.spaceId);

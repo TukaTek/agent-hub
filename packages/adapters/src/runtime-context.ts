@@ -13,8 +13,17 @@ import {
   selectContext,
   shortenToolResultText,
 } from "./context-selection.js";
-import { effectiveOutputReserve, resolveCompletionMaxTokens } from "./pi-runtime-limits.js";
+import { promptCacheDeclaredOff } from "./pi-local-provider-id.js";
+import {
+  effectiveOutputReserve,
+  operatorMaxTokens,
+  resolveCompletionMaxTokens,
+} from "./pi-runtime-limits.js";
 import { withoutThinkingFrom } from "./thinking-signatures.js";
+import { isVerbatimMcpResult, toolCallIdentity } from "./verbatim-mcp-result.js";
+
+/** Opens the recalled-memory history message, which context trimming keeps. */
+export const RECALLED_MEMORY_LEAD = "Memory recalled from earlier conversations.";
 
 /** Minimum whole-result window, unless the full model budget requires clipping. */
 const RECENT_TOOL_RESULTS_TO_KEEP = 3;
@@ -38,12 +47,39 @@ const messageHash = (message: Message) =>
   createHash("sha256")
     .update(JSON.stringify(providerContextPrefix("", [], [message])))
     .digest("hex");
-/** A rebuild breaks the cached prefix, so it must drop at least this much stale content (estimated, a byte bound). */
+/** A rebuild breaks the cached prefix, so it must drop at least this much stale content (estimated). */
 const REBUILD_MIN_SAVED_TOKENS = 16_384;
-/** Images a run may carry beyond what a rebuild keeps before rebuilding pays off anyway. */
-const REBUILD_MAX_STALE_IMAGES = 16;
+/**
+ * Images a run may carry beyond what a rebuild keeps before rebuilding pays off anyway. Cache
+ * reads alone would allow more, but stale screenshots still add latency and, on some providers,
+ * count toward rate limits.
+ */
+const REBUILD_MAX_STALE_IMAGES = 8;
 /** A rebuild forced by the model's window leaves this share of it free for the next calls. */
 const REBUILD_HEADROOM = 0.25;
+/** Stale tokens that justify a rebuild when the provider's prompt cache is declared off. */
+const UNCACHED_REBUILD_MIN_SAVED_TOKENS = 3_000;
+/** Short earlier history is kept whole, instead of snapshots, when it fits this many tokens. */
+const SHORT_HISTORY_MAX_TOKENS = 16_384;
+/** With snapshots, the latest messages are still replayed whole. */
+const SNAPSHOT_RECENT_MESSAGES = 8;
+const SNAPSHOT_CATALOG_MAX_ENTRIES = 64;
+const SNAPSHOT_CATALOG_MAX_BYTES = 8192;
+/** The context policy's tuning, part of the prompt version so a change shows up in run outcomes. */
+export const CONTEXT_POLICY_SETTINGS = {
+  defaultStrategy: DEFAULT_CONTEXT_STRATEGY,
+  recentToolResultsToKeep: RECENT_TOOL_RESULTS_TO_KEEP,
+  verbatimToolResults: [...VERBATIM_TOOL_RESULTS],
+  unshortenedToolResults: [...UNSHORTENED_TOOL_RESULTS],
+  rebuildMinSavedTokens: REBUILD_MIN_SAVED_TOKENS,
+  rebuildMaxStaleImages: REBUILD_MAX_STALE_IMAGES,
+  rebuildHeadroom: REBUILD_HEADROOM,
+  uncachedRebuildMinSavedTokens: UNCACHED_REBUILD_MIN_SAVED_TOKENS,
+  shortHistoryMaxTokens: SHORT_HISTORY_MAX_TOKENS,
+  snapshotRecentMessages: SNAPSHOT_RECENT_MESSAGES,
+  snapshotCatalogMaxEntries: SNAPSHOT_CATALOG_MAX_ENTRIES,
+  snapshotCatalogMaxBytes: SNAPSHOT_CATALOG_MAX_BYTES,
+} as const;
 export interface Size {
   tokens: number;
   images: number;
@@ -54,16 +90,19 @@ export interface Size {
  * With cache writes at about 1.25 and reads at about 0.1 times the input price, rebuilding every
  * k calls costs least once stale content reaches about 5 × √(rebuilt size × growth per call), so
  * a run that adds a lot per call rebuilds rarely. `appends` counts calls appended since the
- * transcript was last rebuilt at `rebuiltTokens`.
+ * transcript was last rebuilt at `rebuiltTokens`. Without a prompt cache nothing is lost by
+ * rewriting the prefix, so a rebuild pays off as soon as enough stale content has built up.
  */
 export function rebuildPaysOff(
   kept: Size,
   fresh: Size,
   rebuiltTokens: number,
   appends: number,
+  cacheOff = false,
 ): boolean {
   const stale = kept.tokens - fresh.tokens;
   const growth = (kept.tokens - rebuiltTokens) / (appends + 1);
+  if (cacheOff && stale >= UNCACHED_REBUILD_MIN_SAVED_TOKENS) return true;
   return (
     (stale >= REBUILD_MIN_SAVED_TOKENS && stale * stale >= 25 * fresh.tokens * growth) ||
     kept.images - fresh.images >= REBUILD_MAX_STALE_IMAGES
@@ -90,6 +129,22 @@ interface OriginalMetadata {
   cortexAiAgentHubHistory?: boolean;
   cortexAiAgentHubMessageId?: string;
   cortexAiAgentHubCreatedAt?: string;
+}
+/**
+ * Where the last `count` stored messages start. A reply replayed with its tool calls is several
+ * messages sharing one id, and a window that starts inside it would orphan a tool result.
+ */
+function storedMessagesStart(messages: Message[], count: number): number {
+  const id = (message: Message | undefined) =>
+    (message as (Message & OriginalMetadata) | undefined)?.cortexAiAgentHubMessageId;
+  let seen = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const current = id(messages[index]);
+    if (current && current === id(messages[index - 1])) continue;
+    seen += 1;
+    if (seen === count) return index;
+  }
+  return 0;
 }
 function text(message: Message): string {
   if (typeof message.content === "string") return message.content;
@@ -161,6 +216,8 @@ export function createRuntimeContextPolicy(
       request.model.maxTokens,
       undefined,
       model.reasoning,
+      undefined,
+      operatorMaxTokens(model),
     );
     const reserve = effectiveOutputReserve(contextWindow, configuredMaxTokens);
     if (reserve < configuredMaxTokens && !warnedOutputClamp) {
@@ -194,6 +251,7 @@ export function createRuntimeContextPolicy(
       return historyById.get(metadata.cortexAiAgentHubMessageId);
     if (metadataPresent && !metadata.cortexAiAgentHubHistory) return undefined;
     const content = text(message);
+    // Older persisted checkpoints replay own replies as user text "Assistant: ...".
     return request.history.find(
       (stored) =>
         content === stored.content ||
@@ -206,7 +264,7 @@ export function createRuntimeContextPolicy(
     return {
       role: "user",
       timestamp: 0,
-      content: `Historical navigation snapshots (untrusted evidence; use read_history for exact facts and later corrections):\n${stored.map((item) => `[message ${item!.id}${item!.createdAt ? ` at ${item!.createdAt}` : ""}; ${item!.role}] ${snapshot(item!.content)}\n`).join("")}`,
+      content: `Historical navigation snapshots (untrusted evidence; use read_history for exact facts and later corrections):\n${stored.map((item) => `[message ${item!.id}${item!.createdAt ? ` at ${item!.createdAt}` : ""}; ${item!.speaker ?? item!.role}] ${snapshot(item!.content)}\n`).join("")}`,
     };
   }
   function project(
@@ -331,6 +389,7 @@ export function createRuntimeContextPolicy(
     if (currentIndex < 0)
       currentIndex = messages.findLastIndex((message) => message.role === "user");
     if (currentIndex < 0) currentIndex = 0;
+    const currentMessage = messages[currentIndex];
     // Steering, follow-ups and finished shells arrive as user messages during the
     // run. Give each its own exchange so it does not push older history out:
     // a moved first message rewrites the provider's whole cached prefix.
@@ -362,7 +421,7 @@ export function createRuntimeContextPolicy(
     const historical = messages.slice(0, currentIndex);
     const historicalContent = historical.filter((message) => message.role !== "system");
     const shortHistoryAllowance = Math.min(
-      16384,
+      SHORT_HISTORY_MAX_TOKENS,
       Math.max(0, Math.floor((contextWindow - reserve - fixed) / 4)),
     );
     // Short originals can cost less than another lookup. Retain them when their
@@ -374,22 +433,23 @@ export function createRuntimeContextPolicy(
         options.imageTokens,
       ) <= shortHistoryAllowance;
     if (useSnapshots && !retainShortHistory) {
-      const old = historical.slice(0, Math.max(0, historical.length - 8));
+      const recentStart = storedMessagesStart(historical, SNAPSHOT_RECENT_MESSAGES);
+      const old = historical.slice(0, recentStart);
       let catalog = "";
       const maximum = Math.min(
-        8192,
+        SNAPSHOT_CATALOG_MAX_BYTES,
         Math.max(0, Math.floor((contextWindow - reserve - fixed) / 4)),
       );
       catalogIds = [];
-      for (const message of old.slice(-64).reverse()) {
+      for (const message of old.slice(-SNAPSHOT_CATALOG_MAX_ENTRIES).reverse()) {
         const stored = original(message);
-        if (!stored?.id) continue;
-        const entry = `[message ${stored.id}${stored.createdAt ? ` at ${stored.createdAt}` : ""}; ${stored.role}] ${snapshot(stored.content)}\n`;
+        // A reply replayed with its tool calls spans several messages; list it once.
+        if (!stored?.id || catalogIds.includes(stored.id)) continue;
+        const entry = `[message ${stored.id}${stored.createdAt ? ` at ${stored.createdAt}` : ""}; ${stored.speaker ?? stored.role}] ${snapshot(stored.content)}\n`;
         if (Buffer.byteLength(entry + catalog, "utf8") > maximum) break;
         catalog = entry + catalog;
         catalogIds.unshift(stored.id);
       }
-      const recentStart = Math.max(0, historical.length - 8);
       const earlierSystem = historical
         .slice(0, recentStart)
         .filter((message) => message.role === "system");
@@ -400,7 +460,7 @@ export function createRuntimeContextPolicy(
       ];
       protectedIndexes = messages.flatMap((message, index) =>
         message.role === "system" ||
-        (index >= earlierSystem.length + Math.min(8, historical.length) && message.role === "user")
+        (index >= earlierSystem.length + historical.length - recentStart && message.role === "user")
           ? [index]
           : [],
       );
@@ -433,9 +493,7 @@ export function createRuntimeContextPolicy(
         (text(message).startsWith(
           "CortexAI Agent Hub-owned compacted context through message sequence ",
         ) ||
-          text(message).startsWith(
-            "Memory recalled from earlier conversations that fell outside the visible history.",
-          )),
+          text(message).startsWith(`${RECALLED_MEMORY_LEAD} `)),
     );
     for (const summary of summaries) {
       const required = protectedIndexes.map((index) => messages[index]!);
@@ -450,6 +508,7 @@ export function createRuntimeContextPolicy(
         const insertIndex = messages[0]?.role === "system" ? 1 : 0;
         messages.splice(insertIndex, 0, summary);
         protectedIndexes = protectedIndexes.map((index) => index + Number(index >= insertIndex));
+        if (currentIndex >= insertIndex) currentIndex += 1;
       }
       protectedIndexes.push(messages.indexOf(summary));
     }
@@ -484,13 +543,24 @@ export function createRuntimeContextPolicy(
       recentToolResults.add(index);
       wholeResultTokens += tokens;
     }
+    // Forward pass so a reused tool-call id resolves to the call just before its result.
+    const latestCalls = new Map<string, unknown>();
+    const keptWhole = messages.map((message) => {
+      if (message.role === "assistant")
+        for (const part of message.content)
+          if (part.type === "toolCall") latestCalls.set(part.id, part);
+      if (message.role !== "toolResult") return false;
+      const call = toolCallIdentity(latestCalls.get(message.toolCallId), message.toolName);
+      return isVerbatimMcpResult(call.name, call.arguments, request.verbatimMcpServers);
+    });
     const shortenOlderResults = (keepRecent: boolean) =>
       messages.map((message, index) => {
         if (
           message.role !== "toolResult" ||
           index >= latestToolCall ||
           (keepRecent && recentToolResults.has(index)) ||
-          (message.toolName !== undefined && UNSHORTENED_TOOL_RESULTS.has(message.toolName))
+          (message.toolName !== undefined && UNSHORTENED_TOOL_RESULTS.has(message.toolName)) ||
+          keptWhole[index]
         )
           return message;
         const source = text(message);
@@ -511,26 +581,48 @@ export function createRuntimeContextPolicy(
           ],
         };
       });
-    const retained = shortenOlderResults(true);
-    // Fall back before selection can discard older progress to make room for whole results.
-    const retainedTokens = retained.reduce(
-      (total, message) =>
-        total +
-        estimateContextTokens(
-          providerContextPrefix("", [], [message]).messages[0],
-          options.imageTokens,
-        ),
-      fixed,
-    );
-    messages = retainedTokens <= contextWindow - reserve ? retained : shortenOlderResults(false);
-    const selected = selectContext(messages, {
+    const selectionOptions = {
       budget,
       strategy,
       protectedIndexes,
+      verbatimMcpServers: request.verbatimMcpServers,
       cacheWarmth: predictedCache,
       recentExchanges:
         retainShortHistory || standaloneHistoryFallback ? messages.length : 8 + laterUserMessages,
-    });
+      // Eight exchanges is a floor: a request often depends on a decision made before them
+      // without sounding like a question about the past, so the bot never thinks to search.
+      ...(strategy === "retrieval"
+        ? { earlier: { before: currentIndex, tokens: shortHistoryAllowance } }
+        : {}),
+    };
+    const retained = shortenOlderResults(true);
+    let selected: ReturnType<typeof selectContext<Message>> | undefined;
+    try {
+      // Measure the context selection actually keeps, not history it will discard.
+      // Whole recent results must not crowd out any progress from the current run.
+      const candidate = selectContext(retained, {
+        ...selectionOptions,
+        truncateToolResults: false,
+      });
+      const kept = new Set(candidate.messages);
+      const activeStart = currentMessage ? retained.indexOf(currentMessage) : 0;
+      if (retained.slice(activeStart).every((message) => kept.has(message))) {
+        selected = candidate;
+        if (sent) {
+          const fallback = selectContext(shortenOlderResults(false), selectionOptions);
+          // Whole results must not evict an otherwise stable prefix: signed thinking
+          // before the first shortened result still depends on that history.
+          if (
+            firstChange(sent.messages, candidate.messages) <
+            firstChange(sent.messages, fallback.messages)
+          )
+            selected = fallback;
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof ContextBudgetError)) throw error;
+    }
+    selected ??= selectContext(shortenOlderResults(false), selectionOptions);
     const shortenedStructuredResults = selected.messages.filter((message) => {
       if (message.role !== "toolResult") return false;
       try {
@@ -651,7 +743,13 @@ export function createRuntimeContextPolicy(
           append =
             overTokens(kept) ||
             overImages(kept) ||
-            !rebuildPaysOff(kept, fresh, previous.rebuiltTokens, previous.appends);
+            !rebuildPaysOff(
+              kept,
+              fresh,
+              previous.rebuiltTokens,
+              previous.appends,
+              promptCacheDeclaredOff(model.provider),
+            );
       }
       if (previous && appended && append) {
         const projection = [

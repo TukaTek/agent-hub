@@ -1,23 +1,27 @@
+import { useLingui } from "@lingui/react/macro";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, Text, View } from "react-native";
 import { ArchivedBotList } from "../../components/archived-bot-list";
 import { NativeActionButton } from "../../components/native-action-button";
-import type { MobileBot, MobileGroup } from "../../lib/api";
-import { captureApiRequestContext, rpc, selectSpace } from "../../lib/api";
+import { captureApiRequestContext, rpc } from "../../lib/api";
+import { selectSpace } from "../../lib/api-server";
 import {
   loadAllArchivedChats as loadArchivedChats,
   notifyArchivedChatsChanged,
 } from "../../lib/archived-chats";
 import { confirmDeleteBot } from "../../lib/bot-lifecycle";
 import { useFloatingHeaderInset } from "../../lib/floating-header";
-import { useI18n } from "../../lib/i18n";
+import type { MobileBot, MobileGroup } from "../../lib/mobile-types";
 import { useMobileTokens } from "../../lib/native";
+import { addToSearchInbox, searchInboxSession } from "../../lib/search-inbox";
 import { openFromSettingsSheet } from "../../lib/settings-sheet";
+import { useSideInsets } from "../../lib/side-insets";
 import { errorText } from "../../lib/user-error";
 
 export default function ArchivedBots() {
-  const { t } = useI18n();
+  const sideInsets = useSideInsets();
+  const { t } = useLingui();
   const router = useRouter();
   const tokens = useMobileTokens();
   const headerInset = useFloatingHeaderInset();
@@ -39,7 +43,7 @@ export default function ArchivedBots() {
     listRequest.current = null;
     if (loaded.bots) setBots(loaded.bots);
     if (loaded.groups) setGroups(loaded.groups);
-    const message = errorText(loaded.error, t("Could not load chats"));
+    const message = errorText(loaded.error, t`Could not load chats`);
     setLoadErrors({
       bots: loaded.bots ? undefined : message,
       groups: loaded.groups ? undefined : message,
@@ -81,7 +85,7 @@ export default function ArchivedBots() {
       removed(generation, removeRow);
     } catch (cause) {
       if (generation === focusGeneration.current) {
-        Alert.alert(failure, errorText(cause, t("Try again.")));
+        Alert.alert(failure, errorText(cause, t`Try again.`));
       }
     } finally {
       if (generation === focusGeneration.current) setPending(false);
@@ -103,7 +107,7 @@ export default function ArchivedBots() {
   }
 
   async function inSpace(spaceId: string | undefined) {
-    if (spaceId && !(await selectSpace(spaceId))) throw new Error(t("Could not switch spaces"));
+    if (spaceId && !(await selectSpace(spaceId))) throw new Error(t`Could not switch spaces`);
   }
 
   function restoreGroup(group: MobileGroup) {
@@ -112,7 +116,7 @@ export default function ArchivedBots() {
         return rpc("groups/restore", { groupId: group.id }, await requestOptions(group.spaceId));
       },
       () => setGroups((current) => current.filter((item) => item.id !== group.id)),
-      t("Could not update chat"),
+      t`Could not update chat`,
     );
   }
 
@@ -126,7 +130,7 @@ export default function ArchivedBots() {
         await rpc("bots/restore", { botId: bot.id }, await requestOptions(bot.spaceId));
       },
       withoutBot(bot.id),
-      t("Could not restore Assistant"),
+      t`Could not restore Assistant`,
     );
   }
 
@@ -137,7 +141,7 @@ export default function ArchivedBots() {
     try {
       options = await requestOptions(bot.spaceId);
     } catch (cause) {
-      Alert.alert(t("Could not delete bot"), errorText(cause, t("Try again.")));
+      Alert.alert(t`Could not delete bot`, errorText(cause, t`Try again.`));
       return;
     }
     if (generation !== focusGeneration.current) return;
@@ -153,11 +157,13 @@ export default function ArchivedBots() {
     if (pending) return;
     setPending(true);
     const generation = focusGeneration.current;
+    const askedIn = searchInboxSession();
     try {
       await inSpace(bot.spaceId);
       await rpc("threads/get", { botId: bot.id });
       // Left or dismissed while loading, even if back since: a later sheet must not close for it.
       if (generation !== focusGeneration.current) return;
+      addToSearchInbox({ kind: "bot", bot }, askedIn);
       // The thread is not a settings page, so it opens on the root stack once the sheet closes.
       openFromSettingsSheet(router, {
         pathname: "/thread",
@@ -165,10 +171,10 @@ export default function ArchivedBots() {
       });
     } catch (cause) {
       if (generation !== focusGeneration.current) return;
-      Alert.alert(t("Could not load bot"), errorText(cause, t("Try again.")), [
-        { text: t("Cancel"), style: "cancel" },
+      Alert.alert(t`Could not load bot`, errorText(cause, t`Try again.`), [
+        { text: t`Cancel`, style: "cancel" },
         {
-          text: t("Try again."),
+          text: t`Try again`,
           onPress: () => {
             if (generation === focusGeneration.current) void open(bot);
           },
@@ -184,19 +190,19 @@ export default function ArchivedBots() {
       <Text accessibilityRole="alert" style={{ color: tokens.destructive }}>
         {error}
       </Text>
-      <NativeActionButton label={t("Try again.")} onPress={() => void loadChats()} fill={false} />
+      <NativeActionButton label={t`Try again`} onPress={() => void loadChats()} fill={false} />
     </>
   ) : null;
   if (!bots?.length && !groups.length)
     return (
       <ScrollView
-        style={{ flex: 1, backgroundColor: tokens.background }}
+        style={[{ flex: 1, backgroundColor: tokens.background }, sideInsets]}
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ padding: 24, gap: 12 }}
       >
         {failure ??
           (bots ? (
-            <Text style={{ color: tokens.mutedForeground }}>{t("No archived chats")}</Text>
+            <Text style={{ color: tokens.mutedForeground }}>{t`No archived chats`}</Text>
           ) : (
             <ActivityIndicator color={tokens.foreground} />
           ))}

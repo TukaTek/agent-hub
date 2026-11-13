@@ -16,14 +16,14 @@ Every protected session/work authorization checks current identity and `/api/ten
 
 Hub mode needs these settings. `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN` and `HUB_AUTH_TENANT_ID` go on both the API and the worker; the service credential goes on the API only, because the worker never contacts Hub.
 
-| Variable | Process | Value |
-| --- | --- | --- |
-| `AUTH_MODE` | API, worker | `hub` |
-| `HUB_AUTH_ORIGIN` | API, worker | Hub's HTTPS origin |
-| `HUB_AUTH_TENANT_ID` | API, worker | The one tenant this deployment serves |
-| `HUB_SERVICE_API_ID` | API | The service credential's API id |
-| `HUB_SERVICE_SECRET_FILE` | API | Path to a file holding only the service credential's secret |
-| `HUB_POLICY_ENFORCEMENT` | API, worker | `on` (default) or `off`. Any other value stops the process at startup. Leave it unset on registered deployments; `off` is for [running without Hub registration](#running-without-hub-registration) |
+| Variable                  | Process     | Value                                                                                                                                                                                               |
+| ------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_MODE`               | API, worker | `hub`                                                                                                                                                                                               |
+| `HUB_AUTH_ORIGIN`         | API, worker | Hub's HTTPS origin                                                                                                                                                                                  |
+| `HUB_AUTH_TENANT_ID`      | API, worker | The one tenant this deployment serves                                                                                                                                                               |
+| `HUB_SERVICE_API_ID`      | API         | The service credential's API id                                                                                                                                                                     |
+| `HUB_SERVICE_SECRET_FILE` | API         | Path to a file holding only the service credential's secret                                                                                                                                         |
+| `HUB_POLICY_ENFORCEMENT`  | API, worker | `on` (default) or `off`. Any other value stops the process at startup. Leave it unset on registered deployments; `off` is for [running without Hub registration](#running-without-hub-registration) |
 
 A malformed value (a bad origin, an oversized id, an oversized secret, or SSO without `HUB_DEPLOYMENT_ID`) stops the process at startup with a message naming the setting. With `HUB_POLICY_ENFORCEMENT` unset or `on`, a **missing** tenant, API id or secret file (unset, unreadable or empty) does not stop it. The process starts in a not-configured state instead:
 
@@ -39,12 +39,14 @@ Hub owns sign-in and accounts in Hub mode, so direct OIDC (`OIDC_ISSUER`) and bi
 
 1. In Hub, issue the deployment's service credential and grant it the Agent Hub service config for the tenant. Note the API id and secret.
 2. Put the secret, and nothing else, in a file on the host, readable by uid 1000 (the image's `node` user). Compose bind-mounts the file with its host owner and mode:
+
    ```bash
    sudo install -d -m 0755 /etc/cortexai-agent-hub
    sudo install -m 0400 -o 1000 -g 1000 /dev/stdin /etc/cortexai-agent-hub/hub-service-secret
    ```
 3. In `.env`, set `AUTH_MODE=hub`, `HUB_AUTH_ORIGIN`, `HUB_AUTH_TENANT_ID`, `HUB_SERVICE_API_ID` and `HUB_SERVICE_SECRET_HOST_FILE` (the host path from step 2). The API and worker both read `.env`. Leave `HUB_SERVICE_SECRET_FILE` unset; the overlay sets it.
-4. Add `infra/compose/docker-compose.hub.yml` after the base file in every Compose command. If the updater runs, add it to `CORTEXAI_AGENT_HUB_COMPOSE_FILE` too (see [self-host](self-host.md#deployments-that-layer-a-compose-overlay)):
+4. Add `infra/compose/docker-compose.hub.yml` after the base file in every Compose command. If the updater runs, add it to `CORTEXAI_AGENT_HUB_COMPOSE_FILE` too (see [production](self-host-production.md)):
+
    ```
    CORTEXAI_AGENT_HUB_COMPOSE_FILE=infra/compose/docker-compose.prod.yml:infra/compose/docker-compose.hub.yml
    ```
@@ -80,15 +82,15 @@ To register the deployment later, follow [Configuring Hub mode](#configuring-hub
 
 With `HUB_SSO_ENABLED=true` the API refuses to start unless all of these are set:
 
-| Variable | Value |
-| --- | --- |
-| `AUTH_MODE` | `hub` |
-| `HUB_AUTH_ORIGIN` | Hub's HTTPS origin |
-| `HUB_AUTH_TENANT_ID` | The one tenant this deployment serves (up to 256 characters) |
-| `HUB_DEPLOYMENT_ID` | The deployment UUID Hub issued for this installation, registered against the same credential as `HUB_SERVICE_API_ID` |
-| `HUB_SERVICE_API_ID` | The service credential's API id (up to 256 characters) |
-| `HUB_SERVICE_SECRET_FILE` | Path to a file holding the service credential's secret (up to 4096 characters, trimmed) |
-| `BETTER_AUTH_URL` | This deployment's HTTPS origin, the same origin as `WEB_ORIGIN` |
+| Variable                  | Value                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_MODE`               | `hub`                                                                                                                |
+| `HUB_AUTH_ORIGIN`         | Hub's HTTPS origin                                                                                                   |
+| `HUB_AUTH_TENANT_ID`      | The one tenant this deployment serves (up to 256 characters)                                                         |
+| `HUB_DEPLOYMENT_ID`       | The deployment UUID Hub issued for this installation, registered against the same credential as `HUB_SERVICE_API_ID` |
+| `HUB_SERVICE_API_ID`      | The service credential's API id (up to 256 characters)                                                               |
+| `HUB_SERVICE_SECRET_FILE` | Path to a file holding the service credential's secret (up to 4096 characters, trimmed)                              |
+| `BETTER_AUTH_URL`         | This deployment's HTTPS origin, the same origin as `WEB_ORIGIN`                                                      |
 
 The secret is read from a file so it never sits in the process environment or `.env`. Hub must register `HUB_DEPLOYMENT_ID` against the same credential as `HUB_SERVICE_API_ID`: for the `agent-hub-web` channel, sso-start and sso-exchange reject any service token whose credential differs from the deployment's registered product credential with `401 invalid_service_token`, which shows up as a start failure at Continue. The callback URL registered with Hub for the deployment is `<BETTER_AUTH_URL>/api/auth/hub/sso/callback`.
 
@@ -179,7 +181,12 @@ In Hub mode, CortexAI Hub is the source of truth for this deployment's Agent Hub
 **Precedence.** Hub wins over the environment and over persisted deployment settings for every setting it manages. At startup each process replaces the environment inputs Hub manages, and Hub's model and signup defaults replace the persisted ones when they are read; the stored local values are kept but ignored. Local values still apply to settings Hub does not manage. Users' own model credentials and per-bot model choices are user data, not deployment settings, and are unchanged. Each override is logged as an operator signal that carries the setting path, Hub's revision and the overridden source, never a value:
 
 ```json
-{ "event": "hub_policy_override", "key": "model.defaultProvider", "hubRevision": 7, "overriddenSource": "env:PI_DEFAULT_PROVIDER" }
+{
+  "event": "hub_policy_override",
+  "key": "model.defaultProvider",
+  "hubRevision": 7,
+  "overriddenSource": "env:PI_DEFAULT_PROVIDER"
+}
 ```
 
 The source is `env:<NAME>` or `deployment_settings.<field>`. Other signals are `hub_policy_rollback`, `hub_policy_refresh_failed` (a code and a fixed reason), `hub_policy_assignments_unknown`, `hub_policy_assignments_empty` (an authoritative list with nobody assigned) and `hub_policy_restart_required`.
@@ -188,29 +195,29 @@ The source is `env:<NAME>` or `deployment_settings.<field>`. Other signals are `
 
 **Sign-in is fail-closed.** Every path that can create a session asks Hub first: email-first Continue (web and desktop), password sign-in (web, desktop and mobile), and the Microsoft SSO start and callback. There is no local or break-glass bypass. Refusals use stable codes:
 
-| Code | When | HTTP |
-| --- | --- | --- |
-| `HUB_UNAVAILABLE` | Hub cannot be reached: timeout, DNS or connection failure, `408`, `429` or `5xx`, including during the password or SSO exchange | 503 |
-| `HUB_CONFIG_INVALID` | Hub's document is malformed, for another tenant or product, or uses an unknown schema, field or value | 503 |
-| `TENANT_DISABLED` | Hub refuses the tenant or this deployment's access to it (`403`). The log reason is Hub's sub-code: `service_grant_missing`, `tenant_disabled` or `product_disabled`, or `access_denied` when Hub doesn't say, as at token mint | 403 |
-| `HUB_CREDENTIAL_INVALID` | Hub rejects this deployment's service credential (`401`, for example a rotated or wrong secret) | 503 |
-| `HUB_NOT_CONFIGURED` | Hub mode is missing its tenant or service credential ([Configuring Hub mode](#configuring-hub-mode)) | 503 |
-| `HUB_CONFIG_RESTART_REQUIRED` | The process has not applied Hub's current revision | 503 |
-| `HUB_ACCESS_DENIED` | Hub's assignments do not include this user, or the grant is for another tenant | 403 |
+| Code                          | When                                                                                                                                                                                                                            | HTTP |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| `HUB_UNAVAILABLE`             | Hub cannot be reached: timeout, DNS or connection failure, `408`, `429` or `5xx`, including during the password or SSO exchange                                                                                                 | 503  |
+| `HUB_CONFIG_INVALID`          | Hub's document is malformed, for another tenant or product, or uses an unknown schema, field or value                                                                                                                           | 503  |
+| `TENANT_DISABLED`             | Hub refuses the tenant or this deployment's access to it (`403`). The log reason is Hub's sub-code: `service_grant_missing`, `tenant_disabled` or `product_disabled`, or `access_denied` when Hub doesn't say, as at token mint | 403  |
+| `HUB_CREDENTIAL_INVALID`      | Hub rejects this deployment's service credential (`401`, for example a rotated or wrong secret)                                                                                                                                 | 503  |
+| `HUB_NOT_CONFIGURED`          | Hub mode is missing its tenant or service credential ([Configuring Hub mode](#configuring-hub-mode))                                                                                                                            | 503  |
+| `HUB_CONFIG_RESTART_REQUIRED` | The process has not applied Hub's current revision                                                                                                                                                                              | 503  |
+| `HUB_ACCESS_DENIED`           | Hub's assignments do not include this user, or the grant is for another tenant                                                                                                                                                  | 403  |
 
 `TENANT_DISABLED` and `HUB_CREDENTIAL_INVALID` stop new work at once. Every code except `HUB_ACCESS_DENIED` carries the message "Sign-in is temporarily unavailable, CortexAI Hub can't be reached"; `HUB_ACCESS_DENIED` carries "Ask your admin for access". The SSO callback redirects to `/sign-in?error=` with the code in lower case. No user, session or SSO state is created for a refused sign-in.
 
 **Active sessions** keep working on last-known-good only within the verification cache window described below. On the next Hub verification after it, the stored policy must still admit the session like a new sign-in: the last refresh succeeded, the process runs Hub's revision and the user is still assigned. Otherwise the request is refused, but the session is kept, so it resumes when the policy admits it again. While the last policy refresh failed (or no policy is stored yet), the refusal is an outage: the request answers `503` `HUB_UNAVAILABLE` and work fails with "CortexAI Hub can't be reached", even if Hub still verifies the user. That holds for policy refusals only. If Hub definitively refuses the user's own verification or refresh, the session is deleted and the user must sign in again. Only these answers count as definitive:
 
-| Hub answer | Where Hub sends it |
-| --- | --- |
-| `401 refresh_failed` | `POST /api/tenant-auth/refresh`: the refresh token is invalid, expired or already spent |
-| `400 invalid_grant` | OAuth code or refresh exchange rejected |
-| `401 invalid_token` | the bearer token is invalid |
-| `401 unauthorized` | the identity is inactive or missing |
-| `403 access_denied` | `GET /api/tenant-auth/config`: the user is no longer entitled |
-| `403 product_not_enabled` | Agent Hub is not enabled for the user |
-| `200` with `valid: false`, another identity or tenant, an expired grant, or Agent Hub missing or disabled in `products` | `/session`, `/refresh` or login replies |
+| Hub answer                                                                                                              | Where Hub sends it                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `401 refresh_failed`                                                                                                    | `POST /api/tenant-auth/refresh`: the refresh token is invalid, expired or already spent |
+| `400 invalid_grant`                                                                                                     | OAuth code or refresh exchange rejected                                                 |
+| `401 invalid_token`                                                                                                     | the bearer token is invalid                                                             |
+| `401 unauthorized`                                                                                                      | the identity is inactive or missing                                                     |
+| `403 access_denied`                                                                                                     | `GET /api/tenant-auth/config`: the user is no longer entitled                           |
+| `403 product_not_enabled`                                                                                               | Agent Hub is not enabled for the user                                                   |
+| `200` with `valid: false`, another identity or tenant, an expired grant, or Agent Hub missing or disabled in `products` | `/session`, `/refresh` or login replies                                                 |
 
 Anything else keeps the session and answers `503` `HUB_UNAVAILABLE` until Hub returns: a timeout, a connection failure, a malformed reply, `408`, `429`, `5xx`, a `401` or `403` without one of the codes above (such as a proxy or firewall page), and every other coded `4xx`, such as `400 invalid_request`, `400 missing_product`, `400 envelope_too_large` or `404 unknown_product`. Those describe a bad request or configuration, not a spent grant, so they never sign the user out. Clients keep the user signed in and retry. Runs and tool calls refused during an outage fail with "CortexAI Hub can't be reached", never with a request to sign in. New work (runs and tool calls) needs the user to be assigned in the stored policy and stops at once when Hub disables the tenant, rejects the service credential, removes the assignment, or a restart is required.
 
@@ -227,6 +234,7 @@ Anything else keeps the session and answers `503` `HUB_UNAVAILABLE` until Hub re
 The verification cache reduces Hub API load and improves perceived latency for authenticated requests. When a user's Hub entitlement is revoked or their session is disabled on Hub, Agent Hub will detect the change after the cache TTL expires on the next request that requires verification. For the default 30-second TTL, this means a revoked user can continue accessing Agent Hub for up to 30 seconds plus one additional request (~0.5–2s depending on Hub latency) before being denied.
 
 This is an intentional trade-off:
+
 - **Without cache**: Every protected RPC hits Hub twice, adding 0.4–2.4s of non-LLM latency to the hot path
 - **With cache**: Protected RPCs within the TTL window skip Hub verification, making the UI feel snappy; revokes are noticed within TTL + one request
 

@@ -15,8 +15,18 @@ describe.each(caddyfiles)("%s deployment retry", (filename) => {
   });
 
   it("applies the retry policy to every API and web upstream", () => {
-    expect(config.match(/reverse_proxy api:3100 \{\s*import deploy_retry\s/g)).toHaveLength(3);
+    expect(config).toMatch(/\(api\) \{\s*reverse_proxy \{[\s\S]*?import deploy_retry\n/);
+    expect(config).toContain(
+      "@api path /health /api/* /rpc/*\n\thandle @api {\n\t\timport api\n\t}",
+    );
     expect(config.match(/reverse_proxy web:5173 \{\s*import deploy_retry\s*\}/g)).toHaveLength(1);
+  });
+
+  it("spreads API requests across every running API container", () => {
+    expect(config).toMatch(
+      /dynamic a api 3100 \{\s*refresh 1s\s*\}\s*lb_policy least_conn\s*fail_duration 2s/,
+    );
+    expect(config).not.toContain("reverse_proxy api:3100");
   });
 });
 
@@ -29,11 +39,7 @@ describe("Caddyfile.prod client address", () => {
   });
 
   it("forwards one resolved client address to every API upstream", () => {
-    expect(config).toContain("header_up X-Forwarded-For {client_ip}");
-    expect(
-      config.match(
-        /reverse_proxy api:3100 \{\s*import deploy_retry\s*import forward_client_ip\s*\}/g,
-      ),
-    ).toHaveLength(2);
+    expect(config.match(/header_up X-Forwarded-For \{client_ip\}/g)).toHaveLength(1);
+    expect(config).toMatch(/\(api\) \{\s*reverse_proxy \{[\s\S]*?header_up X-Forwarded-For/);
   });
 });

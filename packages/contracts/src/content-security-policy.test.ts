@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   APP_CONTENT_SECURITY_POLICY,
   appContentSecurityPolicy,
+  COMPUTER_SCREEN_PATH,
+  COMPUTER_SCREEN_RUNTIME_PATH,
   CSP_REPORT_PATH,
   CSP_REPORTING_ENDPOINTS,
   contentSecurityPolicyFor,
   HTML_VIEWER_PATH,
+  MCP_APP_VIEWER_PATH,
   parseContentSecuritySources,
+  parseCrispWebsiteId,
 } from "./content-security-policy.js";
 
 function directives(policy: string) {
@@ -64,6 +68,33 @@ describe("app content security policy", () => {
 
   it("lets only the app frame the HTML viewer shell, whose own meta CSP governs it", () => {
     expect(contentSecurityPolicyFor(HTML_VIEWER_PATH)).toBe("frame-ancestors 'self'");
+    expect(contentSecurityPolicyFor(MCP_APP_VIEWER_PATH)).toBe("frame-ancestors 'self'");
+  });
+
+  it("applies an injected screen policy only to embedded screen paths", () => {
+    const policy = {
+      screen: "default-src 'none'; sandbox allow-scripts; frame-ancestors 'self'",
+      runtime: "default-src 'none'; sandbox allow-scripts",
+    };
+    const select = (path: string) => contentSecurityPolicyFor(path, undefined, policy);
+    expect(select(COMPUTER_SCREEN_RUNTIME_PATH)).toBe(policy.runtime);
+    for (const path of [
+      COMPUTER_SCREEN_PATH,
+      "/computer-screen/",
+      "/computer-screen/other.html",
+      `${COMPUTER_SCREEN_RUNTIME_PATH}/`,
+      `${COMPUTER_SCREEN_RUNTIME_PATH}.extra`,
+    ]) {
+      expect(select(path)).toBe(policy.screen);
+    }
+    expect(select("/chat")).toBe(APP_CONTENT_SECURITY_POLICY);
+    expect(select("/computer-screen-other")).toBe(APP_CONTENT_SECURITY_POLICY);
+    expect(contentSecurityPolicyFor(COMPUTER_SCREEN_PATH)).toBe(
+      "default-src 'none'; sandbox; frame-ancestors 'self'",
+    );
+    expect(contentSecurityPolicyFor(COMPUTER_SCREEN_RUNTIME_PATH)).toContain(
+      "frame-ancestors 'self'",
+    );
   });
 });
 
@@ -145,5 +176,38 @@ describe("operator-added origins", () => {
     expect(contentSecurityPolicyFor("/", extended)).toBe(extended);
     expect(contentSecurityPolicyFor("/rpc/me", extended)).toBeNull();
     expect(contentSecurityPolicyFor(HTML_VIEWER_PATH, extended)).toBe("frame-ancestors 'self'");
+  });
+});
+
+describe("Crisp chat widget", () => {
+  it("adds Crisp's origins only when the deployment configures it", () => {
+    const crisp = directives(
+      appContentSecurityPolicy({ crisp: true, scriptSrc: ["https://static.example.com"] }),
+    );
+    expect(crisp.get("script-src")).toEqual([
+      "'self'",
+      "https://static.example.com",
+      "https://client.crisp.chat",
+    ]);
+    expect(crisp.get("connect-src")).toContain("wss://client.relay.crisp.chat");
+    expect(crisp.get("style-src")).toEqual([
+      "'self'",
+      "'unsafe-inline'",
+      "https://client.crisp.chat",
+    ]);
+    expect(crisp.get("worker-src")).toEqual(["'self'", "blob:", "https://client.crisp.chat"]);
+    expect(crisp.get("frame-ancestors")).toEqual(["'none'"]);
+    expect(APP_CONTENT_SECURITY_POLICY).not.toContain("crisp");
+  });
+
+  it("accepts only a website ID", () => {
+    expect(parseCrispWebsiteId(undefined)).toBeNull();
+    expect(parseCrispWebsiteId(" ")).toBeNull();
+    expect(parseCrispWebsiteId(" C2C27EA6-4FDB-4350-A9FC-4B5B052DC5EC ")).toBe(
+      "c2c27ea6-4fdb-4350-a9fc-4b5b052dc5ec",
+    );
+    for (const value of ["nope", 'c2c27ea6-4fdb-4350-a9fc-4b5b052dc5ec"; alert(1)//']) {
+      expect(() => parseCrispWebsiteId(value)).toThrow("CRISP_WEBSITE_ID");
+    }
   });
 });

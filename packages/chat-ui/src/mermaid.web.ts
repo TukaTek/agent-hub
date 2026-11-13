@@ -1,5 +1,5 @@
 import type { ResolvedAppearance } from "@cortexai-agent-hub/ui-tokens";
-import { tokensForAppearance } from "@cortexai-agent-hub/ui-tokens";
+import { webTokensForAppearance } from "@cortexai-agent-hub/ui-tokens";
 import type mermaid from "mermaid";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { chatMermaidConfig } from "./mermaid";
@@ -76,7 +76,7 @@ export function renderMermaidSvg(
       const mermaid = await load;
       loading = false;
       if (timedOut) return null;
-      mermaid.initialize(chatMermaidConfig(tokensForAppearance(appearance), appearance));
+      mermaid.initialize(chatMermaidConfig(webTokensForAppearance(appearance), appearance));
       try {
         if ((await mermaid.parse(source, { suppressErrors: true })) && !timedOut) {
           return (await mermaid.render(id, source)).svg;

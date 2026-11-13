@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   authErrorMessage,
   credentialIssue,
+  errorHelpUrl,
   isAbandonedRequest,
   isConnectionFailure,
   isNetworkFailure,
@@ -111,6 +112,7 @@ describe("userErrorMessage", () => {
   it("passes human messages through and replaces technical ones", () => {
     expect(userErrorMessage(new Error("Bot not found"), copy)).toBe("Bot not found");
     expect(userErrorMessage(new Error("rpc bots/list failed"), copy)).toBe(copy.fallback);
+    expect(userErrorMessage(new Error("Input validation failed"), copy)).toBe(copy.fallback);
     expect(userErrorMessage(new Error("  "), copy)).toBe(copy.fallback);
     expect(userErrorMessage({ message: "Bot not found" }, copy)).toBe(copy.fallback);
     expect(userErrorMessage("Bot not found", copy)).toBe("Bot not found");
@@ -197,5 +199,23 @@ describe("isConnectionFailure", () => {
     );
     expect(isAbandonedRequest(new Error("boom"))).toBe(false);
     expect(isAbandonedRequest(null)).toBe(false);
+  });
+});
+
+describe("errorHelpUrl", () => {
+  it("looks up a documented code independently of its message", () => {
+    expect(errorHelpUrl({ code: "MCP_OAUTH_REDIRECT_MISMATCH", message: "Localized copy" })).toBe(
+      "https://github.com/TukaTek/agent-hub/blob/main/docs/troubleshooting.md#mcp-oauth-redirect-mismatch",
+    );
+  });
+
+  it.each([
+    null,
+    "MCP_OAUTH_REDIRECT_MISMATCH",
+    { code: "BAD_REQUEST" },
+    { code: "toString" },
+    { code: "UNKNOWN", helpUrl: "https://untrusted.example.test" },
+  ])("does not invent a guide or accept an external link: %j", (error) => {
+    expect(errorHelpUrl(error)).toBeUndefined();
   });
 });

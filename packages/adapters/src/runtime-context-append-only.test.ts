@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ContextCacheTracker,
   estimateContextTokens,
@@ -138,6 +138,10 @@ function simulateRun(
     cacheTracker?: ContextCacheTracker;
     tick?: () => void;
     systemPrompt?: (step: number) => string;
+    /** The model's reasoning carries no signature, as from OpenAI-compatible providers. */
+    unsigned?: boolean;
+    /** The model the run talks to; the default is a hosted provider. */
+    model?: Model<Api>;
   } = {},
 ) {
   const policy = createRuntimeContextPolicy(input, undefined, {
@@ -152,7 +156,7 @@ function simulateRun(
         tools: [],
         messages: [...messages],
       },
-      model,
+      options.model ?? model,
     );
     sent.push(context);
     policy.onUsage({ inputTokens: 1000, outputTokens: 10, cacheReadTokens: 900 });
@@ -172,7 +176,9 @@ function simulateRun(
         {
           type: "thinking",
           thinking: `Plan step ${index}`,
-          thinkingSignature: prefixSignature(context, context.messages.length),
+          ...(options.unsigned
+            ? {}
+            : { thinkingSignature: prefixSignature(context, context.messages.length) }),
         },
         { type: "toolCall", id, name: step.tool, arguments: {} },
       ],
@@ -203,17 +209,17 @@ function rewrites(sent: Context[]): number[] {
 }
 
 const toolHeavyRun: Step[] = [
-  { tool: "shell", text: `first log line ${"synthetic shell output ".repeat(150)}` },
+  { tool: "shell", text: `first log line ${"synthetic shell output ".repeat(500)}` },
   { tool: "browser_snapshot", text: `page one ${"node ".repeat(400)}` },
   { tool: "computer_observe", screenshot: true },
-  { tool: "shell", text: "synthetic shell output ".repeat(150) },
+  { tool: "shell", text: "synthetic shell output ".repeat(500) },
   { tool: "browser_snapshot", text: `page two ${"node ".repeat(400)}` },
   { tool: "computer_observe", screenshot: true },
   { steer: "Also check the second dashboard" },
   { tool: "browser_snapshot", text: `page three ${"node ".repeat(400)}` },
   { tool: "computer_observe", screenshot: true },
   { tool: "browser_snapshot", text: `page four ${"node ".repeat(400)}` },
-  { tool: "shell", text: "synthetic shell output ".repeat(150) },
+  { tool: "shell", text: "synthetic shell output ".repeat(500) },
   { tool: "computer_observe", screenshot: true },
   { tool: "browser_snapshot", text: `page five ${"node ".repeat(400)}` },
 ];
@@ -283,7 +289,7 @@ describe("append-only run transcript", () => {
     });
     const steps: Step[] = Array.from({ length: 30 }, (_, index) => ({
       tool: "shell",
-      text: `output ${index} ${"synthetic shell output ".repeat(130)}`,
+      text: `output ${index} ${"synthetic shell output ".repeat(433)}`,
     }));
     const sent = simulateRun(input, steps);
     const rebuilt = rewrites(sent);
@@ -307,7 +313,7 @@ describe("append-only run transcript", () => {
       { tool: "shell", text: "short" },
       ...Array.from({ length: 16 }, (_, index) => ({
         tool: "shell" as const,
-        text: `output ${index} ${"synthetic shell output ".repeat(130)}`,
+        text: `output ${index} ${"synthetic shell output ".repeat(433)}`,
       })),
     ];
     const sent = simulateRun(input, steps);
@@ -315,6 +321,16 @@ describe("append-only run transcript", () => {
     expect(first).toBeDefined();
     const rebuilt = sent[first!]!;
     expect(staleThinking(rebuilt)).toEqual([]);
+    // History and the two short steps stay byte-for-byte stable. Keeping larger recent
+    // results must not evict that prefix and invalidate all of its signed thinking.
+    const previous = sent[first! - 1]!;
+    const firstLargeResult = previous.messages.findIndex(
+      (message) => message.role === "toolResult" && message.toolCallId === "call-2",
+    );
+    expect(firstLargeResult).toBeGreaterThan(0);
+    expect(rebuilt.messages.slice(0, firstLargeResult)).toEqual(
+      previous.messages.slice(0, firstLargeResult),
+    );
     // The two short results were not rewritten, so the thinking before them survives.
     const kept = rebuilt.messages.filter(
       (message) =>
@@ -337,6 +353,22 @@ describe("append-only run transcript", () => {
     expect(sent.map(imageCount)).toEqual([0, 1, 2, 3, 4, 5, 2, 3, 4, 5, 2]);
     expect(rewrites(sent)).toEqual([6, 10]);
     for (const context of sent) expect(staleThinking(context)).toEqual([]);
+  });
+
+  it("keeps unsigned thinking through a rebuild", () => {
+    const input = request({
+      contextStrategy: "retrieval",
+      model: { provider: "synthetic-provider", id: "synthetic-model", contextWindow: 40_000 },
+    });
+    const steps: Step[] = Array.from({ length: 18 }, (_, index) => ({
+      tool: "shell" as const,
+      text: `output ${index} ${"synthetic shell output ".repeat(433)}`,
+    }));
+    const sent = simulateRun(input, steps, { unsigned: true });
+    const [first] = rewrites(sent);
+    expect(first).toBeDefined();
+    // Nothing the model wrote can be rejected, so the rebuild drops none of it.
+    expect(thinkingCount(sent[first!]!)).toBe(thinkingCount(sent[first! - 1]!) + 1);
   });
 
   it("rebuilds a browsing run only when dropping stale pages pays for the broken cache", () => {
@@ -461,10 +493,10 @@ describe("append-only run transcript boundaries", () => {
     expect(rebuildPaysOff(kept, fresh, 31_996, 3)).toBe(false);
   });
 
-  it("rebuilds once sixteen stale images could be dropped, not at fifteen", () => {
+  it("rebuilds once eight stale images could be dropped, not at seven", () => {
     const fresh = { tokens: 1_000, images: 2 };
-    expect(rebuildPaysOff({ tokens: 1_000, images: 17 }, fresh, 1_000, 0)).toBe(false);
-    expect(rebuildPaysOff({ tokens: 1_000, images: 18 }, fresh, 1_000, 0)).toBe(true);
+    expect(rebuildPaysOff({ tokens: 1_000, images: 9 }, fresh, 1_000, 0)).toBe(false);
+    expect(rebuildPaysOff({ tokens: 1_000, images: 10 }, fresh, 1_000, 0)).toBe(true);
   });
 
   it("never rebuilds when the rebuilt transcript would be larger", () => {
@@ -476,7 +508,7 @@ describe("append-only run transcript boundaries", () => {
   it("appends at exactly the available budget and rebuilds one token over it", () => {
     const outcome = (headroom: number) => {
       const run = driver(request({ contextStrategy: "retrieval" }, 0));
-      run.act(run.send(), "a", `old ${"x".repeat(5_000)}`);
+      run.act(run.send(), "a", `old ${"0".repeat(5_000)}`);
       const first = run.send();
       run.act(first, "b", "ok");
       const appendedSize = size({
@@ -495,7 +527,7 @@ describe("append-only run transcript boundaries", () => {
 
   it("adds the after-use note only on rebuild, then preserves it exactly once", () => {
     const run = driver(request({ contextStrategy: "retrieval" }, 0));
-    run.act(run.send(), "a", `old ${"x".repeat(5_000)}`);
+    run.act(run.send(), "a", `old ${"0".repeat(5_000)}`);
     const first = run.send();
     run.act(first, "b", "ok");
     const second = run.send();
@@ -544,7 +576,7 @@ describe("append-only run transcript boundaries", () => {
     const steps: Step[] = Array.from({ length: 25 }, (_, index) =>
       index % 2
         ? { tool: "computer_observe", screenshot: true }
-        : { tool: "shell", text: `output ${index} ${"synthetic shell output ".repeat(150)}` },
+        : { tool: "shell", text: `output ${index} ${"synthetic shell output ".repeat(500)}` },
     );
     const sent = simulateRun(input, steps);
     expect(Math.max(...sent.map(imageCount))).toBeLessThanOrEqual(5);
@@ -562,7 +594,7 @@ describe("append-only run transcript boundaries", () => {
     );
     const steps: Step[] = Array.from({ length: 12 }, (_, index) => ({
       tool: "shell",
-      text: `output ${index} ${"synthetic shell output ".repeat(150)}`,
+      text: `output ${index} ${"synthetic shell output ".repeat(500)}`,
     }));
     const sent = simulateRun(input, steps);
     expect(Math.max(...sent.map(size))).toBeGreaterThan(20_000);
@@ -577,7 +609,7 @@ describe("append-only run transcript boundaries", () => {
     });
     const steps: Step[] = Array.from({ length: 30 }, (_, index) => ({
       tool: "shell",
-      text: `output ${index} ${"synthetic shell output ".repeat(130)}`,
+      text: `output ${index} ${"synthetic shell output ".repeat(433)}`,
     }));
     const sent = simulateRun(input, steps);
     const rebuilt = rewrites(sent);
@@ -593,14 +625,14 @@ describe("append-only run transcript boundaries", () => {
     const input = request(
       {
         contextStrategy: "retrieval",
-        prompt: `Current objective ${"p".repeat(Math.floor(available * 0.8))}`,
+        prompt: `Current objective ${"0".repeat(Math.floor(available * 0.8))}`,
         model: { provider: "synthetic-provider", id: "synthetic-model", contextWindow: window },
       },
       0,
     );
     const steps: Step[] = Array.from({ length: 4 }, (_, index) => ({
       tool: "shell",
-      text: `output ${index} ${"x".repeat(4_000)}`,
+      text: `output ${index} ${"0".repeat(4_000)}`,
     }));
     const sent = simulateRun(input, steps);
     expect(rewrites(sent).length).toBeGreaterThan(0);
@@ -625,7 +657,7 @@ describe("append-only run transcript boundaries", () => {
         ),
       );
       const previous = run.send();
-      run.act(previous, "pending", "huge ".repeat(12_000));
+      run.act(previous, "pending", "huge ".repeat(30_000));
       run.messages.push({ role: "user", content: "Also check the summary", timestamp: 4 });
       expect(size({ ...previous, messages: run.messages })).toBeGreaterThan(window);
       const next = run.send();
@@ -661,7 +693,7 @@ describe("append-only run transcript boundaries", () => {
     );
     const sent = simulateRun(input, [
       { tool: "shell", text: "small" },
-      { tool: "shell", text: `huge ${"x".repeat(60_000)}` },
+      { tool: "shell", text: `huge ${"0".repeat(60_000)}` },
     ]);
     const last = sent.at(-1)!;
     expect(size(last)).toBeLessThanOrEqual(window - model.maxTokens);
@@ -743,15 +775,78 @@ describe("append-only run transcript boundaries", () => {
     for (const context of sent) expect(staleThinking(context)).toEqual([]);
   });
 
-  it("rebuilds an unlimited run once sixteen stale screenshots could be dropped", () => {
+  it("rebuilds an unlimited run once eight stale screenshots could be dropped", () => {
     const input = request({ contextStrategy: "retrieval" }, 0);
     const steps: Step[] = Array.from({ length: 24 }, () => ({
       tool: "computer_observe",
       screenshot: true,
     }));
     const sent = simulateRun(input, steps);
-    expect(Math.max(...sent.map(imageCount))).toBe(17);
-    expect(rewrites(sent)).toEqual([18]);
-    expect(imageCount(sent[18]!)).toBe(2);
+    expect(Math.max(...sent.map(imageCount))).toBe(9);
+    expect(rewrites(sent)).toEqual([10, 18]);
+    expect(imageCount(sent[10]!)).toBe(2);
+  });
+});
+
+describe("local prompt cache declared off", () => {
+  const local = { ...model, provider: "local" } as Model<Api>;
+  const pages: Step[] = Array.from({ length: 12 }, (_, index) => ({
+    tool: "browser_snapshot" as const,
+    text: `page ${index} ${"node ".repeat(1_200)}`,
+  }));
+  const lastPrompt = (provider: Model<Api>) =>
+    simulateRun(request({ contextStrategy: "current" }), pages, { model: provider }).at(-1)!;
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps the append-only transcript when the setting is unset", () => {
+    const sent = simulateRun(request({ contextStrategy: "current" }), pages, { model: local });
+    expect(rewrites(sent)).toEqual([]);
+    expect(JSON.stringify(sent.at(-1))).not.toContain("Earlier page state trimmed");
+  });
+
+  it("trims stale page state once enough has built up when set to off", () => {
+    const cached = lastPrompt(local);
+    vi.stubEnv("CORTEXAI_AGENT_HUB_LOCAL_PROMPT_CACHE", "off");
+    const trimmed = lastPrompt(local);
+    expect(JSON.stringify(trimmed)).toContain("Earlier page state trimmed");
+    expect(estimateContextTokens(trimmed)).toBeLessThan(estimateContextTokens(cached) * 0.7);
+  });
+
+  it("does not shrink a prompt below the threshold", () => {
+    vi.stubEnv("CORTEXAI_AGENT_HUB_LOCAL_PROMPT_CACHE", "off");
+    const sent = simulateRun(request({ contextStrategy: "current" }), pages.slice(0, 2), {
+      model: local,
+    });
+    expect(rewrites(sent)).toEqual([]);
+  });
+
+  it("applies to the local provider only", () => {
+    vi.stubEnv("CORTEXAI_AGENT_HUB_LOCAL_PROMPT_CACHE", "off");
+    expect(rewrites(simulateRun(request({ contextStrategy: "current" }), pages))).toEqual([]);
+  });
+
+  it("keeps unsigned thinking on the rebuilds it triggers", () => {
+    vi.stubEnv("CORTEXAI_AGENT_HUB_LOCAL_PROMPT_CACHE", "off");
+    const sent = simulateRun(request({ contextStrategy: "current" }), pages, {
+      model: local,
+      unsigned: true,
+    });
+    expect(rewrites(sent).length).toBeGreaterThan(0);
+    expect(thinkingCount(sent.at(-1)!)).toBe(pages.length);
+  });
+});
+
+describe("rebuildPaysOff with the prompt cache off", () => {
+  const kept = { tokens: 60_000, images: 0 };
+  it("rebuilds from 3,000 stale tokens on, and never when nothing is stale", () => {
+    expect(rebuildPaysOff(kept, { tokens: 57_000, images: 0 }, 55_000, 4, true)).toBe(true);
+    expect(rebuildPaysOff(kept, { tokens: 57_001, images: 0 }, 55_000, 4, true)).toBe(false);
+    expect(rebuildPaysOff(kept, { tokens: 60_000, images: 0 }, 55_000, 4, true)).toBe(false);
+  });
+  it("leaves the cached cost balance alone by default", () => {
+    expect(rebuildPaysOff(kept, { tokens: 50_000, images: 0 }, 55_000, 4)).toBe(false);
   });
 });

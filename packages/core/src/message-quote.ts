@@ -8,6 +8,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { blocksToAgentHistoryText } from "./attachments.js";
 import { replyAttachment } from "./message-replies.js";
+import { isDeliveryMessage } from "./message-visibility.js";
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 /** Past this much source text in one message, quote derivation refuses to run. */
@@ -92,6 +93,8 @@ export function deriveMessageQuote(
   quoteHint: string,
   format: "markdown" | "plain-text",
 ): string | undefined {
+  // A delivery's text is the bot's hidden prompt, never quoted.
+  if (isDeliveryMessage(blocks)) return undefined;
   const hint = normalizeWithOffsets(truncateReplyQuote(quoteHint.trim())).text;
   if (!hint) return undefined;
 
@@ -158,11 +161,12 @@ function replyBlockText(block: MessageBlock): string {
     case "choice":
       return block.question;
     case "card":
-      return block.lines.map((line) => `${line.k}: ${line.v}`).join(" · ");
+      return block.lines.map((line) => `${line.k}: ${line.v}`).join(", ");
     case "steps":
-      return block.steps.map((step) => step.label).join(" · ");
+      return block.steps.map((step) => step.label).join(", ");
     case "voice_call":
     case "cloud_agent":
+    case "page":
       return block.title;
     case "call_request":
       return block.reason;
@@ -175,10 +179,22 @@ function replyBlockText(block: MessageBlock): string {
     case "mcp_approval":
     case "chart":
       return block.name;
+    case "app":
+      return block.server;
+    case "import_setup":
+      if (block.undone) return "";
+      return block.items.map((item) => ("name" in item ? item.name : item.title)).join(", ");
     case "image":
     case "file":
       return block.name || blocksToAgentHistoryText([block]);
+    case "delivery":
+      return "";
   }
+}
+
+/** A message that is only page cards: replies to it name the page rather than quote its text. */
+export function isPageCardMessage(blocks: readonly { kind: string }[]): boolean {
+  return blocks.length > 0 && blocks.every((block) => block.kind === "page");
 }
 
 /** UI previews keep attachment labels separate from agent-history descriptions. */
@@ -186,12 +202,23 @@ export function messageReplyPreview(
   blocks: MessageBlock[],
   role: ReplyPreview["role"],
   botId?: string,
+  author?: ReplyPreview["author"],
 ): ReplyPreview {
+  // A delivery's prompt and files stay hidden, even from a reply to it.
+  if (isDeliveryMessage(blocks)) return { role, botId, ...(author ? { author } : {}), text: "" };
   const attachment = replyAttachment(blocks);
   const caption = messageReplyExcerpt(
     blocks.filter((block) => block.kind !== "image" && block.kind !== "file"),
     role,
   );
   const text = caption || (attachment?.kind === "file" ? attachment.name : "");
-  return { role, botId, text, ...(attachment ? { attachment } : {}) };
+  const page = isPageCardMessage(blocks);
+  return {
+    role,
+    botId,
+    ...(author ? { author } : {}),
+    text,
+    ...(attachment ? { attachment } : {}),
+    ...(page ? { page } : {}),
+  };
 }

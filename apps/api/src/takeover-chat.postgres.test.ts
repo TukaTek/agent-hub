@@ -2,20 +2,33 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentRunRequest, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
+import { computerControlExpireJobKey, runJobKey } from "@cortexai-agent-hub/adapter-kit";
 import {
+  acquireComputerExecutionLease,
+  ComputerBusyError,
+  cancelComputerRunWorkArgv,
   createRunExecutor,
   EncryptedSecretStore,
   FakeBrowserProvider,
   FakeSandboxProvider,
   LocalAgentHomeStore,
   ScriptedAgentRuntime,
+  screenLeaseIdForRun,
+  updateFleetGroup,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
-import type { PrismaClient } from "@cortexai-agent-hub/db";
+import {
+  stuckWorkStatusMessage,
+  TAKEOVER_COMPUTER_PENDING_STATE,
+  TAKEOVER_WAIT_EXPIRE_AFTER_MS,
+} from "@cortexai-agent-hub/core";
+import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import {
   asSystem,
   createDb,
   createThreadEvents,
+  endTakeoverWaits,
+  expireStuckRun,
   runAsSystem,
   runAsTenant,
 } from "@cortexai-agent-hub/db";
@@ -26,9 +39,7 @@ import type { RouterDeps } from "./router.js";
 import { createRouter } from "./router.js";
 
 const describePostgres =
-  process.env.VERIFY_DATABASE === "1" && process.env.DATABASE_URL
-    ? describe.sequential
-    : describe.skip;
+  process.env.VERIFY_DATABASE === "1" && process.env.DATABASE_URL ? describe : describe.skip;
 
 describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
   let db: ReturnType<typeof createDb>;
@@ -63,6 +74,9 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     if (dataDir) await rm(dataDir, { recursive: true, force: true });
   });
 
+  const endWaits = (runIds: string[]) =>
+    runAsSystem("test takeover wait", () => endTakeoverWaits(prisma, runIds));
+
   async function setup(mode: "opened" | "unopened" = "opened", trigger = "user") {
     const id = randomUUID();
     organizations.push(id);
@@ -73,6 +87,19 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
       data: { id, name: "Takeover fixture", slug: id, createdAt: new Date() },
     });
     await system.space.create({ data: { id, organizationId: id, name: "Fixture" } });
+    await system.member.create({
+      data: { id, organizationId: id, userId: id, role: "owner", createdAt: new Date() },
+    });
+    await system.spaceMember.create({
+      data: {
+        id,
+        spaceId: id,
+        organizationId: id,
+        userId: id,
+        role: "owner",
+        createdAt: new Date(),
+      },
+    });
     const computer = await system.computer.create({
       data: { spaceId: id, userId: id, scopeKey: id, homeKey: id, kind: "fake", state: "running" },
     });
@@ -99,6 +126,22 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
         taskId: task.id,
         status: "waiting_takeover",
         trigger,
+      },
+    });
+    // The run asked for help with a card, as a paused run always has.
+    const cardSeq = await system.thread.update({
+      where: { id: thread.id },
+      data: { nextMessageSeq: { increment: 1 } },
+      select: { nextMessageSeq: true },
+    });
+    await system.message.create({
+      data: {
+        threadId: thread.id,
+        botId: bot.id,
+        runId: run.id,
+        seq: cardSeq.nextMessageSeq - 1,
+        role: "bot",
+        blocks: [{ kind: "computer", state: TAKEOVER_COMPUTER_PENDING_STATE, text: "Sign in." }],
       },
     });
     await system.computerExecutionLease.create({
@@ -139,7 +182,6 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
         data: {
           controlHolder: "user",
           controlBotId: bot.id,
-          controlRunId: run.id,
           controlLeaseId: leaseId,
           controlLeaseExpiresAt: new Date(Date.now() + 60_000),
         },
@@ -167,7 +209,6 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
           leaseOwner: "fixture-worker",
           leaseFence: 1,
           reason: "Enter the fixture code",
-          computerId: computer.id,
         }),
       );
     }
@@ -179,6 +220,8 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     });
     const jobs: JobPublisher = {
       enqueue,
+      enqueueIn: vi.fn(async () => undefined),
+      cancelIn: vi.fn(async () => undefined),
       cancel: vi.fn(async () => undefined),
       close: async () => undefined,
     };
@@ -204,6 +247,28 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
       return response!;
     };
     const control = () => system.computer.findUniqueOrThrow({ where: { id: computer.id } });
+    const call = async (path: string, as: Actor = actor) => {
+      const { response } = await handler.handle(
+        new Request(`http://127.0.0.1/rpc/computer/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: { botId: bot.id } }),
+        }),
+        { prefix: "/rpc", context: { actor: as } },
+      );
+      return response!;
+    };
+    const release = async (reason: "done" | "skipped", as: Actor = actor, runId = run.id) => {
+      const { response } = await handler.handle(
+        new Request("http://127.0.0.1/rpc/computer/release", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: { botId: bot.id, reason, runId } }),
+        }),
+        { prefix: "/rpc", context: { actor: as } },
+      );
+      return response!;
+    };
     return {
       actor,
       bot,
@@ -212,14 +277,122 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
       computer,
       sandbox,
       events,
+      deps,
       jobs,
       enqueue,
       queuedStates,
       send,
+      release,
+      call,
       control,
       leaseId,
     };
   }
+
+  it("hands this person's screen to another bot without answering the waiting run", async () => {
+    const fixture = await setup();
+    const other = await system.bot.create({
+      data: {
+        spaceId: fixture.actor.spaceId,
+        userId: fixture.actor.userId,
+        name: "Other fixture",
+        color: "test",
+        computerId: fixture.computer.id,
+      },
+    });
+    const { response } = await new RPCHandler(createRouter(fixture.deps)).handle(
+      new Request("http://127.0.0.1/rpc/computer/takeover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ json: { botId: other.id } }),
+      }),
+      { prefix: "/rpc", context: { actor: fixture.actor } },
+    );
+    expect(response?.status).toBe(200);
+    expect(await fixture.control()).toMatchObject({
+      controlHolder: "user",
+      controlBotId: other.id,
+      controlUserId: fixture.actor.userId,
+    });
+    expect((await fixture.control()).controlLeaseId).not.toBe(fixture.leaseId);
+    expect(fixture.jobs.cancel).toHaveBeenCalledWith(
+      computerControlExpireJobKey(fixture.computer.id, fixture.leaseId!),
+    );
+    // Only Done or Skip answers the bot; handing its screen on does not.
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+      checkpoint: null,
+    });
+    expect(fixture.queuedStates).toEqual([]);
+  });
+
+  it("lets one person at a time control the screen, renewed while their page checks in", async () => {
+    const fixture = await setup("unopened");
+    // The bot working on its computer does not keep a person off it.
+    await system.run.update({ where: { id: fixture.run.id }, data: { status: "running" } });
+    const fenceBefore = (await fixture.control()).controlFence;
+    expect((await fixture.call("takeover")).status).toBe(200);
+    const granted = await fixture.control();
+    expect(granted).toMatchObject({
+      controlHolder: "user",
+      controlBotId: fixture.bot.id,
+      controlUserId: fixture.actor.userId,
+      controlFence: fenceBefore + 1,
+    });
+    expect(granted.controlLeaseExpiresAt!.getTime() - Date.now()).toBeLessThanOrEqual(90_000);
+
+    const otherId = randomUUID();
+    organizations.push(otherId);
+    await system.user.create({
+      data: { id: otherId, name: "Other", email: `${otherId}@example.test`, emailVerified: true },
+    });
+    await system.member.create({
+      data: {
+        id: otherId,
+        organizationId: fixture.actor.spaceId,
+        userId: otherId,
+        role: "member",
+        createdAt: new Date(),
+      },
+    });
+    await system.spaceMember.create({
+      data: {
+        id: otherId,
+        spaceId: fixture.actor.spaceId,
+        organizationId: fixture.actor.spaceId,
+        userId: otherId,
+        role: "member",
+        createdAt: new Date(),
+      },
+    });
+    const other = { ...fixture.actor, userId: otherId, email: `${otherId}@example.test` };
+    const busy = await fixture.call("takeover", other);
+    expect(busy.status).toBe(409);
+    expect(JSON.stringify(await busy.json())).toContain("Someone else is using this computer");
+    expect(await fixture.control()).toEqual(granted);
+
+    await system.computer.update({
+      where: { id: fixture.computer.id },
+      data: { controlLeaseExpiresAt: new Date(Date.now() + 5_000) },
+    });
+    expect((await fixture.call("heartbeat")).status).toBe(200);
+    const renewed = await fixture.control();
+    expect(renewed.controlLeaseId).toBe(granted.controlLeaseId);
+    expect(renewed.controlLeaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 30_000);
+
+    expect((await fixture.call("release")).status).toBe(200);
+    expect(await fixture.control()).toMatchObject({
+      controlHolder: "none",
+      controlLeaseId: null,
+      controlBotId: null,
+      controlUserId: null,
+    });
+    // Handing back ends control but answers nothing.
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "running",
+      checkpoint: null,
+    });
+  });
 
   it("releases the screen before either continuation is queued and executes the steering once", async () => {
     const fixture = await setup();
@@ -234,8 +407,7 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     });
     expect(sent.runId).toBe(fixture.run.id);
     expect(await fixture.control()).toMatchObject({
-      controlHolder: "bot",
-      controlRunId: null,
+      controlHolder: "none",
       controlBotId: null,
       controlLeaseId: null,
       controlLeaseExpiresAt: null,
@@ -248,9 +420,16 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     );
     expect(
       await system.event.findMany({
-        where: { runId: fixture.run.id, type: "computer.takeover.released" },
+        where: { threadId: fixture.thread.id, type: "computer.takeover.released" },
+        orderBy: { seq: "asc" },
       }),
-    ).toMatchObject([{ payload: { holder: "bot", reason: "done", leaseId: fixture.leaseId } }]);
+    ).toMatchObject([
+      { runId: null, payload: { holder: "none", reason: "done", leaseId: fixture.leaseId } },
+      {
+        runId: fixture.run.id,
+        payload: { holder: "none", reason: "done", leaseId: null, answered: true },
+      },
+    ]);
     expect(fixture.queuedStates).toEqual([
       expect.objectContaining({ status: "queued", checkpoint: "takeover" }),
       expect.objectContaining({ status: "queued", checkpoint: "takeover" }),
@@ -335,7 +514,6 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
       controlHolder: "none",
       controlBotId: null,
       controlLeaseId: null,
-      controlRunId: fixture.run.id,
     });
     const response = await fixture.send({ clientNonce: "unopened-reply" });
     expect(response.status).toBe(200);
@@ -347,16 +525,17 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     });
     expect(sent.runId).toBe(fixture.run.id);
     expect(await fixture.control()).toMatchObject({
-      controlHolder: "bot",
+      controlHolder: "none",
       controlBotId: null,
       controlLeaseId: null,
-      controlRunId: null,
     });
     expect(
       await system.event.findMany({
         where: { runId: fixture.run.id, type: "computer.takeover.released" },
       }),
-    ).toMatchObject([{ payload: { holder: "bot", reason: "done", leaseId: null } }]);
+    ).toMatchObject([
+      { payload: { holder: "none", reason: "done", leaseId: null, answered: true } },
+    ]);
     expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
       status: "queued",
       checkpoint: "takeover",
@@ -413,43 +592,147 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     expect(await system.steeringMessage.count({ where: { messageId: message.id } })).toBe(0);
   });
 
-  it.each(["none", "other-run", "other-bot", "idle"])(
-    "keeps unrelated computer control (%s)",
-    async (owner) => {
-      const fixture = await setup();
-      await system.computer.update({
-        where: { id: fixture.computer.id },
-        data:
-          owner === "none"
-            ? {
-                controlHolder: "none",
-                controlRunId: null,
-                controlBotId: null,
-                controlLeaseId: null,
-                controlLeaseExpiresAt: null,
-              }
-            : owner === "other-run"
-              ? { controlRunId: "different-run" }
-              : owner === "other-bot"
-                ? { controlBotId: "different-bot" }
-                : { controlRunId: null },
-      });
-      const before = await fixture.control();
-      const revoke = vi.spyOn(fixture.sandbox, "setScreenControl");
-      expect((await fixture.send()).status).toBe(200);
-      expect(await fixture.control()).toEqual(before);
-      expect(revoke).not.toHaveBeenCalled();
-      expect(
-        await system.event.count({
-          where: { threadId: fixture.thread.id, type: "computer.takeover.released" },
+  it("lets the person the run waits on skip an unopened takeover from the chat card", async () => {
+    const fixture = await setup("unopened");
+    expect((await fixture.release("skipped")).status).toBe(200);
+    expect(await fixture.control()).toMatchObject({ controlHolder: "none", controlLeaseId: null });
+    expect(
+      await system.event.findMany({
+        where: { runId: fixture.run.id, type: "computer.takeover.released" },
+      }),
+    ).toMatchObject([
+      { payload: { holder: "none", reason: "skipped", leaseId: null, answered: true } },
+    ]);
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "queued",
+      checkpoint: "takeover-skipped",
+    });
+  });
+
+  it("shows the screen preview to the Space and to no one outside it", async () => {
+    const fixture = await setup("unopened");
+    const outsider = await setup("unopened");
+    const preview = async (actor: Actor, runId?: string) => {
+      const { response } = await new RPCHandler(createRouter(fixture.deps)).handle(
+        new Request("http://127.0.0.1/rpc/computer/preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: { botId: fixture.bot.id, runId } }),
         }),
-      ).toBe(0);
-      expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
-        status: "waiting_takeover",
-        checkpoint: null,
-      });
-    },
-  );
+        { prefix: "/rpc", context: { actor } },
+      );
+      return response!;
+    };
+    const own = await preview(fixture.actor);
+    expect(own.status).toBe(200);
+    const { json } = await own.json();
+    expect(json.image).toMatch(/^data:image\/(png|jpeg);base64,/);
+    const other = await preview(outsider.actor);
+    expect(other.status).not.toBe(200);
+    expect(JSON.stringify(await other.json())).not.toContain("data:image");
+    // A card whose run no longer waits shows no screen.
+    const stale = await preview(fixture.actor, randomUUID());
+    expect((await stale.json()).json).toEqual({ image: null });
+    const current = await preview(fixture.actor, fixture.run.id);
+    expect((await current.json()).json.image).toMatch(/^data:image/);
+  });
+
+  it("does not let an older card answer the takeover a newer run is waiting on", async () => {
+    const fixture = await setup("unopened");
+    const before = await fixture.control();
+    const response = await fixture.release("skipped", fixture.actor, randomUUID());
+    expect(response.status).toBe(409);
+    expect(await fixture.control()).toEqual(before);
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+    });
+  });
+
+  it("does not let another member answer a takeover that waits on someone else", async () => {
+    const fixture = await setup("unopened");
+    const otherId = randomUUID();
+    await system.user.create({
+      data: { id: otherId, name: "Other", email: `${otherId}@example.test`, emailVerified: true },
+    });
+    organizations.push(otherId);
+    await system.member.create({
+      data: {
+        id: otherId,
+        organizationId: fixture.actor.spaceId,
+        userId: otherId,
+        role: "member",
+        createdAt: new Date(),
+      },
+    });
+    await system.spaceMember.create({
+      data: {
+        id: otherId,
+        spaceId: fixture.actor.spaceId,
+        organizationId: fixture.actor.spaceId,
+        userId: otherId,
+        role: "member",
+        createdAt: new Date(),
+      },
+    });
+    const before = await fixture.control();
+    const response = await fixture.release("done", {
+      ...fixture.actor,
+      userId: otherId,
+      email: `${otherId}@example.test`,
+    });
+    expect(response.status).toBe(409);
+    expect(await fixture.control()).toEqual(before);
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+    });
+  });
+
+  it("does not let another member answer someone else's request by taking the screen", async () => {
+    const fixture = await setup("unopened");
+    const otherId = randomUUID();
+    organizations.push(otherId);
+    await system.user.create({
+      data: { id: otherId, name: "Other", email: `${otherId}@example.test`, emailVerified: true },
+    });
+    const membership = {
+      id: otherId,
+      organizationId: fixture.actor.spaceId,
+      userId: otherId,
+      role: "member",
+      createdAt: new Date(),
+    };
+    await system.member.create({ data: membership });
+    await system.spaceMember.create({ data: { ...membership, spaceId: fixture.actor.spaceId } });
+    const other = { ...fixture.actor, userId: otherId, email: `${otherId}@example.test` };
+    // Anyone in the Space may take the screen…
+    expect((await fixture.call("takeover", other)).status).toBe(200);
+    expect(await fixture.control()).toMatchObject({ controlUserId: otherId });
+    // …but holding it never answers the request the bot made to someone else.
+    for (const reason of ["done", "skipped"] as const) {
+      expect((await fixture.release(reason, other)).status).toBe(409);
+    }
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+      checkpoint: null,
+    });
+  });
+
+  it("answers the request from a reply but keeps another bot's screen control", async () => {
+    const fixture = await setup();
+    await system.computer.update({
+      where: { id: fixture.computer.id },
+      data: { controlBotId: "different-bot" },
+    });
+    const before = await fixture.control();
+    const revoke = vi.spyOn(fixture.sandbox, "setScreenControl");
+    expect((await fixture.send()).status).toBe(200);
+    expect(await fixture.control()).toEqual(before);
+    expect(revoke).not.toHaveBeenCalled();
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "queued",
+      checkpoint: "takeover",
+    });
+  });
 
   it("does not release a bot's takeover when the user sends to a group", async () => {
     const fixture = await setup();
@@ -482,16 +765,123 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     ).toBe(0);
   });
 
+  describe("in a group chat", () => {
+    /** The waiting run belongs to the second member; the first member has nothing to do with it. */
+    async function setupGroup() {
+      const fixture = await setup();
+      const first = await system.bot.create({
+        data: {
+          spaceId: fixture.actor.spaceId,
+          userId: fixture.actor.userId,
+          name: "Bystander",
+          color: "test",
+        },
+      });
+      const group = await system.chatGroup.create({
+        data: {
+          spaceId: fixture.actor.spaceId,
+          userId: fixture.actor.userId,
+          name: "Fixture group",
+          members: { create: [{ botId: first.id }, { botId: fixture.bot.id }] },
+          thread: { create: { spaceId: fixture.actor.spaceId, userId: fixture.actor.userId } },
+        },
+        include: { thread: true },
+      });
+      const threadId = group.thread!.id;
+      await system.task.updateMany({ where: { id: fixture.run.taskId }, data: { threadId } });
+      await system.run.update({ where: { id: fixture.run.id }, data: { threadId } });
+      const card = await system.message.create({
+        data: {
+          threadId,
+          botId: fixture.bot.id,
+          runId: fixture.run.id,
+          seq: 1,
+          role: "bot",
+          blocks: [
+            { kind: "text", text: "Please enter the code on the screen." },
+            { kind: "computer", state: TAKEOVER_COMPUTER_PENDING_STATE, text: "Enter the code." },
+          ],
+        },
+      });
+      const call = async (path: "send" | "react", json: Record<string, unknown>) => {
+        const { response } = await new RPCHandler(createRouter(fixture.deps)).handle(
+          new Request(`http://127.0.0.1/rpc/threads/${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ json: { groupId: group.id, ...json } }),
+          }),
+          { prefix: "/rpc", context: { actor: fixture.actor } },
+        );
+        return response!;
+      };
+      return { ...fixture, first, threadId, card, call };
+    }
+
+    it.each(["send", "react"] as const)(
+      "hands the screen back to the member that asked for it on a group %s",
+      async (path) => {
+        const group = await setupGroup();
+        const revoke = vi.spyOn(group.sandbox, "setScreenControl");
+        const response = await group.call(
+          path,
+          path === "send"
+            ? { text: "@Fixture the code is 1234.", clientNonce: "group-reply" }
+            : { messageId: group.card.id, reaction: "👍", clientNonce: "group-thumb" },
+        );
+        expect(response.status).toBe(200);
+        expect(await group.control()).toMatchObject({
+          controlHolder: "none",
+          controlBotId: null,
+          controlLeaseId: null,
+        });
+        expect(revoke).toHaveBeenCalledWith(
+          expect.anything(),
+          false,
+          expect.anything(),
+          group.leaseId,
+        );
+        expect(
+          await system.event.findMany({
+            where: { runId: group.run.id, type: "computer.takeover.released" },
+          }),
+        ).toMatchObject([{ payload: { reason: "done", leaseId: null, answered: true } }]);
+        expect(await system.run.findUniqueOrThrow({ where: { id: group.run.id } })).toMatchObject({
+          status: "queued",
+          checkpoint: "takeover",
+        });
+      },
+    );
+
+    it("keeps the screen when the reply is for a member that is not waiting", async () => {
+      const group = await setupGroup();
+      const before = await group.control();
+      const revoke = vi.spyOn(group.sandbox, "setScreenControl");
+      const response = await group.call("send", {
+        text: "@Bystander how are you?",
+        clientNonce: "group-other-member",
+      });
+      expect(response.status).toBe(200);
+      expect(await group.control()).toEqual(before);
+      expect(revoke).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not release the takeover of a routine run that the reply does not steer", async () => {
     const fixture = await setup("opened", "routine");
     const before = await fixture.control();
     const revoke = vi.spyOn(fixture.sandbox, "setScreenControl");
-    expect((await fixture.send({ clientNonce: "routine-reply" })).status).toBe(200);
+    const response = await fixture.send({ clientNonce: "routine-reply" });
+    expect(response.status).toBe(200);
+    const { json: sent } = await response.json();
     expect(await fixture.control()).toEqual(before);
     expect(revoke).not.toHaveBeenCalled();
-    expect(
-      await system.steeringMessage.count({ where: { botId: fixture.bot.id, runId: null } }),
-    ).toBe(1);
+    // The reply gets its own run rather than waiting on the routine's takeover request.
+    expect(sent.runId).not.toBe(fixture.run.id);
+    expect(await system.run.findUniqueOrThrow({ where: { id: sent.runId } })).toMatchObject({
+      status: "queued",
+      trigger: "user",
+    });
+    expect(await system.steeringMessage.count({ where: { botId: fixture.bot.id } })).toBe(0);
     expect(
       await system.event.count({
         where: { runId: fixture.run.id, type: "computer.takeover.released" },
@@ -499,40 +889,93 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     ).toBe(0);
   });
 
-  it("releases a takeover the user opens while the release is in flight", async () => {
-    const fixture = await setup("unopened");
-    const finalize = fixture.events.finalizeComputerControlRelease;
-    vi.spyOn(fixture.events, "finalizeComputerControlRelease").mockImplementationOnce(
-      async (input) => {
-        await system.computer.update({
-          where: { id: fixture.computer.id },
-          data: {
-            controlHolder: "user",
-            controlBotId: fixture.bot.id,
-            controlRunId: fixture.run.id,
-            controlLeaseId: randomUUID(),
-            controlLeaseExpiresAt: new Date(Date.now() + 60_000),
-          },
-        });
-        return finalize(input);
-      },
-    );
-    const revoke = vi.spyOn(fixture.sandbox, "setScreenControl");
-    expect((await fixture.send({ clientNonce: "opened-meanwhile" })).status).toBe(200);
-    expect(revoke).toHaveBeenCalledTimes(1);
-    expect(await fixture.control()).toMatchObject({
-      controlHolder: "bot",
-      controlLeaseId: null,
-      controlRunId: null,
+  it("ends an unopened takeover wait that a reply would otherwise queue behind", async () => {
+    const fixture = await setup("unopened", "routine");
+    const response = await fixture.send({ clientNonce: "moved-on" });
+    expect(response.status).toBe(200);
+    const { json: sent } = await response.json();
+    expect(sent.runId).not.toBe(fixture.run.id);
+
+    expect(await endWaits([fixture.run.id])).toBe(1);
+
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "cancelled",
+      error: stuckWorkStatusMessage("waiting_takeover"),
     });
     expect(
-      await system.event.count({
-        where: { runId: fixture.run.id, type: "computer.takeover.released" },
+      await system.message.findFirstOrThrow({
+        where: { threadId: fixture.thread.id, clientNonce: `stuck-expired:${fixture.run.id}` },
       }),
-    ).toBe(1);
-    expect(fixture.queuedStates).toContainEqual(
-      expect.objectContaining({ status: "queued", checkpoint: "takeover" }),
+    ).toMatchObject({
+      role: "system",
+      blocks: [{ kind: "meta", text: stuckWorkStatusMessage("waiting_takeover") }],
+    });
+    expect(await fixture.control()).toMatchObject({ controlHolder: "none", controlLeaseId: null });
+    const lease = await system.computerExecutionLease.findFirstOrThrow({
+      where: { computerId: fixture.computer.id, botId: fixture.bot.id },
+    });
+    expect(lease.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(await system.run.findUniqueOrThrow({ where: { id: sent.runId } })).toMatchObject({
+      status: "queued",
+    });
+  });
+
+  it("keeps a takeover wait the user is on the screen for, even past the timeout", async () => {
+    const fixture = await setup("opened", "routine");
+    await system.computer.update({
+      where: { id: fixture.computer.id },
+      data: { controlLeaseExpiresAt: new Date(Date.now() + 2 * TAKEOVER_WAIT_EXPIRE_AFTER_MS) },
+    });
+    const before = await fixture.control();
+    expect(await endWaits([fixture.run.id])).toBe(0);
+    const run = await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } });
+    const expired = await runAsSystem("test expiry", () =>
+      prisma.$transaction((tx) =>
+        expireStuckRun(tx, {
+          runId: run.id,
+          threadId: run.threadId,
+          status: "waiting_takeover",
+          updatedAt: run.updatedAt,
+          now: new Date(run.updatedAt.getTime() + TAKEOVER_WAIT_EXPIRE_AFTER_MS),
+        }),
+      ),
     );
+    expect(expired).toBeNull();
+    expect(await system.run.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
+      status: "waiting_takeover",
+    });
+    expect(await fixture.control()).toEqual(before);
+  });
+
+  it("keeps a taken wait while its lapsed screen lease is still being released", async () => {
+    const fixture = await setup("opened", "routine");
+    await system.computer.update({
+      where: { id: fixture.computer.id },
+      data: { controlLeaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    expect(await endWaits([fixture.run.id])).toBe(0);
+    // The expiry job is midway: input denied, provider revocation still pending.
+    await system.computer.update({
+      where: { id: fixture.computer.id },
+      data: { controlHolder: "none" },
+    });
+    expect(await endWaits([fixture.run.id])).toBe(0);
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+    });
+  });
+
+  it("does not end a wait once the user's takeover grant lands first", async () => {
+    const fixture = await setup("unopened");
+    expect((await fixture.call("takeover")).status).toBe(200);
+    expect(await fixture.control()).toMatchObject({
+      controlHolder: "user",
+      controlBotId: fixture.bot.id,
+    });
+    expect(await endWaits([fixture.run.id])).toBe(0);
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+    });
   });
 
   it("retries a failed screen revocation without losing or duplicating the steering message", async () => {
@@ -548,7 +991,7 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     expect(fixture.queuedStates).toEqual([]);
     expect((await fixture.send({ clientNonce: "retry-reply" })).status).toBe(200);
     expect(revoke).toHaveBeenCalledTimes(2);
-    expect(await fixture.control()).toMatchObject({ controlHolder: "bot", controlLeaseId: null });
+    expect(await fixture.control()).toMatchObject({ controlHolder: "none", controlLeaseId: null });
     expect(
       await system.message.count({
         where: { threadId: fixture.thread.id, clientNonce: "retry-reply" },
@@ -582,7 +1025,6 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
       data: {
         controlHolder: "user",
         controlBotId: fixture.bot.id,
-        controlRunId: fixture.run.id,
         controlLeaseId: randomUUID(),
         controlLeaseExpiresAt: new Date(Date.now() + 60_000),
       },
@@ -598,4 +1040,308 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
       }),
     ).toBe(1);
   });
+
+  /** Ada's takeover wait from setup() moves into a group where Ben works too. */
+  async function groupWithWaitingRun() {
+    const { actor, bot: ada, run, computer, sandbox, jobs, deps, control } = await setup();
+    const { spaceId, userId } = actor;
+    const bot = (name: string) =>
+      system.bot.create({
+        data: { spaceId, userId, name, color: "test", computerId: computer.id },
+      });
+    const [ben, cy] = [await bot("Ben"), await bot("Cy")];
+    const group = await system.chatGroup.create({
+      data: {
+        spaceId,
+        userId,
+        name: "Crew",
+        members: { create: [{ botId: ada.id }, { botId: ben.id }, { botId: cy.id }] },
+        thread: { create: { spaceId, userId } },
+      },
+      include: { thread: true },
+    });
+    const threadId = group.thread!.id;
+    await system.task.update({ where: { id: run.taskId }, data: { threadId } });
+    await system.run.update({ where: { id: run.id }, data: { threadId } });
+    const benTask = await system.task.create({
+      data: { spaceId, userId, botId: ben.id, threadId, prompt: "Sign in.", status: "running" },
+    });
+    const benRun = await system.run.create({
+      data: {
+        spaceId,
+        userId,
+        botId: ben.id,
+        threadId,
+        taskId: benTask.id,
+        status: "running",
+        trigger: "user",
+      },
+    });
+    const leaseOf = (botId: string) =>
+      system.computerExecutionLease.findUniqueOrThrow({
+        where: { computerId_botId: { computerId: computer.id, botId } },
+      });
+    const adaLease = await leaseOf(ada.id);
+    const benLease = await system.computerExecutionLease.create({
+      data: {
+        computerId: computer.id,
+        botId: ben.id,
+        runId: benRun.id,
+        fence: 1,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const removeAda = { groupId: group.id, botIds: [ben.id, cy.id] };
+    const saveFromSettings = async (prismaClient = prisma, route = "update") => {
+      const { response } = await new RPCHandler(
+        createRouter({ ...deps, prisma: prismaClient }),
+      ).handle(
+        new Request(`http://127.0.0.1/rpc/groups/${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: route === "update" ? removeAda : { groupId: group.id } }),
+        }),
+        { prefix: "/rpc", context: { actor } },
+      );
+      expect(response?.status).toBe(200);
+    };
+    const saveFromManager = (prismaClient = prisma) =>
+      runAsTenant(actor, () =>
+        updateFleetGroup(
+          { prisma: prismaClient, events: createThreadEvents(prisma), jobs, sandbox },
+          {
+            spaceId,
+            userId,
+            botId: cy.id,
+            groupId: null,
+            threadId: randomUUID(),
+            runId: randomUUID(),
+          },
+          { ...removeAda, expectedBotIds: [ada.id, ben.id, cy.id] },
+        ),
+      );
+    /** The removed bot's next chat gets the computer now, not when the takeover hold ends. */
+    const expectComputerFreed = async () => {
+      await expect(
+        runAsSystem("test lease", () =>
+          acquireComputerExecutionLease(prisma, {
+            computerId: computer.id,
+            runId: randomUUID(),
+            botId: ada.id,
+          }),
+        ),
+      ).resolves.toMatchObject({ fence: 2 });
+      // Ben stays in the group, so his run keeps its computer.
+      expect(await leaseOf(ben.id)).toEqual(benLease);
+    };
+    const groupUpdates = () => system.event.count({ where: { threadId, type: "group.updated" } });
+    return {
+      providerRef: (await control()).providerRef,
+      computer,
+      ada,
+      run,
+      adaLease,
+      jobs,
+      sandbox,
+      saveFromSettings,
+      saveFromManager,
+      expectComputerFreed,
+      groupUpdates,
+    };
+  }
+
+  it.each(["the group settings", "a manager bot"])(
+    "stops and frees the computer of a bot %s removes while it waits for takeover",
+    async (path) => {
+      const fixture = await groupWithWaitingRun();
+      const { ada, run } = fixture;
+      const execute = vi.spyOn(fixture.sandbox, "execute");
+      const releaseScreen = vi.spyOn(fixture.sandbox, "releaseScreen");
+
+      if (path === "the group settings") {
+        // Two saves of the same removal race; only the one that cancels the run tears it down.
+        await Promise.all([fixture.saveFromSettings(), fixture.saveFromSettings()]);
+      } else {
+        await expect(fixture.saveFromManager()).resolves.toMatchObject({ ok: true });
+      }
+
+      expect(vi.mocked(fixture.jobs.cancel).mock.calls).toEqual([[runJobKey(run.id)]]);
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ providerRef: fixture.providerRef }),
+        expect.objectContaining({ argv: cancelComputerRunWorkArgv(fixture.computer.id, run.id) }),
+        expect.anything(),
+      );
+      expect(releaseScreen).toHaveBeenCalledTimes(1);
+      expect(releaseScreen).toHaveBeenCalledWith(
+        expect.objectContaining({ providerRef: fixture.providerRef }),
+        expect.objectContaining({
+          spaceId: ada.spaceId,
+          botId: ada.id,
+          runId: run.id,
+          screenLeaseId: screenLeaseIdForRun(fixture.adaLease, run.id),
+          cancelRunWork: true,
+        }),
+      );
+      await fixture.expectComputerFreed();
+    },
+  );
+
+  it("frees the removed bot's computer even when releasing its screen fails", async () => {
+    const fixture = await groupWithWaitingRun();
+    vi.spyOn(fixture.sandbox, "releaseScreen").mockRejectedValue(new Error("provider unavailable"));
+
+    await fixture.saveFromSettings();
+    await fixture.expectComputerFreed();
+  });
+
+  it.each(["update", "archive"])(
+    "tears down a group run that takes its computer while groups/%s is saving",
+    async (route) => {
+      const fixture = await groupWithWaitingRun();
+      const { ada, run, computer } = fixture;
+      // Ada's run is executing and has not taken its computer yet.
+      await system.computerExecutionLease.delete({ where: { id: fixture.adaLease.id } });
+      await system.run.update({
+        where: { id: run.id },
+        data: {
+          status: "running",
+          leaseOwner: "worker",
+          leaseFence: 1,
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        },
+      });
+      const releaseScreen = vi.spyOn(fixture.sandbox, "releaseScreen");
+      let executorAcquire: unknown;
+
+      await fixture.saveFromSettings(
+        afterFirstRead(prisma, "computerExecutionLease", async () => {
+          executorAcquire = await runAsSystem("test lease", () =>
+            acquireComputerExecutionLease(prisma, {
+              computerId: computer.id,
+              runId: run.id,
+              botId: ada.id,
+              workerId: "worker",
+              runFence: 1,
+            }),
+          ).catch((error: unknown) => error);
+        }),
+        route,
+      );
+
+      // Either the save kept the run off the computer, or it tore that computer down.
+      const tornDown = releaseScreen.mock.calls.some(([, context]) => context.runId === run.id);
+      expect(executorAcquire instanceof ComputerBusyError || tornDown).toBe(true);
+    },
+  );
+
+  it.each(["update", "archive"])(
+    "keeps the failure of a group run that ends while groups/%s is saving",
+    async (route) => {
+      const fixture = await groupWithWaitingRun();
+      const attempt = await system.attempt.create({
+        data: { runId: fixture.run.id, fence: 1, status: "running" },
+      });
+      const run = await system.run.update({
+        where: { id: fixture.run.id },
+        data: { status: "running", leaseOwner: "worker", leaseFence: 1 },
+      });
+      const releaseScreen = vi.spyOn(fixture.sandbox, "releaseScreen");
+
+      // The run fails after the save read it as active and before the save cancels it.
+      await fixture.saveFromSettings(
+        afterFirstRead(prisma, "run", () =>
+          runAsSystem("test worker", () =>
+            createThreadEvents(prisma).finalizeRun({
+              spaceId: run.spaceId,
+              threadId: run.threadId,
+              botId: run.botId,
+              runId: run.id,
+              taskId: run.taskId,
+              attemptId: attempt.id,
+              leaseOwner: "worker",
+              leaseFence: 1,
+              outcome: "failed",
+              error: "The model provider is unavailable.",
+            }),
+          ),
+        ),
+        route,
+      );
+
+      expect(await system.run.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
+        status: "failed",
+        error: "The model provider is unavailable.",
+      });
+      expect(await system.task.findUniqueOrThrow({ where: { id: run.taskId } })).toMatchObject({
+        status: "failed",
+      });
+      expect(vi.mocked(fixture.jobs.cancel).mock.calls).not.toContainEqual([runJobKey(run.id)]);
+      expect(releaseScreen.mock.calls.some(([, context]) => context.runId === run.id)).toBe(false);
+    },
+  );
+
+  it("still announces a manager bot's group change when freeing the computer fails", async () => {
+    const fixture = await groupWithWaitingRun();
+    const leaseWriteFails = new Proxy(prisma, {
+      get(client, key) {
+        if (key === "computerExecutionLease") {
+          return {
+            updateMany: async () => {
+              throw new Error("database unavailable");
+            },
+          };
+        }
+        const value = Reflect.get(client, key, client);
+        return typeof value === "function" ? value.bind(client) : value;
+      },
+    });
+
+    await fixture.saveFromManager(leaseWriteFails).catch(() => undefined);
+    expect(await fixture.groupUpdates()).toBe(1);
+  });
 });
+
+/** Runs `after` once, right after the first transaction reads `model`. */
+function afterFirstRead(
+  prisma: PrismaClient,
+  model: "computerExecutionLease" | "run",
+  after: () => Promise<unknown>,
+): PrismaClient {
+  let pending = true;
+  const hooked = (tx: Prisma.TransactionClient) => {
+    const reads = new Proxy(tx[model], {
+      get(delegate, key) {
+        const value = Reflect.get(delegate, key, delegate);
+        if (key !== "findMany") return typeof value === "function" ? value.bind(delegate) : value;
+        return async (args: unknown) => {
+          const rows = await value.call(delegate, args);
+          if (pending) {
+            pending = false;
+            await after();
+          }
+          return rows;
+        };
+      },
+    });
+    return new Proxy(tx, {
+      get(client, key) {
+        if (key === model) return reads;
+        const value = Reflect.get(client, key, client);
+        return typeof value === "function" ? value.bind(client) : value;
+      },
+    });
+  };
+  return new Proxy(prisma, {
+    get(client, key) {
+      const value = Reflect.get(client, key, client);
+      if (key !== "$transaction") return typeof value === "function" ? value.bind(client) : value;
+      const transaction = value as (input: unknown, options?: unknown) => Promise<unknown>;
+      return (input: unknown, options?: unknown) =>
+        transaction.call(
+          client,
+          typeof input === "function" ? (tx: Prisma.TransactionClient) => input(hooked(tx)) : input,
+          options,
+        );
+    },
+  });
+}

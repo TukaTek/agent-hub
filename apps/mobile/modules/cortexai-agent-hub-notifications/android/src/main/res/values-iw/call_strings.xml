@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="cortexai_agent_hub_call_channel">שיחה פעילה</string>
+  <string name="cortexai_agent_hub_call_title">שיחת CortexAI Agent Hub</string>
+  <string name="cortexai_agent_hub_call_text">המיקרופון פעיל</string>
+  <string name="cortexai_agent_hub_call_answer">מענה</string>
+  <string name="cortexai_agent_hub_call_decline">דחייה</string>
+</resources>

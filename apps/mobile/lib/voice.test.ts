@@ -1,22 +1,28 @@
-import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
+import { MAX_VOICE_AUDIO_BYTES, VOICE_RESPONSE_TIMEOUT_MS } from "@cortexai-agent-hub/core";
+import { createAudioPlayer, setAudioModeAsync, setIsAudioActiveAsync } from "expo-audio";
 import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import { Platform } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureApiRequestContext, currentApiBase, rpc } from "./api";
+import { DEVICE_VOICE_KEY } from "./device-voice";
 import {
+  activateVoiceAudio,
+  createSpeechOwner,
   getVoicePlaybackState,
-  MAX_VOICE_AUDIO_BYTES,
   pauseVoicePlayback,
-  playMpeg,
+  playSpeechClip,
   resumeVoicePlayback,
+  setCallAudio,
+  setDictationAudio,
   speakQueue,
   speakText,
   speakUtterance,
   speakWithDeviceVoice,
+  speechClipType,
+  stopSpeaking,
   stopVoicePlayback,
   subscribeVoicePlayback,
-  VOICE_RESPONSE_TIMEOUT_MS,
 } from "./voice";
 
 vi.mock("expo-localization", () => ({ getLocales: () => [{ languageTag: "en-US" }] }));
@@ -26,7 +32,7 @@ vi.mock("expo-file-system", () => ({
   File: class {
     uri = "file:///cache/cortexai-agent-hub-voice.mp3";
     create() {}
-    write() {}
+    writeSync() {}
     delete() {}
   },
   Paths: { cache: "cache" },
@@ -34,6 +40,7 @@ vi.mock("expo-file-system", () => ({
 vi.mock("expo-audio", () => ({
   createAudioPlayer: vi.fn(),
   setAudioModeAsync: vi.fn(async () => undefined),
+  setIsAudioActiveAsync: vi.fn(async () => undefined),
 }));
 vi.mock("expo-secure-store", () => ({
   getItemAsync: vi.fn(),
@@ -48,12 +55,24 @@ vi.mock("expo-speech", () => ({
   getAvailableVoicesAsync: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
+// voice.ts subscribes to ./session; its real dependencies import native notification modules.
+vi.mock("./live-notifications", () => ({
+  resumeLiveNotifications: vi.fn(async () => undefined),
+  stopLiveNotifications: vi.fn(async () => undefined),
+}));
+vi.mock("./network-cache", () => ({ clearNetworkCache: vi.fn() }));
+vi.mock("./thread-feedback", () => ({ clearFailedSends: vi.fn() }));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({
   aiConsentCoalesceKey: vi.fn(() => "test-consent-context"),
   authHeaders: vi.fn(),
   captureApiRequestContext: vi.fn(),
   currentApiBase: vi.fn(() => "https://api.example"),
   rpc: vi.fn(),
+}));
+vi.mock("./api-server", () => ({
+  subscribeConfirmedSpaceSwitch: vi.fn(() => () => {}),
 }));
 
 async function waitFor(predicate: () => boolean, attempts = 50): Promise<void> {
@@ -128,6 +147,15 @@ describe("mobile speech", () => {
     }
   });
 
+  it("plays WAV from a server that renders speech itself and MP3 otherwise", () => {
+    const wav = new TextEncoder().encode("RIFF\0\0\0\0WAVEfmt ");
+    expect(speechClipType(wav)).toEqual({ mimeType: "audio/wav", extension: "wav" });
+    expect(speechClipType(new Uint8Array([0xff, 0xfb, 0x90, 0x00]))).toEqual({
+      mimeType: "audio/mpeg",
+      extension: "mp3",
+    });
+  });
+
   it("listens for an HTML audio clip ending before playback starts", async () => {
     class ImmediateAudio {
       onended: (() => void) | null = null;
@@ -140,7 +168,7 @@ describe("mobile speech", () => {
     }
     vi.stubGlobal("Audio", ImmediateAudio);
 
-    await expect(playMpeg(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+    await expect(playSpeechClip(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
   });
 
   it("rejects oversized audio without waiting for response cancellation", async () => {
@@ -207,7 +235,9 @@ class ControllableAudio {
 describe("hosted voice playback controls", () => {
   beforeEach(() => {
     ControllableAudio.instances = [];
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) =>
+      key === DEVICE_VOICE_KEY ? "0" : null,
+    );
     vi.mocked(captureApiRequestContext).mockResolvedValue({
       apiBase: "https://support.example",
       headers: {
@@ -306,6 +336,75 @@ describe("hosted voice playback controls", () => {
     await waitFor(() => secondAudio.paused === false);
     secondAudio.onended?.();
     await expect(spoken).resolves.toBe(true);
+  });
+
+  it("renders the next utterance while the current clip is still playing", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { body?: unknown }) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        requested.push(body.text ?? "");
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      }),
+    );
+
+    const spoken = speakText("Read this", { botId: "bot-1" });
+    await waitFor(() => ControllableAudio.instances.length === 1);
+    const firstAudio = ControllableAudio.instances[0]!;
+    await waitFor(() => firstAudio.paused === false);
+
+    await waitFor(() => requested.length === 2);
+    expect(requested).toEqual(["First", "Second"]);
+    expect(ControllableAudio.instances).toHaveLength(1);
+
+    firstAudio.onended?.();
+    await waitFor(() => ControllableAudio.instances.length === 2);
+    const secondAudio = ControllableAudio.instances[1]!;
+    await waitFor(() => secondAudio.paused === false);
+    secondAudio.onended?.();
+
+    await expect(spoken).resolves.toBe(true);
+    expect(getVoicePlaybackState()).toEqual({ status: "idle", canPause: false });
+  });
+
+  it("surfaces a prefetched clip's failure when playback reaches it, with no unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 2) throw new Error("Offline.");
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      }),
+    );
+
+    try {
+      const spoken = speakText("Read this", { botId: "bot-1" });
+      const outcome = spoken.then(
+        () => "spoken",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+      await waitFor(() => ControllableAudio.instances.length === 1);
+      const firstAudio = ControllableAudio.instances[0]!;
+      await waitFor(() => firstAudio.paused === false);
+      await waitFor(() => calls === 2);
+      expect(ControllableAudio.instances).toHaveLength(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+
+      firstAudio.onended?.();
+      await expect(outcome).resolves.toBe("Offline.");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      stopVoicePlayback();
+    }
   });
 
   it("stops immediately and resolves the call without playing further utterances", async () => {
@@ -551,6 +650,127 @@ describe("hosted voice playback controls", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledOnce();
   });
 
+  it("stops any speech when stopSpeaking has no owner", async () => {
+    const spoken = speakText("Read this", { botId: "bot-1", messageId: "msg-1" });
+    await waitFor(() => ControllableAudio.instances.length > 0);
+    const audio = ControllableAudio.instances[0]!;
+    await waitFor(() => audio.paused === false);
+
+    stopSpeaking();
+    expect(audio.paused).toBe(true);
+    expect(getVoicePlaybackState()).toEqual({ status: "idle", canPause: false });
+    await expect(spoken).resolves.toBe(true);
+  });
+
+  it("stops the speech its owner started, like a call hanging up", async () => {
+    const owner = createSpeechOwner();
+    const spoken = speakText("Read this", { botId: "bot-1", messageId: "msg-1", owner });
+    await waitFor(() => ControllableAudio.instances.length > 0);
+    const audio = ControllableAudio.instances[0]!;
+    await waitFor(() => audio.paused === false);
+
+    stopSpeaking(owner);
+    expect(audio.paused).toBe(true);
+    expect(getVoicePlaybackState()).toEqual({ status: "idle", canPause: false });
+    await expect(spoken).resolves.toBe(true);
+    expect(ControllableAudio.instances).toHaveLength(1);
+  });
+
+  it("does not stop or clear a queue that replaced the owner's speech", async () => {
+    vi.mocked(rpc).mockImplementation(async (proc, body) => {
+      if (proc === "aiConsent/status") return { version: "2026-09-14", recipients: [] } as never;
+      const text = (body as { text?: string } | undefined)?.text ?? "";
+      return { ready: true, utterances: [text] } as never;
+    });
+    const owner = createSpeechOwner();
+    const call = speakText("Call reply", { botId: "bot-1", messageId: "call-1", owner });
+    await waitFor(() => ControllableAudio.instances.length === 1);
+    await waitFor(() => ControllableAudio.instances[0]!.paused === false);
+
+    const queued = speakQueue([
+      { text: "First", botId: "bot-2", messageId: "msg-1" },
+      { text: "Second", botId: "bot-2", messageId: "msg-2" },
+    ]);
+    await expect(call).resolves.toBe(true);
+    await waitFor(() => ControllableAudio.instances.length === 2);
+    const first = ControllableAudio.instances[1]!;
+    await waitFor(() => first.paused === false);
+    expect(getVoicePlaybackState()).toMatchObject({ status: "playing", messageId: "msg-1" });
+
+    // The call hangs up: its stop must not cut the queue or drop its remaining item.
+    stopSpeaking(owner);
+    expect(first.paused).toBe(false);
+    expect(getVoicePlaybackState()).toMatchObject({ status: "playing", messageId: "msg-1" });
+
+    first.onended?.();
+    await waitFor(() => ControllableAudio.instances.length === 3);
+    const second = ControllableAudio.instances[2]!;
+    await waitFor(() => second.paused === false);
+    expect(getVoicePlaybackState()).toMatchObject({ messageId: "msg-2" });
+    second.onended?.();
+
+    await expect(queued).resolves.toBe(true);
+    expect(getVoicePlaybackState().status).toBe("idle");
+  });
+
+  it("cancels its own speech while it is still preparing", async () => {
+    const gates: Array<() => void> = [];
+    vi.mocked(rpc).mockImplementation(async (proc) => {
+      if (proc === "aiConsent/status") return { version: "2026-09-14", recipients: [] } as never;
+      await new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+      return { ready: true, utterances: ["Read this"] } as never;
+    });
+    const owner = createSpeechOwner();
+    const spoken = speakText("Read this", { botId: "bot-1", messageId: "msg-1", owner });
+    await waitFor(() => gates.length === 1);
+    expect(getVoicePlaybackState()).toMatchObject({ status: "playing", messageId: "msg-1" });
+    expect(ControllableAudio.instances).toHaveLength(0);
+
+    stopSpeaking(owner);
+    expect(getVoicePlaybackState()).toEqual({ status: "idle", canPause: false });
+    gates[0]!();
+    await expect(spoken).resolves.toBe(false);
+    expect(ControllableAudio.instances).toHaveLength(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale owner stop a newer unrelated preparation", async () => {
+    const gates: Array<() => void> = [];
+    vi.mocked(rpc).mockImplementation(async (proc, body) => {
+      if (proc === "aiConsent/status") return { version: "2026-09-14", recipients: [] } as never;
+      await new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+      const text = (body as { text?: string } | undefined)?.text ?? "";
+      return { ready: true, utterances: [text] } as never;
+    });
+    const owner = createSpeechOwner();
+    const call = speakText("Call reply", { botId: "bot-1", messageId: "call-1", owner });
+    await waitFor(() => gates.length === 1);
+    gates[0]!();
+    await waitFor(() => ControllableAudio.instances.length === 1);
+    await waitFor(() => ControllableAudio.instances[0]!.paused === false);
+
+    const other = speakText("Other text", { botId: "bot-2", messageId: "msg-2" });
+    await waitFor(() => gates.length === 2);
+    expect(ControllableAudio.instances[0]!.paused).toBe(true);
+    expect(getVoicePlaybackState()).toMatchObject({ status: "playing", messageId: "msg-2" });
+
+    // Hanging up mid-preparation must not cancel the newer speech.
+    stopSpeaking(owner);
+    expect(getVoicePlaybackState()).toMatchObject({ status: "playing", messageId: "msg-2" });
+
+    gates[1]!();
+    await waitFor(() => ControllableAudio.instances.length === 2);
+    const audio = ControllableAudio.instances[1]!;
+    await waitFor(() => audio.paused === false);
+    audio.onended?.();
+    await expect(other).resolves.toBe(true);
+    await expect(call).resolves.toBe(true);
+  });
+
   it("does not fail a paused native clip when the startup watchdog elapses", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("Audio", undefined);
@@ -621,6 +841,173 @@ describe("hosted voice playback controls", () => {
       await spoken?.catch(() => undefined);
       vi.useRealTimers();
     }
+  });
+});
+
+describe("call audio", () => {
+  const platform = Platform as { OS: string };
+
+  afterEach(() => {
+    platform.OS = "ios";
+    vi.unstubAllGlobals();
+  });
+
+  function finishingPlayer() {
+    const listeners: Array<(status: Record<string, unknown>) => void> = [];
+    const player = {
+      play: vi.fn(() => {
+        for (const listener of listeners) listener({ didJustFinish: true });
+      }),
+      pause: vi.fn(),
+      release: vi.fn(),
+      addListener: (_event: string, listener: (status: Record<string, unknown>) => void) => {
+        listeners.push(listener);
+        return { remove: () => undefined };
+      },
+    };
+    vi.mocked(createAudioPlayer).mockReturnValue(
+      player as unknown as ReturnType<typeof createAudioPlayer>,
+    );
+    return player;
+  }
+
+  it("plays a call's clips in the session the call holds, then releases it at hang-up", async () => {
+    vi.stubGlobal("Audio", undefined);
+    finishingPlayer();
+    vi.mocked(setAudioModeAsync).mockClear();
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+
+    await setCallAudio(true);
+    expect(setAudioModeAsync).toHaveBeenCalledExactlyOnceWith({
+      playsInSilentMode: true,
+      interruptionMode: "mixWithOthers",
+      allowsRecording: true,
+      shouldPlayInBackground: true,
+    });
+    vi.mocked(setAudioModeAsync).mockClear();
+
+    await playSpeechClip(new Uint8Array([1, 2, 3]));
+    expect(setAudioModeAsync).not.toHaveBeenCalled();
+    expect(createAudioPlayer).toHaveBeenLastCalledWith(expect.anything(), {
+      keepAudioSessionActive: true,
+    });
+
+    await setCallAudio(false);
+    expect(setAudioModeAsync).toHaveBeenCalledExactlyOnceWith({
+      playsInSilentMode: true,
+      interruptionMode: "mixWithOthers",
+      shouldPlayInBackground: false,
+    });
+    expect(setIsAudioActiveAsync).toHaveBeenCalledWith(false);
+
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+    await playSpeechClip(new Uint8Array([1, 2, 3]));
+    expect(setIsAudioActiveAsync).toHaveBeenCalledExactlyOnceWith(true);
+    expect(createAudioPlayer).toHaveBeenLastCalledWith(expect.anything(), {
+      keepAudioSessionActive: false,
+    });
+  });
+
+  it.each([
+    ["call", () => setCallAudio(true), () => setCallAudio(false)],
+    ["dictation", () => setDictationAudio(true), () => setDictationAudio(false)],
+    ["cue preview", activateVoiceAudio, async () => undefined],
+  ])("re-enables audio for a %s after dictation releases it", async (_name, start, stop) => {
+    await setDictationAudio(true);
+    await setDictationAudio(false);
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+    await start();
+    expect(setIsAudioActiveAsync).toHaveBeenCalledExactlyOnceWith(true);
+    await stop();
+  });
+
+  it("leaves the session to speech that is still playing when a call ends", async () => {
+    vi.mocked(captureApiRequestContext).mockReturnValueOnce(new Promise(() => undefined));
+    const reading = speakText("Read this", { botId: "bot-1" });
+    await waitFor(() => getVoicePlaybackState().status === "playing");
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+
+    await setCallAudio(true);
+    await setCallAudio(false);
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalledWith(false);
+
+    stopVoicePlayback();
+    void reading;
+  });
+
+  it("keeps Android audio enabled after a call", async () => {
+    platform.OS = "android";
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+    await setCallAudio(true);
+    await setCallAudio(false);
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the session of a call that starts while the last one releases it", async () => {
+    vi.mocked(setAudioModeAsync).mockClear();
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+    const ending = setCallAudio(false);
+    await setCallAudio(true);
+    await ending;
+    expect(setAudioModeAsync).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ allowsRecording: true }),
+    );
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalledWith(false);
+    await setCallAudio(false);
+  });
+
+  it("applies audio mode changes one at a time, in order", async () => {
+    let releaseFirst!: () => void;
+    const applied: unknown[] = [];
+    vi.mocked(setAudioModeAsync)
+      .mockImplementationOnce(async (mode) => {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        applied.push(mode);
+      })
+      .mockImplementation(async (mode) => {
+        applied.push(mode);
+      });
+    const starting = setCallAudio(true);
+    await waitFor(() => typeof releaseFirst === "function");
+    const ending = setCallAudio(false);
+    await Promise.resolve();
+    expect(applied).toEqual([]);
+    releaseFirst();
+    await Promise.all([starting, ending]);
+    expect(applied).toEqual([
+      expect.objectContaining({ allowsRecording: true }),
+      expect.objectContaining({ shouldPlayInBackground: false }),
+    ]);
+    vi.mocked(setAudioModeAsync).mockImplementation(async () => undefined);
+  });
+
+  it("leaves a call's recording on when a dictation elsewhere ends", async () => {
+    await setCallAudio(true);
+    vi.mocked(setAudioModeAsync).mockClear();
+    await setDictationAudio(true);
+    await setDictationAudio(false);
+    expect(setAudioModeAsync).not.toHaveBeenCalled();
+    await setCallAudio(false);
+  });
+
+  it("keeps a dictation recording when a call ends under it, then releases audio after it", async () => {
+    vi.mocked(setIsAudioActiveAsync).mockClear();
+    await setDictationAudio(true);
+    await setCallAudio(true);
+    vi.mocked(setAudioModeAsync).mockClear();
+    await setCallAudio(false);
+    expect(setAudioModeAsync).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ allowsRecording: true }),
+    );
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalledWith(false);
+    vi.mocked(setAudioModeAsync).mockClear();
+    await setDictationAudio(false);
+    expect(setAudioModeAsync).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ allowsRecording: false }),
+    );
+    expect(setIsAudioActiveAsync).toHaveBeenCalledWith(false);
   });
 });
 
@@ -756,6 +1143,42 @@ describe("on-device speech", () => {
     spoken[0]?.options?.onStopped?.();
     await expect(call).resolves.toBe(true);
     expect(spoken.map((s) => s.text)).toEqual(["First sentence.", "Hi, this is how I'll sound."]);
+  });
+
+  it("does not stop a device voice sample that replaced the owner's speech", async () => {
+    Platform.OS = "ios";
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("1");
+    const utterances: Array<{ text: string; done: () => void; stopped: () => void }> = [];
+    vi.mocked(Speech.speak).mockImplementation((text, options) => {
+      utterances.push({
+        text,
+        done: () => options?.onDone?.(),
+        stopped: () => options?.onStopped?.(),
+      });
+    });
+    vi.mocked(Speech.stop).mockResolvedValue(undefined);
+
+    const owner = createSpeechOwner();
+    const call = speakText("Call reply.", { botId: "bot-1", owner });
+    await flushDeviceSpeechImport();
+    expect(utterances.map((u) => u.text)).toEqual(["Call reply."]);
+
+    const sample = speakWithDeviceVoice("Hi, this is how I'll sound.", "bot-1");
+    await flushDeviceSpeechImport();
+    expect(utterances.map((u) => u.text)).toEqual(["Call reply.", "Hi, this is how I'll sound."]);
+    // One stop started the call's speech; replacing it and starting the sample stopped twice more.
+    const stops = vi.mocked(Speech.stop).mock.calls.length;
+
+    // Hanging up the call must not cut the sample that replaced its speech.
+    stopSpeaking(owner);
+    expect(Speech.stop).toHaveBeenCalledTimes(stops);
+    expect(getVoicePlaybackState()).toMatchObject({ status: "playing", botId: "bot-1" });
+
+    utterances[1]!.done();
+    await expect(sample).resolves.toBe(true);
+    // The superseded call speech settles as not spoken, not as a voice setup failure.
+    utterances[0]!.stopped();
+    await expect(call).resolves.toBe(false);
   });
 
   it("speaks locally and never touches the network when the device voice is on", async () => {

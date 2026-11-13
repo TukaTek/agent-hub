@@ -9,6 +9,7 @@ import type {
 } from "@composio/core";
 import type { ToolkitDirectoryEntry } from "./composio-catalog-cache.js";
 import type { ComposioClient, ComposioSession } from "./composio-connector.js";
+import { collectPages } from "./connector-catalog.js";
 import type { EmulatedGithubRelease } from "./release-watch.js";
 import {
   DEFAULT_CORTEXAI_AGENT_HUB_EMULATED_RELEASES,
@@ -273,6 +274,19 @@ export class FakeComposioClient implements ComposioClient {
     },
   };
 
+  readonly toolkits: ComposioClient["toolkits"] = {
+    get: async () =>
+      this.directory.map((entry) => ({
+        slug: entry.slug,
+        noAuth: entry.noAuth,
+        composioManagedAuthSchemes: entry.needsSignInSetup || entry.noAuth ? [] : ["OAUTH2"],
+      })),
+  };
+
+  readonly authConfigs: ComposioClient["authConfigs"] = {
+    list: async () => ({ items: [], nextCursor: null }),
+  };
+
   async create(userId: string, config: ToolRouterCreateSessionConfig): Promise<ComposioSession> {
     this.created.push({ userId, config });
     const toolkits = Array.isArray(config.toolkits) ? config.toolkits : [];
@@ -292,7 +306,12 @@ export class FakeComposioClient implements ComposioClient {
       toolkits: async (options) => this.toolkitPage(userId, options),
       tools: async () => [...enabled].flatMap((toolkit) => toolsFor(toolkit)),
       execute: async (tool, args = {}, options) => {
-        const refused = (error: string) => ({ data: {}, error, logId: "" });
+        const refused = (error: string) => ({
+          data: {},
+          error,
+          logId: "",
+          resultType: "failed" as const,
+        });
         const toolkit = [...enabled].find((slug) => tool.startsWith(`${slug}_`));
         if (!toolkit && !tool.startsWith("COMPOSIO_")) {
           return refused(`Toolkit for ${tool} is not enabled in this session`);
@@ -310,7 +329,11 @@ export class FakeComposioClient implements ComposioClient {
         }
         const result = this.run(userId, tool, args);
         this.executions.push({ userId, tool, args, result: result.data });
-        return { ...result, logId: `log_${++this.nextId}` };
+        return {
+          ...result,
+          logId: `log_${++this.nextId}`,
+          resultType: result.error ? ("failed" as const) : ("completed" as const),
+        };
       },
       authorize: async (toolkit) => this.authorize(userId, toolkit),
     };
@@ -349,6 +372,17 @@ export class FakeComposioClient implements ComposioClient {
     if (!toolkit) throw notFound(`Toolkit ${slug} not found`);
     if (toolkit.noAuth)
       throw new Error(`ToolkitsIsNoAuth: ${toolkit.slug} does not require authentication`);
+    if (toolkit.needsSignInSetup) {
+      const items = await collectPages(async (cursor) => {
+        const page = await this.authConfigs.list({ cursor });
+        return { items: page.items, cursor: page.nextCursor ?? undefined };
+      });
+      const configured = items.some(
+        (config) =>
+          config.status === "ENABLED" && config.toolkit.slug.toLowerCase() === slug.toLowerCase(),
+      );
+      if (!configured) throw new Error(`ToolRouterV2_NoManagedAuth: no auth for ${toolkit.slug}`);
+    }
     // Connects instantly, the way an API-key or already-consented toolkit does.
     const id = this.connect(userId, toolkit.slug);
     const state = { id, status: "ACTIVE" as const, redirectUrl: null };

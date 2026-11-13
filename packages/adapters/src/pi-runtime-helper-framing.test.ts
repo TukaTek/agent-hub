@@ -28,7 +28,9 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
     async prompt(text: string) {
       const delegate = this.tools.find((tool) => tool.name === "run_subagent");
       if (delegate) {
-        await this.tools.find((tool) => tool.name === "list_fleet")?.execute("main-call-1", {});
+        await this.tools
+          .find((tool) => tool.name === "use_tool")
+          ?.execute("main-call-1", { name: "list_fleet", arguments: {} });
         // The main bot hands work to a helper and reads back what the tool returns.
         seen.resultForParent = await delegate.execute("call-1", {
           name: "scout",
@@ -67,8 +69,8 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
-import { isSubagentToolExecution } from "./executor.js";
 import { PiAgentRuntime } from "./pi-runtime.js";
+import { isSubagentToolExecution } from "./run-effects.js";
 
 describe("helpers know who they are talking to", () => {
   beforeEach(async () => {

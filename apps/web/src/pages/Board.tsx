@@ -1,11 +1,5 @@
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/web";
-import type {
-  Bot,
-  Ticket,
-  TicketComment,
-  TicketPriority,
-  TicketStatus,
-} from "@cortexai-agent-hub/contracts";
+import type { Bot, Ticket, TicketPriority, TicketStatus } from "@cortexai-agent-hub/contracts";
 import {
   TICKET_COMMENT_MAX_LENGTH,
   TICKET_DESCRIPTION_MAX_LENGTH,
@@ -13,7 +7,8 @@ import {
   TICKET_STATUSES,
   TICKET_TITLE_MAX_LENGTH,
 } from "@cortexai-agent-hub/contracts";
-import { isRetryableError, retryDelayMs } from "@cortexai-agent-hub/core";
+import { isRetryableError, reconnectDelayMs, retryDelayMs } from "@cortexai-agent-hub/core";
+import { fetchFresh, writeSaved } from "@cortexai-agent-hub/core/query";
 import {
   Button,
   buttonVariants,
@@ -27,9 +22,11 @@ import {
   Textarea,
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
+import { useSpaceQueries } from "../lib/query";
 import { formatRelativeTime } from "../lib/relative-time";
 import { rpc } from "../lib/rpc";
 import { useTicketPriorityLabels } from "../lib/ticket-priority";
@@ -40,27 +37,29 @@ import { WindowChrome } from "./WindowChrome";
 export function BoardPage() {
   const { t } = useLingui();
   const statuses = useTicketStatusLabels();
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [bots, setBots] = useState<Bot[]>([]);
+  const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
+  const ticketsOptions = queries.tickets.list.queryOptions({ input: {} });
+  const ticketsQuery = useQuery(ticketsOptions);
+  const botsQuery = useQuery(queries.bots.list.queryOptions());
+  const tickets = ticketsQuery.data?.tickets ?? [];
+  const bots = botsQuery.data ?? [];
   const [selected, setSelected] = useState<Ticket | "new" | null>(null);
-  const [error, setError] = useState("");
-  const [commentRefresh, setCommentRefresh] = useState<Record<string, number>>({});
-  const reload = useCallback(async () => {
-    const result = await rpc.tickets.list({});
-    setTickets(result.tickets);
-  }, []);
+  const [streamError, setError] = useState("");
+  const loadFailed = ticketsQuery.error ?? botsQuery.error;
+  const error = streamError || (loadFailed ? errorText(loadFailed) : "");
+  /** A read sent after a change, so an older one in flight cannot bring back the old board. */
+  const reload = () => fetchFresh(queryClient, ticketsOptions).then(() => undefined);
 
   useEffect(() => {
     let currentController: AbortController | undefined;
     let active = true;
-    void Promise.all([rpc.tickets.list({}), rpc.bots.list()])
-      .then(([result, owners]) => {
-        if (!active) return;
-        setTickets(result.tickets);
-        setBots(owners);
-      })
-      .catch((cause) => {
-        if (active) setError(errorText(cause));
+    // Live events refresh the board and any open ticket's comments.
+    const refreshComments = (ticketId?: string) =>
+      void queryClient.invalidateQueries({
+        queryKey: ticketId
+          ? queries.tickets.comments.queryKey({ input: { ticketId } })
+          : queries.tickets.comments.key(),
       });
     let cancelRetry: (() => void) | undefined;
     void (async () => {
@@ -68,25 +67,21 @@ export function BoardPage() {
         const controller = new AbortController();
         currentController = controller;
         let failure: unknown;
+        let opened = false;
         try {
-          const stream = await rpc.boards.subscribe(undefined, { signal: controller.signal });
+          const stream = await rpc.boards.subscribe(undefined, {
+            signal: controller.signal,
+          });
           if (!active) return;
-          const result = await rpc.tickets.list({});
+          await fetchFresh(queryClient, ticketsOptions);
           if (!active) return;
-          setTickets(result.tickets);
-          setCommentRefresh((previous) => ({
-            ...previous,
-            "*": (previous["*"] ?? 0) + 1,
-          }));
+          refreshComments();
           setError("");
+          opened = true;
           for await (const event of stream) {
             if (!active) return;
-            setCommentRefresh((previous) => ({
-              ...previous,
-              [event.ticketId ?? "*"]: (previous[event.ticketId ?? "*"] ?? 0) + 1,
-            }));
-            const result = await rpc.tickets.list({});
-            if (active) setTickets(result.tickets);
+            refreshComments(event.ticketId);
+            await fetchFresh(queryClient, ticketsOptions);
           }
         } catch (cause) {
           failure = cause;
@@ -96,7 +91,10 @@ export function BoardPage() {
         }
         if (!active || !isRetryableError(failure)) return;
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, retryDelayMs(failure, 1_000));
+          const timer = setTimeout(
+            resolve,
+            opened ? reconnectDelayMs(failure) : retryDelayMs(failure, 1_000),
+          );
           cancelRetry = () => {
             clearTimeout(timer);
             resolve();
@@ -110,7 +108,7 @@ export function BoardPage() {
       currentController?.abort();
       cancelRetry?.();
     };
-  }, []);
+  }, [queries]);
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
@@ -131,7 +129,7 @@ export function BoardPage() {
         </Button>
       </header>
       {error ? (
-        <p role="alert" className="px-4 py-2 text-sm text-destructive">
+        <p role="alert" className="px-4 py-2 text-body text-destructive">
           {error}
         </p>
       ) : null}
@@ -139,7 +137,7 @@ export function BoardPage() {
         <div data-testid="board-columns" className="flex min-h-full gap-3">
           {TICKET_STATUSES.map((status) => (
             <section key={status} className="min-w-40 flex-1 space-y-2">
-              <h2 className="px-1 text-sm font-medium">{statuses[status]}</h2>
+              <h2 className="px-1 text-body font-medium">{statuses[status]}</h2>
               {tickets
                 .filter((ticket) => ticket.status === status)
                 .map((ticket) => (
@@ -150,9 +148,9 @@ export function BoardPage() {
                     className="h-auto w-full flex-col items-start gap-1 whitespace-normal p-3 text-left font-normal"
                     onClick={() => setSelected(ticket)}
                   >
-                    <span className="text-xs text-muted-foreground">{ticket.ref}</span>
+                    <span className="text-label text-muted-foreground">{ticket.ref}</span>
                     <span>{ticket.title}</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-label text-muted-foreground">
                       {bots.find((bot) => bot.id === ticket.assigneeBotId)?.name}
                     </span>
                   </Button>
@@ -161,7 +159,7 @@ export function BoardPage() {
           ))}
         </div>
         {tickets.length === 0 && !error ? (
-          <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-body text-muted-foreground">
             <Trans>No tickets yet</Trans>
           </p>
         ) : null}
@@ -171,10 +169,6 @@ export function BoardPage() {
           key={selected === "new" ? "new" : selected.id}
           ticket={selected === "new" ? null : selected}
           bots={bots}
-          commentRevision={
-            (commentRefresh["*"] ?? 0) +
-            (selected === "new" ? 0 : (commentRefresh[selected.id] ?? 0))
-          }
           onClose={() => setSelected(null)}
           onSaved={reload}
         />
@@ -188,9 +182,7 @@ function TicketDialog({
   bots,
   onClose,
   onSaved,
-  commentRevision,
 }: {
-  commentRevision?: number;
   ticket: Ticket | null;
   bots: Bot[];
   onClose: () => void;
@@ -205,26 +197,17 @@ function TicketDialog({
   const [owner, setOwner] = useState(ticket?.assigneeBotId ?? bots[0]?.id ?? "");
   const [status, setStatus] = useState<TicketStatus>(ticket?.status ?? "todo");
   const [priority, setPriority] = useState<TicketPriority>(ticket?.priority ?? "normal");
-  const [comments, setComments] = useState<TicketComment[]>([]);
+  const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
+  const commentsOptions = queries.tickets.comments.queryOptions({
+    input: ticket ? { ticketId: ticket.id } : skipToken,
+  });
+  const commentsQuery = useQuery(commentsOptions);
+  const comments = commentsQuery.data ?? [];
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!ticket) return;
-    let active = true;
-    void rpc.tickets
-      .comments({ ticketId: ticket.id })
-      .then((rows) => {
-        if (active) setComments(rows);
-      })
-      .catch((cause) => {
-        if (active) setError(errorText(cause));
-      });
-    return () => {
-      active = false;
-    };
-  }, [ticket, commentRevision]);
+  const shownError = error || (commentsQuery.error ? errorText(commentsQuery.error) : "");
 
   async function save() {
     setBusy(true);
@@ -241,7 +224,13 @@ function TicketDialog({
           ...(status !== ticket.status ? { status } : {}),
           ...(priority !== ticket.priority ? { priority } : {}),
         });
-      else await rpc.tickets.create({ title, description, assigneeBotId: owner, priority });
+      else
+        await rpc.tickets.create({
+          title,
+          description,
+          assigneeBotId: owner,
+          priority,
+        });
       await onSaved();
       onClose();
     } catch (cause) {
@@ -256,8 +245,16 @@ function TicketDialog({
     setError("");
     try {
       const row = await rpc.tickets.comment({ ticketId: ticket.id, body });
-      setComments((previous) => [...previous, row]);
+      const options = queries.tickets.comments.queryOptions({ input: { ticketId: ticket.id } });
+      // A list already on screen shows the comment at once, unless a read already brought it.
+      if (queryClient.getQueryData(options.queryKey)) {
+        await writeSaved(queryClient, options.queryKey, (previous = []) =>
+          previous.some((item) => item.id === row.id) ? previous : [...previous, row],
+        );
+      }
       setBody("");
+      // Saving cancelled any read in flight, so the whole list is read again after the post.
+      void fetchFresh(queryClient, options).catch(() => undefined);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -283,7 +280,7 @@ function TicketDialog({
             void save();
           }}
         >
-          <label htmlFor={`${formId}-title`} className="block space-y-1 text-sm">
+          <label htmlFor={`${formId}-title`} className="block space-y-1 text-body">
             <span>
               <Trans>Title</Trans>
             </span>
@@ -295,7 +292,7 @@ function TicketDialog({
               required
             />
           </label>
-          <label htmlFor={`${formId}-description`} className="block space-y-1 text-sm">
+          <label htmlFor={`${formId}-description`} className="block space-y-1 text-body">
             <span>
               <Trans>Description</Trans>
             </span>
@@ -307,7 +304,7 @@ function TicketDialog({
               maxLength={TICKET_DESCRIPTION_MAX_LENGTH}
             />
           </label>
-          <label htmlFor={`${formId}-owner`} className="block space-y-1 text-sm">
+          <label htmlFor={`${formId}-owner`} className="block space-y-1 text-body">
             <span>
               <Trans>Owner</Trans>
             </span>
@@ -326,7 +323,7 @@ function TicketDialog({
             </NativeSelect>
           </label>
           {ticket ? (
-            <label htmlFor={`${formId}-status`} className="block space-y-1 text-sm">
+            <label htmlFor={`${formId}-status`} className="block space-y-1 text-body">
               <span>
                 <Trans>Status</Trans>
               </span>
@@ -344,7 +341,7 @@ function TicketDialog({
               </NativeSelect>
             </label>
           ) : null}
-          <label htmlFor={`${formId}-priority`} className="block space-y-1 text-sm">
+          <label htmlFor={`${formId}-priority`} className="block space-y-1 text-body">
             <span>
               <Trans>Priority</Trans>
             </span>
@@ -370,8 +367,8 @@ function TicketDialog({
         {ticket ? (
           <div data-testid="ticket-comments" className="space-y-3 border-t pt-3">
             {comments.map((row) => (
-              <div key={row.id} className="text-sm">
-                <div className="mb-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <div key={row.id} className="text-body">
+                <div className="mb-1 flex items-center justify-between gap-3 text-label text-muted-foreground">
                   <span>{row.authorName}</span>
                   <time dateTime={row.createdAt}>{formatRelativeTime(row.createdAt)}</time>
                 </div>
@@ -399,9 +396,9 @@ function TicketDialog({
             </form>
           </div>
         ) : null}
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
+        {shownError ? (
+          <p role="alert" className="text-body text-destructive">
+            {shownError}
           </p>
         ) : null}
       </DialogContent>

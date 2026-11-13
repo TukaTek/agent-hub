@@ -1,10 +1,7 @@
-import {
-  clampThinkingLevel,
-  getSupportedThinkingLevels,
-  type Model,
-  Type,
-} from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildModelConnectPlaintext } from "./model-connect.js";
 import {
@@ -165,6 +162,8 @@ describe("OpenAI-compatible standard thinking transport", () => {
     const { payload, result, events } = await capture("medium");
     expect(payload.messages[0]?.role).toBe("system");
     expect(payload.stream).toBe(true);
+    // Google's OpenAI-compatible endpoint rejects the whole request over `store`.
+    expect(payload).not.toHaveProperty("store");
     expect(payload.tools[0]?.function.name).toBe("lookup");
     expect(events).toEqual(
       expect.arrayContaining(["thinking_delta", "text_delta", "toolcall_delta", "done"]),

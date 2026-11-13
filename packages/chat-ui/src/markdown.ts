@@ -1,12 +1,173 @@
 /// <reference path="./linkify-it.d.ts" />
+
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { urlSite } from "@cortexai-agent-hub/core/egress";
 import LinkifyIt from "linkify-it";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useSyncExternalStore } from "react";
 
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 export type ChatMarkdownProps = {
   children: string;
   streaming?: boolean;
+  /** Draws a mention link from `withMentions`; returning nothing leaves its plain name. */
+  renderMention?: (id: string, name: string) => ReactNode;
+  /** Opens a page linked as `[title](page:<pageId>)`; without it the title stays plain text. */
+  onOpenPage?: (pageId: string) => void;
 };
+
+const PAGE_URL_PATTERN = /^page:([A-Za-z0-9_-]{1,64})$/;
+
+/** The page id of a `page:<pageId>` link, if this href is one. */
+export function markdownPageId(href: string | undefined): string | undefined {
+  return href ? PAGE_URL_PATTERN.exec(href)?.[1] : undefined;
+}
+
+const MENTION_URL_PREFIX = "cortexai-agent-hub-mention:";
+
+/** The id of a mention link, if this href is one. */
+export function markdownMentionId(href: string | undefined): string | undefined {
+  if (!href?.startsWith(MENTION_URL_PREFIX)) return undefined;
+  try {
+    return decodeURIComponent(href.slice(MENTION_URL_PREFIX.length)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const mentionParser = unified().use(remarkParse).use(remarkGfm);
+
+type MentionTrees = Map<string, ReturnType<typeof mentionParser.parse> | null>;
+
+function rewriteOutsideCode(
+  text: string,
+  rewrite: (part: string) => string,
+  trees: MentionTrees,
+  skipLinks = false,
+) {
+  if (trees.get(text) === null) return text;
+  try {
+    const tree = trees.get(text) ?? mentionParser.parse(text);
+    trees.set(text, tree);
+    let result = "";
+    let offset = 0;
+    function visit(node: typeof tree | (typeof tree.children)[number]) {
+      if (
+        node.type === "link" ||
+        node.type === "code" ||
+        node.type === "inlineCode" ||
+        (skipLinks &&
+          ["link", "image", "linkReference", "imageReference", "definition"].includes(node.type))
+      ) {
+        const start = node.position?.start.offset;
+        const end = node.position?.end.offset;
+        if (start !== undefined && end !== undefined) {
+          const source = text.slice(start, end);
+          result +=
+            rewrite(text.slice(offset, start)) +
+            (!skipLinks &&
+            node.type === "link" &&
+            node.url.toLowerCase().startsWith(MENTION_URL_PREFIX)
+              ? rewrite(source)
+              : source);
+          offset = end;
+        }
+        return;
+      }
+      if ("children" in node) for (const child of node.children) visit(child);
+    }
+    visit(tree);
+    return result + rewrite(text.slice(offset));
+  } catch {
+    trees.set(text, null);
+    return text;
+  }
+}
+const MODEL_MENTION_LINK = /\[([^\]\n]*)\]\(\s*<?cortexai-agent-hub-mention:[^)\n]*\)/gi;
+const OPENS_WITH_BLOCK = /^\s*(#|>|\||```|~~~|[-*+]\s|\d+[.)]\s)/;
+
+function linkFirstName(
+  text: string,
+  name: string,
+  link: string,
+  trees: MentionTrees,
+): string | undefined {
+  const pattern = new RegExp(`(^|[^\\p{L}\\p{N}_])${escapeRegExp(name)}(?![\\p{L}\\p{N}_])`, "u");
+  if (!pattern.test(text)) return undefined;
+  let placed = false;
+  const result = rewriteOutsideCode(
+    text,
+    (part) => {
+      if (placed) return part;
+      return part.replace(pattern, (_match, prefix: string) => {
+        placed = true;
+        return `${prefix}${link}`;
+      });
+    },
+    trees,
+    true,
+  );
+  return placed ? result : undefined;
+}
+
+/**
+ * Markdown texts of one message naming each entry once as a mention link: at its first
+ * appearance across the texts, or at the start of the first text when none names it.
+ */
+export function withMentions(
+  texts: readonly string[],
+  mentions: readonly { id: string; name: string }[],
+): string[] {
+  const trees: MentionTrees = new Map();
+  // Only links placed here draw as mentions; ones already in the text keep just their name.
+  const result = texts.map((text) =>
+    rewriteOutsideCode(text, (part) => part.replace(MODEL_MENTION_LINK, "$1"), trees),
+  );
+  if (result.length === 0) return result;
+  for (const mention of mentions) {
+    const name = mention.name.trim();
+    if (!name) continue;
+    const link = `[${name.replace(/[\\[\]*_`<>]/g, "\\$&")}](${MENTION_URL_PREFIX}${encodeURIComponent(mention.id)})`;
+    const placed = result.some((text, index) => {
+      const linked = linkFirstName(text, name, link, trees);
+      if (linked !== undefined) result[index] = linked;
+      return linked !== undefined;
+    });
+    if (placed) continue;
+    const firstIndex = result.findIndex((text) => trees.get(text) !== null);
+    if (firstIndex === -1) continue;
+    const first = result[firstIndex]!;
+    result[firstIndex] = OPENS_WITH_BLOCK.test(first) ? `${link}\n\n${first}` : `${link} ${first}`;
+  }
+  return result;
+}
+
+/** Message blocks whose prose names each entry once as a mention link. Tool activity is left alone. */
+export function withBlockMentions(
+  blocks: readonly MessageBlock[],
+  mentions: readonly { id: string; name: string }[],
+): MessageBlock[] {
+  const prose = blocks.flatMap((block, index) =>
+    block.kind === "text" || (block.kind === "progress" && !block.activity) ? [index] : [],
+  );
+  const texts = withMentions(
+    prose.map((index) => (blocks[index] as { text: string }).text),
+    mentions,
+  );
+  return blocks.map((block, index) => {
+    const prosePosition = prose.indexOf(index);
+    return prosePosition === -1
+      ? block
+      : ({ ...block, text: texts[prosePosition] } as MessageBlock);
+  });
+}
 
 type LinkifyRules = {
   set(options: { fuzzyLink: boolean }): unknown;
@@ -54,7 +215,11 @@ const safeProtocols = new Set(["http", "https", "mailto", "tel"]);
 
 export type PlainTextPart =
   | { type: "text"; value: string }
-  | { type: "link"; value: string; href: string };
+  | { type: "link"; value: string; href: string }
+  | { type: "page"; value: string; pageId: string };
+
+// The link pageReply puts before a sent reply: `[title](page:<pageId>)`, title brackets escaped.
+const PLAIN_PAGE_LINK = /\[((?:\\[\\[\]]|[^\\[\]\n])*)\]\(page:([A-Za-z0-9_-]{1,64})\)/g;
 
 function appendPlainText(parts: PlainTextPart[], value: string) {
   if (!value) return;
@@ -67,13 +232,25 @@ function appendPlainText(parts: PlainTextPart[], value: string) {
 }
 
 /**
- * Split plain user-message text into literal runs and tappable links.
- * User bubbles stay plain text on web and mobile. Bold, headings, and other
- * markdown remain characters. Links use the same explicit autolinker as bot
- * messages, so a balanced parenthesis stays inside the URL and a closing
- * parenthesis that only wraps the surrounding prose does not.
+ * User bubbles stay plain text: markdown remains characters, except a page link, which opens the
+ * page as it does in bot messages. Links use the bot messages' autolinker, so a balanced
+ * parenthesis stays inside the URL and one wrapping the prose does not.
  */
 export function plainTextLinkParts(text: string): PlainTextPart[] {
+  const parts: PlainTextPart[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(PLAIN_PAGE_LINK)) {
+    if (match.index > cursor) parts.push(...urlLinkParts(text.slice(cursor, match.index)));
+    const value = match[1]!.replace(/\\([\\[\]])/g, "$1");
+    parts.push({ type: "page", value, pageId: match[2]! });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor === 0) return urlLinkParts(text);
+  if (cursor < text.length) parts.push(...urlLinkParts(text.slice(cursor)));
+  return parts;
+}
+
+function urlLinkParts(text: string): PlainTextPart[] {
   const matches = plainTextLinkify.match(text);
   if (!matches || matches.length === 0) return [{ type: "text", value: text }];
 
@@ -139,6 +316,25 @@ export function markdownLinkRequiresConfirmation(url: string, appOrigin?: string
   } catch {
     return true;
   }
+}
+
+/**
+ * The site "Always open" trusts for a link: its registrable domain, so every subdomain is
+ * included, while each tenant of a shared host stays its own site. The server stores the same.
+ */
+export function markdownLinkSite(url: string): string | undefined {
+  return urlSite(url);
+}
+
+/** Whether a link shows the external-link prompt: it leaves the app to a site not trusted. */
+export function markdownLinkNeedsPrompt(
+  url: string,
+  appOrigin?: string | null,
+  trustedSites: readonly string[] = [],
+): boolean {
+  if (!markdownLinkRequiresConfirmation(url, appOrigin)) return false;
+  const site = markdownLinkSite(url);
+  return !site || !trustedSites.includes(site);
 }
 
 export type MarkdownLinkDisplayParts = {
@@ -275,7 +471,12 @@ export function linkLabel(text: string, href: string): string {
   const host = url.host.replace(/^www\./i, "");
   const path = decodedUrl(url.pathname.replace(/\/+$/, "")).replace(HIDDEN_PATH_CHARACTERS, "");
   const room = Math.max(SHORT_LINK_LABEL_MAX - host.length, SHORT_LINK_PATH_MIN);
-  return path.length > room ? `${host}${path.slice(0, room - 1)}…` : `${host}${path}`;
+  if (path.length <= room) return `${host}${path}`;
+  let end = room - 1;
+  const before = path.charCodeAt(end - 1);
+  const after = path.charCodeAt(end);
+  if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end--;
+  return `${host}${path.slice(0, end)}…`;
 }
 
 /** The origin a link's site icon is looked up by, or undefined for links that get no icon. */
@@ -396,12 +597,13 @@ export function useLinkFavicon(href: string): { icon: string | null; unusable: (
 export function closeUnterminatedFence(markdown: string): string {
   let openFence: { marker: "`" | "~"; length: number } | undefined;
 
-  for (const line of markdown.split("\n")) {
+  for (const line of markdown.split(/\r\n|\r|\n/)) {
     const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (!match?.[1]) continue;
 
     const marker = match[1][0] as "`" | "~";
     if (!openFence) {
+      if (marker === "`" && (match[2] ?? "").includes("`")) continue;
       openFence = { marker, length: match[1].length };
       continue;
     }
@@ -416,4 +618,12 @@ export function closeUnterminatedFence(markdown: string): string {
   }
 
   return openFence ? `${markdown}\n${openFence.marker.repeat(openFence.length)}` : markdown;
+}
+
+/**
+ * A fence explicitly marked as plain text, such as a draft email: it wraps in the body font. Every
+ * other fence, including one with no language, keeps the monospaced font and sideways scrolling.
+ */
+export function isProseFence(language: string): boolean {
+  return ["text", "txt", "plaintext"].includes(language.toLowerCase());
 }

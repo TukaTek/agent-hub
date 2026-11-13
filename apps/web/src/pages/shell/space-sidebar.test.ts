@@ -40,7 +40,8 @@ describe("sidebarGroupsForSpaces", () => {
       expect.objectContaining({ emptySpaceId: "space-2", title: "Support" }),
       expect.objectContaining({
         sectionId: "saved",
-        title: "Support · Archived projects",
+        title: "Support",
+        subtitle: "Archived projects",
         bots: [],
         emptySpaceId: undefined,
       }),
@@ -198,4 +199,28 @@ it("counts unread bots and groups from the sidebar across spaces", () => {
   input[0]!.bots[0]!.unread = true;
   expect(countUnreadChats(sidebarGroupsForSpaces(input, ""))).toBe(3);
   expect(countUnreadChats([])).toBe(0);
+});
+
+describe("snoozed chats", () => {
+  const now = Date.parse("2026-11-07T12:00:00Z");
+  const snoozed = { ...chat("later", "Later"), snoozedUntil: "2026-11-08T09:00:00.000Z" };
+  const woken = { ...chat("woken", "Woken"), snoozedUntil: "2026-11-07T09:00:00.000Z" };
+  const roster = (query: string) =>
+    sidebarGroupsForSpaces(
+      [space("s", "Home", { bots: [snoozed, woken, chat("plain", "Plain")] })],
+      query,
+      undefined,
+      now,
+    ).flatMap((section) => section.bots.map((item) => ({ id: item.id, woke: item.woke })));
+
+  it("leaves snoozed chats out of the list and marks woken ones", () => {
+    expect(roster("")).toEqual([
+      { id: "woken", woke: true },
+      { id: "plain", woke: false },
+    ]);
+  });
+
+  it("still finds a snoozed chat by search", () => {
+    expect(roster("later")).toEqual([{ id: "later", woke: false }]);
+  });
 });

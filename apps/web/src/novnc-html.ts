@@ -5,6 +5,13 @@ export const MAX_NOVNC_HTML_BYTES = 1024 * 1024;
 
 const NOVNC_PAGES = new Set(["vnc.html", "vnc_lite.html", "embed.html"]);
 
+/** Browser-extension script URLs. Their errors must not replace the screen. */
+export const NOVNC_EXTENSION_ERROR = /^[a-z-]+-extension:/;
+
+export function isNovncExtensionError(filename: string) {
+  return NOVNC_EXTENSION_ERROR.test(filename);
+}
+
 /** Whether an upstream path is a noVNC page, whichever provider serves it. */
 export function isNovncPage(path: string) {
   const { pathname } = new URL(path, "http://upstream.invalid");
@@ -68,8 +75,13 @@ export function rewrittenNovncHeaders(headers: IncomingHttpHeaders): IncomingHtt
  * soon as it runs and then follows noVNC's connection classes (which CortexAI Agent Hub's own embed page
  * sets as well) and its status bar.
  */
-export function injectNovncStorageShim(html: string) {
-  const shim = `<script>
+export function injectNovncStorageShim(html: string, { viewOnly = false } = {}) {
+  // The app shows the screen's state itself, and noVNC's status bar names the provider's host.
+  // Its side panel only has controls to offer while the user has control.
+  const chrome = `<style>#noVNC_status{display:none!important}${
+    viewOnly ? "#noVNC_control_bar_anchor{display:none!important}" : ""
+  }</style>`;
+  const shim = `${chrome}<script>
 (() => {
   const memoryStorage = () => {
     const items = new Map();
@@ -84,7 +96,7 @@ export function injectNovncStorageShim(html: string) {
     Object.defineProperty(window, name, { configurable: true, value: memoryStorage() });
   }
   window.addEventListener("error", (event) => {
-    if (/^[a-z-]+-extension:/.test(String(event.filename))) event.stopImmediatePropagation();
+    if (/${NOVNC_EXTENSION_ERROR.source}/.test(String(event.filename))) event.stopImmediatePropagation();
   }, true);
   // noVNC probes WebCodecs H.264 support while its modules evaluate. On some Android devices
   // VideoDecoder.flush() never returns, so the page never starts. Screens never use H.264.
@@ -94,7 +106,27 @@ export function injectNovncStorageShim(html: string) {
     try {
       window.parent.postMessage(detail ? { cortexAiAgentHubScreen, detail } : { cortexAiAgentHubScreen }, "*");
     } catch {}
+    // The mobile app's WebView hears only the state word: no URL and none of the page's text.
+    try {
+      window.ReactNativeWebView?.postMessage(JSON.stringify({ cortexAiAgentHubScreen }));
+    } catch {}
   };
+  // A reconnected screen takes the keyboard back when the app asks; nothing else is accepted.
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (
+      event.source !== window.parent ||
+      !data ||
+      typeof data !== "object" ||
+      Object.keys(data).length !== 1 ||
+      data.cortexAiAgentHubScreenFocus !== true
+    )
+      return;
+    const canvas = document.querySelector("#screen canvas, #noVNC_container canvas, canvas");
+    try {
+      canvas?.focus();
+    } catch {}
+  });
   let last = "";
   // Pages that never set noVNC's classes (older CortexAI Agent Hub embed images) still build their viewer
   // canvas, which is as far as they can be followed.

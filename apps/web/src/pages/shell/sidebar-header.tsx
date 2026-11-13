@@ -1,8 +1,7 @@
 import type { Bot } from "@cortexai-agent-hub/contracts";
 import { Button, Icon, Popover, PopoverContent, PopoverTrigger } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
-import { Bell, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { useState } from "react";
+import { Bell, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { IconTooltip } from "../../components/IconTooltip";
 import { desktopBridge } from "../../lib/desktop";
 import type { Panel } from "../../lib/right-panel-state";
@@ -11,29 +10,36 @@ import { BotCreatePicker } from "./bot-picker";
 
 export function SidebarHeader({
   mini = false,
+  createMenuOpen,
+  setCreateMenuOpen,
   activityMode,
   toggleActivityMode,
+  searchOpen = false,
+  onSearch,
   setBotsSidebarCollapsedPref,
   bots,
   setMobileSidebarOpen,
   setPanel,
   navigate,
   setNewSpaceOpen,
-  setPickerInfoTopic,
+  setCreateBotOpen,
 }: {
   mini?: boolean;
+  createMenuOpen: boolean;
+  setCreateMenuOpen: (open: boolean) => void;
   activityMode: boolean;
   toggleActivityMode: () => void;
+  searchOpen?: boolean;
+  onSearch?: () => void;
   setBotsSidebarCollapsedPref: (collapsed: boolean) => void;
   bots: Bot[];
   setMobileSidebarOpen: (open: boolean) => void;
   setPanel: (panel: Panel) => void;
   navigate: (path: string) => void;
   setNewSpaceOpen: (open: boolean) => void;
-  setPickerInfoTopic: (topic: "group" | "space") => void;
+  setCreateBotOpen: (open: boolean) => void;
 }) {
   const { t } = useLingui();
-  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const hasWindowChrome = Boolean(desktopBridge());
   const toggleLabel = mini ? t`Show bots` : t`Minimize bots`;
   return (
@@ -53,13 +59,28 @@ export function SidebarHeader({
               alt="CortexAI logo"
               className="h-7 w-7 shrink-0 object-contain"
             />
-            <span className="truncate text-[13.5px] font-semibold tracking-tight text-foreground">
+            <span className="truncate text-body font-semibold tracking-tight text-foreground">
               Agent Hub
             </span>
           </div>
         </div>
       )}
-      <div className={`relative flex items-center ${mini ? "flex-col gap-0.5" : "gap-2.5"}`}>
+      <div className={`relative flex items-center ${mini ? "flex-col gap-0.5" : "gap-1"}`}>
+        {onSearch ? (
+          <IconTooltip label={t`Search`}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t`Search`}
+              aria-pressed={searchOpen}
+              data-testid="sidebar-search-trigger"
+              onClick={onSearch}
+              className="app-no-drag text-muted-foreground"
+            >
+              <Search size={15} strokeWidth={1.8} aria-hidden="true" />
+            </Button>
+          </IconTooltip>
+        ) : null}
         <IconTooltip label={t`Activity`}>
           <Button
             variant="ghost"
@@ -68,12 +89,9 @@ export function SidebarHeader({
             aria-pressed={activityMode}
             data-activity-mode={activityMode ? "on" : "off"}
             onClick={toggleActivityMode}
-            className={`app-no-drag flex h-7 w-7 items-center justify-center rounded-full ${
-              activityMode
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground/70 hover:text-foreground/75"
-            }`}
+            className={`app-no-drag ${activityMode ? "bg-accent text-foreground" : "text-muted-foreground"}`}
           >
+            {/* A filled bell marks Activity on, so on and hovered never look alike. */}
             <Icon icon={Bell} fill={activityMode ? "currentColor" : "none"} />
           </Button>
         </IconTooltip>
@@ -81,7 +99,7 @@ export function SidebarHeader({
           <Button
             variant="ghost"
             size="icon-sm"
-            className="app-no-drag hidden h-7 w-7 items-center justify-center rounded-full text-muted-foreground/70 hover:text-foreground/75 md:inline-flex"
+            className="app-no-drag hidden text-muted-foreground md:inline-flex"
             aria-label={toggleLabel}
             data-testid={mini ? "restore-bots-sidebar" : "minimize-bots-sidebar"}
             onClick={() => setBotsSidebarCollapsedPref(!mini)}
@@ -92,11 +110,17 @@ export function SidebarHeader({
         <Popover open={createMenuOpen} onOpenChange={setCreateMenuOpen}>
           <IconTooltip label={t`Create`}>
             <PopoverTrigger
-              className="app-no-drag flex size-7 items-center justify-center rounded-full text-[21px] text-muted-foreground/70 outline-none hover:text-foreground/75 focus-visible:ring-2 focus-visible:ring-ring"
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="app-no-drag text-muted-foreground"
+                />
+              }
               aria-label={t`Create`}
               data-testid="create-menu-trigger"
             >
-              +
+              <Plus size={15} strokeWidth={1.8} aria-hidden="true" />
             </PopoverTrigger>
           </IconTooltip>
           {/* Unmount with the state change so the panel it opens never coexists with the menu. */}
@@ -110,7 +134,7 @@ export function SidebarHeader({
                 onCreateBot={() => {
                   setCreateMenuOpen(false);
                   setMobileSidebarOpen(false);
-                  setPanel("create");
+                  setCreateBotOpen(true);
                 }}
                 onOpenBot={(id) => {
                   setCreateMenuOpen(false);
@@ -126,16 +150,6 @@ export function SidebarHeader({
                   setCreateMenuOpen(false);
                   setMobileSidebarOpen(false);
                   setNewSpaceOpen(true);
-                }}
-                onShowGroupInfo={() => {
-                  setCreateMenuOpen(false);
-                  setMobileSidebarOpen(false);
-                  setPickerInfoTopic("group");
-                }}
-                onShowSpaceInfo={() => {
-                  setCreateMenuOpen(false);
-                  setMobileSidebarOpen(false);
-                  setPickerInfoTopic("space");
                 }}
               />
             </PopoverContent>

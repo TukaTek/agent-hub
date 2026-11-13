@@ -1,7 +1,8 @@
 import type { DesktopUpdateState } from "@cortexai-agent-hub/contracts";
-import { Button, toast } from "@cortexai-agent-hub/ui-web";
+import { Button, SectionHeading, toast } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { desktopBridge } from "../lib/desktop";
 
 function useDesktopUpdates() {
@@ -141,7 +142,7 @@ function DesktopUpdatePrompt({ onLater }: { onLater: (version: string | null) =>
         </Button>
       </div>
       {error || state.message ? (
-        <p role="status" className="mt-2 text-sm">
+        <p role="status" className="mt-2 text-body">
           {error ?? state.message}
         </p>
       ) : null}
@@ -149,7 +150,6 @@ function DesktopUpdatePrompt({ onLater }: { onLater: (version: string | null) =>
   );
 }
 
-/** Reuse the provider's bridge polling and guarded install action. */
 export function useSidebarUpdate() {
   const updates = useContext(UpdatesContext);
   return {
@@ -172,11 +172,11 @@ export function DesktopUpdateSection() {
       data-testid="desktop-update-settings"
       className="mt-5 rounded-xl border border-border px-4 py-4"
     >
-      <h3 className="text-[15px] font-medium text-foreground">
+      <SectionHeading variant="heading">
         <Trans>Desktop app</Trans>
-      </h3>
+      </SectionHeading>
       <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-sm text-muted-foreground">v{state.currentVersion}</span>
+        <span className="text-body text-muted-foreground">v{state.currentVersion}</span>
         <Button
           variant="outline"
           disabled={busy || downloading || state.phase === "checking"}
@@ -193,7 +193,7 @@ export function DesktopUpdateSection() {
           )}
         </Button>
       </div>
-      <p role="status" className="mt-2 text-sm text-muted-foreground">
+      <p role="status" className="mt-2 text-body text-muted-foreground">
         {error ??
           state.message ??
           (downloading ? (

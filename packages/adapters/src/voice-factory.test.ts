@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CartesiaVoiceProvider } from "./cartesia-voice.js";
 import { ElevenLabsVoiceProvider } from "./elevenlabs-voice.js";
 import { FishAudioVoiceProvider } from "./fish-audio-voice.js";
+import type * as MacOsVoice from "./macos-voice.js";
 import { OpenAIVoiceProvider } from "./openai-voice.js";
 import {
   SCRIPTED_MPEG,
@@ -18,6 +19,7 @@ import {
   VOICE_CATALOG,
 } from "./voice-factory.js";
 import { MAX_SYNTHESIZED_AUDIO_BYTES, MAX_VOICE_JSON_BYTES } from "./voice-http.js";
+import { XaiVoiceProvider } from "./xai-voice.js";
 
 const ctx = {
   operationId: "voice",
@@ -27,9 +29,16 @@ const ctx = {
   signal: new AbortController().signal,
 };
 
+const macOs = vi.hoisted(() => ({ available: false }));
+vi.mock("./macos-voice.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof MacOsVoice>()),
+  macOsSayAvailable: () => macOs.available,
+}));
+
 const previousRuntime = process.env.AGENT_RUNTIME;
 
 afterEach(() => {
+  macOs.available = false;
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
@@ -40,11 +49,13 @@ afterEach(() => {
 describe("createVoiceProvider", () => {
   it("exposes the hosted catalog behind one factory", () => {
     process.env.AGENT_RUNTIME = "pi";
+    vi.stubEnv("CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC", "0");
     expect(VOICE_CATALOG.map((entry) => entry.id)).toEqual([
       "elevenlabs",
       "openai",
       "cartesia",
       "fish-audio",
+      "xai",
       "openai-compatible",
     ]);
     expect(listVoiceCatalog().map((entry) => entry.id)).toEqual([
@@ -52,7 +63,7 @@ describe("createVoiceProvider", () => {
       "openai",
       "cartesia",
       "fish-audio",
-      "openai-compatible",
+      "xai",
     ]);
     expect(createVoiceProvider("elevenlabs").describe().id).toBe("elevenlabs");
     expect(createVoiceProvider("openai").describe().capabilities.transcribe).toBe(true);
@@ -66,11 +77,39 @@ describe("createVoiceProvider", () => {
     expect(() => createVoiceProvider("scripted")).toThrow(/unknown voice provider/i);
   });
 
+  it("shows self-hosted speech only when the operator allows custom endpoints", () => {
+    vi.stubEnv("CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC", "0");
+    expect(listVoiceCatalog().some((entry) => entry.id === "openai-compatible")).toBe(false);
+    expect(
+      listVoiceCatalog({ allowPrivateEndpoint: true }).some(
+        (entry) => entry.id === "openai-compatible",
+      ),
+    ).toBe(true);
+    vi.stubEnv("CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC", "");
+    expect(listVoiceCatalog().some((entry) => entry.id === "openai-compatible")).toBe(true);
+  });
+
   it("adds the scripted fixture only when the agent runtime is scripted", () => {
     process.env.AGENT_RUNTIME = "scripted";
     expect(listVoiceCatalog().some((entry) => entry.id === "scripted")).toBe(true);
     expect(isVoiceProviderId("scripted")).toBe(true);
     expect(createVoiceProvider("scripted").describe().id).toBe("scripted");
+  });
+
+  it("lists macOS first only where the server can run say", () => {
+    process.env.AGENT_RUNTIME = "pi";
+    expect(listVoiceCatalog().some((entry) => entry.id === "macos")).toBe(false);
+    expect(isVoiceProviderId("macos")).toBe(false);
+    expect(() => createVoiceProvider("macos")).toThrow(/unknown voice provider/i);
+
+    macOs.available = true;
+    expect(listVoiceCatalog()[0]).toMatchObject({
+      id: "macos",
+      name: "Server (Mac)",
+      keyless: true,
+    });
+    expect(isVoiceProviderId("macos")).toBe(true);
+    expect(createVoiceProvider("macos").describe().capabilities.transcribe).toBe(false);
   });
 });
 
@@ -163,7 +202,7 @@ describe("ElevenLabsVoiceProvider", () => {
       provider.synthesize({ text: "Hi", voiceId: "abc", apiKey: "sk_test_key" }, ctx),
     ).rejects.toThrow(speaking);
     if (status === 401)
-      await expect(provider.verify("sk_test_key", ctx)).resolves.toEqual({
+      await expect(provider.verify("sk_test_key", ctx)).resolves.toMatchObject({
         ok: false,
         message: speaking,
       });
@@ -790,6 +829,7 @@ describe("hosted voice response limits", () => {
     ["OpenAI", () => new OpenAIVoiceProvider(), "alloy"],
     ["Cartesia", () => new CartesiaVoiceProvider(), "sonic"],
     ["Fish Audio", () => new FishAudioVoiceProvider(), "voice"],
+    ["xAI", () => new XaiVoiceProvider(), "eve"],
   ])(
     "rejects an oversized %s speech response before buffering it",
     async (_name, create, voiceId) => {

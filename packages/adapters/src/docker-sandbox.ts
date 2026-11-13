@@ -1,4 +1,3 @@
-import path from "node:path";
 import type {
   AdapterContext,
   CommandRequest,
@@ -17,7 +16,19 @@ import type {
   ScreenSession,
   TerminalRequest,
 } from "@cortexai-agent-hub/adapter-kit";
-import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import {
+  INVALID_BROWSER_REQUEST,
+  SandboxDamagedError,
+  SandboxRequestRejectedError,
+  SandboxUnresponsiveError,
+} from "@cortexai-agent-hub/adapter-kit";
+import { COMPUTER_UNRESPONSIVE_ERROR } from "@cortexai-agent-hub/contracts";
+import {
+  boundedSandboxCommandTimeoutMs,
+  cancelResponseBody,
+  requestDeadline,
+  resolveSupervisorToken,
+} from "@cortexai-agent-hub/core";
 import { outgoingCorrelationHeaders } from "@cortexai-agent-hub/logging";
 
 import {
@@ -25,14 +36,25 @@ import {
   clampRounded,
   computerObservation,
   normalizeWorkspacePath,
+  workspaceCwd,
 } from "./computer-support.js";
 import { sandboxCommandArgv } from "./sandbox-command-environment.js";
+import { isSandboxGoneError, sandboxNotFoundError } from "./sandbox-errors.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
+import { shouldSkipPortableWorkspaceFile } from "./workspace-save-policy.js";
 
 export const MAX_SANDBOX_ERROR_RESPONSE_BYTES = 8 * 1024;
 export const MAX_SANDBOX_SUCCESS_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const SCREEN_RELEASE_TIMEOUT_MS = 8_000;
+/** How long a computer gets to run a trivial health check. */
+export const HEALTH_CHECK_TIMEOUT_MS = 10_000;
+const HOME_UNWRITABLE = "unwritable";
+const HOME_CHECK = ["/bin/sh", "-c", `test -w . || echo ${HOME_UNWRITABLE}`];
 const SANDBOX_ERROR_RESPONSE_TIMEOUT_MS = 1_000;
+
+function unwritableHome() {
+  return new SandboxDamagedError({ cause: new Error("the computer cannot write its home folder") });
+}
 const SANDBOX_SUCCESS_RESPONSE_TIMEOUT_MS = 30_000;
 
 async function safeBody(res: Response, signal?: AbortSignal): Promise<string> {
@@ -49,14 +71,6 @@ async function safeBody(res: Response, signal?: AbortSignal): Promise<string> {
     return new TextDecoder().decode(bytes).slice(0, 200);
   } catch {
     return "";
-  }
-}
-
-function cancelResponseBody(res: Response): void {
-  try {
-    void Promise.resolve(res.body?.cancel()).catch(() => undefined);
-  } catch {
-    // Error diagnostics are best-effort and must not delay the operation failure.
   }
 }
 
@@ -96,13 +110,19 @@ function encodedFileResponseLimit(maxBytes: number | undefined): number {
 
 /** Named so the API's isSandboxGoneError recognizes it and clears the dead computer row. */
 function sandboxGoneError(computer: ComputerRef): Error {
-  return Object.assign(new Error(`sandbox ${computer.id} is not running`), {
-    name: "SandboxNotFoundError",
-  });
+  return sandboxNotFoundError(`sandbox ${computer.id} is not running`);
 }
 
 export class DockerSandboxProvider implements SandboxProvider {
   private readonly supervisorToken: string;
+  /**
+   * Computers that left a command unanswered, checked before their next use. The value counts
+   * stalls, so a check that started before a newer stall does not clear it.
+   */
+  private readonly unresponsive = new Map<string, number>();
+  private stalls = 0;
+  /** One check per computer, shared by every caller that needs it meanwhile. */
+  private readonly healthChecks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly supervisorUrl: string,
@@ -147,7 +167,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async provision(
-    request: { botId: string; homePath: string },
+    request: { botId: string; homePath: string; timezone?: string; language?: string },
     context: AdapterContext,
   ): Promise<ComputerRef> {
     const res = await fetch(this.url("/computers"), {
@@ -157,6 +177,8 @@ export class DockerSandboxProvider implements SandboxProvider {
         botId: request.botId,
         homePath: request.homePath,
         spaceId: context.spaceId,
+        timezone: request.timezone,
+        language: request.language,
       }),
       signal: context.signal,
     });
@@ -183,12 +205,81 @@ export class DockerSandboxProvider implements SandboxProvider {
     };
   }
 
+  /** A command the computer never finished answering, unless the caller stopped waiting itself. */
+  private unansweredCommand(computer: ComputerRef, error: unknown, callerSignal: AbortSignal) {
+    if (callerSignal.aborted) return error;
+    this.stalls += 1;
+    this.unresponsive.set(computer.id, this.stalls);
+    return new SandboxUnresponsiveError(COMPUTER_UNRESPONSIVE_ERROR, { cause: error });
+  }
+
   async isRunning(computer: ComputerRef, context: AdapterContext): Promise<boolean> {
     if (computer.kind !== "docker") return false;
     return (await this.containerRunning(computer, context)) === true;
   }
 
-  async prepare(_computer: ComputerRef, _context: AdapterContext): Promise<void> {}
+  /**
+   * A computer must be able to write its home folder before it is used: a container started
+   * while the host could not see that folder runs with an empty one it cannot write. A computer
+   * that left a command unanswered must also answer this one in time. One that fails either is
+   * reported damaged, which has it stopped and started again.
+   */
+  async prepare(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    if (context.signal?.aborted) return withAbort(Promise.resolve(), context.signal);
+    let check = this.healthChecks.get(computer.id);
+    if (!check) {
+      const started = this.unresponsive.has(computer.id)
+        ? this.checkHealth(computer, context)
+        : this.checkWritableHome(computer, context);
+      check = started.finally(() => {
+        if (this.healthChecks.get(computer.id) === check) this.healthChecks.delete(computer.id);
+      });
+      this.healthChecks.set(computer.id, check);
+      // The check can fail after every caller has stopped waiting.
+      void check.catch(() => undefined);
+    }
+    await withAbort(check, context.signal);
+  }
+
+  private async checkWritableHome(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    const signal = AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS);
+    if (!(await this.checkHome(computer, { ...context, signal })).writable) throw unwritableHome();
+  }
+
+  /** Runs on its own deadline, so one caller stopping does not decide the others' check. */
+  private async checkHealth(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    const stall = this.unresponsive.get(computer.id);
+    const signal = AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS);
+    let home: { ran: boolean; writable: boolean };
+    try {
+      home = await this.checkHome(computer, { ...context, signal });
+    } catch (error) {
+      if (isSandboxGoneError(error)) throw error;
+      throw new SandboxDamagedError({ cause: error });
+    }
+    if (!home.writable) throw unwritableHome();
+    if (!home.ran) throw new SandboxDamagedError();
+    if (this.unresponsive.get(computer.id) === stall) this.unresponsive.delete(computer.id);
+  }
+
+  /**
+   * Whether a command ran, and whether the home folder every command starts in can be written.
+   * Only the command's own answer counts as unwritable; a command that could not run says nothing
+   * about the folder.
+   */
+  private async checkHome(computer: ComputerRef, context: AdapterContext) {
+    let code: number | undefined;
+    let answer = "";
+    for await (const event of this.execute(
+      computer,
+      { argv: HOME_CHECK, timeoutMs: HEALTH_CHECK_TIMEOUT_MS },
+      context,
+    )) {
+      if (event.type === "exit") code = event.code;
+      else if (event.type === "stdout") answer += event.data;
+    }
+    return { ran: code === 0, writable: code !== 0 || answer.trim() !== HOME_UNWRITABLE };
+  }
 
   async *execute(
     computer: ComputerRef,
@@ -196,16 +287,20 @@ export class DockerSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): AsyncIterable<ProcessEvent> {
     const timeoutMs = boundedSandboxCommandTimeoutMs(request.timeoutMs);
+    // The supervisor enforces timeoutMs; this only ends a command it never answers for.
+    const streamSignal = AbortSignal.any([context.signal, AbortSignal.timeout(timeoutMs + 15_000)]);
     const res = await fetch(this.url(`/computers/${computer.id}/exec`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({
         ...request,
         argv: sandboxCommandArgv(request),
-        cwd: dockerCwd(request.cwd),
+        cwd: workspaceCwd("/home/cortexai-agent-hub", request.cwd),
         timeoutMs,
       }),
-      signal: context.signal,
+      signal: streamSignal,
+    }).catch((error) => {
+      throw this.unansweredCommand(computer, error, context.signal);
     });
     if (!res.ok) {
       cancelResponseBody(res);
@@ -220,12 +315,12 @@ export class DockerSandboxProvider implements SandboxProvider {
     const contentType = res.headers.get("content-type") ?? "";
     if (contentType.includes("ndjson")) {
       // The command may keep running after the first bytes (device-code logins).
-      // Don't apply the short JSON body timeout; the server enforces timeoutMs.
-      const streamSignal = AbortSignal.any([
-        context.signal,
-        AbortSignal.timeout(timeoutMs + 15_000),
-      ]);
-      yield* readNdjsonProcessEvents(res, streamSignal);
+      // Don't apply the short JSON body timeout.
+      try {
+        yield* readNdjsonProcessEvents(res, streamSignal);
+      } catch (error) {
+        throw this.unansweredCommand(computer, error, context.signal);
+      }
       return;
     }
     const body = await readSandboxJson<{ stdout: string; stderr: string; code: number }>(
@@ -253,7 +348,16 @@ export class DockerSandboxProvider implements SandboxProvider {
       redirect: "error",
       signal: context.signal,
     });
-    if (!res.ok) throw new Error(`page browser failed: ${res.status}`);
+    if (!res.ok) {
+      // Only the supervisor's own refusal of a malformed request proves nothing ran.
+      if (res.status === 400) {
+        const refused = await readSandboxJson<{ code?: unknown }>(res, context.signal, 4096).catch(
+          () => undefined,
+        );
+        if (refused?.code === INVALID_BROWSER_REQUEST) throw new SandboxRequestRejectedError();
+      }
+      throw new Error(`page browser failed: ${res.status}`);
+    }
     return readSandboxJson<PageBrowserResult>(res, context.signal, 512 * 1024);
   }
 
@@ -519,7 +623,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     files: AsyncIterable<PortableFile>,
     context: AdapterContext,
   ) {
-    for await (const file of files) await this.writeFile(computer, file, context);
+    for await (const file of files) {
+      if (shouldSkipPortableWorkspaceFile(file.path)) continue;
+      await this.writeFile(computer, file, context);
+    }
   }
 
   async snapshot(computer: ComputerRef, _context: AdapterContext) {
@@ -555,12 +662,20 @@ export class DockerSandboxProvider implements SandboxProvider {
     }
   }
 
-  async stop(computer: ComputerRef, context: AdapterContext): Promise<void> {
+  async stop(
+    computer: ComputerRef,
+    context: AdapterContext,
+    options?: { discardUnsaved?: boolean },
+  ): Promise<void> {
     const res = await fetch(this.url(`/computers/${computer.id}/stop`), {
       method: "POST",
-      headers: this.headers(context, computer.botId),
+      headers: {
+        ...this.headers(context, computer.botId),
+        ...(options?.discardUnsaved ? { "x-cortexai-agent-hub-discard-unsaved": "1" } : {}),
+      },
       signal: context.signal,
     });
+    if (res.ok || res.status === 404) this.unresponsive.delete(computer.id);
     // 404 means the supervisor no longer has the container, which is the state we want.
     if (!res.ok && res.status !== 404) {
       throw new Error(
@@ -575,11 +690,12 @@ export class DockerSandboxProvider implements SandboxProvider {
       headers: this.headers(context, computer.botId),
       signal: context.signal,
     });
-    if (!res.ok && res.status !== 404) {
-      throw new Error(
-        `sandbox destroy failed: ${res.status} ${await safeBody(res, context.signal)}`.trim(),
-      );
-    }
+    if (res.ok || res.status === 404) this.unresponsive.delete(computer.id);
+    if (res.ok) return;
+    const body = await safeBody(res, context.signal);
+    // Only the supervisor's missing-computer answer means already deleted.
+    if (res.status === 404 && body.includes("computer not found")) return;
+    throw new Error(`sandbox destroy failed: ${res.status} ${body}`.trim());
   }
 
   private async *walkWorkspace(
@@ -587,7 +703,9 @@ export class DockerSandboxProvider implements SandboxProvider {
     directory: string,
     context: AdapterContext,
   ): AsyncIterable<PortableFile> {
-    const entries = await this.listFiles(computer, directory, context);
+    const entries = (await this.listFiles(computer, directory, context)).filter(
+      (entry) => !shouldSkipPortableWorkspaceFile(entry.path, entry.kind === "dir"),
+    );
     for (let index = 0; index < entries.length; ) {
       const entry = entries[index]!;
       if (entry.kind === "dir") {
@@ -629,13 +747,12 @@ async function* readNdjsonProcessEvents(
   try {
     while (!sawExit) {
       if (signal.aborted) throw signal.reason ?? new Error("command aborted");
-      const { done, value } = await reader.read();
+      const { done, value } = await withAbort(reader.read(), signal);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > MAX_SANDBOX_SUCCESS_RESPONSE_BYTES) {
         yield { type: "stderr", data: "exec failed: response too large\n" };
         yield { type: "exit", code: 1 };
-        await reader.cancel().catch(() => undefined);
         return;
       }
       buffer += decoder.decode(value, { stream: true });
@@ -656,6 +773,7 @@ async function* readNdjsonProcessEvents(
     }
     if (!sawExit) yield { type: "exit", code: 1 };
   } finally {
+    void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -692,24 +810,4 @@ function parseProcessLine(line: string): ProcessEvent | undefined {
     return { type: "exit", code: record.code };
   }
   return undefined;
-}
-
-function requestDeadline(timeoutMs: number, message: string) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error(message)), timeoutMs);
-  return {
-    signal: controller.signal,
-    dispose() {
-      clearTimeout(timer);
-    },
-  };
-}
-
-function dockerCwd(cwd: string | undefined) {
-  if (!cwd || cwd === "." || cwd === "/" || cwd === "/home/cortexai-agent-hub")
-    return "/home/cortexai-agent-hub";
-  const relative = cwd.startsWith("/home/cortexai-agent-hub/")
-    ? cwd.slice("/home/cortexai-agent-hub/".length)
-    : normalizeWorkspacePath(cwd);
-  return path.posix.join("/home/cortexai-agent-hub", relative);
 }

@@ -37,6 +37,7 @@ function recordingDeps(skill: ReturnType<typeof skillRow>) {
   let current = structuredClone(skill);
   const tx = {
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     taughtSkill: {
       findUniqueOrThrow: vi.fn(async () => current),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
@@ -50,6 +51,7 @@ function recordingDeps(skill: ReturnType<typeof skillRow>) {
         .mockResolvedValue([
           { id: "message-1", blocks: [{ kind: "skill_draft", skillId: "skill-1" }] },
         ]),
+      create: vi.fn(async () => ({ id: "message-1" })),
     },
     bot: {
       findUnique: vi.fn(),
@@ -91,8 +93,15 @@ function recordingDeps(skill: ReturnType<typeof skillRow>) {
           findMany: vi.fn().mockResolvedValue([]),
         },
       },
-      events: { append: vi.fn(), notify: vi.fn(), finalizeComputerControlRelease: vi.fn() },
-      jobs: { enqueue: vi.fn(), cancel: vi.fn() },
+      events: {
+        append: vi.fn(),
+        notify: vi.fn(),
+        releaseUserControl: vi.fn().mockResolvedValue(true),
+      },
+      jobs: {
+        enqueue: vi.fn().mockResolvedValue(undefined),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
       sandbox: { observe: vi.fn(), setScreenControl: vi.fn(), sendInput: vi.fn(), act: vi.fn() },
       home: {},
       dataDir: "/tmp",
@@ -166,10 +175,18 @@ describe("expireTaughtSkillTeaching", () => {
         controlHolder: "user",
         controlBotId: "bot-1",
         controlLeaseId: "lease-1",
+        spaceId: "space-1",
       },
     };
     deps.prisma.bot.findUnique = vi.fn().mockResolvedValue(bot);
     await expireTaughtSkillTeaching(deps as never, "skill-1");
+    expect(deps.events.releaseUserControl).toHaveBeenCalledWith({
+      spaceId: "space-1",
+      computerId: "computer-1",
+      botId: "bot-1",
+      leaseId: "lease-1",
+      reason: "released",
+    });
     expect(deps.jobs.cancel).toHaveBeenCalledWith("computer.control-expire:computer-1:lease-1");
     expect(tx.event.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -212,7 +229,7 @@ describe("expireTaughtSkillTeaching", () => {
     });
     await expireTaughtSkillTeaching(deps as never, "skill-1");
     expect(deps.jobs.cancel).not.toHaveBeenCalled();
-    expect(deps.events.finalizeComputerControlRelease).not.toHaveBeenCalled();
+    expect(deps.events.releaseUserControl).not.toHaveBeenCalled();
   });
 
   it("does not republish draft events once they already exist", async () => {
@@ -311,6 +328,34 @@ describe("recordTeachingInputEvent", () => {
     expect(order).toEqual(["send", "persist"]);
     expect(current().recording.events).toHaveLength(1);
     expect(deps.prisma.taughtSkill.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("records where a scroll was made", async () => {
+    const { deps, current, tx } = recordingDeps(skillRow());
+    tx.bot.findUnique = vi.fn(async () => ({
+      id: "bot-1",
+      computer: {
+        id: "computer-1",
+        homeKey: "bot-1",
+        kind: "e2b",
+        providerRef: "boat-1",
+        controlHolder: "user",
+        controlBotId: "bot-1",
+        controlLeaseId: "lease-1",
+      },
+    }));
+    deps.sandbox.act = vi.fn(async () => ({ completed: 1 }));
+    await expect(
+      recordTeachingInputEvent(
+        deps as never,
+        { spaceId: "workspace-1", userId: "user-1" } as never,
+        "bot-1",
+        { kind: "scroll", direction: "down", amount: 2, x: 600, y: 420 },
+      ),
+    ).resolves.toBe("recorded");
+    expect(current().recording.events).toEqual([
+      expect.objectContaining({ kind: "scroll", type: "down", text: "2", x: 600, y: 420 }),
+    ]);
   });
 
   it("records repeated identical inputs in the same millisecond", async () => {
@@ -591,6 +636,24 @@ describe("applyTeachingDesktopInput", () => {
       expect.anything(),
       pointer,
       expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("scrolls the computer at the point the teacher scrolled", async () => {
+    const sandbox = { sendInput: vi.fn(), act: vi.fn() };
+    await applyTeachingDesktopInput(
+      sandbox as never,
+      computer,
+      { kind: "scroll", direction: "down", amount: 2, x: 600, y: 420 },
+      {} as never,
+    );
+    expect(sandbox.act).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        actions: [{ kind: "scroll", direction: "down", amount: 2, x: 600, y: 420 }],
+        observe: false,
+      },
       expect.anything(),
     );
   });

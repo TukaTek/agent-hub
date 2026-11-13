@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { THREAD_COLUMN_GUTTER } from "./message-presentation";
 
 // Inversion can spread a side edge's tint across the entire message list.
 export const threadScrollEdgeEffects = {
@@ -8,21 +9,30 @@ export const threadScrollEdgeEffects = {
   right: "hidden",
 } as const;
 
-// The pill bottoms sit 10pt above the native header bottom.
+export type ThreadColumnPadding = { paddingStart: number; paddingEnd: number };
+
+/**
+ * Column padding for messages and the composer. Insets are physical (a cutout's side);
+ * start and end are logical, so in RTL the start edge takes the right inset.
+ */
+export function threadColumnPadding(
+  columnInsets: { left: number; right: number },
+  rtl: boolean,
+): ThreadColumnPadding {
+  return {
+    paddingStart: THREAD_COLUMN_GUTTER + (rtl ? columnInsets.right : columnInsets.left),
+    paddingEnd: THREAD_COLUMN_GUTTER + (rtl ? columnInsets.left : columnInsets.right),
+  };
+}
+
+// The pill bottoms sit 10pt above the native header bottom; content rests 14pt below them.
 export const THREAD_HEADER_PILL_BOTTOM_INSET = 10;
-export const THREAD_HEADER_FADE_SOLID = 14;
-export const THREAD_HEADER_FADE_GRADIENT = 12;
+const THREAD_HEADER_CONTENT_GAP = 14;
 
 export function threadHeaderClearance(headerHeight: number) {
-  if (headerHeight <= 0) return { opaqueHeight: 0, padding: 8, anchor: 24, minHeight: 0 };
-  const pillBottom = headerHeight - THREAD_HEADER_PILL_BOTTOM_INSET;
-  const opaqueHeight = pillBottom + THREAD_HEADER_FADE_SOLID;
-  return {
-    opaqueHeight,
-    padding: opaqueHeight,
-    anchor: opaqueHeight + THREAD_HEADER_FADE_GRADIENT + 8,
-    minHeight: opaqueHeight,
-  };
+  if (headerHeight <= 0) return { padding: 8, anchor: 24, minHeight: 0 };
+  const padding = headerHeight - THREAD_HEADER_PILL_BOTTOM_INSET + THREAD_HEADER_CONTENT_GAP;
+  return { padding, anchor: padding + 20, minHeight: padding };
 }
 
 export function threadHeaderFloats() {

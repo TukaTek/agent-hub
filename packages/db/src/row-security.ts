@@ -4,6 +4,7 @@ import { getLogger } from "@cortexai-agent-hub/logging";
 import type { Pool, PoolClient } from "pg";
 import type { PrismaClient } from "./generated/prisma/client.js";
 import { Prisma } from "./generated/prisma/client.js";
+import { withTransactionRetry } from "./transaction-retry.js";
 
 /**
  * Who a database operation runs for. Row-level security policies read the
@@ -25,7 +26,6 @@ export function currentDbContext(): DbContext | undefined {
   return storage.getStore();
 }
 
-/** Run `fn` with row-level security scoped to one Space and user. */
 export function runAsTenant<T>(
   tenant: { spaceId: string; userId: string },
   fn: () => T | PromiseLike<T>,
@@ -50,6 +50,8 @@ export function asSystem<T extends object>(client: T, reason = "test fixture"): 
   return new Proxy(client, {
     get(target, key) {
       const value = Reflect.get(target, key);
+      // A synchronous accessor that reads no rows; wrapping it would hand back a promise.
+      if (key === "$contentEncryption") return value;
       if (typeof value === "function") {
         return (...args: unknown[]) =>
           runAsSystem(reason, () => Reflect.apply(value, target, args));
@@ -99,10 +101,15 @@ function within<T>(context: DbContext, fn: () => T | PromiseLike<T>): Promise<T>
   return storage.run(context, async () => await fn());
 }
 
-/** Prisma models whose tables have row-level security enabled. */
 export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "BillingAuditEvent",
+  "PushToken",
+  "CallPushDevice",
+  "WorkActivityToken",
+  "WorkActivityStartToken",
+  "EmailSend",
   "Thread",
+  "ThreadRead",
   "Message",
   "Event",
   "MemoryDocument",
@@ -110,32 +117,62 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "Artifact",
   "Secret",
   "BotSecret",
+  "VaultCredential",
+  "VaultCredentialBot",
+  "VaultCredentialLimit",
   "AgentSecret",
   "UserModelCredential",
   "UserVoiceCredential",
+  "TrustedLinkSite",
+  "FeedbackReport",
+  "PaymentWallet",
+  "Purchase",
+  "SpendingLimit",
+  "Payment",
   "TaughtSkill",
   "AgentSkill",
+  "AgentSkillSpace",
+  "CapabilityInstallSpace",
+  "AgentImport",
   "Bot",
   "Run",
   "Task",
   "Routine",
   "Connection",
   "McpServer",
+  "McpServerSpace",
   "McpOAuthSession",
+  "ModelOAuthSession",
   "BotMcpServer",
   "Computer",
+  "ComputerRun",
+  "HomeDeletionNotice",
   "Board",
   "Ticket",
   "TicketComment",
   "MessagingIdentity",
+  "MessagingInstallation",
+  "MessagingInstallSession",
   "MessagingOutbound",
   "ExternalConversation",
   "ExternalMessage",
   "SteeringMessage",
   "UsageRecord",
   "ScratchpadItem",
+  "BotEmailMessage",
+  "BotEmailSend",
   "ActionApprovalRule",
+  "SpaceModelRoleChoice",
+  "SpaceSettingOverride",
+  "UserModelRoleChoice",
+  "UserModelPreference",
+  "UserVoicePreference",
+  "UserActionApprovalRule",
+  "UserActionAutoReviewPreference",
   "SecurityEvent",
+  "AuditEvent",
+  "Page",
+  "PageVersion",
 ]);
 
 /**
@@ -180,7 +217,7 @@ function settingsFor(context: DbContext | undefined, bypassKey: string): Setting
 }
 
 const SET_SESSION =
-  "SELECT set_config('app.space_id', $1, false), set_config('app.user_id', $2, false), set_config('app.rls_bypass', $3, false), set_config('app.rls_bypass_key', $4, false)";
+  "SELECT set_config('app.space_id', $1, false), set_config('app.user_id', $2, false), set_config('app.rls_bypass', $3, false), set_config('app.rls_bypass_key', $4, false), set_config('app.vault_access_version', '1', false)";
 const applied = new WeakMap<PoolClient, string>();
 
 async function applySettings(client: PoolClient, settings: Settings): Promise<void> {
@@ -245,7 +282,7 @@ export function installDbContext(pool: Pool): void {
 }
 
 const LOCAL_SETTINGS = (settings: Settings) =>
-  Prisma.sql`SELECT set_config('app.space_id', ${settings[0]}, true), set_config('app.user_id', ${settings[1]}, true), set_config('app.rls_bypass', ${settings[2]}, true), set_config('app.rls_bypass_key', ${settings[3]}, true)`;
+  Prisma.sql`SELECT set_config('app.space_id', ${settings[0]}, true), set_config('app.user_id', ${settings[1]}, true), set_config('app.rls_bypass', ${settings[2]}, true), set_config('app.rls_bypass_key', ${settings[3]}, true), set_config('app.vault_access_version', '1', true)`;
 
 // A wrapped read keeps the pool's checkout timeout and no run limit it did not
 // have before, instead of Prisma's 2s/5s transaction defaults.
@@ -334,20 +371,23 @@ export function withRowLevelSecurity(prisma: PrismaClient, bypassKey = ""): Pris
   return prisma.$extends({
     query: {
       async $allOperations({ model, operation, args, query, ...rest }) {
+        const internal = (rest as { __internalParams?: InternalParams }).__internalParams;
+        const transaction = internal?.transaction;
+        // A lone statement that lost a deadlock changed nothing, so it can run again; a
+        // transaction's statements are retried by whoever opened the transaction.
+        const run = () => (transaction ? query(args) : withTransactionRetry(() => query(args)));
         const context = storage.getStore();
         if (!context) {
           if (model && ROW_SECURITY_MODELS.has(model)) missingContext(model, operation);
-          return query(args);
+          return run();
         }
-        const internal = (rest as { __internalParams?: InternalParams }).__internalParams;
-        const transaction = internal?.transaction;
         if (transaction?.kind === "batch") {
           throw new Error(
             "Batch $transaction([...]) cannot carry a database context; use an interactive transaction",
           );
         }
         if (transaction || (operation !== "findUnique" && operation !== "findUniqueOrThrow")) {
-          return query(args);
+          return run();
         }
         // Prisma would batch this with other findUnique calls of the same tick and
         // run them all in whichever context came first. findFirst runs at once,
@@ -359,15 +399,22 @@ export function withRowLevelSecurity(prisma: PrismaClient, bypassKey = ""): Pris
         if (model && filter) {
           const delegate = Reflect.get(prisma, model[0]!.toLowerCase() + model.slice(1));
           const first = operation === "findUnique" ? "findFirst" : "findFirstOrThrow";
-          return Reflect.apply(delegate[first], delegate, [{ ...args, where: filter }]);
+          return withTransactionRetry(
+            () =>
+              Reflect.apply(delegate[first], delegate, [
+                { ...args, where: filter },
+              ]) as Promise<unknown>,
+          );
         }
         // Fluent relation reads (`findUnique(...).messages()`) keep Prisma's own
         // shape, so they run in a short transaction that sets the context first.
-        const [, result] = await prisma.$transaction(
-          [prisma.$executeRaw(LOCAL_SETTINGS(settingsFor(context, bypassKey))), query(args)],
-          WRAPPED_OPERATION_OPTIONS as never,
-        );
-        return result;
+        return withTransactionRetry(async () => {
+          const [, result] = await prisma.$transaction(
+            [prisma.$executeRaw(LOCAL_SETTINGS(settingsFor(context, bypassKey))), query(args)],
+            WRAPPED_OPERATION_OPTIONS as never,
+          );
+          return result;
+        });
       },
     },
   }) as unknown as PrismaClient;

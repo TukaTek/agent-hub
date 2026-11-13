@@ -1,7 +1,7 @@
 import { RunHistoryWriteError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendToolCompletionAudit } from "./executor.js";
+import { appendToolCompletionAudit } from "./tool-completion-audit.js";
 import {
   createToolCompletionAuditQueue,
   isTransactionNeverStarted,
@@ -215,7 +215,7 @@ describe("tool completion audit queue", () => {
     );
 
     expect(append).toHaveBeenCalledOnce();
-    expect(sink.events).toEqual([]);
+    expect(warnings()).toEqual([]);
   });
 
   it("records a paused completion and its resumed completion separately", async () => {

@@ -8,8 +8,7 @@ import { createRepos } from "./repos.js";
 import { asSystem, runAsSystem, runAsTenant } from "./row-security.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
 describePostgres("archived groups and their bots (PostgreSQL)", () => {
   const provider = "sendblue";
@@ -27,7 +26,6 @@ describePostgres("archived groups and their bots (PostgreSQL)", () => {
   async function bot(name: string) {
     const created = await createRepos(prisma).createBot(actor, {
       name,
-      title: "",
       description: "",
       instructions: "",
       notifyOnFinish: true,

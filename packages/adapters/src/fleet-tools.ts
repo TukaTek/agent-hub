@@ -1,6 +1,5 @@
-import type { JobPublisher } from "@cortexai-agent-hub/adapter-kit";
-import { runJobKey } from "@cortexai-agent-hub/adapter-kit";
-import type { Actor, Group } from "@cortexai-agent-hub/contracts";
+import type { AdapterContext, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
+import type { Actor, Group, MessageBlock } from "@cortexai-agent-hub/contracts";
 import {
   BOT_INSTRUCTIONS_MAX_LENGTH,
   BotSectionName,
@@ -10,6 +9,7 @@ import {
   FLEET_WRITE_TOOL_NAMES,
   GROUP_MEMBER_MAX,
   GROUP_MEMBER_MIN,
+  isAttachmentImageMimeType,
   ThinkingLevelSchema,
   TimeZoneSchema,
   UpdateGroupInput,
@@ -18,7 +18,6 @@ import {
   CARD_TITLE_ESCAPED_CHARACTERS,
   ONCE_ROUTINE_CRON,
   redactSecrets,
-  toolRequiresExplicitApproval,
 } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
@@ -27,13 +26,18 @@ import {
   createRepos,
   InstructionConflictError,
   IsolationError,
+  isRecordNotFound,
   SpaceDeletionInProgressError,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { FleetCardSummary } from "./approval-ask.js";
 import { approvalDetailLength, MAX_APPROVAL_SUMMARY_LENGTH } from "./approval-ask.js";
-import { resolveUpdateBotAvatar } from "./bot-avatar.js";
+import { attachedImageArtifactIds, resolveUpdateBotAvatar } from "./bot-avatar.js";
 import { createdByWhere, managedBotsWhere } from "./child-bots.js";
+import { stopCancelledGroupRuns } from "./computer-idle.js";
+import { asRecord } from "./connector-http.js";
+import type { ExecutorDeps } from "./executor-deps.js";
+import { resolveModelChoice } from "./model-choice.js";
 import type { BotModelChangeDeps } from "./model-selection.js";
 import { validateBotModelChange } from "./model-selection.js";
 import { listPiCatalog, scriptedCatalogEntry } from "./pi-models.js";
@@ -41,23 +45,22 @@ import type { ScheduleToolDeps } from "./schedule-tools.js";
 import {
   compactScheduleInput,
   createScheduleFromTool,
+  isScheduleValueProvided,
   resolveScheduleTiming,
+  scheduleTimingArgs,
   userTimeZone,
 } from "./schedule-tools.js";
 import type { UpdateBotPatch } from "./update-bot-patch.js";
 import { argumentGiven, parseUpdateBotPatch } from "./update-bot-patch.js";
 
-/** The fleet writes that pause for the owner's card. */
+/** The fleet writes resolved up front so an approval card can show what will run. */
 export type FleetApprovalToolName = Exclude<
   (typeof FLEET_WRITE_TOOL_NAMES)[number],
   "organize_bot"
 >;
 
 export function isFleetApprovalTool(name: string): name is FleetApprovalToolName {
-  return (
-    (FLEET_WRITE_TOOL_NAMES as readonly string[]).includes(name) &&
-    toolRequiresExplicitApproval(name)
-  );
+  return name !== "organize_bot" && (FLEET_WRITE_TOOL_NAMES as readonly string[]).includes(name);
 }
 
 /** All scope comes from the run; no tool argument may name a space or user. */
@@ -65,7 +68,6 @@ export type FleetRun = {
   spaceId: string;
   userId: string;
   botId: string;
-  /** The group whose thread the run is in, if any. */
   groupId: string | null;
   /** The thread the run is in; fleet events for the caller land here. */
   threadId: string;
@@ -254,9 +256,9 @@ async function prepareChildModel(
   const thinkingLevel = text(args.thinking_level);
   const clear = args.clear === true;
   if (clear && (provider || model)) {
-    return refuse("Pass either clear: true or provider and model, not both.");
+    return refuse("Pass either clear: true or model, not both.");
   }
-  if (!clear && !(provider && model)) return refuse("Pass provider and model, or clear: true.");
+  if (!clear && !model) return refuse("Pass model, or clear: true.");
   // A model without catalog levels skips the shared check, so the level must be a real one first.
   if (thinkingLevel && !ThinkingLevelSchema.safeParse(thinkingLevel).success) {
     return refuse(`Thinking level must be one of: ${ThinkingLevelSchema.options.join(", ")}`);
@@ -269,13 +271,21 @@ async function prepareChildModel(
     model: child.modelId,
     thinkingLevel: child.thinkingLevel ?? null,
   };
+  const chosen = model
+    ? await resolveModelChoice({ prisma: deps.prisma, ...deps.modelChange }, run, {
+        model,
+        provider,
+        preferredProvider: child.modelProvider,
+      })
+    : undefined;
+  if (chosen && !chosen.ok) return refuse(chosen.error);
   const validated = await validateBotModelChange(
     { prisma: deps.prisma, ...deps.modelChange },
     {
       userId: run.userId,
       spaceId: run.spaceId,
-      provider: provider ?? null,
-      model: model ?? null,
+      provider: chosen?.provider ?? null,
+      model: chosen?.model ?? null,
       thinkingLevel: thinkingLevel ?? null,
       current: previous,
     },
@@ -328,21 +338,12 @@ async function prepareChildRoutine(
   if (hidden) return refuse(hidden);
   const namedRoutine = CreateRoutineInput.shape.name.safeParse(name);
   if (!namedRoutine.success) return refuse(`name: ${issueMessage(namedRoutine.error)}`);
-  const timezone = text(args.timezone) ?? (await userTimeZone(deps.prisma, run.userId));
+  const namedTimezone = text(args.timezone);
+  const timezone = namedTimezone ?? (await userTimeZone(deps.prisma, run.userId));
   if (!TimeZoneSchema.safeParse(timezone).success) {
     return refuse(`Unknown timezone "${timezone}". Use an IANA name like Europe/Paris.`);
   }
-  const resolved = resolveScheduleTiming(
-    compactScheduleInput({
-      cron: args.cron,
-      every: args.every,
-      unit: args.unit,
-      runAt: args.runAt,
-      delayMinutes: args.delayMinutes,
-      delaySeconds: args.delaySeconds,
-    }),
-    timezone,
-  );
+  const resolved = resolveScheduleTiming(compactScheduleInput(scheduleTimingArgs(args)), timezone);
   if (!resolved.ok) return refuse(resolved.error);
 
   const child = await resolveBot(deps.prisma, run, args);
@@ -359,10 +360,20 @@ async function prepareChildRoutine(
       name,
       prompt,
       timezone,
-      // A one-shot keeps its absolute time so a delay is not measured again at approval.
+      // A zone the bot did not name is the account's, re-read when the approved routine
+      // is created, so a zone change between approval and creation does not strand the
+      // routine in the old zone.
+      ...(namedTimezone === undefined ? { timezoneFromAccount: true } : {}),
+      // A one-shot keeps its absolute time so a delay is not measured again at approval,
+      // and a delayed repeat keeps its first run.
       schedule: resolved.oneShot
         ? { runAt: resolved.nextRunAt.toISOString() }
-        : { cron: resolved.cron },
+        : {
+            cron: resolved.cron,
+            ...(isScheduleValueProvided(args.startAt)
+              ? { startAt: resolved.nextRunAt.toISOString() }
+              : {}),
+          },
     },
     summary: {
       title: `Schedule “${cardName(name)}” for ${cardName(child.name)}?`,
@@ -437,11 +448,14 @@ const NOT_FOUND = "That bot or group is no longer available. Call list_fleet and
 type FleetBot = {
   id: string;
   name: string;
-  title: string;
   description: string;
   section: string | null;
   pinned: boolean;
   createdByMe: boolean;
+  /** As update_bot's own read shows it; a bot on the space default is marked "(default)". */
+  model: string;
+  /** "default" when the bot follows the space's default thinking level. */
+  thinkingLevel: string;
 };
 type FleetGroup = {
   id: string;
@@ -455,7 +469,7 @@ export type FleetListing = {
   groups: FleetGroup[];
   sections: string[];
   truncated: boolean;
-  /** With `bot_id` of a bot the caller created: what an instruction edit must start from. */
+  /** With `bot_id`: what an instruction edit must start from. */
   bot?: { id: string; name: string; instructions: string; instructionsVersion: string };
 };
 
@@ -467,7 +481,7 @@ export function instructionsVersionOf(bot: { instructionHistory: unknown }): str
 }
 
 export async function listFleet(
-  deps: Pick<FleetDeps, "prisma">,
+  deps: FleetPrepareDeps,
   run: FleetRun,
   args: { bot_id?: unknown },
 ): Promise<FleetListing | { error: string }> {
@@ -488,33 +502,36 @@ export async function listFleet(
     };
   }
   if (detail) return { bot: detail, bots: [], groups: [], sections: [], truncated: false };
-  const [bots, groups, sections] = await Promise.all([
+  const [bots, groups, sections, fallback] = await Promise.all([
     prisma.bot.findMany({
       where: activeBotsWhere(run),
       select: {
         id: true,
         name: true,
-        title: true,
         description: true,
         pinned: true,
         section: { select: { name: true } },
+        modelProvider: true,
+        modelId: true,
+        thinkingLevel: true,
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: FLEET_BOT_LIMIT + 1,
     }),
     visibleGroups(prisma, run),
     prisma.botSection.findMany({
-      where: { spaceId: run.spaceId, userId: run.userId },
+      where: { spaceId: run.spaceId },
       select: { name: true },
       orderBy: { position: "asc" },
       take: FLEET_SECTION_LIMIT + 1,
     }),
+    deps.modelChange.defaultModel(),
   ]);
   const listedBots = bots.slice(0, FLEET_BOT_LIMIT);
   // Only the listed bots need the creator flag, so this read is bounded by the bot cap.
   const children = await prisma.bot.findMany({
     where: {
-      ...createdByWhere({ botId: run.botId, userId: run.userId, spaceId: run.spaceId }),
+      ...createdByWhere({ botId: run.botId, spaceId: run.spaceId }),
       archivedAt: null,
       id: { in: listedBots.map((bot) => bot.id) },
     },
@@ -525,11 +542,13 @@ export async function listFleet(
     bots: listedBots.map((bot) => ({
       id: bot.id,
       name: singleLine(bot.name),
-      title: singleLine(bot.title),
       description: bot.description,
       section: bot.section ? singleLine(bot.section.name) : null,
       pinned: bot.pinned,
       createdByMe: childIds.has(bot.id),
+      // Everyone's model in one read, so nobody has to ask each bot to inspect itself.
+      model: botModelLabel(bot, fallback),
+      thinkingLevel: bot.thinkingLevel ?? "default",
     })),
     groups: groups.slice(0, FLEET_GROUP_LIMIT),
     sections: sections.slice(0, FLEET_SECTION_LIMIT).map((section) => singleLine(section.name)),
@@ -566,7 +585,7 @@ async function visibleGroups(prisma: PrismaClient, run: FleetRun): Promise<Fleet
   let cursor: string | undefined;
   for (;;) {
     const page = await prisma.chatGroup.findMany({
-      where: { spaceId: run.spaceId, userId: run.userId, archivedAt: null },
+      where: { spaceId: run.spaceId, archivedAt: null },
       select: {
         id: true,
         name: true,
@@ -694,7 +713,7 @@ export async function createFleetGroup(
   const { name, botIds } = parsed.data;
   const wanted = new Set(botIds);
   const sameName = await deps.prisma.chatGroup.findMany({
-    where: { spaceId: run.spaceId, userId: run.userId, archivedAt: null, name },
+    where: { spaceId: run.spaceId, archivedAt: null, name },
     select: {
       id: true,
       name: true,
@@ -740,7 +759,7 @@ export async function createFleetGroup(
 
 /** Apply the approved membership change against the members the card was built from. */
 export async function updateFleetGroup(
-  deps: FleetDeps,
+  deps: FleetDeps & Parameters<typeof stopCancelledGroupRuns>[0],
   run: FleetRun,
   canonical: Record<string, unknown>,
 ): Promise<
@@ -760,12 +779,11 @@ export async function updateFleetGroup(
   } catch (error) {
     return repoRefusal(error);
   }
-  await Promise.all(
-    updated.cancelledRunIds.map((runId) =>
-      deps.jobs.cancel(runJobKey(runId)).catch(() => undefined),
-    ),
-  );
   await appendGroupEvent(deps, run, "group.updated", updated.group);
+  // The change is committed: a failed cleanup must not leave the approved effect uncertain.
+  await stopCancelledGroupRuns(deps, run, updated).catch((error) =>
+    getLogger().error("group member teardown", error),
+  );
   const { group } = updated;
   return {
     ok: true,
@@ -781,7 +799,7 @@ export async function updateFleetGroup(
 const CHILD_CHANGED = "child changed; read it again with list_fleet";
 const ALREADY_WROTE_INSTRUCTIONS = "You already changed this bot's instructions in this run.";
 
-/** `update_bot` with `bot_id`: the profile fields of a bot the caller created. */
+/** `update_bot` with `bot_id`: the profile fields of another bot in the space. */
 export async function updateChildBot(
   deps: Pick<FleetDeps, "prisma" | "events"> & { runSecrets: readonly string[] },
   run: FleetRun,
@@ -790,9 +808,12 @@ export async function updateChildBot(
   if (argumentGiven(args.artifact_id) || args.use_attached_image === true) {
     return { error: "artifact_id and use_attached_image work only on yourself." };
   }
+  if (argumentGiven(args.instructions)) {
+    return { error: "Change another bot's instructions with set_child_instructions." };
+  }
   const profile = {
+    dailyCheckIns: argumentGiven(args.dailyCheckIns) ? args.dailyCheckIns : undefined,
     name: argumentGiven(args.name) ? args.name : undefined,
-    title: argumentGiven(args.title) ? args.title : undefined,
     description: argumentGiven(args.description) ? args.description : undefined,
     notifyOnFinish: argumentGiven(args.notifyOnFinish)
       ? args.notifyOnFinish
@@ -801,7 +822,7 @@ export async function updateChildBot(
         : undefined,
   };
   const credential = credentialField(
-    { name: profile.name, title: profile.title, description: profile.description },
+    { name: profile.name, description: profile.description },
     deps.runSecrets,
   );
   if (credential) return { error: credential };
@@ -814,7 +835,7 @@ export async function updateChildBot(
 
   let patch: UpdateBotPatch = {};
   if (Object.values(profile).some((value) => value !== undefined)) {
-    const parsed = parseUpdateBotPatch(profile, child.name);
+    const parsed = parseUpdateBotPatch(profile);
     if ("error" in parsed) return parsed;
     patch = parsed.patch;
   }
@@ -829,7 +850,7 @@ export async function updateChildBot(
   }
   if (Object.keys(patch).length === 0) {
     return {
-      error: "Provide at least one of name, title, description, notify_on_finish, or color.",
+      error: "Provide at least one of name, description, notify_on_finish, or color.",
     };
   }
   await commitBotUpdate({
@@ -898,7 +919,7 @@ async function wroteInstructionsThisRun(prisma: PrismaClient, run: FleetRun, chi
     select: { request: true, result: true },
   });
   return effects.some(
-    (effect) => record(effect.request)?.botId === childId && record(effect.result)?.ok === true,
+    (effect) => asRecord(effect.request)?.botId === childId && asRecord(effect.result)?.ok === true,
   );
 }
 
@@ -921,7 +942,7 @@ export async function setChildBotModel(
   const child = await resolveBot(deps.prisma, run, { bot_id: canonical.botId });
   if ("error" in child) return { error: child.error };
   if (!child.thread) return { error: NOT_FOUND };
-  const previous = record(canonical.previous);
+  const previous = asRecord(canonical.previous);
   if (
     (previous?.provider ?? null) !== child.modelProvider ||
     (previous?.model ?? null) !== child.modelId ||
@@ -949,7 +970,7 @@ export async function setChildBotModel(
       threadId: child.thread.id,
       botId: child.id,
       emitBotUpdated: true,
-      expectedModel: {
+      expectedSettings: {
         modelProvider: child.modelProvider,
         modelId: child.modelId,
         thinkingLevel: child.thinkingLevel ?? null,
@@ -961,7 +982,7 @@ export async function setChildBotModel(
       },
     });
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "P2025")
+    if (isRecordNotFound(error))
       return { error: "That bot's model changed since you approved; ask again." };
     throw error;
   }
@@ -985,7 +1006,7 @@ export async function createChildRoutine(
   const name = typedName === undefined ? undefined : singleLine(typedName);
   const prompt = text(canonical.prompt);
   const timezone = text(canonical.timezone) ?? "UTC";
-  const schedule = record(canonical.schedule);
+  const schedule = asRecord(canonical.schedule);
   if (!name || !prompt || !schedule) return { error: "The approved routine is incomplete." };
   const child = await resolveBot(deps.prisma, run, { bot_id: canonical.botId });
   if ("error" in child) return { error: child.error };
@@ -994,6 +1015,14 @@ export async function createChildRoutine(
   const runAt = text(schedule.runAt);
   const cron = runAt ? ONCE_ROUTINE_CRON : text(schedule.cron);
   if (!cron) return { error: "The approved routine is incomplete." };
+  // A zone that came from the account is re-read under the account lock at creation,
+  // not replayed from the approval. The identical-routine lookup filters on the
+  // account's current zone for such routines — the move keeps them on it — instead of
+  // the approval's zone, which would miss a routine created or moved since, or no zone
+  // at all, which would also match an unrelated pinned routine.
+  const pinnedTimezone = canonical.timezoneFromAccount === true ? undefined : timezone;
+  const replayTimezone =
+    pinnedTimezone === undefined ? await userTimeZone(deps.prisma, run.userId) : pinnedTimezone;
   const existing = await deps.prisma.routine.findFirst({
     where: {
       spaceId: run.spaceId,
@@ -1002,7 +1031,7 @@ export async function createChildRoutine(
       threadId: child.thread.id,
       name,
       prompt,
-      timezone,
+      timezone: replayTimezone,
       crons: { equals: [cron] },
       active: true,
       ...(runAt ? { nextRunAt: new Date(runAt) } : {}),
@@ -1029,7 +1058,7 @@ export async function createChildRoutine(
     target: { botId: child.id, threadId: child.thread.id },
     name,
     prompt,
-    timezone,
+    ...(pinnedTimezone === undefined ? {} : { timezone: pinnedTimezone }),
     schedule,
   });
   return "error" in created ? created : { ...created, ...target };
@@ -1142,7 +1171,7 @@ async function resolveBot(prisma: PrismaClient, run: FleetRun, args: Record<stri
   );
 }
 
-/** One active group of the user, by `group_id` or exact `group_name`. Groups have no creator. */
+/** One active group of the space, by `group_id` or exact `group_name`. Groups have no creator. */
 async function resolveGroup(prisma: PrismaClient, run: FleetRun, args: Record<string, unknown>) {
   const id = text(args.group_id);
   const name = text(args.group_name);
@@ -1151,7 +1180,6 @@ async function resolveGroup(prisma: PrismaClient, run: FleetRun, args: Record<st
   const groups = await prisma.chatGroup.findMany({
     where: {
       spaceId: run.spaceId,
-      userId: run.userId,
       archivedAt: null,
       ...(id ? { id } : { name }),
     },
@@ -1174,12 +1202,6 @@ async function resolveGroup(prisma: PrismaClient, run: FleetRun, args: Record<st
       ? `No group with id "${id}". Call list_fleet for ids.`
       : `No group named "${name}". Call list_fleet and pass group_id.`,
   );
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function refuse(error: string): Refusal {
@@ -1211,7 +1233,7 @@ function singleLine(value: string): string {
 const CARD_TITLE_ESCAPED = new RegExp(CARD_TITLE_ESCAPED_CHARACTERS, "g");
 
 /** A name in a card title, which renders as Markdown: one line, and no links or emphasis. */
-function cardName(value: string): string {
+export function cardName(value: string): string {
   return singleLine(value).replace(CARD_TITLE_ESCAPED, "\\$&");
 }
 
@@ -1243,7 +1265,16 @@ function memberNames(members: Member[]): string {
   return members.map((member) => singleLine(member.name)).join(", ");
 }
 
-function modelLabel(provider: string | null, model: string | null): string {
+/** A bot's model as its own settings read shows it: the space default is marked "(default)". */
+export function botModelLabel(
+  bot: { modelProvider: string | null; modelId: string | null },
+  fallback: { provider: string | null; model: string | null },
+): string {
+  if (bot.modelProvider && bot.modelId) return modelLabel(bot.modelProvider, bot.modelId);
+  return `${modelLabel(fallback.provider, fallback.model)} (default)`;
+}
+
+export function modelLabel(provider: string | null, model: string | null): string {
   if (!provider || !model) return "Default model";
   const catalog = [...listPiCatalog(), scriptedCatalogEntry];
   const catalogProvider = canonicalPiProviderId(provider);
@@ -1268,4 +1299,95 @@ function formatTime(date: Date, timezone: string): string {
     timeStyle: "short",
   }).format(date);
   return `${local} ${timezone}`;
+}
+
+/** update_bot on the calling bot's own profile. */
+export async function updateOwnBotFromTool(
+  deps: ExecutorDeps,
+  run: { id: string; spaceId: string; userId: string; sourceMessageId: string | null },
+  threadId: string,
+  bot: { id: string; name: string },
+  args: Record<string, unknown>,
+  context: AdapterContext,
+) {
+  const parsed = parseUpdateBotPatch(args);
+  if ("error" in parsed) return parsed;
+  const patch = parsed.patch;
+  const wantsImage = args.artifact_id !== undefined || args.use_attached_image === true;
+  let sourceImageArtifactIds: string[] = [];
+  if (wantsImage && run.sourceMessageId) {
+    const source = await deps.prisma.message.findUnique({
+      where: { id: run.sourceMessageId },
+      select: { blocks: true, threadId: true },
+    });
+    if (source?.threadId === threadId) {
+      sourceImageArtifactIds = attachedImageArtifactIds(source.blocks as MessageBlock[]);
+    }
+  }
+  const avatar = await resolveUpdateBotAvatar({
+    color: args.color,
+    artifactId: args.artifact_id,
+    useAttachedImage: args.use_attached_image,
+    sourceImageArtifactIds,
+    loadArtifact: async (id) => {
+      if (!deps.artifacts) return null;
+      const row = await deps.prisma.artifact.findFirst({
+        where: { id, spaceId: run.spaceId },
+        select: { mimeType: true, storageKey: true },
+      });
+      if (!row || !isAttachmentImageMimeType(row.mimeType)) return null;
+      try {
+        return await deps.artifacts.get(row.storageKey, context);
+      } catch {
+        return null;
+      }
+    },
+  });
+  if ("error" in avatar && avatar.error !== "missing") {
+    return { error: avatar.error };
+  }
+  if ("color" in avatar) patch.color = avatar.color;
+  if (Object.keys(patch).length === 0) {
+    return {
+      error:
+        "Provide at least one of name, description, notifyOnFinish, color, artifact_id, or use_attached_image.",
+    };
+  }
+  const updated = await deps.prisma.bot.update({
+    where: { id: bot.id },
+    data: patch,
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      color: true,
+      notifyOnFinish: true,
+      dailyCheckIns: true,
+    },
+  });
+  try {
+    await deps.events.append({
+      spaceId: run.spaceId,
+      threadId: threadId,
+      botId: bot.id,
+      runId: run.id,
+      type: "bot.updated",
+      payload: {
+        botId: updated.id,
+        name: updated.name,
+        description: updated.description,
+      },
+    });
+  } catch (error) {
+    getLogger().error("bot.updated notification", error);
+  }
+  return {
+    ok: true,
+    botId: updated.id,
+    name: updated.name,
+    description: updated.description,
+    avatar: updated.color.startsWith("data:image/") ? "image" : updated.color,
+    notifyOnFinish: updated.notifyOnFinish,
+    dailyCheckIns: updated.dailyCheckIns,
+  };
 }

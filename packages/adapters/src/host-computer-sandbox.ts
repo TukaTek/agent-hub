@@ -20,6 +20,7 @@ import {
   HOST_COMPUTER_MAX_FILE_BYTES,
   hostComputerDeadlineMs,
 } from "./host-computer-protocol.js";
+import { shouldSkipPortableWorkspaceFile } from "./workspace-save-policy.js";
 
 /** Authenticated native host transport. Commands are never retried after a lost response. */
 export class HostComputerSandbox implements SandboxProvider {
@@ -97,6 +98,17 @@ export class HostComputerSandbox implements SandboxProvider {
       if (!signal.aborted) await cancellation;
       reader.releaseLock();
     }
+  }
+  /** One request outside a computer's lifecycle, such as screen control of this computer. */
+  stream<T>(input: HostComputerRequest, signal: AbortSignal): AsyncIterable<T> {
+    return this.request<T>(input, {
+      operationId: "host-computer",
+      traceId: "host-computer",
+      spaceId: "local",
+      userId: "local",
+      runId: input.runId,
+      signal,
+    });
   }
   private async one<T>(input: HostComputerRequest, context: AdapterContext): Promise<T> {
     let result: T | undefined;
@@ -190,6 +202,7 @@ export class HostComputerSandbox implements SandboxProvider {
       { method: "exportWorkspace", botId: computer.botId },
       context,
     )) {
+      if (shouldSkipPortableWorkspaceFile(file.path)) continue;
       yield { ...file, content: new Uint8Array(Buffer.from(file.content, "base64")) };
     }
   }
@@ -198,7 +211,10 @@ export class HostComputerSandbox implements SandboxProvider {
     files: AsyncIterable<PortableFile>,
     context: AdapterContext,
   ) {
-    for await (const file of files) await this.writeFile(computer, file, context);
+    for await (const file of files) {
+      if (shouldSkipPortableWorkspaceFile(file.path)) continue;
+      await this.writeFile(computer, file, context);
+    }
   }
   snapshot(computer: ComputerRef, context: AdapterContext) {
     return this.one<{ id: string; createdAt: string }>(

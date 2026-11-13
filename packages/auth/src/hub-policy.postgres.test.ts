@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/agent-hub-service-config.v1.json" with { type: "json" };
-import { applyHubPolicyAtStartup, createHubPolicy, type HubConfigFetch } from "./hub-policy.js";
+import type { HubConfigFetch } from "./hub-policy.js";
+import { applyHubPolicyAtStartup, createHubPolicy } from "./hub-policy.js";
 import { prismaHubPolicyStore } from "./hub-policy-store.js";
 
 const describePostgres =

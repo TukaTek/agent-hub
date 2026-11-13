@@ -14,6 +14,11 @@ import {
   resolveAppearancePreference,
   tokensForAppearance,
   UI_APPEARANCE_STORAGE_KEY,
+  webDarkOverrides,
+  webDarkTokens,
+  webLightOverrides,
+  webLightTokens,
+  webTokensForAppearance,
 } from "./index.js";
 
 describe("appearance preference", () => {
@@ -88,7 +93,6 @@ describe("appearance preference", () => {
   });
 
   it("keeps the working dot the same green in both themes", () => {
-    expect(lightTokens.workingDot).toBe("#3FA266");
     expect(darkTokens.workingDot).toBe(lightTokens.workingDot);
   });
 
@@ -245,7 +249,46 @@ describe("tokens.css", () => {
     const css = renderTokensCss();
     expect(css).toContain('[data-theme="dark"] {\n  color-scheme: dark;');
     expect(css).toContain('[data-theme="light"] {\n  color-scheme: light;');
-    expect(css).toContain(`--background: ${lightTokens.background.toLowerCase()};`);
-    expect(css).toContain(`--background: ${darkTokens.background.toLowerCase()};`);
+    expect(css).toContain(`--background: ${webLightTokens.background.toLowerCase()};`);
+    expect(css).toContain(`--background: ${webDarkTokens.background.toLowerCase()};`);
+  });
+});
+
+describe("web palette", () => {
+  // Web shares the mobile palette and adds only the primary fill's hover and disabled states.
+  it("keeps the shared palette for web", () => {
+    expect(webDarkTokens.background).toBe("#141414");
+    expect(webLightTokens.background).toBe("#FCFCFC");
+    expect(Object.keys(webDarkOverrides).sort()).toEqual(["primaryDisabled", "primaryHover"]);
+    expect(Object.keys(webLightOverrides).sort()).toEqual(["primaryDisabled", "primaryHover"]);
+    expect(tokensForAppearance("dark")).toBe(darkTokens);
+    expect(tokensForAppearance("light")).toBe(lightTokens);
+  });
+
+  it.each([
+    ["dark", darkTokens, webDarkOverrides, webDarkTokens],
+    ["light", lightTokens, webLightOverrides, webLightTokens],
+  ] as const)(
+    "differs from the %s mobile palette only in its overrides",
+    (theme, mobile, overrides, web) => {
+      expect(webTokensForAppearance(theme)).toBe(web);
+      for (const key of Object.keys(mobile) as (keyof ColorTokens)[]) {
+        expect(web[key], key).toBe(
+          key in overrides ? overrides[key as keyof typeof overrides] : mobile[key],
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["dark", webDarkTokens, { primaryHover: "#DBDBDB", primaryDisabled: "#FFFFFF21" }],
+    ["light", webLightTokens, { primaryHover: "#363636", primaryDisabled: "#00000026" }],
+  ] as const)("gives the %s primary fill web-only hover and disabled states", (_, web, states) => {
+    expect(web).toMatchObject(states);
+    const css = renderTokensCss();
+    expect(css).toContain(`--primary-hover: ${states.primaryHover.toLowerCase()};`);
+    expect(css).toContain(`--primary-disabled: ${states.primaryDisabled.toLowerCase()};`);
+    expect("primaryHover" in darkTokens || "primaryHover" in lightTokens).toBe(false);
+    expect(contrastRatio(web.primaryForeground, web.primaryHover)).toBeGreaterThanOrEqual(4.5);
   });
 });

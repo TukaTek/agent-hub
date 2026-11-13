@@ -1,16 +1,17 @@
+import { MODEL_KEY_FORMAT_ERROR, ModelConnectInputSchema } from "@cortexai-agent-hub/contracts";
+import { canUseCompatibleModelAsDefault } from "@cortexai-agent-hub/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
   CLOUDFLARE_AI_GATEWAY_PROVIDER_ID,
-  ModelConnectInputSchema,
-} from "@cortexai-agent-hub/contracts";
-import { canUseCompatibleModelAsDefault } from "@cortexai-agent-hub/core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+} from "./cloudflare-ai-gateway.js";
 import {
   buildModelConnectPlaintext,
   modelCredentialDto,
   storedOpenAiCompatibleProbeKey,
 } from "./model-connect.js";
-import { parseModelSecret, serializeModelSecret } from "./pi-oauth.js";
+import { parseModelSecret, serializeModelSecret } from "./model-secret.js";
+import { COMPATIBLE_ENDPOINT_PRESETS } from "./openai-compatible-url.js";
 
 /** Fixtures connect as the deployment owner, who may use local model servers. */
 const connectAsOwner = (
@@ -74,6 +75,28 @@ describe("built-in provider output limits", () => {
       authKind: "api_key",
     });
     expect(JSON.stringify(modelCredentialDto(row, plaintext))).not.toContain("sk-test-key");
+  });
+
+  it.each([
+    ["non-Latin text", "sk-fixture-你好-key"],
+    ["a pasted sentence", "my key is sk-fixture-key"],
+    ["a line break", "sk-fixture\nkey-part"],
+  ])("refuses a key with %s before saving it", (_, apiKey) => {
+    expect(() => connectAsOwner({ provider: "deepseek", apiKey })).toThrow(MODEL_KEY_FORMAT_ERROR);
+    expect(() =>
+      connectAsOwner({
+        provider: "openai-compatible",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        modelId: "fixture-model",
+        apiKey,
+      }),
+    ).toThrow(MODEL_KEY_FORMAT_ERROR);
+  });
+
+  it("trims the whitespace around a pasted key", () => {
+    expect(connectAsOwner({ provider: "deepseek", apiKey: "  sk-fixture-key\n" })).toBe(
+      "sk-fixture-key",
+    );
   });
 
   it("keeps a raw API key when no limit is configured", () => {
@@ -172,6 +195,29 @@ describe("built-in provider output limits", () => {
         previous,
       ).authKind,
     ).toBe("oauth");
+  });
+
+  it("keeps an output limit saved while the connection needs sign-in again", () => {
+    const previous = serializeModelSecret({
+      kind: "oauth",
+      reconnectRequired: true,
+      maxTokens: 4096,
+    });
+    expect(
+      parseModelSecret(connectAsOwner({ provider: "openai-codex", maxTokens: 8192 }, previous)),
+    ).toEqual({ kind: "oauth", reconnectRequired: true, maxTokens: 8192 });
+  });
+
+  it("names a compatible connection at a hosted preset and nowhere else", () => {
+    const dto = (baseUrl: string) =>
+      modelCredentialDto(
+        { id: "cred-compat", provider: "openai-compatible", label: "Compatible" },
+        serializeModelSecret({ kind: "openai_compatible", baseUrl }),
+      );
+    expect(dto(COMPATIBLE_ENDPOINT_PRESETS[0]!.baseUrl).endpointName).toBe(
+      COMPATIBLE_ENDPOINT_PRESETS[0]!.name,
+    );
+    expect(dto("http://127.0.0.1:8000/v1").endpointName).toBeUndefined();
   });
 
   it("rejects a limit update when no credential exists", () => {
@@ -367,6 +413,7 @@ describe("modelCredentialDto", () => {
       modelId: "qwen3-4b",
       reasoning: false,
       thinkingLevels: ["off"],
+      visionModelIds: [],
     });
   });
 
@@ -526,6 +573,21 @@ describe("modelCredentialDto", () => {
     });
     expect(modelCredentialDto({ ...row, provider: "openai-codex" }, oauth).hasKey).toBe(false);
     expect(modelCredentialDto(row).hasKey).toBe(false);
+
+    const rejected = serializeModelSecret({
+      kind: "oauth",
+      reconnectRequired: true,
+      maxTokens: 4096,
+    });
+    const rejectedDto = modelCredentialDto({ ...row, provider: "openai-codex" }, rejected);
+    expect(rejectedDto).toMatchObject({
+      authKind: "oauth",
+      reconnectRequired: true,
+      maxTokens: 4096,
+      hasKey: false,
+    });
+    expect(JSON.stringify(rejectedDto)).not.toContain("access");
+    expect(JSON.stringify(rejectedDto)).not.toContain("refresh");
   });
 
   it("exposes defaultModel as modelId for provider credentials", () => {

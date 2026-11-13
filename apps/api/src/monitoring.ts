@@ -1,4 +1,5 @@
 import { getLogger, monitoringUserId } from "@cortexai-agent-hub/logging";
+import { markExpectedFailure } from "@cortexai-agent-hub/logging/hono";
 import type { MonitoringConfig } from "@cortexai-agent-hub/logging/monitoring";
 import { Hono } from "hono";
 import type { AppEnv } from "./env.js";
@@ -117,13 +118,16 @@ async function forwardEnvelope(
       const value = upstream.headers.get(name);
       if (value) headers.set(name, value);
     }
-    if (!upstream.ok)
+    if (!upstream.ok) {
       getLogger().warn("client error report forwarding rejected", {
         "http.status": upstream.status,
       });
+      markExpectedFailure();
+    }
     return new Response(null, { status: upstream.status, headers });
   } catch {
     getLogger().warn("client error report forwarding failed");
+    markExpectedFailure();
     return new Response(null, { status: 502 });
   }
 }

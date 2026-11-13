@@ -4,11 +4,8 @@ import { symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHubClient, HubRejectedError } from "./hub-client.js";
 import { disabledHubPolicy } from "./hub-policy.js";
-import {
-  createHubSessionAuthorizer,
-  type HubSessionPolicy,
-  HubSessionUnavailableError,
-} from "./hub-sessions.js";
+import type { HubSessionPolicy } from "./hub-sessions.js";
+import { createHubSessionAuthorizer, HubSessionUnavailableError } from "./hub-sessions.js";
 
 /** These tests cover the CAAH-40 verify cache; Hub policy is covered in hub.test.ts. */
 const admitAll: HubSessionPolicy = disabledHubPolicy({});

@@ -1,8 +1,13 @@
 import type { Bot, Group } from "@cortexai-agent-hub/contracts";
-import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@cortexai-agent-hub/contracts";
-import { BotAvatar, Button, Checkbox, Input } from "@cortexai-agent-hub/ui-web";
+import {
+  GROUP_MEMBER_MAX,
+  GROUP_MEMBER_MIN,
+  GROUP_NAME_MAX_LENGTH,
+} from "@cortexai-agent-hub/contracts";
+import { BotAvatar, Button, Checkbox, Input, SectionHeading } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { X } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { errorText } from "../lib/user-error";
 import { DeleteItemDialog } from "./shell/dialogs";
@@ -48,9 +53,7 @@ function MemberPicker({
   const visible = useMemo(() => {
     const base = expanded ? selectable : selectable.filter((bot) => everPicked.has(bot.id));
     if (!needle) return base;
-    return base.filter(
-      (bot) => bot.name.toLowerCase().includes(needle) || bot.title.toLowerCase().includes(needle),
-    );
+    return base.filter((bot) => bot.name.toLowerCase().includes(needle));
   }, [expanded, selectable, everPicked, needle]);
 
   function toggle(botId: string) {
@@ -65,18 +68,18 @@ function MemberPicker({
   return (
     <div className="mt-5 flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">
+        <span className="text-body text-muted-foreground">
           <Trans>Members ({selected.length})</Trans>
         </span>
-        <button
-          type="button"
+        <Button
+          variant="text"
           aria-expanded={expanded}
           aria-controls={listId}
           onClick={() => setExpanded((value) => !value)}
-          className="text-sm text-muted-foreground hover:text-foreground"
+          className="font-normal"
         >
           {expanded ? <Trans>Show selected</Trans> : <Trans>Show all</Trans>}
-        </button>
+        </Button>
       </div>
       {expanded ? (
         <>
@@ -87,7 +90,7 @@ function MemberPicker({
             aria-label={t`Filter bots`}
             className="mt-2"
           />
-          <p className="mt-2 text-sm text-muted-foreground">
+          <p className="mt-2 text-body text-muted-foreground">
             <Trans>
               Pick {GROUP_MEMBER_MIN}–{GROUP_MEMBER_MAX}
             </Trans>
@@ -101,7 +104,7 @@ function MemberPicker({
             <div
               key={bot.id}
               className={`flex w-full items-center rounded-xl px-2.5 py-2.5 ${
-                checked ? "bg-muted" : "hover:bg-accent"
+                checked ? "bg-accent" : "hover:bg-accent"
               }`}
             >
               <button
@@ -109,8 +112,14 @@ function MemberPicker({
                 onClick={() => onOpenBot?.(bot.id)}
                 className="flex min-w-0 flex-1 items-center gap-3 text-start"
               >
-                <BotAvatar color={bot.color} identity={bot.id} size={32} status={bot.status} />
-                <span className="flex-1 text-[15px] text-foreground" dir="auto">
+                <BotAvatar
+                  avatarSet={bot.avatarSet}
+                  color={bot.color}
+                  identity={bot.id}
+                  size={32}
+                  status={bot.status}
+                />
+                <span className="flex-1 text-body-lg text-foreground" dir="auto">
                   {bot.name}
                 </span>
               </button>
@@ -125,7 +134,7 @@ function MemberPicker({
           );
         })}
         {visible.length === 0 ? (
-          <p className="px-2.5 py-2.5 text-sm text-muted-foreground">
+          <p className="px-2.5 py-2.5 text-body text-muted-foreground">
             {expanded ? <Trans>No bots match</Trans> : <Trans>No members yet</Trans>}
           </p>
         ) : null}
@@ -168,7 +177,7 @@ export function CreateGroupForm({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-4 flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">
+        <span className="text-body text-muted-foreground">
           <Trans>New group</Trans>
         </span>
         <Button
@@ -182,17 +191,18 @@ export function CreateGroupForm({
         </Button>
       </div>
       {error ? (
-        <p role="alert" className="mb-3 text-sm text-destructive">
+        <p role="alert" className="mb-3 text-body text-destructive">
           {error}
         </p>
       ) : null}
-      <label htmlFor={nameId} className="block text-sm text-muted-foreground">
+      <label htmlFor={nameId} className="block text-body text-muted-foreground">
         <Trans>Name</Trans>
         <Input
           id={nameId}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t`Name this group`}
+          maxLength={GROUP_NAME_MAX_LENGTH}
           className="mt-2"
         />
       </label>
@@ -222,6 +232,7 @@ export function GroupSettings({
   onClose,
   onOpenBot,
   covered = false,
+  pages,
 }: {
   group: Group;
   bots: Bot[];
@@ -231,11 +242,23 @@ export function GroupSettings({
   onOpenBot?: (botId: string) => void;
   /** A full-screen overlay is on top, so Escape belongs to it. */
   covered?: boolean;
+  pages?: ReactNode;
 }) {
   const { t } = useLingui();
   const nameId = useId();
   const [name, setName] = useState(group.name);
   const [selected, setSelected] = useState(group.members.map((member) => member.botId));
+  // The panel can open on a cached group. A refreshed one replaces whatever was not edited, so a
+  // save does not send the cached name or members back as a change.
+  const [shownGroup, setShownGroup] = useState(group);
+  if (group !== shownGroup) {
+    setShownGroup(group);
+    if (name === shownGroup.name) setName(group.name);
+    const shownMembers = shownGroup.members.map((member) => member.botId);
+    if (sameMembers(selected, shownMembers)) {
+      setSelected(group.members.map((member) => member.botId));
+    }
+  }
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -254,7 +277,12 @@ export function GroupSettings({
   useEffect(() => {
     if (saving || confirmingDelete || covered) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) {
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        event.keyCode !== 229
+      ) {
         event.preventDefault();
         onClose();
       }
@@ -291,7 +319,7 @@ export function GroupSettings({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-4 flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">
+        <span className="text-body text-muted-foreground">
           <Trans>Group settings</Trans>
         </span>
         <Button
@@ -305,16 +333,17 @@ export function GroupSettings({
         </Button>
       </div>
       {error ? (
-        <p role="alert" className="mb-3 text-sm text-destructive">
+        <p role="alert" className="mb-3 text-body text-destructive">
           {error}
         </p>
       ) : null}
-      <label htmlFor={nameId} className="block text-sm text-muted-foreground">
+      <label htmlFor={nameId} className="block text-body text-muted-foreground">
         <Trans>Name</Trans>
         <Input
           id={nameId}
           value={name}
           onChange={(e) => setName(e.target.value)}
+          maxLength={GROUP_NAME_MAX_LENGTH}
           className="mt-2"
         />
       </label>
@@ -326,6 +355,14 @@ export function GroupSettings({
       >
         {saving ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}
       </Button>
+      {pages ? (
+        <section className="mt-6">
+          <SectionHeading variant="label" className="mb-2">
+            <Trans>Pages</Trans>
+          </SectionHeading>
+          {pages}
+        </section>
+      ) : null}
       <Button
         variant="destructive"
         className="mt-4 w-full"
@@ -344,12 +381,4 @@ export function GroupSettings({
       ) : null}
     </div>
   );
-}
-
-export function memberName(
-  members: Group["members"] | undefined,
-  botId: string | undefined,
-): string | undefined {
-  if (!botId || !members) return undefined;
-  return members.find((member) => member.botId === botId)?.name;
 }

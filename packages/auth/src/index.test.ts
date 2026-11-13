@@ -107,6 +107,8 @@ describe("authRateLimitOptions", () => {
       storage: "database",
       customRules: {
         "/request-account-deletion": { window: 600, max: 3 },
+        "/request-identity-code": { window: 600, max: 3 },
+        "/confirm-identity": { window: 15 * 60, max: 10 },
         "/sign-in/email": { window: 15 * 60, max: 10 },
         "/sign-up/email": { window: 15 * 60, max: 10 },
         "/request-password-reset": { window: 15 * 60, max: 10 },
@@ -127,18 +129,14 @@ describe("authRateLimitOptions", () => {
 describe("buildTrustedOrigins", () => {
   it("adds the localhost twin for a 127.0.0.1 web origin", () => {
     expect(
-      buildTrustedOrigins({
-        webOrigin: "http://127.0.0.1:5173",
-        baseURL: "http://127.0.0.1:5173",
-      }),
+      buildTrustedOrigins({ origins: ["http://127.0.0.1:5173", "http://127.0.0.1:5173"] }),
     ).toEqual(expect.arrayContaining(["http://127.0.0.1:5173", "http://localhost:5173"]));
   });
 
   it("keeps extraOrigins and does not twin non-loopback hosts", () => {
     expect(
       buildTrustedOrigins({
-        webOrigin: "https://app.example.test",
-        baseURL: "https://api.example.test",
+        origins: ["https://app.example.test", "https://api.example.test"],
         extraOrigins: ["https://extra.example.test"],
       }),
     ).toEqual([
@@ -147,11 +145,66 @@ describe("buildTrustedOrigins", () => {
       "https://extra.example.test",
     ]);
   });
+
+  // The list Better Auth received before both callers shared one builder.
+  function previousAuthOrigins(env: {
+    webOrigin: string;
+    baseURL: string;
+    extraOrigins?: string[];
+  }) {
+    const configured = [env.webOrigin, env.baseURL, ...(env.extraOrigins ?? [])];
+    const twins = [env.webOrigin, env.baseURL].flatMap(previousLoopbackTwins);
+    return [...new Set([...configured, ...twins])];
+  }
+
+  function previousLoopbackTwins(origin: string): string[] {
+    try {
+      const url = new URL(origin);
+      if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)) return [];
+      const twins: string[] = [];
+      for (const host of ["localhost", "127.0.0.1"]) {
+        if (host === url.hostname) continue;
+        const twin = new URL(origin);
+        twin.hostname = host;
+        twins.push(twin.origin);
+      }
+      return twins;
+    } catch {
+      return [];
+    }
+  }
+
+  const mobile = [
+    "cortexai-agent-hub://",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:19006",
+    "http://127.0.0.1:19006",
+  ];
+
+  it.each([
+    { webOrigin: "https://app.example.test", baseURL: "https://app.example.test" },
+    {
+      webOrigin: "https://app.example.test",
+      baseURL: "https://auth.example.test/",
+      extraOrigins: mobile,
+    },
+    { webOrigin: "http://127.0.0.1:5173", baseURL: "http://127.0.0.1:5173", extraOrigins: mobile },
+    { webOrigin: "http://localhost:5173/", baseURL: "http://[::1]:3100", extraOrigins: [] },
+    { webOrigin: "http://localhost:5173", baseURL: "not a url", extraOrigins: mobile },
+  ])("gives Better Auth the same list as before for $webOrigin and $baseURL", (env) => {
+    expect(
+      buildTrustedOrigins({
+        origins: [env.webOrigin, env.baseURL],
+        extraOrigins: env.extraOrigins,
+      }),
+    ).toEqual(previousAuthOrigins(env));
+  });
 });
 
 describe("passwordResetEmail", () => {
-  it("keeps the reset URL in text and escapes user-controlled HTML", () => {
-    const message = passwordResetEmail(
+  it("keeps the reset URL in text and escapes user-controlled HTML", async () => {
+    const message = await passwordResetEmail(
       { id: "user-1", email: "ada@example.test", name: '<Ada & "team">' },
       "https://cortexai-agent-hub.test/reset-password?token=secret&next=1",
     );
@@ -170,15 +223,16 @@ describe("passwordResetEmail", () => {
 });
 
 describe("signInCodeEmail", () => {
-  it("puts the code in plain text and HTML without links", () => {
-    const message = signInCodeEmail("ada@example.test", "042517");
+  it("puts the code in plain text and HTML without links", async () => {
+    const message = await signInCodeEmail("ada@example.test", "042517");
     expect(message).toMatchObject({
       to: "ada@example.test",
       subject: "Your CortexAI Agent Hub sign-in code",
     });
     expect(message.text).toContain("042517");
     expect(message.html).toContain("042517");
-    expect(`${message.text}${message.html}`).not.toMatch(/https?:/);
+    expect(message.text).not.toMatch(/https?:/);
+    expect(message.html).not.toContain("<a ");
   });
 });
 

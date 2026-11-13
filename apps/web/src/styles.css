@@ -12,7 +12,10 @@ body,
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Geist Variable", var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Adapted from OpenMausBot src/styles.css (Apache-2.0). Modified by TukaTek.
@@ -114,4 +117,28 @@ body,
   50% {
     opacity: 0.3;
   }
+}
+
+/* A page prints alone and light: the app under an open page, its popups and its backdrop stay
+   off the paper, and the paper stays white past the page's end, whatever the app's theme. */
+@media print {
+  html:has([data-page-print]),
+  html:has([data-page-print]) body,
+  html:has([data-page-print]) #root {
+    height: auto;
+    background: #fff;
+  }
+  body:has([data-page-print]) > :not(:has([data-page-print])),
+  [data-slot="dialog-overlay"]:has(~ [data-page-print]) {
+    display: none;
+  }
+}
+
+/* Find in chat (pages/shell/chat-find-bar.tsx) paints its matches without touching the transcript. */
+::highlight(cortexai-agent-hub-find) {
+  background-color: color-mix(in oklab, var(--foreground) 18%, transparent);
+}
+::highlight(cortexai-agent-hub-find-current) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
 }

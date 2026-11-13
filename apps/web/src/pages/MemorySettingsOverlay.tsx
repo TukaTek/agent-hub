@@ -9,19 +9,21 @@ import {
   FieldLabel,
   NativeSelect,
   NativeSelectOption,
+  SectionHeading,
   Spinner,
   Toggle,
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { SETTINGS_CONTENT_WIDTH } from "../components/SettingsRows";
 import { useSpaceRpc } from "../lib/space-rpc";
 import { errorText } from "../lib/user-error";
 import { SpaceMemorySection } from "./KnowledgeSection";
+import type { MemoryProviderConnectionDraft } from "./memory-providers/registry";
 import {
   defaultMemoryProviderSettings,
   MEMORY_PROVIDER_SETTINGS,
-  type MemoryProviderConnectionDraft,
   memoryProviderSettings,
 } from "./memory-providers/registry";
 
@@ -47,7 +49,7 @@ function ScopePicker({
             pressed={value === option}
             disabled={disabled}
             onPressedChange={() => onChange(option)}
-            className="text-[13px] aria-pressed:bg-background aria-pressed:shadow-sm"
+            className="text-body-sm aria-pressed:bg-background aria-pressed:shadow-sm"
           >
             {option === "isolated" ? <Trans>Isolated</Trans> : <Trans>Shared</Trans>}
           </Toggle>
@@ -82,6 +84,7 @@ export function MemorySettingsOverlay({
     config?.defaultMemoryScope ?? "isolated",
   );
   const [pending, setPending] = useState<"connect" | "disconnect" | "scope" | null>(null);
+  const [addingProvider, setAddingProvider] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -132,6 +135,7 @@ export function MemorySettingsOverlay({
     markPending("disconnect");
     try {
       await rpc.memory.disconnectProvider();
+      setAddingProvider(false);
       onConfigChange(null);
     } catch (err) {
       setError(errorText(err, t`Could not disconnect memory provider`));
@@ -159,7 +163,7 @@ export function MemorySettingsOverlay({
       {!embedded ? (
         <div className="flex items-start justify-between px-6 pt-6 sm:px-8 sm:pt-7">
           <div>
-            <DialogTitle className="text-2xl font-medium text-foreground">
+            <DialogTitle className="text-heading2 font-medium text-foreground">
               <Trans>Memory</Trans>
             </DialogTitle>
           </div>
@@ -174,24 +178,26 @@ export function MemorySettingsOverlay({
       ) : null}
 
       <div className="cortexai-agent-hub-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-6 sm:px-8 sm:pb-8">
-        <div className="space-y-5">
-          {error ? <p className="text-[13px] text-destructive">{error}</p> : null}
+        <div className={`space-y-5 ${SETTINGS_CONTENT_WIDTH}`}>
+          {error ? <p className="text-body-sm text-destructive">{error}</p> : null}
+
+          <SpaceMemorySection />
 
           {config === undefined ? (
-            <p className="text-[13px] text-muted-foreground">
+            <p className="text-body-sm text-muted-foreground">
               <Spinner aria-label={t`Loading memory settings…`} />
             </p>
           ) : config ? (
             <section className="rounded-xl border border-border px-4 py-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-[15px] font-medium text-foreground">
+                <SectionHeading variant="heading">
                   {registration?.name ?? config.provider}
-                </h3>
-                <span className="text-[13px] text-success">
+                </SectionHeading>
+                <span className="text-body-sm text-success">
                   <Trans>Connected</Trans>
                 </span>
               </div>
-              <p className="mt-1 text-[13px] text-muted-foreground">
+              <p className="mt-1 text-body-sm text-muted-foreground">
                 {registration?.connectedLabel(config) ?? config.provider}
               </p>
               <div className="mt-4">
@@ -206,7 +212,7 @@ export function MemorySettingsOverlay({
                 type="button"
                 disabled={busy}
                 onClick={() => void disconnect()}
-                className="mt-5 rounded-full"
+                className="mt-5"
               >
                 {pending === "disconnect" ? (
                   <Trans>Disconnecting…</Trans>
@@ -215,11 +221,20 @@ export function MemorySettingsOverlay({
                 )}
               </Button>
             </section>
+          ) : !addingProvider ? (
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => setAddingProvider(true)}
+              className="rounded-full"
+            >
+              <Trans>Connect memory provider</Trans>
+            </Button>
           ) : registration ? (
             <section className="rounded-xl border border-border px-4 py-4">
-              <h3 id={providerSelectId} className="text-[15px] font-medium text-foreground">
+              <SectionHeading id={providerSelectId} variant="heading">
                 <Trans>Provider</Trans>
-              </h3>
+              </SectionHeading>
               {MEMORY_PROVIDER_SETTINGS.length > 1 ? (
                 <div className="mt-3">
                   <NativeSelect
@@ -237,24 +252,30 @@ export function MemorySettingsOverlay({
                   </NativeSelect>
                 </div>
               ) : (
-                <p className="mt-3 text-[14px] text-foreground">{registration.name}</p>
+                <p className="mt-3 text-body text-foreground">{registration.name}</p>
               )}
-              {registration.description ? (
-                <p className="mt-2 text-[13px] text-muted-foreground">{registration.description}</p>
-              ) : null}
 
-              <div className="mt-4">
-                <ScopePicker value={defaultScope} disabled={busy} onChange={setDefaultScope} />
-              </div>
-
-              <registration.SettingsForm busy={busy} onConnect={connect} />
+              <p className="mt-3 text-body-sm text-muted-foreground">
+                <Trans>
+                  An external memory service for storing and recalling context across chats.
+                </Trans>
+              </p>
+              <registration.SettingsForm
+                key={registration.id}
+                busy={busy}
+                onConnect={connect}
+                advancedSettings={
+                  <div className="mt-4">
+                    <ScopePicker value={defaultScope} disabled={busy} onChange={setDefaultScope} />
+                  </div>
+                }
+              />
             </section>
           ) : (
-            <p className="text-[13px] text-destructive">
+            <p className="text-body-sm text-destructive">
               <Trans>The selected memory provider is not available in this build.</Trans>
             </p>
           )}
-          <SpaceMemorySection />
         </div>
       </div>
     </>

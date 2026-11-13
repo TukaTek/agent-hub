@@ -5,6 +5,12 @@ import type {
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import {
+  createHindsightProvider,
+  HINDSIGHT_PROVIDER_ID,
+  hindsightRequiresPrivateEndpoint,
+  prepareHindsightConnection,
+} from "./hindsight-memory-provider.js";
 import { revalidateLocalServiceSettings } from "./local-service-endpoint.js";
 import {
   classifySerenityConnectionSettings,
@@ -61,6 +67,7 @@ interface MemoryProviderAdapter {
   create(
     settings: Record<string, string>,
     credentials: Record<string, string>,
+    connectionVersion?: string,
   ): SemanticMemoryProvider;
   decodeLegacyCredentials?(plaintext: string): Record<string, string> | null;
 }
@@ -87,6 +94,15 @@ const MEMORY_PROVIDER_ADAPTERS: ReadonlyMap<string, MemoryProviderAdapter> = new
         options?: { allowPrivateEndpoint?: boolean },
       ) => prepareSerenityConnection(settings, credentials, undefined, options),
       create: createSerenityProvider,
+    },
+  ],
+  [
+    HINDSIGHT_PROVIDER_ID,
+    {
+      requiresPrivateEndpoint: hindsightRequiresPrivateEndpoint,
+      revalidate: revalidateLocalServiceSettings,
+      prepare: prepareHindsightConnection,
+      create: createHindsightProvider,
     },
   ],
 ]);
@@ -132,8 +148,9 @@ export function createMemoryProvider(
   provider: string,
   settings: Record<string, string>,
   credentials: Record<string, string>,
+  connectionVersion?: string,
 ): SemanticMemoryProvider {
-  return memoryProviderAdapter(provider).create(settings, credentials);
+  return memoryProviderAdapter(provider).create(settings, credentials, connectionVersion);
 }
 
 export function toStringRecord(value: unknown): Record<string, string> {
@@ -186,7 +203,13 @@ export class SpaceMemoryProviderResolver implements MemoryProviderResolver {
       await this.secrets.load(config.secret.ciphertext, config.secret.id),
     );
     return {
-      provider: createMemoryProvider(config.provider, settings, credentials),
+      provider: createMemoryProvider(
+        config.provider,
+        settings,
+        credentials,
+        // Memory connection saves create a new secret ID when credentials change.
+        JSON.stringify([config.id, config.secretId, config.provider]),
+      ),
       defaultScope: config.defaultMemoryScope === "shared" ? "shared" : "isolated",
     };
   }

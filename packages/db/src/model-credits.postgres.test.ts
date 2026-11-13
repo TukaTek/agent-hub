@@ -8,11 +8,11 @@ import {
   reserveModelCredits,
   settleModelCredits,
   settleModelCreditsTx,
+  unexpiredCreditAccount,
 } from "./model-credits.js";
 import { asSystem } from "./row-security.js";
 
-const dbTests =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
+const dbTests = process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 dbTests("model credits ledger", () => {
   let organizationId: string;
   let db: ReturnType<typeof createDb>;
@@ -107,17 +107,21 @@ dbTests("model credits ledger", () => {
     await settleModelCredits(prisma, id, 0.125);
     expect(await balance()).toBe(9_875_000n);
   });
-  it("rejects unknown pricing and BYOK accounts before spending", async () => {
+  it("rejects unknown pricing before spending", async () => {
     await expect(reserveModelCredits(prisma, organizationId, Number.NaN)).rejects.toThrow(
       "reliable price",
     );
+  });
+  it("spends an own-key account's balance and stops when it runs out", async () => {
     await reconcileCreditPurchase(prisma, organizationId, {
       id: `${organizationId}-byok`,
       amountCents: 1000,
     });
     await prisma.modelCreditAccount.update({ where: { organizationId }, data: { mode: "byok" } });
-    await expect(reserveModelCredits(prisma, organizationId, 1)).rejects.toThrow("credits");
-    expect(await balance()).toBe(10_000_000n);
+    await reserveModelCredits(prisma, organizationId, 1);
+    expect(await balance()).toBe(9_000_000n);
+    await expect(reserveModelCredits(prisma, organizationId, 10)).rejects.toThrow("credits");
+    expect(await balance()).toBe(9_000_000n);
   });
   const beforeRenewal = new Date("2029-12-15T00:00:00Z");
   const renewal = new Date("2030-01-01T00:00:00Z");
@@ -146,6 +150,34 @@ dbTests("model credits ledger", () => {
       where: { organizationId, expiresAt: null },
     });
     expect(topup.availableMicros).toBe(20_000_000n);
+  });
+  it("leaves lapsed credits out of a read without expiring them", async () => {
+    await grant("topup", 2000);
+    await grant("monthly", 1000, renewal);
+    const call = await reserve(5);
+    await settleModelCredits(prisma, call, 3, beforeRenewal);
+    const read = await unexpiredCreditAccount(prisma, organizationId, renewal);
+    expect(read.balanceMicros).toBe(20_000_000n);
+    expect(await balance()).toBe(27_000_000n);
+    expect(
+      await prisma.modelCreditEntry.count({
+        where: { organizationId, source: { startsWith: "expiry:" } },
+      }),
+    ).toBe(0);
+    await expireModelCredits(prisma, organizationId, renewal);
+    expect(await balance()).toBe(read.balanceMicros);
+  });
+  it("reads the balance the expiry leaves when spending outran the credit lots", async () => {
+    await grant("topup", 2000);
+    await grant("monthly", 1000, renewal);
+    await prisma.modelCreditAccount.update({
+      where: { organizationId },
+      data: { balanceMicros: { decrement: 5_000_000n } },
+    });
+    const read = await unexpiredCreditAccount(prisma, organizationId, renewal);
+    expect(read.balanceMicros).toBe(20_000_000n);
+    await expireModelCredits(prisma, organizationId, renewal);
+    expect(await balance()).toBe(read.balanceMicros);
   });
   it("renews without accumulating old monthly credits or refilling an expired invoice replay", async () => {
     await grant("monthly", 1000, renewal);

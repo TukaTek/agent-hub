@@ -1,5 +1,8 @@
+import "./zod-config";
 import "./monitoring-bootstrap";
-import { Toaster, TooltipProvider } from "@cortexai-agent-hub/ui-web";
+import { rememberSignupAttribution } from "@cortexai-agent-hub/core/signup-attribution";
+import { BotAvatarActivityProvider, Toaster, TooltipProvider } from "@cortexai-agent-hub/ui-web";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, useLocation } from "react-router-dom";
@@ -8,20 +11,26 @@ import { DesktopUpdatesProvider } from "./components/DesktopUpdates";
 import { I18nBootstrap } from "./components/I18nBootstrap";
 import { applyUiDirection } from "./lib/apply-ui-direction";
 import { clientUpdates } from "./lib/client-update";
+import { webLogoAvatarActivity } from "./lib/logo-avatar-activity";
 import { reportCaughtReactError } from "./lib/monitoring";
 import { markAfterPaint, markOnce } from "./lib/performance";
 import { installPreloadRecovery } from "./lib/preload-recovery";
+import { queryClient } from "./lib/query";
+import { captureReferral } from "./lib/referral";
 import { applyUiAppearance, watchSystemAppearance } from "./lib/ui-appearance";
 import { resolveUiLocale } from "./lib/ui-locale";
 import { registerServiceWorker } from "./pwa/register";
+import { lockStandaloneZoom } from "./pwa/standalone";
 import "./styles.css";
 
 markOnce("cortexai-agent-hub:renderer:module-evaluated");
 installPreloadRecovery();
 clientUpdates().install();
 registerServiceWorker();
+lockStandaloneZoom();
 applyUiDirection(resolveUiLocale());
 applyUiAppearance();
+captureReferral(window.location.search);
 
 function PerformanceProbe() {
   useLayoutEffect(() => {
@@ -43,6 +52,14 @@ function ClientUpdateOnNavigate() {
   return null;
 }
 
+function SignupAttributionOnNavigate() {
+  const { pathname, search } = useLocation();
+  useLayoutEffect(() => {
+    rememberSignupAttribution(window);
+  }, [pathname, search]);
+  return null;
+}
+
 function AppearanceSync() {
   useEffect(() => watchSystemAppearance(), []);
   return null;
@@ -59,13 +76,18 @@ createRoot(document.getElementById("root")!, { onCaughtError: reportCaughtReactE
           the stale location, so deep links (?m=) and thread switches never
           land while the URL already moved. */}
       <BrowserRouter useTransitions={false}>
+        <SignupAttributionOnNavigate />
         <ClientUpdateOnNavigate />
-        <DesktopUpdatesProvider>
-          <TooltipProvider>
-            <App />
-          </TooltipProvider>
-          <Toaster />
-        </DesktopUpdatesProvider>
+        <QueryClientProvider client={queryClient}>
+          <DesktopUpdatesProvider>
+            <TooltipProvider>
+              <BotAvatarActivityProvider source={webLogoAvatarActivity}>
+                <App />
+              </BotAvatarActivityProvider>
+            </TooltipProvider>
+            <Toaster />
+          </DesktopUpdatesProvider>
+        </QueryClientProvider>
       </BrowserRouter>
     </I18nBootstrap>
   </StrictMode>,

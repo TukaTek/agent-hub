@@ -1,6 +1,13 @@
+import { i18n } from "@lingui/core";
+import { generateMessageId } from "@lingui/message-utils/generateMessageId";
 import { afterEach, describe, expect, it } from "vitest";
-import { resetI18nForTests, t } from "./i18n";
-import { secretDestinationLabel } from "./secret-destination";
+import { resetI18nForTests } from "./i18n";
+import { secretDestinationLabel, siteHost } from "./secret-destination";
+
+/** A catalog message in the active language, looked up as the compiled macro does. */
+function t(message: string) {
+  return i18n._({ id: generateMessageId(message), message });
+}
 
 describe("mobile credential destination label", () => {
   afterEach(() => {
@@ -13,7 +20,7 @@ describe("mobile credential destination label", () => {
       origin: "",
       auth: { type: "command" },
     });
-    expect(label).toBe(`${t("Command variable")} · $NETBIRD_SETUP_KEY`);
+    expect(label).toBe(`${t("Command variable")} $NETBIRD_SETUP_KEY`);
     expect(label).not.toBe("");
   });
 
@@ -27,6 +34,16 @@ describe("mobile credential destination label", () => {
     ).toBe("https://api.example.test");
   });
 
+  it("shows a login's host in the punycode form it was saved in", () => {
+    expect(
+      secretDestinationLabel({
+        name: "site_login",
+        origin: "https://xn--bcher-kva.example.test",
+        auth: { type: "login" },
+      }),
+    ).toBe("xn--bcher-kva.example.test");
+  });
+
   it("localizes the command label for the active locale", () => {
     resetI18nForTests("zh-CN");
     const localized = t("Command variable");
@@ -36,7 +53,7 @@ describe("mobile credential destination label", () => {
       origin: "",
       auth: { type: "command" },
     });
-    expect(label).toBe(`${localized} · $API_TOKEN`);
+    expect(label).toBe(`${localized} $API_TOKEN`);
     expect(label).not.toContain("Command variable");
   });
 });
@@ -48,4 +65,11 @@ it.each([
   ["invalid origin", "invalid origin"],
 ])("formats login destination %s as %s", (origin, expected) => {
   expect(secretDestinationLabel({ name: "login", origin, auth: { type: "login" } })).toBe(expected);
+});
+
+describe("mobile site host", () => {
+  it("shows the host of an origin, and the text itself when it is not one", () => {
+    expect(siteHost("https://login.example.test")).toBe("login.example.test");
+    expect(siteHost("not a url")).toBe("not a url");
+  });
 });

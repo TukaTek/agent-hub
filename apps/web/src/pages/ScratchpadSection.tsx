@@ -1,10 +1,14 @@
 import type { ScratchpadItem } from "@cortexai-agent-hub/contracts";
-import { Button, Checkbox, Input } from "@cortexai-agent-hub/ui-web";
+import { fetchFresh, writeSaved } from "@cortexai-agent-hub/core/query";
+import { Button, Checkbox, Input, SectionHeading } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Plus, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
+import { useSpaceQueries } from "../lib/query";
+import { useSpaceRpc } from "../lib/space-rpc";
 
-import { rpc } from "../lib/rpc";
+const NO_ITEMS: ScratchpadItem[] = [];
 
 const COLLAPSE_ABOVE = 5;
 const expandedStorageKey = (botId: string) => `cortexai-agent-hub.openWorkExpanded.${botId}`;
@@ -29,15 +33,19 @@ function persistExpanded(botId: string, expanded: boolean) {
 export function ScratchpadSection({ botId }: { botId: string }) {
   const { t } = useLingui();
   const listId = useId();
-  const [items, setItems] = useState<ScratchpadItem[]>([]);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const rpc = useSpaceRpc();
+  const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
+  const list = queries.scratchpad.list.queryOptions({ input: { botId } });
+  // The bot edits its open work as it runs, so every open refreshes behind the cached list.
+  const listQuery = useQuery({ ...list, refetchOnMount: "always" });
+  const items = listQuery.data ?? NO_ITEMS;
   const [choice, setChoice] = useState<{ botId: string; expanded: boolean } | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const listGeneration = useRef(0);
-  const loaded = loadedFor === botId;
+  const loaded = !listQuery.isPending;
   const expanded =
     (choice?.botId === botId ? choice.expanded : readExpanded(botId)) ??
     (loaded && items.length <= COLLAPSE_ABOVE);
@@ -47,31 +55,13 @@ export function ScratchpadSection({ botId }: { botId: string }) {
     persistExpanded(botId, next);
   }
 
-  async function refresh() {
-    const generation = ++listGeneration.current;
-    const list = await rpc.scratchpad.list({ botId });
-    if (generation !== listGeneration.current) return;
-    setItems(list);
+  function setItems(update: (current: ScratchpadItem[]) => ScratchpadItem[]) {
+    return writeSaved(queryClient, list.queryKey, (current) => update(current ?? []));
   }
 
-  useEffect(() => {
-    const generation = ++listGeneration.current;
-    void rpc.scratchpad
-      .list({ botId })
-      .then((list) => {
-        if (generation !== listGeneration.current) return;
-        setItems(list);
-        setLoadedFor(botId);
-      })
-      .catch(() => {
-        if (generation !== listGeneration.current) return;
-        setItems([]);
-        setLoadedFor(botId);
-      });
-    return () => {
-      listGeneration.current += 1;
-    };
-  }, [botId]);
+  async function refresh() {
+    await fetchFresh(queryClient, list);
+  }
 
   async function addItem() {
     const title = draft.trim();
@@ -82,7 +72,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
       const created = await rpc.scratchpad.create({ botId, title });
       setDraft("");
       setAdding(false);
-      setItems((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      await setItems((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       try {
         await refresh();
       } catch {
@@ -101,7 +91,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
     setError(null);
     try {
       const updated = await rpc.scratchpad.update({ itemId: item.id, status });
-      setItems((current) => {
+      await setItems((current) => {
         const next = current.map((entry) => (entry.id === updated.id ? updated : entry));
         return status === "done" ? next.filter((entry) => entry.status !== "done") : next;
       });
@@ -123,7 +113,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
     setError(null);
     try {
       await rpc.scratchpad.remove({ itemId: item.id });
-      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      await setItems((current) => current.filter((entry) => entry.id !== item.id));
       try {
         await refresh();
       } catch {
@@ -140,7 +130,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
 
   return (
     <div className="mt-6" data-testid="bot-scratchpad">
-      <h3 className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground pe-1">
+      <SectionHeading variant="label" className="mb-2 flex items-center justify-between pe-1">
         <button
           type="button"
           aria-expanded={expanded}
@@ -167,7 +157,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
         >
           <Plus className="size-4" />
         </Button>
-      </h3>
+      </SectionHeading>
       {expanded ? (
         <div id={listId} className="rounded-xl bg-muted/50 p-4">
           <div data-testid="bot-scratchpad-list" className="max-h-80 overflow-y-auto">
@@ -186,13 +176,13 @@ export function ScratchpadSection({ botId }: { botId: string }) {
                 />
                 <div className="min-w-0 flex-1">
                   <div
-                    className={`text-start text-[14.5px] ${item.status === "done" ? "text-muted-foreground/80 line-through" : "text-foreground"}`}
+                    className={`text-start text-body-lg ${item.status === "done" ? "text-muted-foreground/80 line-through" : "text-foreground"}`}
                     dir="auto"
                   >
                     {item.title}
                   </div>
                   {item.notes ? (
-                    <div className="mt-0.5 text-[12.5px] text-muted-foreground/80" dir="auto">
+                    <div className="mt-0.5 text-body-sm text-muted-foreground/80" dir="auto">
                       {item.notes}
                     </div>
                   ) : null}
@@ -229,7 +219,6 @@ export function ScratchpadSection({ botId }: { botId: string }) {
               />
               <Button
                 variant="secondary"
-                className="rounded-full"
                 disabled={busy || !draft.trim()}
                 onClick={() => void addItem()}
               >
@@ -239,7 +228,7 @@ export function ScratchpadSection({ botId }: { botId: string }) {
           ) : null}
         </div>
       ) : null}
-      {error ? <div className="mt-2 text-[13px] text-destructive">{error}</div> : null}
+      {error ? <div className="mt-2 text-body-sm text-destructive">{error}</div> : null}
     </div>
   );
 }

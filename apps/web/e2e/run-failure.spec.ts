@@ -144,23 +144,30 @@ test("a covered run error is not remembered until it is presented", async ({ pag
   await expect(error).toBeHidden();
 });
 
-test("an overloaded provider is named instead of a generic error", async ({ page }, testInfo) => {
+test("an operator usage cap explains the pause without offering a billing upgrade", async ({
+  page,
+}, testInfo) => {
   await signup(
     page,
-    `overloaded-run-${Date.now()}@cortexai-agent-hub.test`,
+    `usage-cap-${Date.now()}@cortexai-agent-hub.test`,
     "password12",
-    "Overloaded Run",
+    "Usage Limit",
   );
   await completeOnboarding(page);
-
-  await page.getByPlaceholder(/^Message /).fill("fail this run as overloaded");
+  // Use the normal failure fixture and replace only the server's error message.
+  await page.route("**/rpc/threads/get", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { json?: { run?: { error?: string | null } } };
+    if (body.json?.run?.error)
+      body.json.run.error = "Usage limit reached. Contact support to continue.";
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByPlaceholder(/^Message /).fill("fail this run");
   await page.getByRole("button", { name: "Send" }).click();
-
   const error = page.getByTestId("composer-error");
-  await expect(error).toContainText(
-    "Your model provider is overloaded right now. Try again in a moment.",
-    { timeout: 30_000 },
-  );
-  await expect(error).not.toContainText("The model provider returned an error.");
-  await captureScreenshot(page, testInfo, "overloaded-run-error");
+  await expect(error).toContainText("Usage limit reached. Contact support to continue.", {
+    timeout: 30_000,
+  });
+  await expect(error.getByTestId("composer-error-action")).toBeHidden();
+  await captureScreenshot(page, testInfo, "model-credit-usage-cap");
 });

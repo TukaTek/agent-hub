@@ -1,10 +1,20 @@
-import type { ModelCatalogEntry } from "@cortexai-agent-hub/contracts";
+import type { Bot, ModelApiProtocol, ModelCatalogEntry } from "@cortexai-agent-hub/contracts";
 import {
   canonicalPiProviderId,
+  DEFAULT_MODEL_MAX_TOKENS,
   normalizeOpenAiCompatibleBaseUrl,
+  OPENAI_COMPATIBLE_PROVIDER_ID,
   selectCompatibleModelCredential,
+  withConnectionName,
 } from "@cortexai-agent-hub/contracts";
-import { matchesSearchQuery } from "./search.js";
+import { listSearch } from "./list-search.js";
+
+/** Bots that pick their own model ignore the space default and its changes. */
+export function botsWithOwnModel<T extends Pick<Bot, "modelProvider" | "modelId">>(
+  bots: readonly T[],
+): T[] {
+  return bots.filter((bot) => Boolean(bot.modelProvider && bot.modelId));
+}
 
 /** Effort choices an OpenAI-compatible endpoint stores when reasoning is enabled. */
 export const COMPATIBLE_THINKING_LEVELS = [
@@ -16,7 +26,31 @@ export const COMPATIBLE_THINKING_LEVELS = [
   "max",
 ] as const;
 
+/**
+ * Effort choices by wire protocol. Anthropic Messages maps every level to a
+ * budget, and pi-ai's budgets top out at the "high" level, so the two levels
+ * above it are not offered for that protocol.
+ */
+export function compatibleThinkingLevels(
+  apiProtocol: ModelApiProtocol | undefined,
+): readonly (typeof COMPATIBLE_THINKING_LEVELS)[number][] {
+  return apiProtocol === "anthropic-messages"
+    ? COMPATIBLE_THINKING_LEVELS.filter((level) => level !== "xhigh" && level !== "max")
+    : COMPATIBLE_THINKING_LEVELS;
+}
+
 const THINKING_LEVELS = ["off", ...COMPATIBLE_THINKING_LEVELS] as const;
+
+/**
+ * The max-tokens field for a connection. An OpenAI-compatible endpoint always sends a limit, so
+ * an unsaved one shows the default it would get; catalog providers leave it blank to use theirs.
+ */
+export function connectionMaxTokensField(providerId: string, stored: number | undefined): string {
+  if (providerId === OPENAI_COMPATIBLE_PROVIDER_ID) {
+    return String(stored ?? DEFAULT_MODEL_MAX_TOKENS);
+  }
+  return stored !== undefined ? String(stored) : "";
+}
 
 /**
  * Map a staged effort onto the levels a model actually supports.
@@ -59,16 +93,20 @@ export const POPULAR_MODEL_PROVIDER_IDS = [
 const DEFAULT_PROVIDER_COUNT = POPULAR_MODEL_PROVIDER_IDS.length;
 const POPULAR_MODEL_PROVIDER_IDS_LIST: readonly string[] = POPULAR_MODEL_PROVIDER_IDS;
 
-/** Popular providers in curated order, then the rest in their original order. */
+/** Popular providers in curated order, then the rest by name. */
 export function popularModelProvidersFirst<T>(
   items: readonly T[],
   providerId: (item: T) => string,
+  name: (item: T) => string,
 ): T[] {
   const rank = (item: T) => {
     const index = POPULAR_MODEL_PROVIDER_IDS_LIST.indexOf(providerId(item));
     return index === -1 ? DEFAULT_PROVIDER_COUNT : index;
   };
-  return [...items].sort((a, b) => rank(a) - rank(b));
+  return [...items].sort(
+    (a, b) =>
+      rank(a) - rank(b) || name(a).localeCompare(name(b), undefined, { sensitivity: "base" }),
+  );
 }
 
 /**
@@ -98,20 +136,6 @@ export function pickCatalogModelId(
     }
   }
   return entries.find((entry) => entry.recommended)?.id ?? entries[0]?.id ?? "";
-}
-
-/** Return the active choice separately when it is not one of the search results. */
-export function selectedProviderOutsideSearchResults(
-  filteredProviders: readonly ModelCatalogEntry[],
-  allProviders: readonly ModelCatalogEntry[],
-  selectedProvider: string,
-): ModelCatalogEntry | undefined {
-  if (
-    filteredProviders.some((entry) => entry.provider === canonicalPiProviderId(selectedProvider))
-  ) {
-    return undefined;
-  }
-  return allProviders.find((entry) => entry.provider === canonicalPiProviderId(selectedProvider));
 }
 
 /**
@@ -216,7 +240,7 @@ function freeFormChoice(credential: CredentialModelRef, modelId: string): Connec
     key: modelOptionKey(credential.provider, modelId),
     provider: credential.provider,
     modelId,
-    label: `${credential.label} · ${modelId}`,
+    label: withConnectionName(modelId, credential.label),
     providerLabel: credential.label,
     modelLabel: modelId,
   };
@@ -229,7 +253,7 @@ function catalogChoices(providerModels: readonly CatalogModelRef[]): ConnectedMo
       key: modelOptionKey(entry.provider, modelId),
       provider: entry.provider,
       modelId,
-      label: `${entry.providerName ?? entry.provider} · ${entry.label}`,
+      label: withConnectionName(entry.label, entry.providerName ?? entry.provider),
       providerLabel: entry.providerName ?? entry.provider,
       modelLabel: entry.label,
       images: entry.images,
@@ -317,20 +341,6 @@ export function connectedModelChoices(
   });
 }
 
-/** Match a model by name, id, or provider name; a blank query keeps every model. */
-export function filterModelCatalog(
-  entries: readonly ModelCatalogEntry[],
-  query: string,
-): readonly ModelCatalogEntry[] {
-  if (!query.trim()) return entries;
-  return entries.filter((entry) =>
-    matchesSearchQuery(query, entry.label, entry.id, entry.providerName ?? entry.provider),
-  );
-}
-
-/** Model lists longer than this get a search field. */
-export const MODEL_SEARCH_THRESHOLD = 10;
-
 export type ChatModelChoice = {
   key: string;
   label: string;
@@ -350,7 +360,9 @@ export function groupModelChoices(choices: readonly ChatModelChoice[], query: st
     // The catalog has no vendor field. Its display convention is "Vendor: Model".
     const vendor = choice.modelLabel?.match(/^([^:]+): (.+)$/);
     const heading = choice.providerLabel
-      ? [choice.providerLabel, vendor?.[1]].filter(Boolean).join(" · ")
+      ? vendor?.[1]
+        ? withConnectionName(vendor[1], choice.providerLabel)
+        : choice.providerLabel
       : undefined;
     const key = heading ? `provider:${heading}` : "ungrouped";
     let section = sections.find((entry) => entry.key === key);
@@ -402,16 +414,7 @@ export function filterModelChoices<C extends ChatModelChoice>(
   choices: readonly C[],
   query: string,
 ): readonly C[] {
-  if (!query.trim()) return choices;
-  return choices.filter((choice) =>
-    matchesSearchQuery(
-      query,
-      choice.label,
-      choice.modelId,
-      choice.provider,
-      choice.provider ? choice.providerLabel : undefined,
-    ),
-  );
+  return listSearch(choices, query, { text: modelChoiceSearchText }).visible;
 }
 
 type SavedCompatibleModels = { baseUrl?: string; enabledModelIds?: readonly string[] };
@@ -466,3 +469,16 @@ export function canUseCompatibleModelAsDefault(
 ): boolean {
   return savedIds === undefined || savedIds.includes(modelId);
 }
+
+export const modelCatalogSearchText = (entry: ModelCatalogEntry) => [
+  entry.label,
+  entry.id,
+  entry.providerName ?? entry.provider,
+];
+
+export const modelChoiceSearchText = (choice: ChatModelChoice) => [
+  choice.label,
+  choice.modelId,
+  choice.provider,
+  choice.provider ? choice.providerLabel : undefined,
+];

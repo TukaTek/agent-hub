@@ -1,47 +1,80 @@
 import type { Routine } from "@cortexai-agent-hub/contracts";
 import { formatCron } from "@cortexai-agent-hub/core";
-import { t } from "./i18n";
+import { ph, t } from "@lingui/core/macro";
+import { cronLabels } from "./cron";
+
+/** Triggers set up on web. Mobile lists them and can remove them, but not add or edit them. */
+export type RoutineWebTrigger = "webhookEnabled" | "githubEnabled" | "messageProvider" | "watch";
+
+/** The routine's web-only triggers with their names, in the order the routine lists them. */
+export function routineWebTriggers(
+  routine: Pick<Routine, RoutineWebTrigger>,
+): Array<{ key: RoutineWebTrigger; label: string }> {
+  const message =
+    routine.messageProvider === "slack"
+      ? t`Slack message`
+      : routine.messageProvider === "teams"
+        ? t`Teams message`
+        : t`Message event`;
+  return [
+    ...(routine.webhookEnabled ? [{ key: "webhookEnabled" as const, label: t`Webhook` }] : []),
+    ...(routine.githubEnabled ? [{ key: "githubEnabled" as const, label: t`Git event` }] : []),
+    ...(routine.messageProvider ? [{ key: "messageProvider" as const, label: message }] : []),
+    ...(routine.watch ? [{ key: "watch" as const, label: t`When something changes` }] : []),
+  ];
+}
+
+/** The triggers that aren't schedules, by name. */
+export function routineTriggerNames(routine: Routine): string[] {
+  const web = routineWebTriggers(routine);
+  const named = (keys: RoutineWebTrigger[]) =>
+    web.filter((trigger) => keys.includes(trigger.key)).map((trigger) => trigger.label);
+  return [
+    ...named(["webhookEnabled", "githubEnabled", "messageProvider"]),
+    ...(routine.emailSenders ? [t`When an email arrives`] : []),
+    ...named(["watch"]),
+  ];
+}
 
 function routineTriggers(routine: Routine): string {
+  const labels = cronLabels();
   return [
-    ...routine.crons.map(formatCron),
-    ...(routine.webhookEnabled ? [t("Webhook")] : []),
-    ...(routine.githubEnabled ? [t("Git event")] : []),
-    ...(routine.messageProvider === "slack"
-      ? [t("Slack message")]
-      : routine.messageProvider === "teams"
-        ? [t("Teams message")]
-        : routine.messageProvider
-          ? [t("Message event")]
-          : []),
-    ...(routine.watch ? [t("When something changes")] : []),
+    ...routine.crons.map((cron) => formatCron(cron, labels)),
+    ...routineTriggerNames(routine),
   ].join(", ");
 }
 
-export function routineStatusLine(routine: Routine): string {
-  return [routine.active ? t("Active") : t("Paused"), routineTriggers(routine), routine.timezone]
-    .filter(Boolean)
-    .join(" · ");
+/** Triggers with their zone in parentheses, or whichever of the two exists. */
+function routineSchedule(routine: Routine, zone: string | undefined): string {
+  const triggers = routineTriggers(routine);
+  return triggers && zone ? `${triggers} (${zone})` : triggers || zone || "";
+}
+
+/** One line per trigger for a routine's detail; schedules name their zone when it isn't the device's. */
+export function routineTriggerRows(routine: Routine, deviceTimeZone: string | undefined): string[] {
+  const labels = cronLabels();
+  const zone = routine.timezone === deviceTimeZone ? "" : ` (${routine.timezone})`;
+  return [
+    ...routine.crons.map((cron) => `${formatCron(cron, labels)}${zone}`),
+    ...routineTriggerNames(routine),
+  ];
 }
 
 /** A list row: the schedule, its zone only when it isn't the device's, and "Paused" only when paused. */
 export function routineRowDetail(routine: Routine, deviceTimeZone: string | undefined): string {
   return [
-    routineTriggers(routine),
-    routine.timezone === deviceTimeZone ? "" : routine.timezone,
-    routine.active ? "" : t("Paused"),
+    routineSchedule(routine, routine.timezone === deviceTimeZone ? undefined : routine.timezone),
+    routine.active ? (routine.scheduleDelayed ? t`Schedule delayed` : "") : t`Paused`,
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(", ");
 }
 
-/** Soonest next run first, routines without one last; ties keep the oldest first. */
-export function sortRoutinesByNextRun(routines: Routine[]): Routine[] {
-  const nextRun = (routine: Routine) =>
-    routine.nextRunAt ? Date.parse(routine.nextRunAt) : Number.POSITIVE_INFINITY;
-  return [...routines].sort(
-    (a, b) => nextRun(a) - nextRun(b) || Date.parse(a.createdAt) - Date.parse(b.createdAt),
-  );
+/** A list row's name for screen readers, with whether its switch is on. */
+export function routineRowLabel(routine: Routine): string {
+  return routine.active
+    ? t`${ph({ name: routine.name })}, On`
+    : t`${ph({ name: routine.name })}, Off`;
 }
 
 /** The device's IANA time zone, or undefined when the runtime can't tell. */

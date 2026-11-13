@@ -7,7 +7,10 @@ import type {
   ConnectorTool,
   SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
+import type { McpSourcePreset } from "@cortexai-agent-hub/contracts";
+import { cancelResponseBody } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { availableInSpace, itemSecretIn } from "@cortexai-agent-hub/db";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
@@ -41,6 +44,7 @@ import {
   resolveCatalogCall,
   SELECTED_SCHEMA_MAX_BYTES,
 } from "./lazy-tool-catalog.js";
+import { readMcpApp } from "./mcp-app.js";
 import { localSchemaReference } from "./openai-tool-parameters.js";
 import type { RemoteTransportDependencies, RemoteUrlPolicy } from "./remote-mcp.js";
 import {
@@ -48,6 +52,8 @@ import {
   callRemoteMcpTool,
   createSafeRemoteFetch,
   listRemoteMcpTools,
+  RemoteMcpSessionCache,
+  readRemoteMcpResource,
 } from "./remote-mcp.js";
 
 const ModelHeaderName = HeaderName.refine(
@@ -61,8 +67,29 @@ const McpAuthSchema = z
   })
   .default({ type: "none" });
 
+/** MCP services offered as one-step sources. A preset with a URL always connects there. */
+export const MCP_SOURCE_PRESETS: McpSourcePreset[] = [
+  { id: "executor", name: "Executor", urlPlaceholder: "https://executor.example/mcp" },
+];
+
+/** Applies a preset named in an MCP install: its fixed URL and bearer auth, so clients send
+ * only the id. Stored configs keep only fixed-URL preset ids; the rest store as custom. */
+export function applyMcpSourcePreset(
+  source: string,
+  config: Record<string, unknown>,
+): { source: string; config: Record<string, unknown> } {
+  const preset = MCP_SOURCE_PRESETS.find((entry) => entry.id === config.preset);
+  if (!preset) return { source, config: { ...config, preset: "custom" } };
+  return {
+    source: preset.url ?? source,
+    config: { ...config, preset: preset.url ? preset.id : "custom", auth: { type: "bearer" } },
+  };
+}
+
 const McpConfigSchema = z.object({
-  preset: z.enum(["treg", "custom"]).default("custom"),
+  // Installs keep the preset id they were made with, even after it leaves MCP_SOURCE_PRESETS;
+  // nothing reads it back, so any stored id stays valid.
+  preset: z.string().min(1).max(64).default("custom"),
   auth: McpAuthSchema,
   headers: PublicHeadersSchema,
 });
@@ -79,6 +106,7 @@ const ApiOperationSchema = z.object({
   }),
   readOnly: z.boolean().default(false),
   queryParameters: z.array(z.string().min(1).max(120)).default([]),
+  commaSeparatedQueryParameters: z.array(z.string().min(1).max(120)).optional(),
   headerParameters: z.array(ModelHeaderName).default([]),
 });
 
@@ -102,6 +130,9 @@ export type RemoteConnectorDependencies = RemoteTransportDependencies;
 type RemoteRequestPolicy = RemoteConnectorDependencies & RemoteUrlPolicy;
 
 export class InstalledConnectorProvider implements ConnectorProvider {
+  /** Run-scoped MCP sessions, so a stateful server sees one session per run. */
+  private readonly mcpSessions = new RemoteMcpSessionCache();
+
   constructor(
     private readonly prisma: PrismaClient,
     private readonly secrets: SecretStore,
@@ -117,6 +148,36 @@ export class InstalledConnectorProvider implements ConnectorProvider {
       ...this.remote,
       allowPrivateEndpoint: this.allowPrivateEndpoint,
     };
+  }
+
+  /** Session reuse only inside one run, lasting the run rather than one
+   * attempt; discovery and calls outside a run (settings, verification) keep
+   * one session per call. */
+  private mcpSessionOptions(
+    context: AdapterContext,
+    install: Pick<InstalledRow, "id">,
+  ): {
+    sessionScope?: string;
+    sessionPool?: RemoteMcpSessionCache;
+    sessionRunId?: string;
+  } {
+    if (!context.runId) return {};
+    return {
+      sessionScope: `${context.spaceId} ${context.userId} ${context.runId} ${install.id}`,
+      sessionPool: this.mcpSessions,
+      sessionRunId: context.runId,
+    };
+  }
+
+  /** Close the run-scoped MCP sessions of a run that ended on this worker;
+   * see `RemoteMcpSessionCache.endRun`. */
+  endRun(runId: string): void {
+    this.mcpSessions.endRun(runId);
+  }
+
+  /** Close every run-scoped MCP session; for shutdown. */
+  async close(): Promise<void> {
+    await this.mcpSessions.close();
   }
 
   describe() {
@@ -146,8 +207,7 @@ export class InstalledConnectorProvider implements ConnectorProvider {
   private async authorizedTools(context: AdapterContext): Promise<ConnectorTool[]> {
     const installs = await this.prisma.capabilityInstall.findMany({
       where: {
-        spaceId: context.spaceId,
-        userId: context.userId,
+        ...availableInSpace(context),
         kind: { in: ["mcp", "api", "graphql"] },
       },
       orderBy: { createdAt: "asc" },
@@ -183,6 +243,7 @@ export class InstalledConnectorProvider implements ConnectorProvider {
           endpoint: install.source,
           headers: connectorHeaders(config, credential),
           signal: context.signal,
+          ...this.mcpSessionOptions(context, install),
         });
         return tools.map((tool) => ({
           ...tool,
@@ -191,6 +252,7 @@ export class InstalledConnectorProvider implements ConnectorProvider {
             resourceId: install.id,
             toolName: tool.name,
             catalogGroup,
+            appResourceUri: tool.appResourceUri,
           },
         }));
       }
@@ -258,8 +320,7 @@ export class InstalledConnectorProvider implements ConnectorProvider {
     const install = await this.prisma.capabilityInstall.findFirst({
       where: {
         id: installId,
-        spaceId: context.spaceId,
-        userId: context.userId,
+        ...availableInSpace(context),
         kind: { in: ["mcp", "api", "graphql"] },
       },
     });
@@ -273,13 +334,15 @@ export class InstalledConnectorProvider implements ConnectorProvider {
       const remote = await this.remoteFor(context);
       if (install.kind === "mcp") {
         const config = McpConfigSchema.parse(install.config);
+        const session = {
+          ...remote,
+          endpoint: install.source,
+          headers: connectorHeaders(config, credential),
+          signal: context.signal,
+          ...this.mcpSessionOptions(context, install),
+        };
         const result = await callRemoteMcpTool(
-          {
-            ...remote,
-            endpoint: install.source,
-            headers: connectorHeaders(config, credential),
-            signal: context.signal,
-          },
+          session,
           call.route?.toolName ?? call.tool,
           call.args,
         );
@@ -287,6 +350,14 @@ export class InstalledConnectorProvider implements ConnectorProvider {
           type: "result",
           data: redactConnectorPayload(result, credential ? [credential] : []),
         };
+        const app = await readMcpApp(
+          install.name,
+          call.withApp ? call.route?.appResourceUri : undefined,
+          result,
+          (uri) => readRemoteMcpResource(session, uri),
+          credential ? [credential] : [],
+        );
+        if (app) yield { type: "app", app };
         return;
       }
       if (install.kind === "graphql") {
@@ -342,11 +413,7 @@ export class InstalledConnectorProvider implements ConnectorProvider {
   ): Promise<string | undefined> {
     if (!install.secretId) return undefined;
     const row = await this.prisma.secret.findFirst({
-      where: {
-        id: install.secretId,
-        spaceId: context.spaceId,
-        userId: context.userId,
-      },
+      where: { id: install.secretId, ...itemSecretIn(context) },
     });
     return row ? await this.secrets.load(row.ciphertext, row.id) : undefined;
   }
@@ -424,9 +491,15 @@ async function loadOpenApiDocument(
       headers,
       signal: combineSignals(signal, AbortSignal.timeout(15_000)),
     });
-    if (!response.ok) throw new Error(`OpenAPI document returned HTTP ${response.status}`);
+    if (!response.ok) {
+      cancelResponseBody(response);
+      throw new Error(`OpenAPI document returned HTTP ${response.status}`);
+    }
     const size = Number(response.headers.get("content-length") ?? 0);
-    if (size > 2_000_000) throw new Error("OpenAPI document is too large");
+    if (size > 2_000_000) {
+      cancelResponseBody(response);
+      throw new Error("OpenAPI document is too large");
+    }
     const { text, truncated } = await readBoundedText(response, 2_000_000);
     if (truncated) throw new Error("OpenAPI document is too large");
     return parseOpenApiText(text);
@@ -488,12 +561,18 @@ export function importOpenApiDocument(document: Record<string, unknown>): {
   baseUrl: string;
   operations: ApiOperation[];
 } {
-  const server = Array.isArray(document.servers) ? document.servers[0] : undefined;
-  const baseUrl =
-    server && typeof server === "object" && typeof (server as { url?: unknown }).url === "string"
-      ? String((server as { url: string }).url)
-      : "";
-  if (!baseUrl) throw new Error("OpenAPI document must define servers[0].url");
+  const server = asRecord(Array.isArray(document.servers) ? document.servers[0] : undefined);
+  if (typeof server?.url !== "string" || !server.url) {
+    throw new Error("OpenAPI document must define servers[0].url");
+  }
+  const variables = asRecord(server.variables);
+  const baseUrl = server.url.replace(/\{([^{}]+)\}/g, (_placeholder, name: string) => {
+    const variable = asRecord(variables?.[name]);
+    if (typeof variable?.default !== "string") {
+      throw new Error("OpenAPI server variable must define a string default");
+    }
+    return variable.default;
+  });
   assertNoSensitiveQuery(baseUrl);
   const paths = document.paths;
   if (!paths || typeof paths !== "object" || Array.isArray(paths)) {
@@ -513,18 +592,29 @@ export function importOpenApiDocument(document: Record<string, unknown>): {
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
       const queryParameters: string[] = [];
+      const commaSeparatedQueryParameters: string[] = [];
       const headerParameters: string[] = [];
       for (const parameter of openApiParameters(
         document,
         (pathValue as Record<string, unknown>).parameters,
         operation.parameters,
       )) {
-        properties[parameter.name] = asRecord(
-          inlineOpenApiSchema(refs, parameter.schema, "string"),
-        ) ?? {
+        const schema = asRecord(inlineOpenApiSchema(refs, parameter.schema, "string")) ?? {
           type: "string",
         };
-        if (parameter.in === "query") queryParameters.push(parameter.name);
+        properties[parameter.name] =
+          typeof parameter.description === "string"
+            ? { ...schema, description: parameter.description }
+            : schema;
+        if (parameter.in === "query") {
+          queryParameters.push(parameter.name);
+          if (
+            (parameter.style === undefined || parameter.style === "form") &&
+            parameter.explode === false
+          ) {
+            commaSeparatedQueryParameters.push(parameter.name);
+          }
+        }
         if (parameter.in === "header") {
           if (isSensitiveHeader(parameter.name) || isTransportHeader(parameter.name)) {
             throw new Error(`OpenAPI operation ${id} contains unsafe header ${parameter.name}`);
@@ -559,6 +649,7 @@ export function importOpenApiDocument(document: Record<string, unknown>): {
         },
         readOnly: method === "get",
         queryParameters,
+        ...(commaSeparatedQueryParameters.length > 0 ? { commaSeparatedQueryParameters } : {}),
         headerParameters,
       });
       if (operations.length >= 100) break;
@@ -888,11 +979,21 @@ async function executeApiOperation(
     consumed.add(key);
     if (value != null) headers[key] = String(value);
   }
-  if (operation.method === "GET" || operation.method === "DELETE") {
+  const declaredJsonBody =
+    !consumed.has("body") &&
+    !operation.queryParameters.includes("body") &&
+    Object.hasOwn(asRecord(operation.inputSchema.properties) ?? {}, "body");
+  const declaredDeleteBody =
+    operation.method === "DELETE" && args.body !== undefined && declaredJsonBody;
+  if (operation.method === "GET" || (operation.method === "DELETE" && !declaredDeleteBody)) {
     for (const [key, value] of Object.entries(args)) {
       if (consumed.has(key) || value == null) continue;
       if (Array.isArray(value)) {
-        for (const item of value) url.searchParams.append(key, String(item));
+        if (operation.commaSeparatedQueryParameters?.includes(key)) {
+          url.searchParams.set(key, value.map(String).join(","));
+        } else {
+          for (const item of value) url.searchParams.append(key, String(item));
+        }
       } else if (typeof value !== "object") {
         url.searchParams.set(key, String(value));
       }
@@ -903,13 +1004,20 @@ async function executeApiOperation(
       consumed.add(key);
       if (value == null) continue;
       if (Array.isArray(value)) {
-        for (const item of value) url.searchParams.append(key, String(item));
+        if (operation.commaSeparatedQueryParameters?.includes(key)) {
+          url.searchParams.set(key, value.map(String).join(","));
+        } else {
+          for (const item of value) url.searchParams.append(key, String(item));
+        }
       } else {
         url.searchParams.set(key, String(value));
       }
     }
     const payload =
-      args.body ?? Object.fromEntries(Object.entries(args).filter(([key]) => !consumed.has(key)));
+      declaredJsonBody && args.body === null
+        ? null
+        : (args.body ??
+          Object.fromEntries(Object.entries(args).filter(([key]) => !consumed.has(key))));
     body = JSON.stringify(payload);
     headers["content-type"] = "application/json";
   }

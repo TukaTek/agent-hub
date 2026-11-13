@@ -1,4 +1,11 @@
-import { credentialIssue, MAX_PASSWORD_LENGTH, PASSWORD_RULES } from "@cortexai-agent-hub/core";
+import {
+  credentialIssue,
+  MAX_PASSWORD_LENGTH,
+  PASSWORD_RULES,
+  suggestEmailCorrection,
+} from "@cortexai-agent-hub/core";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -16,38 +23,39 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeActionButton } from "../components/native-action-button";
-import type { MobileMe, PasswordResetCapabilities } from "../lib/api";
+import { FORM_COLUMN_WIDTH } from "../lib/adaptive-layout";
+import { currentApiBase, rpc } from "../lib/api";
+import type { PasswordResetCapabilities } from "../lib/api-auth";
 import {
-  currentApiBase,
-  displayApiHost,
-  loadSessionToken,
   passwordResetCapabilities,
   requestPasswordReset,
-  rpc,
   sendSignInCode,
   signIn,
   signInWithCode,
   signUp,
-  usesCustomApiBase,
-} from "../lib/api";
+} from "../lib/api-auth";
 import type { AuthMode } from "../lib/auth-routing";
 import { initialAuthMode } from "../lib/auth-routing";
-import { useI18n } from "../lib/i18n";
+import { displayApiHost, usesCustomApiBase } from "../lib/endpoint";
+import { hasIncomingShare } from "../lib/incoming-share";
 import { useMobileTokens } from "../lib/native";
 import { passkeysAvailable, signInWithPasskey } from "../lib/passkey";
+import { loadSessionToken } from "../lib/session";
 import { continueWithSso } from "../lib/sso";
 import { credentialIssueText, errorText } from "../lib/user-error";
 
 const CODE_LENGTH = 6;
 
 export default function SignIn() {
-  const { t } = useI18n();
+  const { t } = useLingui();
   const tokens = useMobileTokens();
   const router = useRouter();
   const { mode: requestedMode } = useLocalSearchParams<{ mode?: string | string[] }>();
   const [formMode, setMode] = useState<AuthMode>(() => initialAuthMode(requestedMode));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [emailBlurred, setEmailBlurred] = useState(false);
+  const [warnedEmail, setWarnedEmail] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,18 +66,18 @@ export default function SignIn() {
   const [reset, setReset] = useState<PasswordResetCapabilities | null>(null);
   const hubMode = reset?.mode === "hub";
   const mode = hubMode ? "in" : formMode;
+  const emailSuggestion = mode === "up" ? suggestEmailCorrection(email) : null;
   const passwordForm = Boolean(reset?.passwordAuth || hubMode);
   const [capabilityError, setCapabilityError] = useState(false);
   const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const [resetSent, setResetSent] = useState(false);
-  const [usePassword, setUsePassword] = useState(false);
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [passkeys, setPasskeys] = useState(false);
 
   useEffect(() => {
     setPasswordVisible(false);
-  }, [mode, apiBase, usePassword]);
+  }, [mode, apiBase]);
 
   useFocusEffect(
     useCallback(() => {
@@ -115,7 +123,7 @@ export default function SignIn() {
   }, [reset]);
 
   useEffect(() => {
-    if (resetSent || codeSent) AccessibilityInfo.announceForAccessibility(t("Check your email"));
+    if (resetSent || codeSent) AccessibilityInfo.announceForAccessibility(t`Check your email`);
   }, [resetSent, codeSent, t]);
 
   if (!ready) {
@@ -128,15 +136,16 @@ export default function SignIn() {
           padding: 24,
         }}
       >
-        <ActivityIndicator color={tokens.mutedForeground} accessibilityLabel={t("Loading…")} />
+        <ActivityIndicator color={tokens.mutedForeground} accessibilityLabel={t`Loading…`} />
       </View>
     );
   }
-  if (hasSession) return <Redirect href="/" />;
+  if (hasSession) return <Redirect href={hasIncomingShare() ? "/share" : "/"} />;
 
   const codeFlow = Boolean(reset?.passwordAuth && reset.emailCode && mode !== "forgot");
-  const usingCode = codeFlow && !usePassword;
-  const codeStep = usingCode && codeSent;
+  // A blank password asks for an emailed code, so code-only accounts need no toggle.
+  const usingCode = codeFlow && (codeSent || !password);
+  const codeStep = codeFlow && codeSent;
 
   async function submit(enteredCode = code) {
     if (pending || !passwordForm) return;
@@ -148,6 +157,14 @@ export default function SignIn() {
       setError(credentialIssueText(issue));
       return;
     }
+    if (emailSuggestion && warnedEmail !== email) {
+      setWarnedEmail(email);
+      setEmailBlurred(true);
+      AccessibilityInfo.announceForAccessibility(
+        t`Did you mean ${ph({ email: emailSuggestion })}?`,
+      );
+      return;
+    }
     // An unfinished code would spend one of the code's three attempts.
     if (codeStep && enteredCode.length !== CODE_LENGTH) return;
     setPending(true);
@@ -155,7 +172,7 @@ export default function SignIn() {
     try {
       if (mode === "forgot") {
         if (!reset?.passwordReset || !reset.resetUrl) {
-          throw new Error(t("Password recovery is not configured for this server"));
+          throw new Error(t`Password recovery is not configured for this server`);
         }
         await requestPasswordReset(email.trim(), reset.resetUrl);
         setResetSent(true);
@@ -193,7 +210,7 @@ export default function SignIn() {
       }
       await openApp();
     } catch (err) {
-      setError(errorText(err, t("Could not continue")));
+      setError(errorText(err, t`Could not continue`));
     } finally {
       setPending(false);
     }
@@ -201,7 +218,8 @@ export default function SignIn() {
 
   // Any sign-in can create the account (a code, SSO), so ask the server rather than the form.
   async function openApp() {
-    const me = await rpc<MobileMe>("me").catch(() => null);
+    if (hasIncomingShare()) return router.replace("/share");
+    const me = await rpc("me").catch(() => null);
     router.replace(me?.needsSignupSurvey ? "/signup-survey" : "/");
   }
 
@@ -211,7 +229,7 @@ export default function SignIn() {
     try {
       if (await run()) await openApp();
     } catch (err) {
-      setError(errorText(err, t("Could not continue")));
+      setError(errorText(err, t`Could not continue`));
     } finally {
       setPending(false);
     }
@@ -231,6 +249,9 @@ export default function SignIn() {
               contentContainerStyle={{
                 flexGrow: 1,
                 justifyContent: "center",
+                width: "100%",
+                maxWidth: FORM_COLUMN_WIDTH,
+                alignSelf: "center",
                 paddingHorizontal: 24,
                 paddingVertical: 24,
               }}
@@ -247,12 +268,12 @@ export default function SignIn() {
                 }}
               >
                 {resetSent || codeStep
-                  ? t("Check your email")
+                  ? t`Check your email`
                   : mode === "in"
-                    ? t("Sign in to CortexAI Agent Hub")
+                    ? t`Sign in to CortexAI Agent Hub`
                     : mode === "up"
-                      ? t("Sign up for CortexAI Agent Hub")
-                      : t("Reset your password")}
+                      ? t`Sign up for CortexAI Agent Hub`
+                      : t`Reset your password`}
               </Text>
               {resetSent ? (
                 <View style={{ alignItems: "center", marginTop: 28 }}>
@@ -265,7 +286,7 @@ export default function SignIn() {
                     }}
                   >
                     <Text style={{ color: tokens.foreground, fontSize: 15, fontWeight: "600" }}>
-                      {t("Back to sign in")}
+                      {t`Back to sign in`}
                     </Text>
                   </Pressable>
                 </View>
@@ -274,23 +295,23 @@ export default function SignIn() {
                   {capabilityError ? (
                     <View accessibilityRole="alert">
                       <Text style={{ color: tokens.destructive }}>
-                        {t("Could not load sign-in options")}
+                        {t`Could not load sign-in options`}
                       </Text>
                       <NativeActionButton
-                        label={t("Retry")}
+                        label={t`Retry`}
                         onPress={() => setCapabilityAttempt((value) => value + 1)}
                       />
                     </View>
                   ) : !reset ? (
                     <ActivityIndicator
                       color={tokens.mutedForeground}
-                      accessibilityLabel={t("Loading…")}
+                      accessibilityLabel={t`Loading…`}
                       style={{ marginTop: 16 }}
                     />
                   ) : null}
                   {reset?.sso && !passwordForm && mode !== "forgot" ? (
                     <NativeActionButton
-                      label={t("Continue with {name}", { name: reset.sso.name })}
+                      label={t`Continue with ${ph({ name: reset.sso.name })}`}
                       disabled={pending}
                       onPress={() => void externalSignIn(continueWithSso)}
                       style={{ marginTop: 16 }}
@@ -307,12 +328,12 @@ export default function SignIn() {
                   {passwordForm && codeStep ? (
                     <>
                       <TextInput
-                        accessibilityLabel={t("Code")}
+                        accessibilityLabel={t`Code`}
                         autoComplete="one-time-code"
                         autoFocus
                         keyboardType="number-pad"
                         maxLength={CODE_LENGTH}
-                        placeholder={t("Code")}
+                        placeholder={t`Code`}
                         placeholderTextColor={tokens.mutedForeground}
                         textContentType="oneTimeCode"
                         value={code}
@@ -336,12 +357,12 @@ export default function SignIn() {
                       ) : null}
                       <NativeActionButton
                         disabled={pending || code.length < CODE_LENGTH}
-                        label={pending ? t("Working…") : t("Continue")}
+                        label={pending ? t`Working…` : t`Continue`}
                         onPress={() => void submit()}
                         style={{ marginTop: 16 }}
                       />
                       <NativeActionButton
-                        label={t("Back")}
+                        label={t`Back`}
                         prominence="quiet"
                         disabled={pending}
                         onPress={() => {
@@ -357,7 +378,7 @@ export default function SignIn() {
                       {mode === "up" ? (
                         <TextInput
                           autoComplete="name"
-                          placeholder={t("Name")}
+                          placeholder={t`Name`}
                           placeholderTextColor={tokens.mutedForeground}
                           value={name}
                           onChangeText={setName}
@@ -374,10 +395,14 @@ export default function SignIn() {
                         autoCapitalize="none"
                         autoComplete="email"
                         keyboardType="email-address"
-                        placeholder={t("Email")}
+                        placeholder={t`Email`}
                         placeholderTextColor={tokens.mutedForeground}
                         value={email}
-                        onChangeText={setEmail}
+                        onChangeText={(value) => {
+                          setEmail(value);
+                          setEmailBlurred(false);
+                        }}
+                        onBlur={() => setEmailBlurred(true)}
                         style={{
                           marginTop: mode === "up" ? 12 : 28,
                           backgroundColor: tokens.muted,
@@ -386,7 +411,19 @@ export default function SignIn() {
                           color: tokens.foreground,
                         }}
                       />
-                      {mode !== "forgot" && !usingCode ? (
+                      {emailSuggestion && emailBlurred ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          hitSlop={8}
+                          onPress={() => setEmail(emailSuggestion)}
+                          style={{ marginTop: 8, paddingHorizontal: 4 }}
+                        >
+                          <Text style={{ color: tokens.warning, fontSize: 14 }}>
+                            {t`Did you mean ${ph({ email: emailSuggestion })}?`}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                      {mode !== "forgot" ? (
                         <View
                           style={{
                             marginTop: 12,
@@ -401,7 +438,7 @@ export default function SignIn() {
                             textContentType={mode === "in" ? "password" : "newPassword"}
                             passwordRules={mode === "in" ? undefined : PASSWORD_RULES}
                             maxLength={MAX_PASSWORD_LENGTH}
-                            placeholder={t("Password")}
+                            placeholder={t`Password`}
                             placeholderTextColor={tokens.mutedForeground}
                             returnKeyType="go"
                             autoCapitalize="none"
@@ -419,7 +456,7 @@ export default function SignIn() {
                           />
                           <NativeActionButton
                             accessibilityLabel={
-                              passwordVisible ? t("Hide password") : t("Show password")
+                              passwordVisible ? t`Hide password` : t`Show password`
                             }
                             icon={{
                               ios: passwordVisible ? "eye.slash" : "eye",
@@ -443,49 +480,39 @@ export default function SignIn() {
                         disabled={pending}
                         label={
                           pending
-                            ? t("Working…")
+                            ? t`Working…`
                             : usingCode
-                              ? t("Continue")
+                              ? t`Continue`
                               : mode === "in"
-                                ? t("Sign in")
+                                ? t`Sign in`
                                 : mode === "up"
-                                  ? t("Sign up")
-                                  : t("Send reset link")
+                                  ? t`Sign up`
+                                  : t`Send reset link`
                         }
                         onPress={() => void submit()}
                         style={{ marginTop: 16 }}
                       />
-                      {passkeys && mode === "in" && !codeSent ? (
+                      {passkeys && mode === "in" ? (
                         <NativeActionButton
-                          label={t("Sign in with passkey")}
-                          prominence="quiet"
+                          label={t`Sign in with passkey`}
+                          icon={{ ios: "key.fill", android: "key-outline" }}
+                          prominence="secondary"
+                          fill
                           disabled={pending}
                           onPress={() => void externalSignIn(signInWithPasskey)}
-                          style={{ alignSelf: "center", marginTop: 16 }}
-                        />
-                      ) : null}
-                      {codeFlow ? (
-                        <NativeActionButton
-                          label={usingCode ? t("Use password") : t("Use email code")}
-                          prominence="quiet"
-                          disabled={pending}
-                          onPress={() => {
-                            setUsePassword(usingCode);
-                            setError(null);
-                          }}
-                          style={{ alignSelf: "center", marginTop: 16 }}
+                          style={{ marginTop: 12 }}
                         />
                       ) : null}
                       {reset?.sso && mode !== "forgot" ? (
                         <NativeActionButton
-                          label={t("Continue with {name}", { name: reset.sso.name })}
+                          label={t`Continue with ${ph({ name: reset.sso.name })}`}
                           prominence="quiet"
                           disabled={pending}
                           onPress={() => void externalSignIn(continueWithSso)}
                           style={{ alignSelf: "center", marginTop: 16 }}
                         />
                       ) : null}
-                      {mode === "in" && !usingCode && reset?.passwordReset && reset.resetUrl ? (
+                      {mode === "in" && reset?.passwordReset && reset.resetUrl ? (
                         <Pressable
                           accessibilityRole="button"
                           hitSlop={8}
@@ -498,7 +525,7 @@ export default function SignIn() {
                           <Text
                             style={{ color: tokens.foreground, fontSize: 14, fontWeight: "600" }}
                           >
-                            {t("Forgot password?")}
+                            {t`Forgot password?`}
                           </Text>
                         </Pressable>
                       ) : null}
@@ -513,9 +540,9 @@ export default function SignIn() {
                         >
                           <Text style={{ color: tokens.mutedForeground, fontSize: 15 }}>
                             {mode === "in"
-                              ? t("Don’t have an account?")
+                              ? t`Don’t have an account?`
                               : mode === "up"
-                                ? t("Already have an account?")
+                                ? t`Already have an account?`
                                 : ""}
                           </Text>
                           <Pressable
@@ -531,10 +558,10 @@ export default function SignIn() {
                               style={{ color: tokens.foreground, fontSize: 15, fontWeight: "600" }}
                             >
                               {mode === "in"
-                                ? t("Sign up")
+                                ? t`Sign up`
                                 : mode === "up"
-                                  ? t("Sign in")
-                                  : t("Back to sign in")}
+                                  ? t`Sign in`
+                                  : t`Back to sign in`}
                             </Text>
                           </Pressable>
                         </View>
@@ -548,8 +575,8 @@ export default function SignIn() {
               accessibilityRole="button"
               accessibilityLabel={
                 custom
-                  ? t("Custom server {host}", { host: displayApiHost(apiBase) })
-                  : t("Use a custom server")
+                  ? t`Custom server ${ph({ host: displayApiHost(apiBase) })}`
+                  : t`Use a custom server`
               }
               hitSlop={12}
               onPress={() => router.push("/server")}
@@ -563,7 +590,7 @@ export default function SignIn() {
               {custom ? (
                 <>
                   <Text style={{ color: tokens.mutedForeground, fontSize: 12 }}>
-                    {t("Custom server")}
+                    {t`Custom server`}
                   </Text>
                   <Text style={{ color: tokens.mutedForeground, fontSize: 13, marginTop: 2 }}>
                     {displayApiHost(apiBase)}
@@ -571,7 +598,7 @@ export default function SignIn() {
                 </>
               ) : (
                 <Text style={{ color: tokens.mutedForeground, fontSize: 13 }}>
-                  {t("Use a custom server")}
+                  {t`Use a custom server`}
                 </Text>
               )}
             </Pressable>

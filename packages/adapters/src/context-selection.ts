@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
 import type { AgentContextStrategy, CacheCapabilities } from "@cortexai-agent-hub/adapter-kit";
+import {
+  MODEL_CONTEXT_TOO_SMALL_ERROR,
+  shortenedTextLength,
+  textBoundary,
+  truncatePlainText,
+  VERBATIM_TOOL_RESULT_TOO_LARGE_ERROR,
+} from "@cortexai-agent-hub/core";
+import type { VerbatimMcpServers } from "./verbatim-mcp-result.js";
+import { isVerbatimMcpResult, toolCallIdentity } from "./verbatim-mcp-result.js";
 
 export type ContextStrategy = AgentContextStrategy;
 export interface ContextMessage {
@@ -18,7 +27,7 @@ export interface ContextBudget {
   tools: unknown;
   /** Additional instructions, snapshots, retrieved passages or task state outside messages. */
   extraContext?: string;
-  /** Adapter-specific image planning estimate. Unknown images use serialized bytes. */
+  /** Adapter-specific image planning estimate. Images without one count their serialized bytes. */
   imageTokens?: number | ((image: object) => number | undefined);
 }
 export interface ContextSelectionOptions {
@@ -27,16 +36,31 @@ export interface ContextSelectionOptions {
   /** Never drop current request, steering, approvals or authoritative constraints. */
   protectedIndexes?: readonly number[];
   recentExchanges?: number;
+  /**
+   * Exchanges older than recentExchanges stay while the messages before index `before`, where
+   * the current request starts, fit `tokens`.
+   */
+  earlier?: { before: number; tokens: number };
   cacheWarmth?: "likely-warm" | "likely-cold" | "unknown";
   /** Keep tool protocol intact while shortening oversized result bodies. */
   truncateToolResults?: boolean;
+  /** Servers that asked to keep tool results whole. Those results are never cut. */
+  verbatimMcpServers?: VerbatimMcpServers;
 }
 export class ContextBudgetError extends Error {
   constructor(
     public readonly estimatedTokens: number,
     public readonly availableTokens: number,
+    /** Instructions and tools alone fill the window, so no conversation can fit. */
+    modelTooSmall = false,
+    message?: string,
   ) {
-    super("Required context exceeds the model context budget");
+    super(
+      message ??
+        (modelTooSmall
+          ? MODEL_CONTEXT_TOO_SMALL_ERROR
+          : "Required context exceeds the model context budget"),
+    );
     this.name = "ContextBudgetError";
   }
 }
@@ -72,8 +96,50 @@ function imageBlocks(value: unknown): object[] {
   } else visitMessage(value);
   return found;
 }
-/** Conservative byte bound plus framing, not a tokenizer. Only actual user/tool
- * image blocks receive an adapter estimate; image-shaped tool arguments remain text.
+/** Deliberately low count, about five characters a token, for text that must never be overcharged. */
+export function lowTextTokens(text: string): number {
+  return Math.floor(text.length / 5);
+}
+
+/**
+ * Provider-neutral token estimate for text, without a tokenizer. The weights were calibrated
+ * against cl100k, o200k, Llama 3, Qwen 2.5 and Mistral's original tokenizer, landing at or a
+ * little above the least efficient of them for prose, code, JSON, IDs and non-Latin scripts:
+ * about 3.3 ASCII characters per token (English prose is nearer 4.5), one token per digit and
+ * per camelCase or letter-digit boundary (IDs, hashes, base64), 0.6 per accented Latin, Greek
+ * or Cyrillic letter, and 1.25 per UTF-16 unit of other scripts and emoji. Byte-level
+ * tokenizers never exceed one token per UTF-8 byte, so that bounds the estimate.
+ */
+export function estimateTextTokens(text: string): number {
+  let total = 0;
+  let previous = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    // 1 lowercase, 2 uppercase, 3 digit, 0 anything else.
+    const kind =
+      code >= 97 && code <= 122
+        ? 1
+        : code >= 65 && code <= 90
+          ? 2
+          : code >= 48 && code <= 57
+            ? 3
+            : 0;
+    if (code >= 128) total += code < 0x0590 ? 0.6 : 1.25;
+    else if (kind === 3) total += 1;
+    else if (kind === 0 && code > 32 && code < 127) total += 0.4;
+    else total += 0.3;
+    if (
+      (previous === 1 && kind === 2) ||
+      (previous === 3 && (kind === 1 || kind === 2)) ||
+      ((previous === 1 || previous === 2) && kind === 3)
+    )
+      total += 1;
+    previous = kind;
+  }
+  return Math.min(Math.ceil(total), Buffer.byteLength(text, "utf8"));
+}
+/** Text estimate plus framing. Actual user/tool image blocks receive an adapter estimate;
+ * images without one keep a serialized byte count, and image-shaped tool arguments remain text.
  */
 export function estimateContextTokens(
   value: unknown,
@@ -81,20 +147,24 @@ export function estimateContextTokens(
 ): number {
   const images = new Set<object>();
   let imageTotal = 0;
-  if (imageTokens !== undefined) {
-    for (const image of imageBlocks(value)) {
-      const estimate = typeof imageTokens === "number" ? imageTokens : imageTokens(image);
-      if (estimate !== undefined && Number.isFinite(estimate) && estimate > 0) {
-        images.add(image);
-        imageTotal += estimate;
-      }
-    }
+  for (const image of imageBlocks(value)) {
+    const estimate =
+      imageTokens === undefined
+        ? undefined
+        : typeof imageTokens === "number"
+          ? imageTokens
+          : imageTokens(image);
+    images.add(image);
+    imageTotal +=
+      estimate !== undefined && Number.isFinite(estimate) && estimate > 0
+        ? estimate
+        : Buffer.byteLength(JSON.stringify(image), "utf8");
   }
   const serialized =
     JSON.stringify(value, (_key, item: unknown) =>
       item && typeof item === "object" && images.has(item) ? { type: "image" } : item,
     ) ?? "";
-  return Buffer.byteLength(serialized, "utf8") + imageTotal + 16;
+  return estimateTextTokens(serialized) + imageTotal + 16;
 }
 function fixedTokens(budget: ContextBudget): number {
   for (const value of [
@@ -153,17 +223,21 @@ function shortenHistoryResult(
   // Snapshot text is only navigation; original reference offsets retain exact evidence.
   for (const snapshot of Array.isArray(payload.snapshots) ? payload.snapshots : []) {
     if (!snapshot || typeof snapshot !== "object") continue;
-    if (typeof snapshot.topic === "string") snapshot.topic = snapshot.topic.slice(0, 80);
-    if (typeof snapshot.outcome === "string") snapshot.outcome = snapshot.outcome.slice(0, 80);
+    if (typeof snapshot.topic === "string") snapshot.topic = truncatePlainText(snapshot.topic, 80);
+    if (typeof snapshot.outcome === "string")
+      snapshot.outcome = truncatePlainText(snapshot.outcome, 80);
   }
   payload.contextTruncated = true;
   let encoded = JSON.stringify(payload);
   while (encoded.length > size) {
     const longest = refs.reduce<HistoryTextReference | undefined>(
-      (best, ref) => (!best || ref.text.length > best.text.length ? ref : best),
+      (best, ref) =>
+        shortenedTextLength(ref.text) > 0 && (!best || ref.text.length > best.text.length)
+          ? ref
+          : best,
       undefined,
     );
-    if (!longest || longest.text.length < 2) {
+    if (!longest) {
       return JSON.stringify({
         untrusted: true,
         contextTruncated: true,
@@ -176,7 +250,7 @@ function shortenHistoryResult(
         },
       });
     }
-    longest.text = longest.text.slice(0, Math.floor(longest.text.length / 2));
+    longest.text = longest.text.slice(0, shortenedTextLength(longest.text));
     longest.nextTextOffset = longest.textOffset + longest.text.length;
     longest.truncated = true;
     encoded = JSON.stringify(payload);
@@ -224,19 +298,20 @@ export function shortenStructuredResult(
   else visit(payload);
   if (payload && typeof payload === "object" && !Array.isArray(payload))
     (payload as Record<string, unknown>).contextTruncated = true;
-  let encoded = JSON.stringify(holder.payload);
-  while (encoded.length > size) {
-    const largest = leaves.reduce<(typeof leaves)[number] | undefined>((best, leaf) => {
-      const value = (leaf.parent as Record<string, unknown>)[leaf.key];
-      const prior = best ? (best.parent as Record<string, unknown>)[best.key] : undefined;
-      return typeof value === "string" &&
-        value.length > 128 &&
-        (!best || typeof prior !== "string" || value.length > prior.length)
-        ? leaf
-        : best;
-    }, undefined);
-    if (!largest) break; // Required metadata alone may still need explicit budget failure.
-    const value = (largest.parent as Record<string, unknown>)[largest.key] as string;
+  // Re-encoding the whole payload and rescanning every leaf per cut blocked the event loop for
+  // tens of seconds on large connector results, so track the length and the longest leaf instead.
+  let encodedLength = JSON.stringify(holder.payload).length;
+  const leafText = (index: number) =>
+    (leaves[index]!.parent as Record<string, unknown>)[leaves[index]!.key] as string;
+  const longest = new LongestFirst(
+    leaves.flatMap((_, index) =>
+      leafText(index).length > 128 ? [[index, leafText(index).length] as const] : [],
+    ),
+  );
+  while (encodedLength > size) {
+    const index = longest.peek();
+    if (index === undefined) break; // Required metadata alone may still need explicit budget failure.
+    const value = leafText(index);
     // Keep a quarter at each end when that still shrinks the field. Otherwise size the ends net
     // of the marker, so each pass on a medium-length field halves what is left to cut.
     const preferredKeep = Math.max(8, Math.floor(value.length / 4));
@@ -247,10 +322,57 @@ export function shortenStructuredResult(
     if (keep < 1) break;
     const shortened = `${value.slice(0, keep)}\n${marker}\n${value.slice(-keep)}`;
     if (shortened.length >= value.length) break;
-    (largest.parent as Record<string, unknown>)[largest.key] = shortened;
-    encoded = JSON.stringify(holder.payload);
+    (leaves[index]!.parent as Record<string, unknown>)[leaves[index]!.key] = shortened;
+    encodedLength += JSON.stringify(shortened).length - JSON.stringify(value).length;
+    longest.pop();
+    if (shortened.length > 128) longest.push(index, shortened.length);
   }
-  return encoded;
+  return JSON.stringify(holder.payload);
+}
+
+/** Max-heap of leaf indexes by string length; ties go to the earlier leaf. */
+class LongestFirst {
+  private readonly heap: Array<readonly [index: number, length: number]> = [];
+
+  constructor(entries: ReadonlyArray<readonly [index: number, length: number]>) {
+    for (const [index, length] of entries) this.push(index, length);
+  }
+
+  peek(): number | undefined {
+    return this.heap[0]?.[0];
+  }
+
+  push(index: number, length: number) {
+    const heap = this.heap;
+    heap.push([index, length]);
+    for (let child = heap.length - 1; child > 0; ) {
+      const parent = (child - 1) >> 1;
+      if (!this.before(child, parent)) break;
+      [heap[child], heap[parent]] = [heap[parent]!, heap[child]!];
+      child = parent;
+    }
+  }
+
+  pop() {
+    const heap = this.heap;
+    const last = heap.pop();
+    if (!last || heap.length === 0) return;
+    heap[0] = last;
+    for (let parent = 0; ; ) {
+      let first = parent;
+      for (const child of [2 * parent + 1, 2 * parent + 2])
+        if (child < heap.length && this.before(child, first)) first = child;
+      if (first === parent) return;
+      [heap[first], heap[parent]] = [heap[parent]!, heap[first]!];
+      parent = first;
+    }
+  }
+
+  private before(a: number, b: number) {
+    const [indexA, lengthA] = this.heap[a]!;
+    const [indexB, lengthB] = this.heap[b]!;
+    return lengthA > lengthB || (lengthA === lengthB && indexA < indexB);
+  }
 }
 
 /**
@@ -376,8 +498,19 @@ export function shortenToolResultText(
     shortenHistoryResult(source, size, tool) ??
     shortenMcpEnvelope(source, size, marker) ??
     shortenStructuredResult(source, size, marker) ??
-    `${source.slice(0, Math.floor(size / 2))}\n${afterUse ? OMITTED_AFTER_USE : OMITTED_TEXT_BEFORE_USE}\n${source.slice(-Math.floor(size / 2))}`
+    shortenPlainText(source, size, afterUse ? OMITTED_AFTER_USE : OMITTED_TEXT_BEFORE_USE)
   );
+}
+
+/** Keep the head and tail halves of plain text around an omission marker. */
+export function shortenPlainText(
+  source: string,
+  size: number,
+  marker = OMITTED_TEXT_BEFORE_USE,
+): string {
+  const half = Math.floor(size / 2);
+  const tail = textBoundary(source, source.length - half);
+  return `${truncatePlainText(source, half)}\n${marker}\n${source.slice(tail)}`;
 }
 interface Group {
   indexes: number[];
@@ -457,11 +590,25 @@ export function selectContext<T extends ContextMessage>(
   droppedMessages: number;
   truncatedToolResults: number;
   availableMessageTokens: number;
-  estimation: "utf8-byte-bound";
+  estimation: "text-estimate";
 } {
   const fixed = fixedTokens(options.budget);
   const available = Math.floor(options.budget.contextWindow - options.budget.outputReserve - fixed);
   const groups = messageGroups(messages, options.budget.imageTokens);
+  // Pi can carry mandatory instructions and tool schemas in system messages.
+  // A new conversation cannot make either representation fit a smaller model.
+  const requiredFixed =
+    fixed +
+    groups
+      .filter((group) => messages[group.indexes[0]!]!.role === "system")
+      .reduce((total, group) => total + group.tokens, 0);
+  if (requiredFixed > options.budget.contextWindow - options.budget.outputReserve) {
+    throw new ContextBudgetError(
+      requiredFixed,
+      options.budget.contextWindow - options.budget.outputReserve,
+      true,
+    );
+  }
   // A result followed by any assistant message has been read, with or without a later tool call.
   const latestAssistant = messages.findLastIndex((message) => message.role === "assistant");
   const protectedIndexes = new Set(options.protectedIndexes ?? []);
@@ -493,6 +640,7 @@ export function selectContext<T extends ContextMessage>(
   if (used > available) {
     if (options.truncateToolResults !== false) {
       let shortenedCount = 0;
+      let keptVerbatimWhole = false;
       const shortened = messages.map((message, index) => {
         if (!protectedGroupIndexes.has(index) || message.role !== "toolResult") return message;
         const parts = Array.isArray(message.content) ? message.content : undefined;
@@ -510,10 +658,6 @@ export function selectContext<T extends ContextMessage>(
             ? message.content
             : JSON.stringify(message.content);
         if (!serialized || serialized.length <= 256) return message;
-        const size = Math.max(
-          128,
-          Math.min(Math.floor(serialized.length / 2), Math.floor(available / 4)),
-        );
         const group = groups.find((group) => group.indexes.includes(index));
         const assistant = group ? messages[group.indexes[0]!] : undefined;
         const nativeCall = Array.isArray(assistant?.content)
@@ -521,6 +665,15 @@ export function selectContext<T extends ContextMessage>(
               (part) => part?.type === "toolCall" && part.id === message.toolCallId,
             )
           : undefined;
+        const call = toolCallIdentity(nativeCall, message.toolName);
+        if (isVerbatimMcpResult(call.name, call.arguments, options.verbatimMcpServers)) {
+          keptVerbatimWhole = true;
+          return message;
+        }
+        const size = Math.max(
+          128,
+          Math.min(Math.floor(serialized.length / 2), Math.floor(available / 4)),
+        );
         const text = shortenToolResultText(
           serialized,
           size,
@@ -538,10 +691,21 @@ export function selectContext<T extends ContextMessage>(
           truncatedToolResults: Math.max(retry.truncatedToolResults, shortenedCount),
         };
       }
+      if (keptVerbatimWhole) {
+        // Throws the generic error when shortening the kept results would not make it fit either.
+        selectContext(messages, { ...options, verbatimMcpServers: undefined });
+        throw new ContextBudgetError(
+          used + fixed,
+          options.budget.contextWindow - options.budget.outputReserve,
+          false,
+          VERBATIM_TOOL_RESULT_TOO_LARGE_ERROR,
+        );
+      }
     }
     throw new ContextBudgetError(
       used + fixed,
       options.budget.contextWindow - options.budget.outputReserve,
+      available <= 0,
     );
   }
   const keepPrefix =
@@ -551,15 +715,25 @@ export function selectContext<T extends ContextMessage>(
     ? Number.POSITIVE_INFINITY
     : Math.max(1, options.recentExchanges ?? 8);
   let exchanges = 0;
+  // Active tool progress never counts against the earlier allowance, so the retained start
+  // holds during a run.
+  const currentStart = options.earlier?.before ?? 0;
+  let earlierTokens = 0;
   // Retain a contiguous recent suffix. Skip no holes inside a retained tool group.
   for (let index = groups.length - 1; index >= 0; index--) {
     const group = groups[index]!;
     if (group.indexes.some((i) => messages[i]!.role === "user")) exchanges += 1;
-    if (exchanges > exchangeLimit && !selected.has(group)) break;
     if (selected.has(group)) continue;
+    const earlier = group.indexes[0]! < currentStart;
+    if (
+      exchanges > exchangeLimit &&
+      (!earlier || earlierTokens + group.tokens > (options.earlier?.tokens ?? 0))
+    )
+      break;
     if (used + group.tokens > available) break;
     selected.add(group);
     used += group.tokens;
+    if (earlier) earlierTokens += group.tokens;
   }
   const selectedIndexes = new Set([...selected].flatMap((group) => group.indexes));
   return {
@@ -568,7 +742,7 @@ export function selectContext<T extends ContextMessage>(
     droppedMessages: messages.length - selectedIndexes.size,
     truncatedToolResults: 0,
     availableMessageTokens: available,
-    estimation: "utf8-byte-bound" as const,
+    estimation: "text-estimate" as const,
   };
 }
 

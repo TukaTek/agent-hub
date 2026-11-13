@@ -2,7 +2,7 @@ import { ACTIVE_RUN_STATUSES } from "@cortexai-agent-hub/core";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-  BOT_AVATAR_COLORS,
+  BOT_COLORS,
   BotAvatar,
   BotShapePreview,
   DEFAULT_BOT_AVATAR_COLOR,
@@ -12,7 +12,7 @@ import {
 } from "./bot-avatar.js";
 
 describe("BotAvatar", () => {
-  it("renders distinct SVG gradient IDs for concurrent working avatars", () => {
+  it("renders distinct ring gradient IDs for concurrent working avatars", () => {
     const html = renderToString(
       <div>
         <BotAvatar color="#8B5CF6::shape_0" status="running" />
@@ -21,12 +21,19 @@ describe("BotAvatar", () => {
     );
 
     const gradMatches = [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
-    expect(gradMatches).toHaveLength(4);
-    expect(new Set(gradMatches).size).toBe(4);
+    expect(gradMatches).toHaveLength(2);
+    expect(new Set(gradMatches).size).toBe(2);
     for (const id of gradMatches) {
       expect(id).toBeTruthy();
       expect(html).toContain(`url(#${id})`);
     }
+  });
+
+  // Button sizes any SVG without a size class, which beats width/height attributes but not inline styles.
+  it("sizes the shape with an inline style so icon sizing in a button cannot shrink it", () => {
+    const html = renderToString(<BotAvatar color="#8B5CF6::shape_0" size={26} />);
+    const shape = html.match(/<svg[^>]*transition-transform[^>]*>/)?.[0];
+    expect(shape).toMatch(/style="[^"]*width:26px;height:26px/);
   });
 
   it.each([...ACTIVE_RUN_STATUSES])("marks active run status %s as working", (status) => {
@@ -60,9 +67,9 @@ describe("BotAvatar", () => {
   });
 
   it("resolves explicit colors and shapes", () => {
-    expect(resolvePersonaColorDef("bot", "#10B981").hex.toLowerCase()).toBe("#10b981");
+    expect(resolvePersonaColorDef("bot", "#10B981").hex).toBe("#00C972");
     expect(resolvePersonaColorDef("bot", "#fff").hex).toBe("#fff");
-    expect(BOT_AVATAR_COLORS.length).toBeGreaterThan(0);
+    expect(BOT_COLORS.length).toBeGreaterThan(0);
   });
 
   it("falls back to the identity palette for invalid custom hex", () => {
@@ -154,6 +161,27 @@ describe("BotAvatar", () => {
     expect(html).toContain('aria-label="hex"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("focus-visible:ring-2");
+  });
+
+  it("previews an organic body when no studio shape is given", () => {
+    const html = renderToString(
+      <BotShapePreview identity="maya" label="Shape 1" color="#8B5CF6" selected={false} />,
+    );
+    expect(html).toContain('aria-label="Shape 1"');
+    expect(html).toContain("cortexai-agent-hub-organic-avatar");
+  });
+
+  it("morphs the organic body only while working", () => {
+    const morphing = (status: string) =>
+      [
+        ...renderToString(<BotAvatar color="#8B5CF6" status={status} />).matchAll(
+          /cortexai-agent-hub-organic-avatar-body-(idle|working)"[^>]*>(<animate)?/g,
+        ),
+      ]
+        .filter((match) => match[2])
+        .map((match) => match[1]);
+    expect(morphing("idle")).toEqual([]);
+    expect(morphing("running")).toEqual(["working"]);
   });
 
   it("draws every plain-colour bot with the organic body", () => {

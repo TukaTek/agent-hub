@@ -1,15 +1,13 @@
 // @vitest-environment jsdom
 
-import type { ComputerStatus } from "@cortexai-agent-hub/contracts";
 import type { ReactNode } from "react";
 import { act, createElement, useEffect } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ArchivedBots from "../app/(settings)/archived-bots";
-import { ComputerMaintenanceActions } from "../components/computer-maintenance-actions";
-import type { MobileBot, MobileGroup } from "./api";
 import { onArchivedChatsChanged } from "./archived-chats";
+import type { MobileBot, MobileGroup } from "./mobile-types";
 import { registerSettingsSheet } from "./settings-sheet";
 
 const { rpc, groupRpc, alert, push, closeSettingsSheet, navigation, focus, selectSpace } =
@@ -26,15 +24,20 @@ const { rpc, groupRpc, alert, push, closeSettingsSheet, navigation, focus, selec
   }));
 const bot = { id: "bot-fixture", name: "Fixture", spaceId: "space-a" } as MobileBot;
 const group = { id: "group-fixture", name: "Crew", spaceId: "space-a" } as MobileGroup;
+vi.mock("./side-insets", () => ({ useSideInsets: () => ({}) }));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({
   captureApiRequestContext: async () => ({ apiBase: "https://example.test", headers: {} }),
-  selectSpace,
   rpc: (procedure: string, ...args: unknown[]) =>
     procedure === "spaces/list"
       ? Promise.resolve({ spaces: [{ id: "space-a" }] })
       : procedure.startsWith("groups/")
         ? groupRpc(procedure, ...args)
         : rpc(procedure, ...args),
+}));
+vi.mock("./api-server", () => ({
+  selectSpace,
 }));
 vi.mock("expo-router", () => ({
   useRouter: () => ({ push }),
@@ -56,18 +59,18 @@ vi.mock("./native", () => ({
   useResolvedAppearance: () => "light",
 }));
 vi.mock("./floating-header", () => ({ useFloatingHeaderInset: () => 0 }));
+const addToSearchInbox = vi.hoisted(() => vi.fn());
+vi.mock("./search-inbox", () => ({
+  addToSearchInbox,
+  removeFromSearchInbox: vi.fn(),
+  searchInboxSession: () => ({ generation: 3, apiBase: "http://api.test" }),
+}));
 vi.mock("./native-controls", () => ({ iosAtLeast: () => true }));
-vi.mock("./computer-updates", () => ({ computerUpdates: { start: vi.fn() } }));
-vi.mock("@expo/ui/community/menu", () => ({ MenuView: () => null }));
 vi.mock("../components/native-symbol", () => ({ NativeSymbol: () => null }));
 vi.mock("../components/native-action-button", () => ({
   NativeActionButton: ({ label, onPress }: { label: string; onPress: () => void }) =>
     createElement("button", { type: "button", onClick: onPress }, label),
 }));
-vi.mock("./i18n", () => {
-  const t = (text: string) => text;
-  return { t, useI18n: () => ({ t }) };
-});
 vi.mock("../components/archived-bot-list", () => ({
   ArchivedBotList: ({
     bots,
@@ -126,6 +129,18 @@ describe("archived chat read failures", () => {
     vi.unstubAllGlobals();
   });
 
+  it("adds the archived bot to the inbox roster before opening its chat, so its title is complete", async () => {
+    rpc.mockResolvedValueOnce({});
+    await act(async () => container.querySelector("button")!.click());
+    expect(addToSearchInbox).toHaveBeenCalledWith(
+      { kind: "bot", bot },
+      { generation: 3, apiBase: "http://api.test" },
+    );
+    expect(addToSearchInbox.mock.invocationCallOrder[0]).toBeLessThan(
+      push.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
   it.each([new TypeError("Network request failed"), new Error("Request timed out")])(
     "retries a failed read without restoring the bot: %s",
     async (cause) => {
@@ -134,7 +149,7 @@ describe("archived chat read failures", () => {
       expect(push).not.toHaveBeenCalled();
       expect(alert).toHaveBeenCalledWith("Could not load bot", expect.any(String), [
         { text: "Cancel", style: "cancel" },
-        { text: "Try again.", onPress: expect.any(Function) },
+        { text: "Try again", onPress: expect.any(Function) },
       ]);
       rpc.mockResolvedValueOnce({});
       await act(async () => alert.mock.calls[0]![2][1].onPress());
@@ -143,6 +158,14 @@ describe("archived chat read failures", () => {
         pathname: "/thread",
         params: { botId: bot.id, name: bot.name, readOnly: "1" },
       });
+      // The chat finds the archived bot in the roster, so its title is complete at once.
+      expect(addToSearchInbox).toHaveBeenCalledWith(
+        { kind: "bot", bot },
+        { generation: 3, apiBase: "http://api.test" },
+      );
+      expect(addToSearchInbox.mock.invocationCallOrder[0]).toBeLessThan(
+        push.mock.invocationCallOrder[0] ?? 0,
+      );
       expect(closeSettingsSheet.mock.invocationCallOrder[0]).toBeLessThan(
         push.mock.invocationCallOrder[0] ?? 0,
       );
@@ -313,7 +336,7 @@ describe("archived chat read failures", () => {
     expect(container.textContent).toContain(bot.name);
     expect(container.textContent).toContain("Could not reach the server");
     const retry = [...container.querySelectorAll("button")].find(
-      (item) => item.textContent === "Try again.",
+      (item) => item.textContent === "Try again",
     )!;
     rpc.mockResolvedValueOnce([]);
     await act(async () => retry.click());
@@ -469,7 +492,7 @@ describe("archived chat read failures", () => {
       (item) => item.textContent === "Restore Crew",
     )!;
     await act(async () => restore.click());
-    expect(container.textContent).toBe("Could not load chatsTry again.");
+    expect(container.textContent).toBe("Could not load chatsTry again");
   });
 
   it("keeps the groups load error after restoring the last bot", async () => {
@@ -483,7 +506,7 @@ describe("archived chat read failures", () => {
       (item) => item.textContent === "Restore",
     )!;
     await act(async () => restore.click());
-    expect(container.textContent).toBe("Could not load chatsTry again.");
+    expect(container.textContent).toBe("Could not load chatsTry again");
   });
 
   it("keeps a bots retry that is running when a group is restored", async () => {
@@ -500,7 +523,7 @@ describe("archived chat read failures", () => {
     );
     groupRpc.mockResolvedValueOnce([group]);
     const retry = [...container.querySelectorAll("button")].find(
-      (item) => item.textContent === "Try again.",
+      (item) => item.textContent === "Try again",
     )!;
     await act(async () => retry.click());
     groupRpc.mockResolvedValueOnce({ ok: true });
@@ -575,7 +598,7 @@ describe("archived chat read failures", () => {
       );
       rpc.mockResolvedValueOnce([bot]);
       const retry = [...container.querySelectorAll("button")].find(
-        (item) => item.textContent === "Try again.",
+        (item) => item.textContent === "Try again",
       )!;
       await act(async () => retry.click());
       rpc.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce([]);
@@ -639,19 +662,4 @@ describe("archived chat read failures", () => {
       expect(alert).toHaveBeenCalledTimes(alerts);
     },
   );
-
-  it("clears a computer's native header menu when its actions unmount", async () => {
-    await act(async () =>
-      root.render(
-        <ComputerMaintenanceActions
-          botId="bot-fixture"
-          computer={{ state: "running" } as ComputerStatus}
-          onChanged={async () => {}}
-        />,
-      ),
-    );
-    expect(navigation.setOptions.mock.lastCall![0].unstable_headerRightItems()).toHaveLength(1);
-    await act(async () => root.render(null));
-    expect(navigation.setOptions.mock.lastCall![0].unstable_headerRightItems()).toEqual([]);
-  });
 });

@@ -1,6 +1,6 @@
 import type { Routine } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
-import { routineRowDetail, routineStatusLine, sortRoutinesByNextRun } from "./routine.js";
+import { routineRowDetail, routineTriggerRows } from "./routine.js";
 
 function routine(partial: Partial<Routine>): Routine {
   return {
@@ -15,6 +15,7 @@ function routine(partial: Partial<Routine>): Routine {
     webhookEnabled: false,
     githubEnabled: false,
     messageProvider: null,
+    emailSenders: null,
     modelProvider: null,
     modelId: null,
     thinkingLevel: null,
@@ -27,43 +28,36 @@ function routine(partial: Partial<Routine>): Routine {
   };
 }
 
-describe("routineStatusLine", () => {
-  it("names a change trigger", () => {
+describe("routineTriggerRows", () => {
+  it("shows readable schedules, then the other triggers", () => {
     expect(
-      routineStatusLine(
-        routine({ watch: { kind: "files", paths: ["inbox"], everyMinutes: 15, loud: false } }),
-      ),
-    ).toBe("Active · When something changes · UTC");
-  });
-
-  it("shows readable schedules instead of cron expressions", () => {
-    expect(routineStatusLine(routine({ crons: ["0 6 * * *"] }))).toBe(
-      "Active · Every day at 6:00 AM · UTC",
-    );
-    expect(routineStatusLine(routine({ crons: ["0 6 * * 0"] }))).toBe(
-      "Active · Every Sunday at 6:00 AM · UTC",
-    );
-    expect(routineStatusLine(routine({ crons: ["30 8 * * 1-5"] }))).toBe(
-      "Active · Weekdays at 8:30 AM · UTC",
-    );
-    expect(routineStatusLine(routine({ crons: ["0 * * * *"] }))).toBe("Active · Every hour · UTC");
-  });
-
-  it("keeps the routine's time zone and other triggers", () => {
-    expect(
-      routineStatusLine(
+      routineTriggerRows(
         routine({
-          active: false,
-          crons: ["0 9 * * 1"],
-          timezone: "Europe/Berlin",
+          crons: ["0 6 * * 0", "30 8 * * 1-5"],
           webhookEnabled: true,
+          watch: { kind: "files", paths: ["inbox"], everyMinutes: 15, loud: false },
         }),
+        "UTC",
       ),
-    ).toBe("Paused · Every Monday at 9:00 AM, Webhook · Europe/Berlin");
+    ).toEqual([
+      "Every Sunday at 6:00 AM",
+      "Weekdays at 8:30 AM",
+      "Webhook",
+      "When something changes",
+    ]);
   });
 
-  it("omits the trigger segment when there are no triggers", () => {
-    expect(routineStatusLine(routine({}))).toBe("Active · UTC");
+  it("names the routine's zone on schedules when it isn't the device's", () => {
+    expect(
+      routineTriggerRows(routine({ crons: ["0 9 * * 1"], timezone: "Europe/Berlin" }), "UTC"),
+    ).toEqual(["Every Monday at 9:00 AM (Europe/Berlin)"]);
+  });
+
+  it("uses the server's delay status, without diagnosing worker health", () => {
+    expect(routineRowDetail(routine({ scheduleDelayed: true }), "UTC")).toBe("Schedule delayed");
+    expect(routineRowDetail(routine({ active: false, scheduleDelayed: true }), "UTC")).toBe(
+      "Paused",
+    );
   });
 });
 
@@ -84,48 +78,21 @@ describe("routineRowDetail", () => {
         }),
         "America/New_York",
       ),
-    ).toBe("Every day at 6:00 AM, Every Monday at 9:00 AM, Webhook · Europe/Berlin");
+    ).toBe("Every day at 6:00 AM, Every Monday at 9:00 AM, Webhook (Europe/Berlin)");
   });
 
   it("ends with Paused only when paused", () => {
     expect(routineRowDetail(routine({ active: false, crons: ["0 * * * *"] }), "UTC")).toBe(
-      "Every hour · Paused",
+      "Every hour, Paused",
     );
     expect(routineRowDetail(routine({ active: false, timezone: "Asia/Tokyo" }), "UTC")).toBe(
-      "Asia/Tokyo · Paused",
+      "Asia/Tokyo, Paused",
     );
   });
 
   it("keeps the time zone when the device's is unknown", () => {
     expect(routineRowDetail(routine({ crons: ["0 6 * * *"] }), undefined)).toBe(
-      "Every day at 6:00 AM · UTC",
+      "Every day at 6:00 AM (UTC)",
     );
-  });
-});
-
-describe("sortRoutinesByNextRun", () => {
-  it("puts the soonest run first, then routines without one, oldest first on ties", () => {
-    const sorted = sortRoutinesByNextRun([
-      routine({ id: "none-new", createdAt: "2026-03-01T00:00:00.000Z" }),
-      routine({ id: "later", nextRunAt: "2026-10-20T09:00:00.000Z" }),
-      routine({ id: "none-old", createdAt: "2026-02-01T00:00:00.000Z" }),
-      routine({
-        id: "soon-new",
-        nextRunAt: "2026-10-19T09:00:00.000Z",
-        createdAt: "2026-05-01T00:00:00.000Z",
-      }),
-      routine({
-        id: "soon-old",
-        nextRunAt: "2026-10-19T09:00:00.000Z",
-        createdAt: "2026-04-01T00:00:00.000Z",
-      }),
-    ]);
-    expect(sorted.map((item) => item.id)).toEqual([
-      "soon-old",
-      "soon-new",
-      "later",
-      "none-old",
-      "none-new",
-    ]);
   });
 });

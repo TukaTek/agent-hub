@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CortexAiAgentHubDesktop, CortexAiAgentHubDesktopOAuthCallback } from "./desktop.js";
 import {
-  type CortexAiAgentHubDesktop,
-  type CortexAiAgentHubDesktopOAuthCallback,
+  DARWIN_WINDOW_CONTROLS_WIDTH_PX,
   desktopOAuthCode,
   oauthStateOf,
   onDesktopOAuthCallback,
@@ -44,9 +44,17 @@ describe("window chrome", () => {
     expect(windowChromeKind(desktop("darwin"))).toBe("darwin");
   });
 
-  it("uses real window-control buttons on Windows and Linux", () => {
+  it("leaves the native Windows frame to Electron when advertised", () => {
+    expect(windowChromeKind({ ...desktop("win32"), nativeWindowFrame: true })).toBe("spacer");
+  });
+
+  it("keeps controls for older frameless Windows clients and Linux", () => {
     expect(windowChromeKind(desktop("win32"))).toBe("controls");
     expect(windowChromeKind(desktop("linux"))).toBe("controls");
+  });
+
+  it("reserves the macOS traffic-light strip width beside inset controls", () => {
+    expect(DARWIN_WINDOW_CONTROLS_WIDTH_PX).toBe(72);
   });
 });
 

@@ -2,7 +2,6 @@ import type { Actor, MessageBlock } from "@cortexai-agent-hub/contracts";
 import type { Prisma, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { appendEventInTransaction, IsolationError } from "@cortexai-agent-hub/db";
 
-/** Minimal dependency surface for helpers that update a bot's thread cards. */
 export type BotThreadDeps = {
   prisma: PrismaClient;
   events: ThreadEvents;
@@ -10,7 +9,7 @@ export type BotThreadDeps = {
 
 export async function requireBotThread(deps: BotThreadDeps, actor: Actor, botId: string) {
   const bot = await deps.prisma.bot.findFirst({
-    where: { id: botId, spaceId: actor.spaceId, userId: actor.userId },
+    where: { id: botId, spaceId: actor.spaceId },
     include: { thread: true },
   });
   if (!bot?.thread) throw new IsolationError();

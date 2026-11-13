@@ -11,14 +11,12 @@ export function ConnectionModeFields({
   onModeChange,
   baseUrl,
   onBaseUrlChange,
-  baseUrlPlaceholder,
 }: {
   busy: boolean;
   mode: ConnectionMode;
   onModeChange: (mode: ConnectionMode) => void;
   baseUrl: string;
   onBaseUrlChange: (baseUrl: string) => void;
-  baseUrlPlaceholder: string;
 }) {
   const baseUrlId = useId();
   const connectionLabelId = useId();
@@ -35,9 +33,9 @@ export function ConnectionModeFields({
               pressed={mode === option}
               disabled={busy}
               onPressedChange={() => onModeChange(option)}
-              className="text-[13px] aria-pressed:bg-background aria-pressed:shadow-sm"
+              className="text-body-sm aria-pressed:bg-background aria-pressed:shadow-sm"
             >
-              {option === "cloud" ? <Trans>Cloud</Trans> : <Trans>Local</Trans>}
+              {option === "cloud" ? <Trans>Cloud</Trans> : <Trans>Self-hosted</Trans>}
             </Toggle>
           ))}
         </div>
@@ -53,7 +51,7 @@ export function ConnectionModeFields({
             value={baseUrl}
             disabled={busy}
             onChange={(event) => onBaseUrlChange(event.target.value)}
-            placeholder={baseUrlPlaceholder}
+            placeholder="https://…"
           />
         </Field>
       ) : null}

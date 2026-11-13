@@ -1,12 +1,20 @@
 import type { ArtifactStore } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { attachmentComputerPath } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { IsolationError } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactListCursorError,
   createOwnedArtifact,
   deleteArtifactFamily,
+  getOwnedArtifact,
+  getSpaceArtifact,
+  getSpaceArtifactById,
+  listArtifactVersions,
   listSpaceArtifacts,
+  resolveGroupSendAttachments,
+  resolveSendAttachments,
   storeInboundAttachment,
 } from "./artifacts.js";
 
@@ -40,6 +48,7 @@ function cursor(input: { createdAt: string; id: string; botId: string | null; as
       createdAt: input.createdAt,
       id: input.id,
       botId: input.botId,
+      madeByBots: false,
       asOf: input.asOf ?? "2026-09-20T00:00:00.000Z",
     }),
     "utf8",
@@ -213,6 +222,31 @@ describe("listSpaceArtifacts", () => {
     expect(queryRaw).not.toHaveBeenCalled();
   });
 
+  it("reads a cursor issued before the made-by-bots filter as the full list", async () => {
+    const issuedBefore = `v1.${Buffer.from(
+      JSON.stringify({
+        createdAt: "2026-08-01T00:00:00.000Z",
+        id: "version-b",
+        botId: null,
+        asOf: "2026-09-20T00:00:00.000Z",
+      }),
+      "utf8",
+    ).toString("base64url")}`;
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const deps = {
+      prisma: { artifact: { findFirst: vi.fn() }, $queryRaw: queryRaw } as unknown as Pick<
+        PrismaClient,
+        "artifact" | "$queryRaw"
+      >,
+    };
+    await listSpaceArtifacts(deps, actor, { cursor: issuedBefore });
+    expect(queryRaw.mock.calls[0]?.[0].values).toContain("version-b");
+    await expect(
+      listSpaceArtifacts(deps, actor, { madeByBots: true, cursor: issuedBefore }),
+    ).rejects.toBeInstanceOf(ArtifactListCursorError);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
   it("applies a bot-scoped cursor with that bot filter", async () => {
     const queryRaw = vi.fn().mockResolvedValue([]);
     const pageCursor = cursor({
@@ -383,26 +417,20 @@ describe("deleteArtifactFamily", () => {
 });
 
 describe("configured artifact upload limit", () => {
-  it.each([
-    ["song.mp3", "audio/mp3", "audio/mpeg"],
-    ["song.wav", "audio/x-wav", "audio/wav"],
-    ["song.ogg", "", "audio/ogg"],
-    ["song.m4a", "audio/x-m4a", "audio/mp4"],
-    ["song.m4a", "audio/aac", "audio/mp4"],
-  ])("normalizes %s uploads before validation/storage", async (name, mimeType, expected) => {
+  it("normalizes uploads before validation/storage", async () => {
     const reachedStorage = new Error("reached storage");
     const put = vi.fn().mockRejectedValue(reachedStorage);
     const deps = { prisma: {} as PrismaClient, artifacts: { put } as unknown as ArtifactStore };
     await expect(
       createOwnedArtifact(deps, actor, {
         botId: "bot-1",
-        name,
-        mimeType,
+        name: "song.m4a",
+        mimeType: "audio/aac",
         contentBase64: "YXVkaW8=",
       }),
     ).rejects.toBe(reachedStorage);
     expect(put).toHaveBeenCalledWith(
-      expect.objectContaining({ mimeType: expected }),
+      expect.objectContaining({ mimeType: "audio/mp4" }),
       expect.anything(),
     );
     put.mockClear();
@@ -448,9 +476,17 @@ describe("storeInboundAttachment", () => {
       artifacts: { put } as unknown as ArtifactStore,
       maxUploadSizeBytes: 8,
     };
-    const store = (attachment: Parameters<typeof storeInboundAttachment>[2]["attachment"]) =>
-      storeInboundAttachment(deps, actor, { botId: "bot-1", attachment, clientNonce: "nonce-1" });
-    return { put, store };
+    const store = (
+      attachment: Parameters<typeof storeInboundAttachment>[2]["attachment"],
+      downloadDeadline?: number,
+    ) =>
+      storeInboundAttachment(deps, actor, {
+        botId: "bot-1",
+        attachment,
+        clientNonce: "nonce-1",
+        downloadDeadline,
+      });
+    return { put, store, findFirst };
   }
 
   it("bounds a stalled download and does not store its late result", async () => {
@@ -474,6 +510,16 @@ describe("storeInboundAttachment", () => {
     }
   });
 
+  it("does not start another download after the shared deadline", async () => {
+    const { put, store } = setup();
+    const fetch = vi.fn(async () => new Uint8Array(3));
+    await expect(
+      store({ name: "a.png", mimeType: "image/png", fetch }, Date.now() - 1),
+    ).rejects.toThrow("Attachment download timed out");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("skips the download when the platform reports an oversize file", async () => {
     const { put, store } = setup();
     const fetch = vi.fn(async () => new Uint8Array(4));
@@ -482,6 +528,18 @@ describe("storeInboundAttachment", () => {
     );
     expect(fetch).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it("stores a CSV that a chat platform labelled as Excel as CSV", async () => {
+    const { put, store } = setup();
+    const fetch = vi.fn(async () => new Uint8Array(4));
+    await expect(
+      store({ name: "sales.csv", mimeType: "application/vnd.ms-excel", fetch }),
+    ).rejects.toBe(reachedStorage);
+    expect(put).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: "text/csv" }),
+      expect.anything(),
+    );
   });
 
   it("rejects unsupported types and oversize downloads before storage", async () => {
@@ -528,7 +586,7 @@ describe("storeInboundAttachment", () => {
   });
 
   it("reuses the artifact an earlier delivery of the same file stored", async () => {
-    const { put, store } = setup({
+    const { put, store, findFirst } = setup({
       id: "artifact-1",
       botId: "bot-1",
       groupId: null,
@@ -541,10 +599,227 @@ describe("storeInboundAttachment", () => {
       createdAt: new Date("2026-10-01T00:00:00.000Z"),
     });
     const fetch = vi.fn(async () => new Uint8Array(3));
-    await expect(store({ name: "a.png", mimeType: "image/png", fetch })).resolves.toMatchObject({
+    const replayed = await store({ name: "a.png", mimeType: "image/png", fetch }, Date.now() - 1);
+    expect(replayed).toMatchObject({
       id: "artifact-1",
+    });
+    expect(replayed.bytes).toBeUndefined();
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { spaceId: actor.spaceId, userId: actor.userId, clientNonce: "nonce-1" },
     });
     expect(fetch).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it("returns the downloaded bytes with a freshly stored artifact", async () => {
+    const bytes = new Uint8Array([7, 8, 9]);
+    const row = {
+      id: "artifact-9",
+      botId: "bot-1",
+      groupId: null,
+      runId: null,
+      name: "voice.oga",
+      description: null,
+      mimeType: "audio/ogg",
+      size: bytes.byteLength,
+      version: 1,
+      createdAt: new Date(0),
+    };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      artifact: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(row),
+      },
+    };
+    const deps = {
+      prisma: {
+        artifact: { findFirst: vi.fn().mockResolvedValue(null) },
+        $transaction: vi.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
+      } as unknown as PrismaClient,
+      artifacts: { put: vi.fn().mockResolvedValue({ id: "store-1" }) } as unknown as ArtifactStore,
+    };
+    const stored = await storeInboundAttachment(deps, actor, {
+      botId: "bot-1",
+      attachment: { name: "voice.oga", mimeType: "audio/ogg", fetch: async () => bytes },
+      clientNonce: "nonce-2",
+    });
+    expect(stored).toMatchObject({ id: "artifact-9", mimeType: "audio/ogg" });
+    expect(stored.bytes).toBe(bytes);
+  });
+
+  it("stores a WhatsApp voice note whose MIME type carries parameters", async () => {
+    // WhatsApp Cloud API reports voice notes as "audio/ogg; codecs=opus"
+    // with a parameter-less file name, so the type must be normalized
+    // before it is matched against the allowlist.
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const row = {
+      id: "artifact-11",
+      botId: "bot-1",
+      groupId: null,
+      runId: null,
+      name: "voice",
+      description: null,
+      mimeType: "audio/ogg",
+      size: bytes.byteLength,
+      version: 1,
+      createdAt: new Date(0),
+    };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      artifact: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(row),
+      },
+    };
+    const deps = {
+      prisma: {
+        artifact: { findFirst: vi.fn().mockResolvedValue(null) },
+        $transaction: vi.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
+      } as unknown as PrismaClient,
+      artifacts: { put: vi.fn().mockResolvedValue({ id: "store-2" }) } as unknown as ArtifactStore,
+    };
+    const stored = await storeInboundAttachment(deps, actor, {
+      botId: "bot-1",
+      attachment: { name: "voice", mimeType: "audio/ogg; codecs=opus", fetch: async () => bytes },
+      clientNonce: "nonce-3",
+    });
+    expect(stored).toMatchObject({ id: "artifact-11", mimeType: "audio/ogg" });
+    expect(attachmentComputerPath(stored.id, stored.mimeType)).toBe(`attachments/${stored.id}.ogg`);
+    expect(stored.bytes).toBe(bytes);
+  });
+
+  it("stores a standalone file apart from a same-name file's versions", async () => {
+    const existing = { id: "owner-report", rootArtifactId: null, version: 2 };
+    const create = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+      ...data,
+      id: "artifact-10",
+      runId: null,
+      description: null,
+      createdAt: new Date(0),
+    }));
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      artifact: {
+        // The nonce replay check finds nothing; the version lookup finds the owner's file.
+        findFirst: vi.fn(async ({ where }: { where: { clientNonce?: string } }) =>
+          where.clientNonce ? null : existing,
+        ),
+        create,
+      },
+    };
+    const deps = {
+      prisma: {
+        artifact: { findFirst: vi.fn().mockResolvedValue(null) },
+        $transaction: vi.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
+      } as unknown as PrismaClient,
+      artifacts: { put: vi.fn().mockResolvedValue({ id: "store-2" }) } as unknown as ArtifactStore,
+    };
+    const store = (standalone: boolean) =>
+      storeInboundAttachment(deps, actor, {
+        botId: "bot-1",
+        attachment: {
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          fetch: async () => new Uint8Array([1]),
+        },
+        clientNonce: "nonce-3",
+        standalone,
+      });
+
+    await store(true);
+    await store(false);
+
+    expect(create.mock.calls.map(([{ data }]) => [data.rootArtifactId, data.version])).toEqual([
+      [null, 1],
+      ["owner-report", 3],
+    ]);
+  });
+});
+
+describe("send attachment count", () => {
+  it.each(["bot", "group"])("enforces the deployment limit for %s attachments", async (target) => {
+    const findMany = vi.fn().mockImplementation(async ({ where }) =>
+      where.id.in.map((id: string) => ({
+        id,
+        name: `${id}.txt`,
+        mimeType: "text/plain",
+        size: 1,
+        storageKey: id,
+      })),
+    );
+    const prisma = { artifact: { findMany } } as unknown as PrismaClient;
+    const send = (maxAttachmentsPerMessage: number | undefined, count: number) => {
+      const deps = { prisma, maxAttachmentsPerMessage };
+      const ids = Array.from({ length: count }, (_, i) => `artifact-${i}`);
+      return target === "bot"
+        ? resolveSendAttachments(deps, actor, "bot-1", ids)
+        : resolveGroupSendAttachments(deps, actor, "group-1", ["bot-1"], ids);
+    };
+    for (const limit of [undefined, 1, 8, 100]) {
+      findMany.mockClear();
+      const effective = limit ?? 4;
+      await expect(send(limit, effective + 1)).rejects.toThrow(
+        `At most ${effective} attachments per message`,
+      );
+      expect(findMany).not.toHaveBeenCalled();
+      await expect(send(limit, effective)).resolves.toMatchObject({ blocks: expect.any(Array) });
+      expect(findMany).toHaveBeenCalledOnce();
+    }
+  });
+});
+
+describe("a reply's kept screenshot", () => {
+  it("cannot be opened from a client, by a group member or anyone else", async () => {
+    const row = {
+      id: "shot-1",
+      botId: "bot-1",
+      groupId: "group-1",
+      runId: "run-1",
+      storageKey: "stored-shot",
+      name: "screenshot",
+      description: null,
+      mimeType: "image/png;profile=step-screenshot",
+      size: 3,
+      version: 1,
+      createdAt: new Date(),
+    };
+    const get = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const deps = {
+      prisma: { artifact: { findFirst: vi.fn(async () => row) } } as unknown as PrismaClient,
+      artifacts: { get } as unknown as ArtifactStore,
+    };
+    const member: Actor = { ...actor, userId: "member-1" };
+    await expect(
+      getSpaceArtifact(deps, member, {
+        artifactId: "shot-1",
+        groupId: "group-1",
+        contextBotId: "bot-1",
+      }),
+    ).rejects.toBeInstanceOf(IsolationError);
+    await expect(
+      getSpaceArtifactById(deps, member, { artifactId: "shot-1" }),
+    ).rejects.toBeInstanceOf(IsolationError);
+    await expect(
+      getOwnedArtifact(deps, actor, { artifactId: "shot-1", botId: "bot-1" }),
+    ).rejects.toBeInstanceOf(IsolationError);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("is neither listed as a file's versions nor deletable from a client", async () => {
+    const findFirst = vi.fn(async () => null);
+    const prisma = { artifact: { findFirst, findMany: vi.fn() } } as unknown as PrismaClient;
+    await expect(
+      listArtifactVersions({ prisma }, actor, { familyId: "shot-1" }),
+    ).rejects.toBeInstanceOf(IsolationError);
+    await expect(
+      deleteArtifactFamily({ prisma, artifacts: {} as ArtifactStore }, actor, {
+        familyId: "shot-1",
+      }),
+    ).rejects.toBeInstanceOf(IsolationError);
+    for (const [query] of findFirst.mock.calls as unknown as Array<[{ where: unknown }]>)
+      expect(query.where).toMatchObject({
+        mimeType: { notIn: expect.arrayContaining(["image/png;profile=step-screenshot"]) },
+      });
   });
 });

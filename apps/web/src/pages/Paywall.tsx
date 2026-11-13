@@ -3,30 +3,36 @@ import { Button } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { Check } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { AccountMenu } from "../components/AccountMenu";
 import { CreditChoice } from "../components/ModelCredits";
 import { formatBillingPrice } from "../lib/billing";
-import { clearSpaceSelection, rpc } from "../lib/rpc";
+import type { RpcClient } from "../lib/rpc";
 import { useSignOut } from "../lib/sign-out";
 import { AuthFrame, submitClass } from "./Auth";
 
-export function PaywallPage({ status }: { status: BillingStatus }) {
+export function PaywallPage({
+  status,
+  client,
+  dismissible = false,
+}: {
+  status: BillingStatus;
+  /** The space `status` was read for, so a choice bills the organization whose prices show. */
+  client: RpcClient;
+  /** Opened from the app rather than required, so it closes instead of logging out. */
+  dismissible?: boolean;
+}) {
   return status.funding !== undefined ? (
-    <CreditChoice status={status} />
+    <CreditChoice status={status} client={client} dismissible={dismissible} />
   ) : (
-    <LegacyPaywallPage status={status} />
+    <LegacyPaywallPage status={status} client={client} />
   );
 }
 
-function LegacyPaywallPage({ status }: { status: BillingStatus }) {
+function LegacyPaywallPage({ status, client }: { status: BillingStatus; client: RpcClient }) {
   const { t, i18n } = useLingui();
-  const navigate = useNavigate();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { signingOut, logOut } = useSignOut(() => {
-    clearSpaceSelection();
-    navigate("/");
-  }, setError);
+  const { signingOut, logOut } = useSignOut("/sign-in", setError);
   // An unpaid or paused subscription resumes from the portal; a new checkout would bill twice.
   const resumable = status.state === "unpaid" || status.state === "paused";
   const showCheckout = status.canManage && !resumable;
@@ -43,7 +49,9 @@ function LegacyPaywallPage({ status }: { status: BillingStatus }) {
     setPending(true);
     setError(null);
     try {
-      const { url } = await (target === "checkout" ? rpc.billing.checkout() : rpc.billing.portal());
+      const { url } = await (target === "checkout"
+        ? client.billing.checkout()
+        : client.billing.portal());
       window.location.assign(url);
     } catch {
       setError(t`Could not open billing`);
@@ -76,12 +84,12 @@ function LegacyPaywallPage({ status }: { status: BillingStatus }) {
     >
       <div data-testid="billing-paywall" className="flex w-full flex-col items-center">
         {error ? (
-          <p role="alert" className="mb-3 w-full text-sm text-destructive">
+          <p role="alert" className="mb-3 w-full text-body text-destructive">
             {error}
           </p>
         ) : null}
         {status.canManage ? (
-          <ul className="mb-9 flex flex-col gap-3 text-base">
+          <ul className="mb-9 flex flex-col gap-3 text-body-lg">
             {included.map((item) => (
               <li key={item} className="flex items-center gap-3">
                 <Check aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -111,15 +119,7 @@ function LegacyPaywallPage({ status }: { status: BillingStatus }) {
             <Trans>Manage billing</Trans>
           </Button>
         ) : null}
-        <Button
-          type="button"
-          variant="ghost"
-          className="mt-6 text-muted-foreground"
-          disabled={pending || signingOut}
-          onClick={() => void logOut()}
-        >
-          <Trans>Log out</Trans>
-        </Button>
+        <AccountMenu disabled={pending} signingOut={signingOut} onLogOut={() => void logOut()} />
       </div>
     </AuthFrame>
   );

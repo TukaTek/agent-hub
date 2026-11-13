@@ -1,5 +1,9 @@
 import { ATTACHMENT_IMAGE_MAX_EDGE, ATTACHMENT_IMAGE_QUALITY } from "@cortexai-agent-hub/contracts";
-import { inferAttachmentMimeType } from "@cortexai-agent-hub/core";
+import {
+  inferAttachmentMimeType,
+  isStaticPng,
+  PNG_ANIMATION_HEADER_BYTES,
+} from "@cortexai-agent-hub/core";
 
 // Recompress byte-heavy images even when their dimensions already fit.
 const IMAGE_RECOMPRESS_BYTES = 5 * 1024 * 1024;
@@ -16,6 +20,10 @@ export async function prepareImage(file: File): Promise<File> {
   if (!canPrepareImage(file)) return file;
   let image: ImageBitmap | undefined;
   try {
+    if (inferAttachmentMimeType(file.name, file.type) === "image/png") {
+      const header = new Uint8Array(await file.slice(0, PNG_ANIMATION_HEADER_BYTES).arrayBuffer());
+      if (!isStaticPng(header)) return file;
+    }
     image = await createImageBitmap(file);
     const edge = Math.max(image.width, image.height);
     if (edge <= ATTACHMENT_IMAGE_MAX_EDGE && file.size < IMAGE_RECOMPRESS_BYTES) return file;

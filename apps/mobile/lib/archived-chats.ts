@@ -1,5 +1,6 @@
-import type { ApiRequestContext, MobileBot, MobileGroup, MobileSpaceNavigation } from "./api";
+import type { ApiRequestContext } from "./api";
 import { captureApiRequestContext, rpc } from "./api";
+import type { MobileBot, MobileGroup } from "./mobile-types";
 
 /** Archived bots and groups load independently, so one failing list doesn't hide the other. */
 export async function loadArchivedChats(
@@ -14,8 +15,8 @@ export async function loadArchivedChats(
     ? { signal, requestContext, skipSpaceAuthRecovery: true }
     : { signal };
   const [bots, groups] = await Promise.allSettled([
-    rpc<MobileBot[]>("bots/listArchived", {}, options),
-    rpc<MobileGroup[]>("groups/listArchived", {}, options),
+    rpc("bots/listArchived", {}, options),
+    rpc("groups/listArchived", {}, options),
   ]);
   return {
     bots: bots.status === "fulfilled" ? bots.value : null,
@@ -51,11 +52,7 @@ export function onArchivedChatsChanged(listener: () => void): () => void {
 export async function loadAllArchivedChats(signal?: AbortSignal) {
   try {
     const context = await captureApiRequestContext();
-    const navigation = await rpc<MobileSpaceNavigation>(
-      "spaces/list",
-      {},
-      { signal, requestContext: context },
-    );
+    const navigation = await rpc("spaces/list", {}, { signal, requestContext: context });
     const loaded = await Promise.all(
       navigation.spaces.map(async (space) => {
         const loaded = await loadArchivedChats(signal, {

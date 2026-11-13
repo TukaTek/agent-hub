@@ -15,6 +15,7 @@ import {
   resolveStartupTarget,
   safeExternalUrl,
   serializeSetup,
+  serverHeadersFor,
   servesBundledRenderer,
   sessionPartitionForServerUrl,
 } from "./setup-config.js";
@@ -50,12 +51,17 @@ describe("server address normalization", () => {
     expect(normalizeServerUrl("http://cortexai-agent-hub.example.com")).toBeNull();
     expect(normalizeServerUrl("http://10.0.0.8:3100")).toBe("http://10.0.0.8:3100");
     expect(normalizeServerUrl("http://[fd00::1]:3100")).toBe("http://[fd00::1]:3100");
+    expect(normalizeServerUrl("100.101.102.103:3100")).toBe("http://100.101.102.103:3100");
   });
 
   it("rejects cleartext link-local addresses used by cloud metadata endpoints", () => {
     expect(normalizeServerUrl("http://169.254.169.254")).toBeNull();
     expect(normalizeServerUrl("http://169.254.1.1:80")).toBeNull();
     expect(normalizeServerUrl("http://[fe80::1]:3100")).toBeNull();
+    expect(normalizeServerUrl("http://100.100.100.200")).toBeNull();
+    expect(normalizeServerUrl("http://[fd00:ec2::254]")).toBeNull();
+    // fd::1 is 00fd::1, not unique-local.
+    expect(normalizeServerUrl("http://[fd::1]:3100")).toBeNull();
     // HTTPS to link-local still normalizes; the health probe must match CortexAI Agent Hub.
     expect(normalizeServerUrl("https://169.254.169.254")).toBe("https://169.254.169.254");
   });
@@ -145,11 +151,54 @@ describe("saved setup", () => {
   });
 });
 
+describe("server request headers", () => {
+  const access = { "CF-Access-Client-Id": "id.access", "CF-Access-Client-Secret": "secret" };
+  const setup = {
+    mode: "existing",
+    serverUrl: "https://cortexai-agent-hub.example.com",
+    headers: access,
+  } as const;
+
+  it("saves headers for an existing server and drops an empty set", () => {
+    expect(parseStoredSetup(serializeSetup(setup))).toEqual(setup);
+    expect(
+      parseSetupInput({
+        mode: "existing",
+        serverUrl: "https://cortexai-agent-hub.example.com",
+        headers: {},
+      }),
+    ).toEqual({ mode: "existing", serverUrl: "https://cortexai-agent-hub.example.com" });
+  });
+
+  it("refuses headers CortexAI Agent Hub owns and headers for a new local instance", () => {
+    expect(parseSetupInput({ ...setup, headers: { Cookie: "a=b" } })).toBeNull();
+    expect(parseSetupInput({ ...setup, headers: "x: y" })).toBeNull();
+    expect(
+      parseSetupInput({ mode: "new", serverUrl: "http://127.0.0.1:5173", headers: access }),
+    ).toBeNull();
+  });
+
+  it("adds them only to the saved server, websockets included", () => {
+    expect(serverHeadersFor("https://cortexai-agent-hub.example.com/rpc/me", setup)).toEqual(
+      access,
+    );
+    expect(
+      serverHeadersFor("wss://cortexai-agent-hub.example.com/novnc/websockify", setup),
+    ).toEqual(access);
+    expect(serverHeadersFor("https://cortexai-agent-hub.example.com.evil/rpc", setup)).toEqual({});
+    expect(serverHeadersFor("http://cortexai-agent-hub.example.com/rpc", setup)).toEqual({});
+    expect(serverHeadersFor("https://accounts.example.com/", setup)).toEqual({});
+    expect(serverHeadersFor("not a url", setup)).toEqual({});
+    expect(serverHeadersFor("https://cortexai-agent-hub.example.com/", null)).toEqual({});
+  });
+});
+
 describe("startup target", () => {
   const saved = { mode: "existing", serverUrl: "https://cortexai-agent-hub.example.com" } as const;
 
   it("runs setup on a first launch", () => {
     expect(resolveStartupTarget({})).toEqual({ kind: "setup" });
+    expect(resolveStartupTarget({ saved: null })).toEqual({ kind: "setup" });
   });
 
   it("opens the saved instance on later launches", () => {

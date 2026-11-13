@@ -13,12 +13,12 @@ CortexAI Agent Hub is in beta. Learn more at the [CortexAI product page](https:/
 ## Features
 
 - Persistent assistants with their own conversations, memory, routines, and history
-- Voice mode: speak replies, dictate, and call an assistant. Bring your own ElevenLabs, OpenAI, Cartesia, or Fish Audio key
+- Voice mode: speak replies, dictate, and call an assistant. Bring your own ElevenLabs, OpenAI, Cartesia, or Fish Audio key, or use a Mac server's installed voices
 - Shared Team Computers and isolated Private computers
 - Browser, terminal, file, and graphical desktop access
 - Assistants that can delegate to peer assistants or short-lived subagents
 - Bring-your-own model credentials through Pi
-- App integrations through Composio or Pipedream Connect, plus user-installed Treg, remote MCP, and OpenAPI tool sources
+- App integrations through Composio or Pipedream Connect, plus user-installed remote MCP and OpenAPI tool sources
 - Docker, E2B, Daytona, CreateOS, Boat, and trusted local-computer support
 
 ## Stack
@@ -57,7 +57,7 @@ place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or wh
 disposable); `docker compose down -v` deletes all Postgres state.
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
-Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, `boat`, or `railway`
+Local Docker computers are on by default. Optional remote providers: `e2b`, `novita`, `daytona`, `createos`, `boat`, `boxd`, `instabox`, or `railway`
 with the matching API key.
 
 Default image tag is `edge` (main builds, `linux/amd64` + `linux/arm64`). Details and tags:
@@ -81,7 +81,7 @@ bash install-images.sh --prepare-only
 bash install-images.sh
 ```
 
-Put HTTPS in front of port 5173; [docs/self-host.md](./docs/self-host.md#public-single-vm-deployment)
+Put HTTPS in front of port 5173; [docs/self-host-production.md](./docs/self-host-production.md#public-single-vm-deployment)
 covers the Caddy setup and host hardening. In the desktop app choose **Existing instance** and enter
 the `https://` address.
 
@@ -89,19 +89,19 @@ Or [deploy on Railway](https://railway.com/new/template/cortexai-agent-hub-templ
 
 ## Local development (source checkout)
 
-You need Node.js 22.22.2 or newer in the 22.x line, Node.js 24.x, or Node.js 26+;
-pnpm 9; and Docker. Node.js 23.x and 25.x are not supported.
+You need Node.js 24.15.0 or newer in the 24.x line, or Node.js 26+; pnpm 12;
+and Docker. Node.js 25.x is not supported.
 
 ```bash
 git clone https://github.com/TukaTek/agent-hub.git
-cd cortexai-agent-hub
+cd agent-hub
 cp .env.example .env
 ```
 
 Set `POSTGRES_PASSWORD` and `POSTGRES_APP_PASSWORD` to two values from `openssl rand -hex 16`,
 then put them in `DATABASE_MIGRATION_URL` and `DATABASE_URL`. The app connects as its own
 `cortexai_agent_hub_app` login, which row-level security applies to; migrations run as the owner
-([database roles](docs/self-host.md#database-roles)). Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to
+([database roles](docs/self-host-configuration.md#database-roles)). Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to
 independent long random values. Docker sandboxes also need a dedicated
 `SANDBOX_SUPERVISOR_TOKEN`. You can also set `OPENROUTER_API_KEY`, or connect a supported
 model provider during onboarding.
@@ -112,42 +112,62 @@ in `.env`. The supervisor discovers Docker Desktop's user socket automatically;
 
 Managed app catalogs are optional. Set `COMPOSIO_API_KEY` for Composio, or the
 `PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, and `PIPEDREAM_PROJECT_ID` trio for Pipedream
-Connect. Users can add an HTTPS MCP server, Treg endpoint, or OpenAPI JSON document from
-**Integrations** without enabling either managed catalog. Connector credentials are encrypted on the
-server and are never returned by the API.
+Connect. Users can add an HTTPS MCP server or OpenAPI JSON document from **Integrations** without
+enabling either managed catalog. Connector credentials are encrypted on the server and are never
+returned by the API.
 
-Treg is usage-metered. Self-hosters supply their own Treg token; operators embedding Treg in a
-hosted product should review [Treg's integration terms](https://treg.to/integrate.md), which require
-a written agreement for hosted resale.
+Paid data services (map places, search results, work emails, profiles, SEO data) are optional too.
+Set `PAID_SERVICES_PROVIDER=treg` and `PAID_SERVICES_API_KEY` to an org-scoped
+[Treg](https://treg.to) token, and bots can find and call them on the deployment's account. When
+model credits are on, each call is charged to the organization's credits at the provider's cost
+plus 20%.
+
+```bash
+pnpm install
+pnpm sandbox:build
+pnpm dev
+```
+
+`pnpm dev` uses the Postgres in `DATABASE_URL` when it accepts a connection. Otherwise it starts a
+local `cortexai-agent-hub-dev-postgres` container with Docker, and every checkout reuses that one. It applies
+migrations and generates the Prisma client before starting. A branch that adds migrations main
+doesn't have gets its own database on the same server, copied from the shared one when possible,
+so unmerged schema changes stay out of it. When the default ports are taken, for example by
+another git worktree, it moves to the next free block and prints the URL. Set `WEB_PORT` and
+`API_PORT` to choose ports yourself.
+
+To try a checkout from your phone or another computer, install [Tailscale](https://tailscale.com)
+on each device and set `CORTEXAI_AGENT_HUB_DEV_TAILNET=1` in `.env`. `pnpm dev` then serves the web app over
+HTTPS at `https://<machine>.<tailnet>.ts.net:<web port>`, reachable only from devices on your
+tailnet, and stops serving it when you quit. Sign in at that URL on every device, including the
+one running it. The first run may ask you to turn on HTTPS certificates for your tailnet.
+
+To keep keys in a secrets manager instead of `.env`, set `CORTEXAI_AGENT_HUB_DEV_RUN_WITH` to the command
+that runs another with your secrets added, for example `op run --env-file=dev.env --` or
+`infisical run --env=dev --projectId=<project> --`. `pnpm dev` then starts inside it, and the
+values it adds win over `.env`.
+
+To run Postgres from the Compose file instead, start it with the `postgres-host` overlay, which
+publishes loopback `127.0.0.1:5433`, and point `DATABASE_URL` and `DATABASE_MIGRATION_URL` at it:
 
 ```bash
 docker compose --env-file .env \
   -f infra/compose/docker-compose.yml \
   -f infra/compose/docker-compose.postgres-host.yml \
   up postgres -d
-pnpm install
-pnpm db:generate
-pnpm db:migrate
-pnpm sandbox:build
-pnpm dev
 ```
 
-Postgres stays network-internal in the default Compose file (same as published images). The
-`postgres-host` overlay publishes loopback `127.0.0.1:5433` for host-side `pnpm` and DB tools.
-If that port is occupied, change `POSTGRES_HOST_PORT` and the ports in `DATABASE_URL` and
-`DATABASE_MIGRATION_URL` in `.env`.
-Without the overlay, open a shell with
-`docker compose --env-file .env -f infra/compose/docker-compose.yml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
 Use a URI-safe `POSTGRES_PASSWORD` (`openssl rand -hex 16`). An existing `pgdata` volume keeps the
 user, password, and database from first init, so keep those values in `.env`, or change them in
 place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or when the data is
 disposable); `docker compose down -v` deletes all Postgres state.
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, connect a model, and create
+Open the printed URL ([http://127.0.0.1:5173](http://127.0.0.1:5173) by default), create an account, connect a model, and create
 your first assistant.
 
 For deployment, provider selection, backups, and upgrades, see the
-[self-hosting guide](./docs/self-host.md).
+[self-hosting guide](./docs/self-host.md), [production deployment](./docs/self-host-production.md),
+[backup and restore](./docs/self-host-backups.md), and [upgrading](./docs/self-host-upgrading.md).
 
 To use CreateOS, set `SANDBOX_PROVIDER=createos` and `CREATEOS_SANDBOX_API_KEY`.
 Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, and
@@ -184,15 +204,21 @@ pnpm --filter @cortexai-agent-hub/desktop dev
 ```
 
 On first run the desktop app asks whether to run CortexAI Agent Hub on this computer or connect to an existing
-server. **This computer** installs and starts the published images with Docker Compose (the same
-files as `infra/compose/install-images.sh`) under the app's data directory, so Docker Desktop,
-OrbStack, or Docker Engine must be installed; the app links to them when it is not. Installed
+server. **This computer** can run without Docker on Apple silicon Macs with macOS 26 or later
+when the build includes a server bundle. Fresh setups use this path: the app downloads the server
+and computer runtime as needed. Existing Docker setups are offered a move while Docker is running;
+choosing **Keep Docker** leaves them on Docker.
+
+Other builds and platforms use Docker Compose to install and start the published images (the same
+files as `infra/compose/install-images.sh`) under the app's data directory. This path needs Docker
+Desktop, OrbStack, or Docker Engine. Without one, setup offers the Docker Desktop download, opens
+an installed Docker app that is not running, and continues on its own once Docker answers. Installed
 builds pin the image tag to their own version; unpackaged builds pull `edge`. Developers running
 `pnpm dev` should pick **Existing instance** with `http://127.0.0.1:5173` instead. Public servers
 must use HTTPS; HTTP is accepted only for loopback and private LAN addresses (not link-local). The
 app verifies CortexAI Agent Hub's health endpoint before saving, and later launches go straight to that
-instance. The stack keeps running after the app quits; **Stop Local Stack** in the application
-menu turns it off.
+instance. The Docker stack keeps running after the app quits; the Docker-free server stops with the app.
+**Stop Local Stack** in the application menu stops the managed stack without quitting.
 
 On Linux the desktop app ships as an AppImage, which needs FUSE 2 (`libfuse.so.2`). Distributions
 that only include FUSE 3, such as Fedora Silverblue or Ubuntu 24.04, show
@@ -201,11 +227,11 @@ that only include FUSE 3, such as Fedora Silverblue or Ubuntu 24.04, show
 FUSE:
 
 ```bash
-chmod +x CortexAI Agent Hub-*.AppImage
-./CortexAI Agent Hub-*.AppImage --appimage-extract-and-run
+chmod +x CortexAI-Agent-Hub-*.AppImage
+./CortexAI-Agent-Hub-*.AppImage --appimage-extract-and-run
 ```
 
-**This computer** looks for the `docker` CLI and does not detect Podman. To try another
+The Docker path of **This computer** looks for the `docker` CLI and does not detect Podman. To try another
 Docker-compatible CLI that supports the `compose` commands, set `CORTEXAI_AGENT_HUB_DOCKER_BINARY` to its path
 before starting the app.
 
@@ -219,14 +245,14 @@ Mobile build and release instructions live in [docs/mobile-release.md](./docs/mo
 ## UI language
 
 The web (and Electron-hosted) UI supports English, Deutsch, 한국어, Türkçe, हिन्दी,
-Português (Brasil), 简体中文, Español, Русский, Français, and עברית under
-**Settings → Language**. The Expo app ships English, 简体中文, Русский, and Deutsch
-catalogs, and **Account → Language** lists all four. A device language or
+Português (Brasil), 简体中文, 繁體中文, Español, Русский, Français, עברית, 日本語, and Polski under
+**Settings → Language**. The Expo app ships English, 简体中文, 繁體中文, Русский, Deutsch,
+日本語, Español, and Polski catalogs, and **Account → Language** lists all eight. A device language or
 `EXPO_PUBLIC_DEFAULT_UI_LOCALE` still selects the starting catalog before a saved choice.
-The marketing
-homepage (`apps/www`) is available in en/de/ko/zh via footer language links (`/`, `/de/`,
-`/ko/`, `/zh/`); other marketing pages stay English. The Russian marketing homepage and
-native Electron setup/menu remain separate follow-up work.
+Native Electron setup and menus also support the web UI's languages, following the saved app
+choice or, on first launch, the system language. The marketing homepage (`apps/www`) offers all
+15 languages through footer links, including `/zh/` and `/zh-tw/`; other marketing pages remain
+primarily English.
 
 ## Development
 
@@ -254,13 +280,31 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow and test m
 
 ## Documentation
 
+Chinese guides cover [self-hosting](./docs/zh-CN/self-host.md), [models](./docs/zh-CN/self-host-models.md),
+[backups](./docs/zh-CN/self-host-backups.md), [upgrading](./docs/zh-CN/self-host-upgrading.md), and
+[restricted networks](./docs/zh-CN/self-host-restricted-network.md).
+
 - [Self-hosting](./docs/self-host.md)
+- [Self-host configuration](./docs/self-host-configuration.md)
 - [Self-host secrets](./docs/self-host-secrets.md)
+- [Sign-in and accounts](./docs/self-host-accounts.md)
+- [Models](./docs/self-host-models.md)
+- [Tools and integrations](./docs/self-host-integrations.md)
+- [Computer providers](./docs/self-host-sandbox-providers.md)
+- [Docker computers](./docs/self-host-docker-computers.md)
+- [Storage and encryption](./docs/self-host-storage.md)
+- [Production deployment](./docs/self-host-production.md)
+- [Backup and restore](./docs/self-host-backups.md)
+- [Upgrading](./docs/self-host-upgrading.md)
+- [Logs and monitoring](./docs/self-host-observability.md)
+- [Audit log](./docs/self-host-audit-log.md)
+- [Apps and clients](./docs/self-host-clients.md)
+- [Billing](./docs/self-host-billing.md)
 - [Computer runtime and isolation](./docs/computer-runtime.md)
 - [Desktop releases](./docs/desktop-release.md)
 - [Mobile releases](./docs/mobile-release.md)
 - [Performance testing](./docs/performance.md)
-- [Manage the bots it creates](./docs/fleet-management.md)
+- [Bots that manage bots](./docs/fleet-management.md)
 
 ## Contributing
 

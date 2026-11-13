@@ -2,7 +2,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, it } from "vitest";
 import { listPiCatalog } from "./pi-models.js";
-import { modelsForRequest } from "./pi-runtime.js";
+import { modelsForRequest } from "./pi-runtime-models.js";
 
 describe("current model compatibility", () => {
   it("disables strict tools for Bedrock Haiku in India", () => {
@@ -18,6 +18,7 @@ describe("current model compatibility", () => {
     ["opencode", "claude-sonnet-5-5"],
     ["opencode-go", "claude-haiku-5-5"],
     ["openai-codex", "gpt-6.1-sol"],
+    ["openrouter", "deepseek/deepseek-v4.1-flash-1017"],
     ["amazon-bedrock", "anthropic.claude-sonnet-5-5"],
     ["amazon-bedrock", "eu.anthropic.claude-sonnet-5-5"],
     ["amazon-bedrock", "global.anthropic.claude-sonnet-5-5"],

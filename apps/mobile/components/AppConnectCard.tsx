@@ -1,12 +1,13 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { appConnectedInput, waitForConnection } from "@cortexai-agent-hub/core";
 import { fontWeight, typeScale } from "@cortexai-agent-hub/ui-tokens";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
 import type { ViewProps } from "react-native";
 import { Linking, Text, View } from "react-native";
 import { rpc } from "../lib/api";
 import { appConnectPresentation } from "../lib/app-connect";
-import { useI18n } from "../lib/i18n";
 import { native, useMobileTokens } from "../lib/native";
 import { useThreadReadOnly } from "../lib/thread-read-only";
 import { errorText } from "../lib/user-error";
@@ -28,7 +29,7 @@ export function AppConnectCard({
   accessibilityActions?: ViewProps["accessibilityActions"];
   onAccessibilityAction?: ViewProps["onAccessibilityAction"];
 }) {
-  const { t } = useI18n();
+  const { t } = useLingui();
   const readOnly = useThreadReadOnly();
   const tokens = useMobileTokens();
   const [busy, setBusy] = useState(false);
@@ -48,7 +49,7 @@ export function AppConnectCard({
     setBusy(true);
     setError(null);
     try {
-      const started = await rpc<{ connectionId: string; authorizationUrl: string | null }>(
+      const started = await rpc(
         "connections/begin",
         {
           connectorId: block.connectorId,
@@ -61,8 +62,7 @@ export function AppConnectCard({
       if (started.authorizationUrl) await Linking.openURL(started.authorizationUrl);
       const result = await waitForConnection(
         started.connectionId,
-        (input) =>
-          rpc<{ status: string }>("connections/complete", input, { signal: controller.signal }),
+        (input) => rpc("connections/complete", input, { signal: controller.signal }),
         { signal: controller.signal, attempts: 60 },
       );
       if (result.status === "aborted") return;
@@ -72,10 +72,10 @@ export function AppConnectCard({
         setLocalStatus("connected");
         return;
       }
-      setError(t("Authorization timed out. Please try again."));
+      setError(t`Authorization timed out. Please try again.`);
     } catch (reason) {
       if (!controller.signal.aborted) {
-        setError(errorText(reason, t("Could not authorize this app")));
+        setError(errorText(reason, t`Could not authorize this app`));
       }
     } finally {
       if (connectionAttempt.current === controller) {
@@ -87,7 +87,7 @@ export function AppConnectCard({
 
   return (
     <View
-      accessibilityLabel={t("{name} connection", { name: block.name })}
+      accessibilityLabel={t`${ph({ name: block.name })} connection`}
       style={{
         width: "100%",
         borderRadius: 18,
@@ -114,7 +114,7 @@ export function AppConnectCard({
         {view.showAuthorize && !readOnly && threadId ? (
           <NativeActionButton
             label={view.actionLabel}
-            accessibilityLabel={t("Authorize {name}", { name: block.name })}
+            accessibilityLabel={t`Connect ${ph({ name: block.name })}`}
             fill={false}
             busy={busy}
             style={{ alignSelf: "center" }}

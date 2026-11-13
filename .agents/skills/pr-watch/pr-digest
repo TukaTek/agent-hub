@@ -13,7 +13,6 @@
 set -uo pipefail
 
 POLL=${PR_DIGEST_POLL:-30}
-DEADLINE=${PR_DIGEST_DEADLINE:-7200}
 BODY_CHARS=${PR_DIGEST_BODY_CHARS:-600}
 SEEN_DIR=${PR_DIGEST_SEEN_DIR:-$HOME/.cache/pr-digest}
 # How many empty polls to allow before accepting that a PR has no check runs.
@@ -52,9 +51,16 @@ check_runs() {
     --jq '.check_runs[] | {name, status, conclusion, html_url}' | jq -s .
 }
 
+# Fork PRs always carry Vercel's "Authorization required to deploy." failure,
+# which AGENTS.md says to ignore; counting it would wake every watch at once.
+# On a same-repo PR the same status is a real deploy problem, so it still counts.
+FORK=false
 commit_statuses() {
   api --paginate "repos/$1/commits/$2/status?per_page=100" \
-    --jq '.statuses[] | {context, state}' | jq -s .
+    --jq '.statuses[] | {context, state, description}' |
+    jq -s --argjson fork "$FORK" '[.[]
+      | select($fork and .context == "Vercel" and .description == "Authorization required to deploy." | not)
+      | {context, state}]'
 }
 
 logs() {
@@ -110,7 +116,7 @@ findings() {
       | implode
       | sub("^ +"; "") | sub(" +$"; "") | .[0:$n];'
 
-  # Deploy tables, rate-limit notices, screenshot galleries, and sticky bot
+  # Deploy tables, preview links, rate-limit notices, screenshot galleries, and sticky bot
   # summaries are status chrome — not findings that need a reply. Actionable
   # bot conversation comments are not noise and must block green.
   local noise_def='
@@ -123,8 +129,14 @@ findings() {
             or startswith("<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->")))
         or (.user.login == "greptile-apps[bot]" and (.body |
           startswith("<h3>Greptile Summary</h3>") or startswith("<!-- greptile_summary -->")))
+        or ((.user.login | startswith("qodo-")) and (.body | ltrimstr("\n") |
+          startswith("<h3>PR Summary by Qodo</h3>") or startswith("<h3>Code Review by Qodo</h3>")
+            or startswith("<h3>Qodo is busy working</h3>") or startswith("<!-- qodo:")
+            or test("^\\[Code review\\]\\([^)]*\\) by qodo was updated up to the latest commit ")))
         or (.user.login == "github-actions[bot]" and (.body |
-          startswith("<!-- cortexai-agent-hub-playwright-screenshots -->\n### Playwright screenshots")))
+          startswith("<!-- cortexai-agent-hub-playwright-screenshots -->\n### Playwright screenshots")
+            or startswith("<!-- cortexai-agent-hub-preview -->")
+            or . == "/agentic_review"))
       );'
 
   # Compare complete URL tokens, never substrings or bare comment IDs.
@@ -344,9 +356,12 @@ main() {
     || die "could not resolve authenticated user"
   case $viewer in ''|null|\{*) die "could not resolve authenticated user" ;; esac
   [ -n "$pr" ] || pr=$(gh pr view --json number --jq .number 2>/dev/null) || die "no PR for this branch"
+  FORK=$(gh pr view "$pr" --repo "$repo" --json isCrossRepository --jq .isCrossRepository) \
+    || die "could not read PR $pr"
+  [ "$FORK" = true ] || FORK=false
 
   if [ "$watch" -eq 1 ]; then
-    local started=$SECONDS head runs statuses empty=0 left baseline="" first=1 seen
+    local head runs statuses empty=0 baseline="" first=1 seen
     seen=$(seen_path "$repo" "$pr")
     while :; do
       head=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid) \
@@ -376,9 +391,7 @@ main() {
         fi
         empty=$((empty + 1))
       fi
-      left=$((DEADLINE - (SECONDS - started)))
-      [ "$left" -le 0 ] && break
-      sleep "$(( POLL < left ? POLL : left ))"
+      sleep "$POLL"
     done
   fi
 

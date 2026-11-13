@@ -45,14 +45,37 @@ export const AUDITED_PROCEDURES: Record<string, AuditedProcedure> = {
     kind: "bot_secret",
     fields: ["botId", "name"],
   },
+  "vault.put": {
+    type: "credential.changed",
+    kind: "vault_credential",
+    fields: ["scope", "destination.name"],
+  },
+  "vault.remove": {
+    type: "credential.deleted",
+    kind: "vault_credential",
+    fields: ["scope", "name"],
+  },
   "bots.rotateWebhookSecret": { type: "credential.changed", kind: "webhook", fields: ["botId"] },
   "voice.connect": { type: "credential.created", kind: "voice", fields: ["provider"] },
   "voice.disconnect": { type: "credential.deleted", kind: "voice", fields: ["provider"] },
   "memory.connectProvider": { type: "credential.created", kind: "memory" },
   "memory.disconnectProvider": { type: "credential.deleted", kind: "memory" },
+  // Starting a sign-in replaces any wallet already connected.
+  "paymentWallet.connect": { type: "credential.changed", kind: "payment_wallet" },
+  "paymentWallet.disconnect": { type: "credential.deleted", kind: "payment_wallet" },
   "deployment.update": {
     type: "deployment.settings.changed",
     fields: ["signupsEnabled", "computerHost"],
+  },
+  "computerProvider.update": {
+    type: "credential.changed",
+    kind: "computer_provider",
+    fields: ["provider"],
+  },
+  "computerProvider.account.update": {
+    type: "credential.changed",
+    kind: "computer_provider",
+    fields: ["provider"],
   },
   "mcp.assignments.approve": {
     type: "approval.decided",
@@ -66,7 +89,17 @@ export const AUDITED_PROCEDURES: Record<string, AuditedProcedure> = {
   },
   "approvalRules.set": { type: "approval.policy.changed", fields: ["effect", "matchKind"] },
   "approvalRules.remove": { type: "approval.policy.changed", fields: ["id"] },
-  "autoReview.set": { type: "approval.policy.changed", fields: ["enabled"] },
+  "models.setRole": { type: "approval.policy.changed", fields: ["role", "scope"] },
+  "autoReview.set": { type: "approval.policy.changed", fields: ["enabled", "skipApprovals"] },
+  "spendingLimit.set": {
+    type: "approval.policy.changed",
+    kind: "spending_limit",
+    fields: ["limit.currency", "limit.period"],
+  },
+  "spaceSettings.setOverride": {
+    type: "approval.policy.changed",
+    fields: ["setting", "enabled"],
+  },
 };
 
 /**
@@ -83,6 +116,19 @@ export function connectionCreatedEvent(
     userId: actor.userId,
     spaceId: actor.spaceId,
     metadata: { procedure, kind: "connection", connectionId },
+  };
+}
+
+/** A wallet sign-in finishing. Clients poll `paymentWallet.status`, so it records the transition. */
+export function paymentWalletConnectedEvent(actor: {
+  userId: string;
+  spaceId: string;
+}): SecurityEventInput {
+  return {
+    type: "credential.created",
+    userId: actor.userId,
+    spaceId: actor.spaceId,
+    metadata: { procedure: "paymentWallet.status", kind: "payment_wallet" },
   };
 }
 

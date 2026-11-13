@@ -1,10 +1,21 @@
-import { createHash } from "node:crypto";
 import type { JobPublisher, SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import { runContinueJob, SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
-import { inboundRoutineModelPin } from "@cortexai-agent-hub/adapters";
-import { escapePromptData, inboundRoutineBlock } from "@cortexai-agent-hub/core";
-import type { PrismaClient } from "@cortexai-agent-hub/db";
+import type { InboundSource } from "@cortexai-agent-hub/adapters";
+import {
+  inboundDeliveryClientNonce,
+  inboundRoutineModelPin,
+  isPermanentDecryptFailure,
+} from "@cortexai-agent-hub/adapters";
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import {
+  escapePromptData,
+  inboundRoutineBlock,
+  messageBlockForArtifact,
+} from "@cortexai-agent-hub/core";
+import type { PrismaClient, SendUserMessageInput } from "@cortexai-agent-hub/db";
+import { accountDeactivated, SpaceDeletionInProgressError } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import type { Context } from "hono";
 
 export const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
 export const WEBHOOK_SECRET_KIND = "webhook";
@@ -15,7 +26,7 @@ export type WebhookEvents = {
     threadId: string;
     botId: string;
     userId: string;
-    blocks: Array<{ kind: "text"; text: string }>;
+    blocks: MessageBlock[];
     prompt: string;
     trigger: "webhook";
     clientNonce?: string;
@@ -119,13 +130,6 @@ function subscribeWebhookCache(secrets: SecretStore, cache: WebhookSecretCache):
   });
 }
 
-function isPermanentDecryptFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : "";
-  return (
-    message.includes("unable to authenticate") || message.includes("Encrypted secret is malformed")
-  );
-}
-
 function touchWebhookSecret(
   cache: WebhookSecretCache,
   botId: string,
@@ -183,7 +187,6 @@ function loadWebhookSecret(
   return entry.plaintext;
 }
 
-/** Load the bot webhook secret target, or null when the bot/secret is missing or invalid. */
 export async function loadWebhookTarget(
   deps: Pick<WebhookDeps, "prisma" | "secrets">,
   cache: WebhookSecretCache,
@@ -200,7 +203,8 @@ export async function loadWebhookTarget(
     },
   });
 
-  if (!bot?.thread || !bot.webhookSecretId) {
+  // A deactivated owner's bot takes no deliveries; callers see the usual unauthorized reply.
+  if (!bot?.thread || !bot.webhookSecretId || (await accountDeactivated(deps.prisma, bot.userId))) {
     cache.delete(botId);
     return null;
   }
@@ -245,18 +249,21 @@ export async function loadWebhookTarget(
   };
 }
 
-/** Idempotency key shared by messaging wakes and TeamChat duplicate-skip lookups. */
-export function messagingWakeIdempotencyKey(provider: string, handle: string): string {
-  return `${provider}:${handle}`;
-}
-
-/** Client nonce for idempotent inbound deliveries (webhook / github / messaging). */
-export function inboundDeliveryClientNonce(
-  source: "webhook" | "github" | "messaging",
-  botId: string,
-  idempotencyKey: string,
-): string {
-  return `${source}:${botId}:${createHash("sha256").update(idempotencyKey).digest("base64url")}`;
+/**
+ * Answers an authenticated delivery. A Space being deleted takes none: the sender gets a 409, not
+ * a server error, so the request is not reported as a failure.
+ */
+export async function webhookDeliveryResponse(
+  c: Context,
+  delivery: ReturnType<typeof deliverWebhookEvent>,
+): Promise<Response> {
+  try {
+    return c.json(await delivery);
+  } catch (error) {
+    if (error instanceof SpaceDeletionInProgressError)
+      return c.json({ error: "Space deletion in progress" }, 409);
+    throw error;
+  }
 }
 
 export async function deliverWebhookEvent(
@@ -264,6 +271,7 @@ export async function deliverWebhookEvent(
   target: InboundTarget,
   input: {
     prompt: string;
+    artifacts?: Array<{ id: string; name: string; mimeType: string; size: number }>;
     routines: Array<{
       name: string;
       prompt: string;
@@ -271,10 +279,12 @@ export async function deliverWebhookEvent(
       modelId: string | null;
       thinkingLevel: string | null;
     }>;
-    source: "webhook" | "github" | "messaging";
+    source: InboundSource;
     idempotencyKey?: string;
     /** Messaging wakes share the live chat thread; keep a separate webhook run. */
     allowParallelRun?: boolean;
+    /** Claims what the wake answers in the transaction that starts its run. */
+    claim?: SendUserMessageInput["claim"];
   },
 ) {
   const promptText =
@@ -286,7 +296,9 @@ export async function deliverWebhookEvent(
             ? "Inbound GitHub event metadata:"
             : input.source === "messaging"
               ? "Inbound messaging event:"
-              : "Inbound webhook payload:",
+              : input.source === "email"
+                ? "Inbound email:"
+                : "Inbound webhook payload:",
           input.prompt,
         ].join("\n")
       : input.prompt;
@@ -301,11 +313,16 @@ export async function deliverWebhookEvent(
     threadId: target.threadId,
     botId: target.bot.id,
     userId: target.bot.userId,
-    blocks: [{ kind: "text", text: promptText }],
+    blocks: [
+      { kind: "delivery" },
+      { kind: "text", text: promptText },
+      ...(input.artifacts ?? []).map(messageBlockForArtifact),
+    ],
     prompt: promptText,
     trigger: "webhook",
     clientNonce,
     ...(input.allowParallelRun ? { allowParallelRun: true } : {}),
+    ...(input.claim ? { claim: input.claim } : {}),
     ...(pin.modelProvider && pin.modelId
       ? {
           modelPin: {

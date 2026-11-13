@@ -1,16 +1,6 @@
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  Button,
-  Input,
-} from "@cortexai-agent-hub/ui-web";
+import { Button, Input } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
+import { Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { authClient } from "../lib/auth";
 import {
@@ -20,8 +10,14 @@ import {
   usePasskeysVersion,
 } from "../lib/passkeys";
 import { formatRelativeTime } from "../lib/relative-time";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { SettingsRow } from "./SettingsRows";
 
-type PasskeyRow = { id: string; name?: string | null; createdAt: Date | string };
+type PasskeyRow = {
+  id: string;
+  name?: string | null;
+  createdAt: Date | string;
+};
 
 /** The account's passkeys, shown only where this browser can use them. */
 export function PasskeySettings() {
@@ -96,22 +92,38 @@ function PasskeyList({ onRetry }: { onRetry: () => void }) {
   }
 
   return (
-    <section className="rounded-xl border border-border px-4 py-4" data-testid="passkey-settings">
-      <h3 className="text-[15px] font-medium text-foreground">
-        <Trans>Passkeys</Trans>
-      </h3>
-      {loadFailed ? (
-        <div role="alert" className="mt-3 flex items-center gap-2 text-[13.5px] text-destructive">
-          <Trans>Could not load</Trans>
-          <Button variant="outline" size="xs" onClick={onRetry}>
-            <Trans>Retry</Trans>
+    <div className="divide-y divide-border" data-testid="passkey-settings">
+      <SettingsRow
+        label={<Trans>Passkeys</Trans>}
+        control={
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={pending}
+            onClick={() => void run(() => authClient.passkey.addPasskey())}
+          >
+            <Trans>Add passkey</Trans>
           </Button>
-        </div>
-      ) : null}
+        }
+      >
+        {loadFailed ? (
+          <div role="alert" className="mt-2 flex items-center gap-2 text-body text-destructive">
+            <Trans>Could not load</Trans>
+            <Button variant="outline" size="xs" onClick={onRetry}>
+              <Trans>Retry</Trans>
+            </Button>
+          </div>
+        ) : null}
+        {error && !deleting ? (
+          <p role="alert" className="mt-2 text-body-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </SettingsRow>
       {passkeys.length > 0 ? (
-        <ul className="mt-3 divide-y divide-border">
+        <ul className="divide-y divide-border">
           {passkeys.map((passkey) => (
-            <li key={passkey.id} className="flex min-h-11 items-center gap-2 py-2">
+            <li key={passkey.id} className="flex min-h-15 items-center gap-2 px-4 py-3">
               {renaming?.id === passkey.id ? (
                 <form
                   className="flex flex-1 items-center gap-2"
@@ -127,6 +139,10 @@ function PasskeyList({ onRetry }: { onRetry: () => void }) {
                     autoFocus
                     onChange={(event) => setRenaming({ id: passkey.id, name: event.target.value })}
                     onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                        if (event.key === "Escape") event.stopPropagation();
+                        return;
+                      }
                       if (event.key === "Escape") setRenaming(null);
                     }}
                     className="h-8 flex-1"
@@ -140,28 +156,30 @@ function PasskeyList({ onRetry }: { onRetry: () => void }) {
                 </form>
               ) : (
                 <>
-                  <span className="min-w-0 flex-1 truncate text-[14px] text-foreground/75">
-                    {passkeyLabel(passkey, t`Passkey`)}
-                  </span>
-                  <span className="shrink-0 text-[12.5px] text-muted-foreground">
-                    {formatRelativeTime(new Date(passkey.createdAt).toISOString())}
-                  </span>
+                  <p className="flex min-w-0 flex-1 items-baseline gap-2 text-body text-foreground">
+                    <span className="truncate">{passkeyLabel(passkey, t`Passkey`)}</span>
+                    <span className="shrink-0 text-body-sm text-muted-foreground">
+                      {formatRelativeTime(new Date(passkey.createdAt).toISOString())}
+                    </span>
+                  </p>
                   <Button
                     variant="ghost"
-                    size="xs"
+                    size="icon-sm"
+                    aria-label={t`Rename`}
                     disabled={pending}
                     onClick={() => setRenaming({ id: passkey.id, name: passkey.name ?? "" })}
                   >
-                    <Trans>Rename</Trans>
+                    <Pencil />
                   </Button>
                   <Button
                     variant="ghost"
-                    size="xs"
+                    size="icon-sm"
+                    aria-label={t`Delete`}
                     disabled={pending}
                     className="text-destructive hover:text-destructive"
                     onClick={() => setDeleting(passkey)}
                   >
-                    <Trans>Delete</Trans>
+                    <Trash2 />
                   </Button>
                 </>
               )}
@@ -169,53 +187,21 @@ function PasskeyList({ onRetry }: { onRetry: () => void }) {
           ))}
         </ul>
       ) : null}
-      {error && !deleting ? (
-        <p role="alert" className="mt-3 text-[12.5px] text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <Button
-        variant="secondary"
-        className="mt-3 rounded-full"
-        disabled={pending}
-        onClick={() => void run(() => authClient.passkey.addPasskey())}
-      >
-        <Trans>Add passkey</Trans>
-      </Button>
       {deleting ? (
-        <AlertDialog
-          open
-          onOpenChange={(open) => {
-            if (!open && !pending) {
-              setDeleting(null);
-              setError(null);
-            }
+        <ConfirmDialog
+          onCancel={() => {
+            setDeleting(null);
+            setError(null);
           }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>{t`Delete "${passkeyLabel(deleting, t`Passkey`)}"?`}</AlertDialogTitle>
-              <AlertDialogDescription>
-                <Trans>This can't be undone.</Trans>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            {error ? <p className="text-[13.5px] text-destructive">{error}</p> : null}
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={pending}>
-                <Trans>Cancel</Trans>
-              </AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                disabled={pending}
-                onClick={() => void remove()}
-              >
-                {pending ? <Trans>Deleting…</Trans> : <Trans>Delete</Trans>}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          title={t`Delete "${passkeyLabel(deleting, t`Passkey`)}"?`}
+          description={<Trans>This can't be undone.</Trans>}
+          error={error}
+          busy={pending}
+          onConfirm={() => void remove()}
+          confirmLabel={pending ? <Trans>Deleting…</Trans> : <Trans>Delete</Trans>}
+        />
       ) : null}
-    </section>
+    </div>
   );
 }
 

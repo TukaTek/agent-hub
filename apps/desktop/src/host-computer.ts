@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { startHostComputerServer } from "@cortexai-agent-hub/adapters/host-computer-server";
+import type { HostScreen } from "@cortexai-agent-hub/adapters/host-screen";
 import { readPrivateFile, writePrivateFile } from "./setup-store.js";
 
 /** App-private credentials and consent, never sent to a renderer or a connected remote server. */
-export async function prepareHostComputer(userDataDir: string) {
+export async function prepareHostComputer(userDataDir: string, screen?: HostScreen) {
   const configFile = path.join(userDataDir, "host-computer.json");
   const consentFile = path.join(userDataDir, "host-computer-consent");
   const raw = await readPrivateFile(configFile, 1024);
@@ -19,12 +21,12 @@ export async function prepareHostComputer(userDataDir: string) {
     /* Invalid local configuration is replaced. */
   }
   let server: Awaited<ReturnType<typeof startHostComputerServer>>;
-  const options = { root: path.join(userDataDir, "computers"), token };
+  const options = { root: path.join(userDataDir, "computers"), token, screen };
   try {
     server = await startHostComputerServer({ ...options, port });
   } catch (error) {
-    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EADDRINUSE")
-      throw error;
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "EADDRINUSE" && code !== "EACCES") throw error;
     // A listener on the old port may have received the old credential from a still-running backend.
     token = randomBytes(32).toString("hex");
     server = await startHostComputerServer({ ...options, token });
@@ -40,7 +42,15 @@ export async function prepareHostComputer(userDataDir: string) {
   let consentIntent = 0;
   let consentWrites: Promise<void> = Promise.resolve();
   function persistConsent(value: string) {
-    const write = consentWrites.then(() => writePrivateFile(consentFile, value));
+    const write = consentWrites.then(() =>
+      writePrivateFile(consentFile, value).catch(async (error) => {
+        if (value) throw error;
+        // A stale token left on disk would re-enable the host computer on the next launch.
+        await rm(consentFile, { force: true }).catch(() => {
+          throw error;
+        });
+      }),
+    );
     consentWrites = write.catch(() => undefined);
     return write;
   }

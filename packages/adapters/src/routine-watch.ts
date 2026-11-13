@@ -4,25 +4,45 @@ import type {
   AdapterContext,
   AgentHomeStore,
   ConnectorProvider,
+  ConnectorTool,
   JobPublisher,
+  PaymentWalletProvider,
   SandboxProvider,
+  SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
 import { routineJobKey, routineWakeupJob } from "@cortexai-agent-hub/adapter-kit";
 import type { RoutineWatch, RoutineWatchState } from "@cortexai-agent-hub/contracts";
 import { RoutineWatchSchema, RoutineWatchStateSchema } from "@cortexai-agent-hub/contracts";
 import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
-import { connectorKindFromToolName, watchToolRefusal } from "@cortexai-agent-hub/core";
+import {
+  connectorKindFromToolName,
+  isAbandonedRequest,
+  redactSecrets,
+  watchToolRefusal,
+} from "@cortexai-agent-hub/core";
 import type { ComputerMode, PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
+  listApprovalRules,
   parseComputerMode,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import {
+  loadLoginPasswordRedactions,
+  shellCommandEnvironment,
+  VaultKeyUnavailableError,
+} from "./bot-secrets.js";
 import { scheduleComputerSleep } from "./computer-idle.js";
 import { ComputerBusyError, provisionComputer } from "./computer-lifecycle.js";
 import { resolveBotWorkspaceCwd, teamBotWorkspaceDirectory } from "./computer-support.js";
 import { connectedContext, selectRunConnections } from "./connection-context.js";
+import { nativeShellCommandArgv, usesNativeShell } from "./native-shell.js";
+import { isEgressRefused } from "./network-address.js";
+import { loadPurchaseRedactions } from "./purchase-service.js";
+import { recordVaultItemUse } from "./vault-activity.js";
+import type { SafeWebFetchOptions } from "./web-ssrf.js";
+import { fetchSafeHttpRequest } from "./web-ssrf.js";
 
 /**
  * The checker behind a routine's "when something changes" trigger. It never
@@ -52,6 +72,11 @@ export type RoutineWatchDeps = {
   connector?: ConnectorProvider;
   /** The shell tool's desktop-protection guard: why a command is refused on a graphical computer. */
   commandRefusal?: (command: string) => string | undefined;
+  /** Decrypts Vault credentials. Absent, a command watch runs without them. */
+  secretStore?: SecretStore;
+  paymentWallet?: PaymentWalletProvider | null;
+  /** HTTP transport and DNS boundary; destination checks and limits always stay enabled. */
+  http?: Pick<SafeWebFetchOptions, "fetch" | "resolveHostname">;
 };
 
 export type RoutineWatchTarget = {
@@ -87,8 +112,7 @@ export function parseRoutineWatchState(value: unknown): RoutineWatchState | null
   return parsed.success ? parsed.data : null;
 }
 
-/** When the next check is due. */
-export function nextRoutineWatchAt(watch: RoutineWatch, from: Date): Date {
+export function nextRoutineWatchAt(watch: Pick<RoutineWatch, "everyMinutes">, from: Date): Date {
   return new Date(from.getTime() + watch.everyMinutes * 60_000);
 }
 
@@ -96,6 +120,8 @@ export function nextRoutineWatchAt(watch: RoutineWatch, from: Date): Date {
 export function describeRoutineWatch(watch: RoutineWatch): string {
   if (watch.kind === "files") return (watch.paths ?? []).join(", ");
   if (watch.kind === "command") return `\`${watch.command ?? ""}\``;
+  // A status URL can contain an access token, so do not copy it into messages.
+  if (watch.kind === "http") return "HTTPS endpoint";
   return watch.tool ?? "";
 }
 
@@ -108,9 +134,11 @@ export async function checkRoutineWatch(
   if (!watch) throw new RoutineWatchError("The change trigger's settings are not valid.");
   const previous = parseRoutineWatchState(routine.watchState);
   const reading =
-    watch.kind === "tool"
-      ? await readTool(deps, routine, watch)
-      : await readComputer(deps, routine, watch);
+    watch.kind === "http"
+      ? await readHttp(deps, watch, routine.id)
+      : watch.kind === "tool"
+        ? await readTool(deps, routine, watch)
+        : await readComputer(deps, routine, watch);
   return compareReading(previous, reading, now);
 }
 
@@ -119,7 +147,99 @@ type Reading = {
   entries?: Record<string, string>;
   /** Shown when the reading differs from the last one. */
   detail: string | null;
+  /** Hidden from a change description, which can name items from the last reading. */
+  secrets?: readonly string[];
 };
+
+/** A structured public GET, never a shell command or an authenticated server session. */
+async function readHttp(
+  deps: RoutineWatchDeps,
+  watch: RoutineWatch,
+  routineId: string,
+): Promise<Reading> {
+  let response: Awaited<ReturnType<typeof fetchSafeHttpRequest>>;
+  try {
+    response = await fetchSafeHttpRequest(
+      watch.url!,
+      { method: "GET" },
+      {
+        ...deps.http,
+        allowedPorts: [443],
+        timeoutMs: 15_000,
+        maxBytes: 1_000_000,
+      },
+    );
+  } catch (error) {
+    getLogger().warn("routine.http_check_failed", {
+      "routine.id": routineId,
+      "http.failure.kind": httpFailureKind(error),
+    });
+    // Keep destination refusals permanent even when the transport wraps one in its cause.
+    if (isEgressRefused(error)) throw new RoutineWatchError("Could not check the HTTPS endpoint.");
+    // Never expose a transport error's URL; it can carry a token in its path or query.
+    throw new RoutineWatchRetry("Could not check the HTTPS endpoint.");
+  }
+  if (response.status === 408 || response.status === 429 || response.status >= 500)
+    throw new RoutineWatchRetry(`HTTPS check returned status ${response.status}.`);
+  if (response.status < 200 || response.status >= 300)
+    throw new RoutineWatchError(`HTTPS check returned status ${response.status}.`);
+  if (response.truncated) throw new RoutineWatchError("HTTPS check response is too large.");
+  const text = new TextDecoder().decode(response.body);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (watch.track) throw new RoutineWatchError("Tracked HTTP fields require a JSON response.");
+    return { fingerprint: sha256(text), detail: null };
+  }
+  // Bound recursion in the shared JSON comparators before handing them external data.
+  const pending = [{ value: data, depth: 0 }];
+  while (pending.length) {
+    const { value, depth } = pending.pop()!;
+    if (value === null || typeof value !== "object") continue;
+    if (depth > 64) throw new RoutineWatchError("HTTPS check JSON is too deeply nested.");
+    for (const child of Object.values(value)) {
+      if (child !== null && typeof child === "object")
+        pending.push({ value: child, depth: depth + 1 });
+    }
+  }
+  // Store only a fingerprint: endpoint data must not become trusted instructions or internal tool output.
+  const fingerprint = watch.track
+    ? readJsonItems(data, watch.track).fingerprint
+    : sha256(stableStringify(data));
+  return { fingerprint, detail: null };
+}
+
+const HTTP_FAILURE_CODES: Record<string, string> = {
+  ENOTFOUND: "dns",
+  EAI_AGAIN: "dns",
+  ECONNREFUSED: "connection",
+  ECONNRESET: "connection",
+  EHOSTUNREACH: "connection",
+  ENETUNREACH: "connection",
+  ETIMEDOUT: "timeout",
+  UND_ERR_CONNECT_TIMEOUT: "timeout",
+  UND_ERR_HEADERS_TIMEOUT: "timeout",
+  UND_ERR_BODY_TIMEOUT: "timeout",
+  CERT_HAS_EXPIRED: "tls",
+  ERR_TLS_CERT_ALTNAME_INVALID: "tls",
+  DEPTH_ZERO_SELF_SIGNED_CERT: "tls",
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: "tls",
+};
+
+/** Only fixed categories leave this boundary: error names, codes, and messages may contain secrets. */
+function httpFailureKind(error: unknown): string {
+  if (isEgressRefused(error)) return "destination_refused";
+  if (isAbandonedRequest(error)) return "timeout";
+  let current = error;
+  for (let depth = 0; current !== null && typeof current === "object" && depth < 4; depth += 1) {
+    const { code, cause } = current as { code?: unknown; cause?: unknown };
+    if (typeof code === "string" && Object.hasOwn(HTTP_FAILURE_CODES, code))
+      return HTTP_FAILURE_CODES[code]!;
+    current = cause;
+  }
+  return "transport";
+}
 
 /** Pure: decides baseline / unchanged / changed and describes the change. */
 export function compareReading(
@@ -141,7 +261,10 @@ export function compareReading(
   }
   const detail =
     reading.entries && previous.entries
-      ? describeEntryChanges(previous.entries, reading.entries)
+      ? redactSecrets(
+          describeEntryChanges(previous.entries, reading.entries),
+          reading.secrets ?? [],
+        )
       : reading.detail;
   return { changed: true, state: { ...base, outcome: "changed", detail } };
 }
@@ -204,7 +327,19 @@ function itemFields(signature: string | undefined): string | undefined {
  * anywhere in the result that carries the first field is an item; that field
  * is its identity, and the rest decide whether it was updated.
  */
-export function readItems(data: unknown, track: readonly string[]): Reading {
+export function readItems(
+  data: unknown,
+  track: readonly string[],
+  secrets: readonly string[] = [],
+): Reading {
+  return readJsonItems(resultJson(data), track, secrets);
+}
+
+function readJsonItems(
+  data: unknown,
+  track: readonly string[],
+  secrets: readonly string[] = [],
+): Reading {
   const [identity, ...fields] = track;
   const items = new Map<string, { fields: string[]; titles: string[] }>();
   let count = 0;
@@ -227,7 +362,7 @@ export function readItems(data: unknown, track: readonly string[]): Reading {
     }
     for (const child of Object.values(record)) visit(child);
   };
-  visit(resultJson(data));
+  visit(redactJsonStrings(data, secrets));
   // IDs can repeat in nested results. Preserve every object's values, independent of order.
   const entries = Object.fromEntries(
     [...items].map(([id, item]) => [
@@ -244,7 +379,7 @@ export function readItems(data: unknown, track: readonly string[]): Reading {
   );
   return count > MAX_TRACKED_ENTRIES
     ? { fingerprint, detail: `${count} watched items; something among them changed.` }
-    : { fingerprint, entries, detail: null };
+    : { fingerprint, entries, detail: null, secrets };
 }
 
 /** A result as JSON: the parsed text of an MCP or text result, or the data itself. */
@@ -270,6 +405,20 @@ function resultJson(data: unknown): unknown {
   } catch {
     throw new RoutineWatchError("The result is not JSON, so its tracked fields cannot be read.");
   }
+}
+
+function redactJsonStrings(value: unknown, secrets: readonly string[]): unknown {
+  if (!secrets.length) return value;
+  if (typeof value === "string") return redactSecrets(value, secrets);
+  if (Array.isArray(value)) return value.map((item) => redactJsonStrings(item, secrets));
+  if (value && typeof value === "object") {
+    const redacted: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      redacted[redactSecrets(key, secrets)] = redactJsonStrings(child, secrets);
+    }
+    return redacted;
+  }
+  return value;
 }
 
 function isMcpEnvelope(data: unknown): boolean {
@@ -373,15 +522,36 @@ async function readComputer(
   if (!bot?.computer) throw new RoutineWatchError("This bot has no computer to check.");
   const mode = parseComputerMode(bot.computer.scope);
   if (watch.kind === "command") {
-    const graphical =
-      bot.computer.kind !== "desktop" && deps.sandbox.describe().capabilities.graphical;
-    const refusal = graphical ? deps.commandRefusal?.(watch.command ?? "") : undefined;
+    // The guard reads bash, so it protects the Linux desktop and never a native shell.
+    const guarded =
+      !usesNativeShell(bot.computer.kind) && deps.sandbox.describe().capabilities.graphical;
+    const refusal = guarded ? deps.commandRefusal?.(watch.command ?? "") : undefined;
     if (refusal) {
       throw new RoutineWatchError(
         `The check command is refused by the desktop-protection guard: ${refusal}.`,
       );
     }
   }
+  // Loaded before the computer wakes, so a key manager outage defers the check without waking it.
+  const secrets = new Set<string>();
+  const secretStore = watch.kind === "command" ? deps.secretStore : undefined;
+  const [commandEnvironment, loginRedactions, purchaseRedactions] = secretStore
+    ? await Promise.all([
+        shellCommandEnvironment({
+          prisma: deps.prisma,
+          secretStore,
+          scope: { spaceId: routine.spaceId, userId: routine.userId, botId: bot.id },
+          registerRedactions: (values) => {
+            for (const value of values) secrets.add(value);
+          },
+        }),
+        loadLoginPasswordRedactions(deps.prisma, secretStore, routine),
+        deps.paymentWallet
+          ? loadPurchaseRedactions({ prisma: deps.prisma, secretStore }, routine)
+          : [],
+      ])
+    : [undefined, [], []];
+  for (const value of [...loginRedactions, ...purchaseRedactions]) secrets.add(value);
   const ctx = context(routine);
   const computerId = bot.computer.id;
   let computer: Awaited<ReturnType<typeof provisionComputer>>;
@@ -410,14 +580,48 @@ async function readComputer(
   if (watch.kind === "command") {
     // Runs this shell command on the bot's computer every interval, in its folder,
     // without a model or per-run approval: equivalent to the bot running it itself.
-    const result = await run(deps, computer, ctx, ["sh", "-lc", watch.command ?? ""], cwd);
+    const shellEnvironment = usesNativeShell(bot.computer.kind)
+      ? await deps.sandbox.environment?.(computer, ctx)
+      : undefined;
+    const argv = shellEnvironment
+      ? nativeShellCommandArgv(watch.command ?? "", shellEnvironment)
+      : ["sh", "-lc", watch.command ?? ""];
+    // The computer is sent the check with its variables here, so each is a use from then on,
+    // recorded once the check ends, however it ends; a check refused or stopped before this got
+    // none. It has no run or chat, and the audit log never throws, so the check never fails on it.
+    const result = await run(
+      deps,
+      computer,
+      ctx,
+      argv,
+      cwd,
+      commandEnvironment && {
+        env: Object.keys(commandEnvironment.env).length > 0 ? commandEnvironment.env : undefined,
+        unsetEnv: commandEnvironment.unsetEnv,
+      },
+    ).finally(async () => {
+      for (const item of commandEnvironment?.used ?? [])
+        await recordVaultItemUse({
+          bot,
+          spaceId: routine.spaceId,
+          // The routine's owner, whose vault the check reads.
+          userId: routine.userId,
+          tool: "routine_watch",
+          item,
+        });
+    });
+    const revealed = [...secrets];
+    const stderr = redactSecrets(result.stderr, revealed);
     if (result.code !== 0) {
       throw new RoutineWatchError(
-        `The check command exited with ${result.code}${result.stderr ? `: ${clip(result.stderr)}` : "."}`,
+        `The check command exited with ${result.code}${stderr ? `: ${clip(stderr)}` : "."}`,
       );
     }
-    if (watch.track) return readItems(result.stdout, watch.track);
-    return { fingerprint: sha256(result.stdout), detail: clip(result.stdout) || null };
+    // Pass the raw JSON. Parsing it here makes a `content` array look like an MCP envelope
+    // on the second parse, and the watch pauses.
+    if (watch.track) return readItems(result.stdout, watch.track, revealed);
+    const stdout = redactSecrets(result.stdout, revealed);
+    return { fingerprint: sha256(stdout), detail: clip(stdout) || null };
   }
 
   const paths = (watch.paths ?? []).map((path) => {
@@ -467,6 +671,7 @@ async function run(
   ctx: AdapterContext,
   argv: string[],
   cwd: string | undefined,
+  launch?: { env?: Record<string, string>; unsetEnv: string[] },
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   let stdout = "";
   let stderr = "";
@@ -474,7 +679,13 @@ async function run(
   try {
     for await (const event of deps.sandbox.execute(
       computer,
-      { argv, cwd, timeoutMs: CHECK_TIMEOUT_MS },
+      {
+        argv,
+        cwd,
+        timeoutMs: CHECK_TIMEOUT_MS,
+        ...(launch?.env ? { env: launch.env } : {}),
+        ...(launch ? { unsetEnv: launch.unsetEnv } : {}),
+      },
       ctx,
     )) {
       if (event.type === "stdout") stdout += event.data;
@@ -502,6 +713,8 @@ async function readTool(
   } catch (error) {
     throw new RoutineWatchError(`Could not list the integration's tools: ${errorText(error)}`);
   }
+  // Discovery waits on every provider; the tool call gets its own full budget.
+  ctx.signal = AbortSignal.timeout(CHECK_TIMEOUT_MS);
   const call = { tool: toolName, args: watch.args ?? {}, executionId: ctx.operationId };
   const tool = tools.find((candidate) => candidate.name === toolName);
   const resolved = tool
@@ -511,15 +724,16 @@ async function readTool(
     throw new RoutineWatchError(`No connected integration has a tool named ${toolName}.`);
   }
   const refusal = watchToolRefusal({
-    toolName: resolved.tool.name,
+    toolName: resolved.tool.route?.connectionId ? resolved.tool.route.toolName : resolved.tool.name,
+    toolAliases: [resolved.tool.name],
     connectorKind: connectorKindFromToolName(
-      resolved.tool.name,
+      resolved.tool.route?.connectionId ? resolved.tool.route.toolName : resolved.tool.name,
       ctx.connectedConnections?.map((row) => row.externalId),
     ),
-    readOnly: resolved.tool.readOnly,
-    rules: (await deps.prisma.actionApprovalRule.findMany({
-      where: { spaceId: routine.spaceId, createdByUserId: routine.userId },
-      select: { effect: true, matchKind: true, matchValue: true },
+    readOnly: declaredRead(resolved.tool),
+    rules: (await listApprovalRules(deps.prisma, {
+      userId: routine.userId,
+      spaceId: routine.spaceId,
     })) as ActionApprovalRule[],
   });
   if (refusal) throw new RoutineWatchError(refusal);
@@ -549,13 +763,40 @@ async function readTool(
 
 /**
  * What a tool returned, as text a bot can read: an MCP result's text parts
- * rather than its `{content:[{type:"text",text}]}` envelope.
+ * beside its structured copy, rather than its `{content:[{type:"text",text}]}`
+ * envelope. A text block that only repeated the structured data is dropped on
+ * the way in, so any text left is supplemental — the note needs both to keep
+ * the details that triggered the routine. An error result keeps its text on the
+ * way in; when the structured copy only repeats that text, the text alone is the
+ * message, and any other diagnostic keeps the structured copy.
  */
 export function toolResultText(data: unknown): string {
   if (typeof data === "string") return data;
   const texts = toolResultTextParts(data);
-  if (texts.length) return texts.join("\n");
+  const { structuredContent: structured, isError } =
+    (data as { structuredContent?: unknown; isError?: unknown } | null) ?? {};
+  const text = texts.join("\n");
+  if (isError === true && text.trim() && repeatsErrorText(structured, text)) return text;
+  if (structured && typeof structured === "object" && !Array.isArray(structured)) {
+    const json = stableStringify(structured);
+    return texts.length ? `${text}\n${json}` : json;
+  }
+  if (texts.length) return text;
   return stableStringify(data ?? null);
+}
+
+/**
+ * Whether a structured error only repeats the error text: an object whose sole fields are
+ * `error` or `message` strings the text already contains. Any other field is a diagnostic the
+ * note keeps, with its key.
+ */
+function repeatsErrorText(data: unknown, text: string): boolean {
+  if (data === null || data === undefined) return true;
+  if (typeof data !== "object" || Array.isArray(data)) return false;
+  return Object.entries(data).every(
+    ([key, value]) =>
+      (key === "error" || key === "message") && typeof value === "string" && text.includes(value),
+  );
 }
 
 function toolResultTextParts(data: unknown): string[] {
@@ -617,18 +858,47 @@ export async function tickRoutineWatch(
     if (!watch) throw new RoutineWatchError("The change trigger's settings are not valid.");
     outcome = await checkRoutineWatch(deps, routine, now);
   } catch (error) {
-    if (error instanceof RoutineWatchRetry) {
-      const retryAt = new Date(now.getTime() + RETRY_AFTER_MS);
+    // Defer a key outage instead of pausing the routine.
+    if (error instanceof RoutineWatchRetry || error instanceof VaultKeyUnavailableError) {
+      if (error instanceof VaultKeyUnavailableError)
+        getLogger().warn("routine.watch_deferred", { "routine.id": routine.id, error });
+      const retryAt =
+        watch?.kind === "http"
+          ? nextRoutineWatchAt(watch, now)
+          : new Date(now.getTime() + RETRY_AFTER_MS);
       const deferred = await deps.prisma.routine.updateMany({
-        where: { id: routine.id, active: true, nextRunAt: scheduledAt },
-        data: { nextRunAt: retryAt },
+        where: { id: routine.id, userId: routine.userId, active: true, nextRunAt: scheduledAt },
+        data: {
+          nextRunAt: retryAt,
+          ...(watch?.kind === "http"
+            ? {
+                watchState: {
+                  checkedAt: now.toISOString(),
+                  outcome: "failed",
+                  retrying: true,
+                  fingerprint: previous?.fingerprint ?? null,
+                  detail: error.message,
+                } satisfies RoutineWatchState,
+              }
+            : {}),
+        },
       });
-      if (deferred.count === 1) await deps.jobs.enqueue(routineWakeupJob(routine.id, retryAt));
+      if (deferred.count === 1) {
+        await deps.jobs.enqueue(routineWakeupJob(routine.id, retryAt));
+        if (watch?.kind === "http" && previous?.retrying !== true) {
+          await postRoutineWatchMessage(deps, {
+            spaceId: routine.spaceId,
+            ...target,
+            role: "system",
+            text: `The **${routine.name}** routine's HTTPS check failed: ${error.message} I'll keep checking.`,
+          });
+        }
+      }
       return { run: false };
     }
     const reason = error instanceof Error ? error.message : String(error);
     const paused = await deps.prisma.routine.updateMany({
-      where: { id: routine.id, active: true, nextRunAt: scheduledAt },
+      where: { id: routine.id, userId: routine.userId, active: true, nextRunAt: scheduledAt },
       data: {
         active: false,
         nextRunAt: null,
@@ -665,7 +935,7 @@ export async function tickRoutineWatch(
     };
   }
   const claimed = await deps.prisma.routine.updateMany({
-    where: { id: routine.id, active: true, nextRunAt: scheduledAt },
+    where: { id: routine.id, userId: routine.userId, active: true, nextRunAt: scheduledAt },
     data: { nextRunAt, watchState: outcome.state },
   });
   if (claimed.count !== 1) return { run: false };
@@ -753,5 +1023,10 @@ export async function validateRoutineWatch(
       )
     )?.tool;
   if (!tool) throw new RoutineWatchError(`No connected integration has a tool named ${name}.`);
-  assertWatchToolReadOnly(name, tool.readOnly);
+  assertWatchToolReadOnly(name, declaredRead(tool));
+}
+
+/** A batch runs whatever actions its arguments name, so it is never a declared read. */
+function declaredRead(tool: ConnectorTool): boolean | undefined {
+  return tool.batch ? undefined : tool.readOnly;
 }

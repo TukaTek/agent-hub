@@ -1,7 +1,8 @@
-import * as Sentry from "@sentry/node";
+import type * as SentrySdk from "@sentry/node";
 import { CORRELATION_TAG_KEYS } from "./monitoring.js";
 import { isMonitoringUserId, monitoringPseudonymSecret, monitoringUserId } from "./pseudonym.js";
 import { redactSensitiveText } from "./redaction.js";
+import { errorSummary } from "./serialize-error.js";
 import { reportSinkError } from "./sink-guard.js";
 import type { LogEvent, LogSink, SerializedError } from "./types.js";
 
@@ -19,6 +20,7 @@ export interface SentryConfig {
 const FLUSH_TIMEOUT_MS = 2_000;
 // Model fields let issues be filtered by the provider and model that failed.
 const TAG_KEYS = [...CORRELATION_TAG_KEYS, "model.provider", "model.id"] as const;
+const EXTRA_KEYS = ["log.message", "error.details"] as const;
 
 export function sentryConfigFromEnv(source: NodeJS.ProcessEnv = process.env): {
   config?: SentryConfig;
@@ -52,11 +54,15 @@ export function isValidDsn(dsn: string): boolean {
   }
 }
 
-export function createSentrySink(
+// The SDK loads only when a sink is built (SENTRY_DSN set), so unconfigured installs never
+// import it; a dynamic import of this module alone would not keep it lazy, because the
+// server bundle inlines this file.
+export async function createSentrySink(
   service: string,
   config: SentryConfig,
-  transport?: Sentry.NodeOptions["transport"],
-): LogSink {
+  transport?: SentrySdk.NodeOptions["transport"],
+): Promise<LogSink> {
+  const Sentry = await import("@sentry/node");
   Sentry.init({
     dsn: config.dsn,
     environment: config.environment,
@@ -113,7 +119,7 @@ export function createSentrySink(
     write(event: LogEvent) {
       if (event.level !== "error" || event["error.report"] === false) return;
       const { "service.name": service, error } = event;
-      const message = redactSensitiveText(event.message);
+      const message = redactSensitiveText(reportTitle(event));
       Sentry.withScope((scope) => {
         scope.setTag("service", service);
         for (const key of TAG_KEYS) {
@@ -126,6 +132,14 @@ export function createSentrySink(
         if (config.pseudonymSecret && typeof userId === "string" && userId.length > 0)
           scope.setUser({ id: monitoringUserId(config.pseudonymSecret, userId), ip_address: null });
         scope.setExtra("log.message", message);
+        // Diagnostics the caller already reduced to safe fields, such as a rejected request's shape.
+        const details = event["error.details"];
+        if (typeof details === "string")
+          scope.setExtra("error.details", redactSensitiveText(details));
+        const fingerprint = event["error.fingerprint"];
+        // Split on top of the stack: errors rethrown from one place stop sharing one issue.
+        if (Array.isArray(fingerprint) && fingerprint.every((part) => typeof part === "string"))
+          scope.setFingerprint(["{{ default }}", ...fingerprint.map(redactSensitiveText)]);
         if (error) {
           Sentry.captureException(rebuildError(error));
         } else {
@@ -139,15 +153,22 @@ export function createSentrySink(
   };
 }
 
-export function createSentrySinkFromEnv(
+export async function createSentrySinkFromEnv(
   service: string,
   source: NodeJS.ProcessEnv = process.env,
-): {
+): Promise<{
   sink?: LogSink;
   warning?: string;
-} {
+}> {
   const { config, warning } = sentryConfigFromEnv(source);
-  return config ? { sink: createSentrySink(service, config) } : { warning };
+  return config ? { sink: await createSentrySink(service, config) } : { warning };
+}
+
+/** A failed request with nothing else logged groups by what answered it, not as one issue. */
+function reportTitle(event: LogEvent): string {
+  const route = event["http.route"];
+  if (typeof route !== "string") return event.message;
+  return `${event.message} ${event["http.method"]} ${route} ${event["http.status"]}`;
 }
 
 function releaseFromGitSha(sha: string | undefined): string | undefined {
@@ -157,7 +178,7 @@ function releaseFromGitSha(sha: string | undefined): string | undefined {
 
 /** The logger hands sinks a serialized error; rebuild one Sentry can parse, cause chain included. */
 function rebuildError(serialized: SerializedError): Error {
-  const message = reportedMessage(redactSensitiveText(serialized.message), serialized.code);
+  const message = errorSummary(redactSensitiveText(serialized.message), serialized.code);
   const error = new Error(message);
   error.name = redactSensitiveText(serialized.name);
   error.stack = serialized.stack
@@ -167,33 +188,19 @@ function rebuildError(serialized: SerializedError): Error {
   return error;
 }
 
-const PRISMA_INVOCATION = /^Invalid `(?:\w+\.)*(\w+\.\w+)\(\)` invocation/;
-
-/**
- * The collector titles an issue by the first line of the message. Prisma's errors start with a
- * blank line and name the failing call only in their body, so every one arrived untitled; lead
- * with the error code and the model operation instead.
- */
-function reportedMessage(message: string, code: string | undefined): string {
-  const lines = message
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const call = lines[0]?.match(PRISMA_INVOCATION)?.[1];
-  const summary = call ? `${call}: ${lines.slice(1).join(" ")}` : message.trimStart();
-  return code && !summary.includes(code) ? `${code} ${summary}` : summary;
-}
-
-function redactEvent(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
+function redactEvent(event: SentrySdk.ErrorEvent): SentrySdk.ErrorEvent {
   delete event.request;
   const userId = event.user?.id;
   event.user = isMonitoringUserId(userId) ? { id: userId, ip_address: null } : { ip_address: null };
   delete event.breadcrumbs;
   event.server_name = undefined;
   if (event.extra) {
-    const message = event.extra["log.message"];
-    event.extra =
-      typeof message === "string" ? { "log.message": redactSensitiveText(message) } : {};
+    const extra = event.extra;
+    event.extra = Object.fromEntries(
+      EXTRA_KEYS.flatMap((key) =>
+        typeof extra[key] === "string" ? [[key, redactSensitiveText(extra[key])]] : [],
+      ),
+    );
   }
   if (event.message) event.message = redactSensitiveText(event.message);
   for (const value of event.exception?.values ?? []) {

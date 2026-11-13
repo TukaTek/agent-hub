@@ -1,8 +1,9 @@
 import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@cortexai-agent-hub/contracts";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { useState } from "react";
 import { AccessibilityInfo, Pressable, Text, TextInput, View } from "react-native";
-import type { MobileBot } from "../lib/api";
-import { useI18n } from "../lib/i18n";
+import type { MobileBot } from "../lib/mobile-types";
 import { native, useMobileTokens } from "../lib/native";
 import { BotAvatar } from "./bot-avatar";
 import { NativeSymbol } from "./native-symbol";
@@ -16,7 +17,7 @@ export function BotChipPicker({
   selected: string[];
   onChange: (ids: string[]) => void;
 }) {
-  const { t } = useI18n();
+  const { t } = useLingui();
   const tokens = useMobileTokens();
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -25,9 +26,7 @@ export function BotChipPicker({
     (bot) =>
       !bot.archivedAt &&
       !selected.includes(bot.id) &&
-      (!needle ||
-        bot.name.toLowerCase().includes(needle) ||
-        bot.title.toLowerCase().includes(needle)),
+      (!needle || bot.name.toLowerCase().includes(needle)),
   );
   return (
     <View>
@@ -42,14 +41,14 @@ export function BotChipPicker({
           backgroundColor: native.fill,
         }}
       >
-        <Text style={{ color: tokens.mutedForeground, fontSize: 16 }}>{t("To:")}</Text>
+        <Text style={{ color: tokens.mutedForeground, fontSize: 16 }}>{t`To:`}</Text>
         {selected.map((id) => {
           const bot = bots.find((item) => item.id === id);
           return bot ? (
             <Pressable
               key={id}
               accessibilityRole="button"
-              accessibilityLabel={t("Remove {name}", { name: bot.name })}
+              accessibilityLabel={t`Remove ${ph({ name: bot.name })}`}
               onPress={() => remove(id)}
               style={({ pressed }) => ({
                 flexDirection: "row",
@@ -62,7 +61,7 @@ export function BotChipPicker({
                 maxWidth: "100%",
               })}
             >
-              <BotAvatar color={bot.color} identity={id} size={20} />
+              <BotAvatar color={bot.color} avatarSet={bot.avatarSet} identity={id} size={20} />
               <Text numberOfLines={1} style={{ color: tokens.foreground, flexShrink: 1 }}>
                 {bot.name}
               </Text>
@@ -74,7 +73,7 @@ export function BotChipPicker({
           autoFocus
           value={query}
           onChangeText={setQuery}
-          placeholder={selected.length ? t("Add another") : t("Search bots")}
+          placeholder={selected.length ? t`Add another` : t`Search bots`}
           placeholderTextColor={tokens.mutedForeground}
           returnKeyType="search"
           autoCapitalize="none"
@@ -104,7 +103,7 @@ export function BotChipPicker({
             onPress={() => {
               if (selected.length >= GROUP_MEMBER_MAX) {
                 AccessibilityInfo.announceForAccessibility(
-                  t("Pick {min}–{max}", { min: GROUP_MEMBER_MIN, max: GROUP_MEMBER_MAX }),
+                  t`Pick ${ph({ min: GROUP_MEMBER_MIN })}–${ph({ max: GROUP_MEMBER_MAX })}`,
                 );
                 return;
               }
@@ -119,7 +118,13 @@ export function BotChipPicker({
               opacity: pressed ? 0.6 : 1,
             })}
           >
-            <BotAvatar color={bot.color} identity={bot.id} size={36} status={bot.status} />
+            <BotAvatar
+              color={bot.color}
+              avatarSet={bot.avatarSet}
+              identity={bot.id}
+              size={36}
+              status={bot.status}
+            />
             <Text style={{ color: tokens.foreground, fontSize: 16, flex: 1 }}>{bot.name}</Text>
           </Pressable>
         ))}

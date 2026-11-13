@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="cortexai_agent_hub_call_channel">通話中</string>
+  <string name="cortexai_agent_hub_call_title">CortexAI Agent Hubの通話</string>
+  <string name="cortexai_agent_hub_call_text">マイクがオンです</string>
+  <string name="cortexai_agent_hub_call_answer">応答</string>
+  <string name="cortexai_agent_hub_call_decline">拒否</string>
+</resources>

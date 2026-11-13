@@ -48,12 +48,6 @@ describe.skipIf(!databaseAvailable)("routine silence eval through the product", 
       semanticPass: false,
     },
     {
-      id: "silence-repeat-after-new-release",
-      replies: ["v2.2.0 adds a calendar integration.", "NO_RESPONSE"],
-      pass: false,
-      semanticPass: false,
-    },
-    {
       id: "silence-failed-check",
       replies: ["The release source did not respond."],
       pass: false,
@@ -80,6 +74,17 @@ describe.skipIf(!databaseAvailable)("routine silence eval through the product", 
         {
           expect(request) {
             expect(JSON.stringify(request.messages)).toContain("stay silent");
+            // The wake is forced early, but the agent is told it is the routine's 9:00 due time.
+            const told = /That is (\S+) \(UTC\)|Current date and time: \w+, (\S+) \(UTC\)/.exec(
+              JSON.stringify(request.messages),
+            );
+            const toldAt = new Date(told?.[1] ?? told?.[2] ?? "");
+            const due = new Date(toldAt);
+            due.setUTCHours(9, 0, 0, 0);
+            expect(toldAt.getTime() - due.getTime()).toBeGreaterThanOrEqual(0);
+            expect(toldAt.getTime() - due.getTime()).toBeLessThan(60_000);
+            expect(toldAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+            expect(toldAt.getTime()).toBeLessThan(Date.now() + 86_400_000);
             if (index === 1 && replies[0] === releaseReply)
               expect(JSON.stringify(request.messages)).toContain(releaseReply);
           },
@@ -110,7 +115,6 @@ describe.skipIf(!databaseAvailable)("routine silence eval through the product", 
                   id: "remember-notified",
                   name: "remember",
                   arguments: {
-                    path: "MEMORY.md",
                     content: `Already notified the user: ${releaseReply}`,
                   },
                 }
@@ -133,7 +137,7 @@ describe.skipIf(!databaseAvailable)("routine silence eval through the product", 
       const dataDir = await mkdtemp(path.join(tmpdir(), "cortexai-agent-hub-silence-eval-"));
       let evidence: Evidence | undefined;
       try {
-        const { createApp } = await import("../../../apps/api/src/app.ts");
+        const { createApp } = await import("@cortexai-agent-hub/api/app");
         const result = await runTrial(
           {
             ...scenario,

@@ -23,13 +23,15 @@ const API = "https://api.openai.com/v1";
 const TTS_MODEL = "gpt-4o-mini-tts";
 const STT_MODEL = "gpt-4o-mini-transcribe";
 
-const OPENAI_VOICES: VoiceInfo[] = [
+export const OPENAI_VOICES: VoiceInfo[] = [
   { id: "alloy", label: "Alloy", description: "Neutral" },
   { id: "ash", label: "Ash", description: "Clear" },
   { id: "ballad", label: "Ballad", description: "Warm" },
+  { id: "cedar", label: "Cedar" },
   { id: "coral", label: "Coral", description: "Bright" },
   { id: "echo", label: "Echo", description: "Even" },
   { id: "fable", label: "Fable", description: "Narrative" },
+  { id: "marin", label: "Marin" },
   { id: "onyx", label: "Onyx", description: "Deep" },
   { id: "nova", label: "Nova", description: "Energetic" },
   { id: "sage", label: "Sage", description: "Calm" },

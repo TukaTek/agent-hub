@@ -150,7 +150,6 @@
   "Connect remote or local tool servers and choose which agents can use them.": "Uzak veya yerel araç sunucuları bağla ve hangi agent'ların kullanabileceğini seç.",
   "Connect Treg": "Treg'i bağla",
   "Connected": "Bağlandı",
-  "Connected. Its tools are available from your next message.": "Bağlandı. Araçları bir sonraki mesajından itibaren kullanılabilir.",
   "Connected {0}.": "{0} bağlandı.",
   "Connecting…": "Bağlanıyor…",
   "Connection to {0} is still pending. You can close this and check again.": "{0} bağlantısı hâlâ beklemede. Bunu kapatıp daha sonra tekrar kontrol edebilirsin.",
@@ -577,5 +576,6 @@
   "Nothing is still running": "Hâlâ çalışan bir şey yok",
   "Credentials are encrypted and never sent to the model.": "Kimlik bilgileri şifrelenir ve modele asla gönderilmez.",
   "Rename section": "Bölümü yeniden adlandır",
-  "Could not rename section": "Bölüm yeniden adlandırılamadı"
+  "Could not rename section": "Bölüm yeniden adlandırılamadı",
+  "{count, plural, one {# message with {peer}} other {# messages with {peer}}}": "{count, plural, one {{peer} ile # mesaj} other {{peer} ile # mesaj}}"
 }

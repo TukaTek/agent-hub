@@ -5,20 +5,16 @@ import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import nativeContract from "./fixtures/agent-hub-native-sso.v1.json" with { type: "json" };
 import { HUB_SIGN_IN_RATE_LIMITS } from "./hub.js";
+import type { HubAuthConfig } from "./hub-client.js";
 import {
   createHubClient,
-  type HubAuthConfig,
   HubRejectedError,
   HubRequestError,
   HubUnsupportedIdpError,
   hubUserId,
 } from "./hub-client.js";
-import {
-  applyHubPolicyAtStartup,
-  createHubPolicy,
-  type HubPolicy,
-  notConfiguredHubPolicy,
-} from "./hub-policy.js";
+import type { HubPolicy } from "./hub-policy.js";
+import { applyHubPolicyAtStartup, createHubPolicy, notConfiguredHubPolicy } from "./hub-policy.js";
 import { memoryHubPolicyStore } from "./hub-policy-store.js";
 import { hubPolicyBodyForTests, hubPolicyForTests } from "./hub-policy-testing.js";
 import { createHubSessionAuthorizer, createUserWorkAuthorizer } from "./hub-sessions.js";

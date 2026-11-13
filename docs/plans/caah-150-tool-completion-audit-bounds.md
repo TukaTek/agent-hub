@@ -36,15 +36,15 @@ heartbeats, steering and `finalizeRun`.
 
 ## Bounds
 
-| Constant | Value | Why |
-| --- | --- | --- |
-| `TOOL_COMPLETION_AUDIT_PER_RUN_CONCURRENCY` | 1 | Same-run audits update one threads row (`nextEventSeq`). |
-| `TOOL_COMPLETION_AUDIT_PROCESS_CONCURRENCY` | 2 | Worker pool 8, minus about 3 reserved, leaves about 5. Using 2 leaves room for required writes. |
-| `TOOL_COMPLETION_AUDIT_QUEUE_CAPACITY` | 32 | Pending audits, not counting in-flight ones. |
-| `TOOL_COMPLETION_AUDIT_QUEUE_WAIT_MS` | 30 000 | Longest an audit waits for a slot. |
-| `TOOL_COMPLETION_AUDIT_RETRY_ATTEMPTS` | 3 | Total attempts, for never-started P2028 only. |
-| `TOOL_COMPLETION_AUDIT_RETRY_BASE_MS` / `_MAX_MS` | 250 / 2 000 | Full jitter. |
-| `TOOL_COMPLETION_AUDIT_SHUTDOWN_DRAIN_MS` | 5 000 | Worker stop drain. |
+| Constant                                          | Value       | Why                                                                                             |
+| ------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| `TOOL_COMPLETION_AUDIT_PER_RUN_CONCURRENCY`       | 1           | Same-run audits update one threads row (`nextEventSeq`).                                        |
+| `TOOL_COMPLETION_AUDIT_PROCESS_CONCURRENCY`       | 2           | Worker pool 8, minus about 3 reserved, leaves about 5. Using 2 leaves room for required writes. |
+| `TOOL_COMPLETION_AUDIT_QUEUE_CAPACITY`            | 32          | Pending audits, not counting in-flight ones.                                                    |
+| `TOOL_COMPLETION_AUDIT_QUEUE_WAIT_MS`             | 30 000      | Longest an audit waits for a slot.                                                              |
+| `TOOL_COMPLETION_AUDIT_RETRY_ATTEMPTS`            | 3           | Total attempts, for never-started P2028 only.                                                   |
+| `TOOL_COMPLETION_AUDIT_RETRY_BASE_MS` / `_MAX_MS` | 250 / 2 000 | Full jitter.                                                                                    |
+| `TOOL_COMPLETION_AUDIT_SHUTDOWN_DRAIN_MS`         | 5 000       | Worker stop drain.                                                                              |
 
 These bounds apply per process. Running N worker processes allows up to 2N concurrent audit
 transactions.

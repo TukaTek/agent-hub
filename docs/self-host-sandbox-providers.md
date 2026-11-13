@@ -6,15 +6,75 @@ for the sharing and persistence contract.
 
 ## Quick pick
 
-| Goal | Set | Also need |
-| --- | --- | --- |
-| Local Docker computers | `SANDBOX_PROVIDER=docker` | `SANDBOX_SUPERVISOR_TOKEN`, computer image, Docker socket for supervisor |
-| UI only, no computers | `SANDBOX_PROVIDER=none` | No provider credential; published-images Compose still requires `SANDBOX_SUPERVISOR_TOKEN` |
-| Managed remote desktop | `e2b` / `daytona` / `boat` | `SANDBOX_SUPERVISOR_TOKEN` (published-images Compose), matching API key (and optional URL knobs for Daytona/Boat) |
+| Goal                                                    | Set                                                                      | Also need                                                                                                                             |
+| ------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Local Docker computers                                  | `SANDBOX_PROVIDER=docker`                                                | `SANDBOX_SUPERVISOR_TOKEN`, computer image, Docker socket for supervisor                                                              |
+| UI only, no computers                                   | `SANDBOX_PROVIDER=none`                                                  | No provider credential; published-images Compose still requires `SANDBOX_SUPERVISOR_TOKEN`                                            |
+| Managed remote desktop                                  | `e2b` / `novita` / `daytona` / `createos` / `boat` / `boxd` / `instabox` | `SANDBOX_SUPERVISOR_TOKEN` (published-images Compose), matching API key (and optional URL knobs for Daytona/CreateOS/Boat)            |
+| One pod per computer on your own cluster                | `SANDBOX_PROVIDER=kubernetes`                                            | API and worker running in the cluster, a namespace and a Role that can create, read, delete and exec into pods                        |
+| One app container per computer on your own Incus server | `SANDBOX_PROVIDER=incus`                                                 | Incus API address, a client certificate restricted to one project, and a route from the API, worker and web to the computers' network |
+| One VM per computer on an Apple silicon Mac             | `SANDBOX_PROVIDER=local-vm`                                              | macOS 26 or newer and Apple's `container` runtime with its system service started                                                     |
 
 Published-images [Compose](../infra/compose/docker-compose.images.yml) defaults to **`docker`**.
 It always starts the supervisor and requires `SANDBOX_SUPERVISOR_TOKEN`, including for `none`
 and remote providers. This stack credential does not replace a remote provider's API key.
+
+## Settings configuration
+
+Set `COMPUTER_SETTINGS_ENABLED=true` on the API to turn this on. Admins can then choose
+**Settings → Computer → New computers run on** and save a supported provider's fields.
+The API supplies the provider's field descriptors and validates values server-side. Credentials are encrypted in the secret store and
+never returned; a blank secret field keeps its saved value for the same provider and destination.
+Changing a URL requires credentials again. **Default** uses `SANDBOX_PROVIDER`.
+Docker, Kubernetes, Incus, desktop, fake, and none remain environment-only. Settings overrides are disabled
+for desktop and fake deployments.
+
+The account form offers only providers that declare support for account-owned computers.
+Team Computers follow their owner's account choice; Private Computers use the deployment choice. See [Wuying setup](./wuying-computers.md) for that adapter's fields and requirements.
+
+## Choosing a provider
+
+The Electron desktop app is a client of the same API. Docker remains the default. For an app-managed local instance, the local operator can choose **Use this Mac** (macOS) or **Use this computer** (Windows/Linux). After native confirmation, an authenticated bridge sends commands from the Docker backend to Electron, where they run under your OS account. **Computer Access…** in the app menu changes the choice; **Revoke Local Computer Access** immediately disconnects active operations and revokes the saved permission. Local execution requires the desktop app to remain running. Connecting to an existing remote instance does not grant it access to your computer. Browser and mobile clients use the deployment’s configured computer; they do not expose their own host. `SANDBOX_PROVIDER=desktop` is a separate, development-only configuration for backends running directly on the intended host.
+
+Native file reads and workspace exports are limited to 8 MiB per file. A larger workspace file fails the checkpoint and preserves the previous saved workspace; local files remain on the computer. Writes are bounded by the 12 MiB encoded request limit.
+
+- **Published images** (`docker-compose.images.yml`) default to `SANDBOX_PROVIDER=docker` with a
+  local supervisor and published `ghcr.io/tukatek/agent-hub/computer` image. No E2B account required.
+  Optional: set `e2b`, `novita`, `daytona`, `createos`, or `boat` plus the matching API key for remote computers.
+- **Docker** is the quick-start default for published images and for a source checkout / full local
+  Compose stack. Workspace bots share a persistent Team Computer by default; Private computers are
+  optional. Keep the supervisor private, as the included Compose files do.
+- **E2B** runs bot computers away from the CortexAI Agent Hub host and is a good choice for public or multi-user
+  production deployments. CortexAI Agent Hub checkpoints the portable workspace and browser-profile directory to
+  `DATA_DIR`; the E2B disk is a runtime cache, not the durable source of truth.
+- **Daytona** provides the same remote-computer contract through Daytona sandboxes. Configure
+  `DAYTONA_API_KEY` and optionally `DAYTONA_API_URL` / `DAYTONA_TARGET` / `DAYTONA_SNAPSHOT`.
+- **CreateOS** provides the same remote-computer contract through CreateOS desktop sandboxes.
+  Configure `CREATEOS_SANDBOX_API_KEY` and optionally `CREATEOS_SANDBOX_BASE_URL`,
+  `CREATEOS_SANDBOX_SHAPE`, or `CREATEOS_SANDBOX_ROOTFS`. CortexAI Agent Hub defaults to
+  `https://api.sb.createos.sh`, `s-2vcpu-2gb`, and `desktop:1`.
+- **Boat** provides a managed Linux desktop through `BOAT_API_KEY` and optionally
+  `BOAT_API_URL`. CortexAI Agent Hub always creates or resumes sandboxes with `noEnv: true`, keeps the portable
+  workspace under `/home/user/cortexai-agent-hub-home`, and refreshes a two-hour TTL. Boat uses the shared Linux
+  desktop runtime and protected port routes for concurrent bot desktops. Each bot has its own
+  persistent Chrome profile; logins are not shared between bots.
+- **Local computer access** in the app-managed Electron instance runs commands on Windows, macOS,
+  or Linux through the native bridge. Bots can read/change local files and launch installed apps
+  through OS commands, subject to your account and OS permissions. Portable file tools and
+  checkpoints remain scoped to bot workspaces; use commands for other local folders. On macOS and
+  Windows, the owner's own chats also get the paired-computer screen tools through the same bridge,
+  with the same per-app approval; routines and other people's messages do not. Permission is
+  remembered locally and can be revoked from the app menu. Only enable this for a trusted personal instance: every bot on that instance can use
+  your account’s permissions.
+- **Desktop provider** (`SANDBOX_PROVIDER=desktop`) runs commands directly on the API/worker host,
+  with only a minimal shell environment (no server secrets). The API and worker refuse it unless
+  `NODE_ENV` is `development` or `test`, so a production server never runs bot commands on itself.
+  Setting this inside a container does not grant access to the physical computer. Docker deployments
+  use the authenticated native bridge when local computer access is selected; they never silently
+  fall back to executing on the backend host.
+- **Fake** is only an emulator for verification.
+- **None** boots the product without a computer host (fallback when Docker/supervisor is not
+  configured, or when a remote provider is selected without its API key).
 
 ## `docker` (in-stack supervisor)
 
@@ -39,25 +99,345 @@ Missing supervisor token is a **setup failure**: do not treat `sandbox: "none"` 
 
 Signup and local Docker computers work **without** an E2B (or other remote) account.
 
+Resource ceilings, network isolation and shared folders for these computers are covered in
+[Docker computers](./self-host-docker-computers.md).
+
 ### Bot browser
 
-The published computer image uses Chromium. To use Brave instead, build the image with
-`BROWSER=brave` and point Compose at it:
+The published computer image uses Chromium. To use Google Chrome or Brave instead, build the image
+with `BROWSER=chrome` or `BROWSER=brave` and point Compose at it:
 
 ```bash
-docker build --build-arg BROWSER=brave -t cortexai-agent-hub-computer-brave infra/sandboxes/computer
+docker build --build-arg BROWSER=chrome -t cortexai-agent-hub-computer-chrome infra/sandboxes/computer
 ```
 
 ```env
-CORTEXAI_AGENT_HUB_COMPUTER_IMAGE=cortexai-agent-hub-computer-brave
+CORTEXAI_AGENT_HUB_COMPUTER_IMAGE=cortexai-agent-hub-computer-chrome
 CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=latest
 ```
 
 The image holds one browser, and `cortexai-agent-hub-browser` launches whichever is installed. A locally built
 image is not on a registry, so start the stack with `bash install-images.sh --pull-never` after
 pulling the other images once. Brave's Rewards, Wallet, Leo, VPN and News are disabled by managed
-policy. Browser identity is only one input to bot-check challenges; the host's IP reputation usually
+policy.
+
+`BROWSER=chrome` installs Google Chrome stable from Google's apt repository and checks Google's
+signing key by fingerprint. Google publishes Chrome for amd64 only, so the build fails on other
+platforms; build those with the default. Chrome identifies itself as Google Chrome and ships the
+Widevine module that some sites expect, where Debian's Chromium reports a plain Chromium brand and
+has no Widevine. Some payment and sign-in risk checks may count that profile against the device.
+
+Browser identity is only one input to bot-check challenges; the host's IP reputation usually
 matters more.
+
+## `kubernetes`
+
+Each computer is one pod in a namespace you choose, created from the published computer image.
+The API and worker talk to the Kubernetes API with their own service account (or the kubeconfig in
+`KUBECONFIG`), so they normally run in the same cluster. No supervisor or Docker socket is involved.
+
+| Variable                                             | Default                                   | Notes                                                                 |
+| ---------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------- |
+| `KUBERNETES_SANDBOX_NAMESPACE`                       | `cortexai-agent-hub-sandboxes`            | Namespace for computer pods; it must exist                            |
+| `KUBERNETES_SANDBOX_COMPUTER_IMAGE`                  | `ghcr.io/tukatek/agent-hub/computer:edge` | Pin a digest in production                                            |
+| `KUBERNETES_SANDBOX_RUNTIME_CLASS_NAME`              | unset                                     | For example `kata` or `gvisor` for a VM or user-space kernel boundary |
+| `KUBERNETES_SANDBOX_CPU_LIMIT` / `_MEMORY_LIMIT`     | unset                                     | Container limits, such as `2` and `4Gi`                               |
+| `KUBERNETES_SANDBOX_POD_LABELS` / `_POD_ANNOTATIONS` | unset                                     | JSON objects of strings, merged into every pod                        |
+| `KUBERNETES_SANDBOX_READY_TIMEOUT_MS`                | `120000`                                  | How long a new pod has to become ready                                |
+
+Each pod runs the image's own user (uid 1000) with no service account token and no service links,
+with all Linux capabilities dropped, privilege escalation off and the runtime's default seccomp
+profile, like a Docker computer (these apply to newly created pods; a pod that was already running
+keeps its old spec until it is stopped and recreated),
+and is labelled `app.kubernetes.io/name=cortexai-agent-hub-computer` and `cortexai-agent-hub-bot-id=<bot id>`. Commands,
+file transfers and workspace save and restore go through `pods/exec`; save and restore stream the
+home as one tar archive. Screens use the image's desktop gateway on the pod IP, so the API, the
+worker and the web screen proxy must be able to reach pods in that namespace on port `6080` and the
+display ports from `6100` upward. Pods are ephemeral: the
+saved workspace is the persistence boundary, as with the remote providers. Kubernetes computers do
+not bill while running, so `COMPUTER_MAX_ACTIVE_MS` does not apply to them;
+`COMPUTER_MAX_ACTIVE_UNBILLED_MS` caps them when set.
+
+### Mounted home (optional)
+
+A bot can finish its reply while its computer is still saving a large workspace. Without a
+mounted home, saving copies files back to the server and may pause browsers. More CPU can make
+that copy faster, but it does not remove the copy or its exclusive save period.
+
+If the computer writes directly to the server's workspace directory, those files are already
+saved. This is a **mounted home**: only `DATA_DIR/homes/<home key>` is mounted at `/home/cortexai-agent-hub`.
+Run checkpoints record a revision without exporting files or changing the computer to
+`suspending`, so they do not interrupt its screen. An intentional stop or idle shutdown still
+closes the screen.
+
+This option applies to the local home store. With `OBJECT_STORAGE_BUCKET` configured, CortexAI Agent Hub
+ignores the home claim and continues copying workspaces. A mounted home retains the latest files;
+it is not an immutable snapshot or a backup. Keep encrypted, off-host backups of the data volume.
+
+#### Start with one shared claim
+
+The simplest layout puts the API, worker and computer pods in the same namespace. The API and
+worker mount the data claim at `DATA_DIR`; computers mount only their own subdirectory from that
+same claim. A new empty claim with the same name is **not** the same storage.
+
+For example, if the application namespace is `cortexai-agent-hub`, its data claim is `data`, and API pods
+have label `app=cortexai-agent-hub-api`, configure both API and worker with:
+
+```env
+SANDBOX_PROVIDER=kubernetes
+KUBERNETES_SANDBOX_NAMESPACE=cortexai-agent-hub
+KUBERNETES_SANDBOX_HOME_CLAIM=data
+KUBERNETES_SANDBOX_HOME_COLOCATE_NAMESPACE=cortexai-agent-hub
+KUBERNETES_SANDBOX_HOME_COLOCATE_LABELS={"app":"cortexai-agent-hub-api"}
+```
+
+Use your deployment's actual namespace, claim and API label. Move the computer Role and
+RoleBinding below to that namespace too; keep permissions scoped to the computer manager.
+If application and computer pods share a namespace, distinguish them by pod labels in network
+and admission policies. The computer pods carry `app.kubernetes.io/name=cortexai-agent-hub-computer`.
+
+The two `HOME_COLOCATE` settings are required. They keep computers on a node with the selected
+application pods. A ReadWriteOnce volume can be used by multiple pods on the same node; it does
+not mean one pod only. A ReadWriteOncePod claim is unsuitable for this shared layout. See
+[Kubernetes volume access modes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes).
+The directory must be writable by the computer image's uid/gid 1000. CortexAI Agent Hub sets `fsGroup: 1000`
+and mounts the exact `homes/<home key>` subpath, not the whole data directory.
+
+#### Keeping a separate computer namespace on k3s
+
+A pod cannot mount another namespace's claim. If computers must remain in `cortexai-agent-hub-sandboxes`,
+that namespace needs a claim exposing the **same underlying directory**, not a separately
+provisioned disk. This requires storage-specific administration.
+
+For a single-node k3s installation using a local directory, an administrator can create a static
+local PV and bind it to a claim in the computer namespace. Its `local.path` must be the existing
+application data directory, and its node affinity must identify the node that owns that directory.
+Keep the API/worker's existing volume and data intact. Use `Retain` on both PV references before
+making the second reference, so removing a claim cannot trigger deletion of the shared directory.
+Configure `HOME_CLAIM` with the computer-namespace claim, while `HOME_COLOCATE_NAMESPACE` and
+`HOME_COLOCATE_LABELS` continue to identify the application pods.
+
+This is two references to one directory, not two copies, extra capacity, or failover. Kubernetes
+does not coordinate their deletion as a pair. Record that relationship in your operations notes
+and never clean up the directory through either reference while the other still uses it. Do not
+apply this technique to a CSI volume by duplicating its volume handle; use the storage provider's
+supported sharing arrangement instead. See [local volume requirements](https://kubernetes.io/docs/concepts/storage/volumes/#local).
+
+Preserve the sandbox boundary when allowing the new volume. Admission should allow only the
+named home PVC, mounted at `/home/cortexai-agent-hub`, with a `subPath` exactly equal to
+`homes/` plus the pod's validated `cortexai-agent-hub-bot-id` label. Reject parent paths, a mount of the entire
+claim, other home keys, host paths, injected credentials, and privileged containers. Keep the
+service-account token disabled. These restrictions constrain the pods created by the trusted
+computer manager; they do not make that manager an untrusted tenant. Validate admission using
+server-side dry runs before replacing live pods.
+
+#### Move existing computers without losing their files
+
+1. Wait for bot jobs and manual computer sessions to finish. Stop each computer through CortexAI Agent Hub
+   and confirm its save succeeds. Do not delete an unmounted pod first: its newest files may
+   exist only inside that pod.
+2. Back up the data volume, including `homes` and `home-revisions`, and record checksums of
+   representative large files. Ensure the intended claim exposes that saved directory.
+3. Apply the mounted-home settings to both API and worker, along with the storage, placement,
+   access and admission policies for your namespace layout. Existing unmounted pods keep the
+   old copy behavior until they are stopped and recreated.
+4. Start one computer. Inspect its pod's volumes and mounts: the correct claim must appear at
+   `/home/cortexai-agent-hub` with that computer's `homes/<home key>` subpath. A successful boot alone does
+   not prove the home is mounted.
+5. Compare the saved file checksums. Write a small test file in the computer, stop and start it
+   through CortexAI Agent Hub, then verify that file again. Confirm that finishing a bot task no longer
+   disconnects the screen during its workspace checkpoint before moving the remaining computers.
+
+For rollback, stop computers cleanly before removing mounts or changing the storage mapping.
+Retain the shared directory and the backup. Removing the environment variable alone does not
+unmount an existing pod; CortexAI Agent Hub still detects its mounted home to avoid copying over live files.
+A replacement unmounted pod restores from the saved server directory.
+
+#### When a computer still feels slow
+
+Start with the operation that is waiting, rather than increasing every limit. A reasonable
+starting point for a browser computer is 2 CPU and 4Gi memory, adjusted to its workload. Budget
+for all concurrent computers **plus** the API, worker, database and the node's other workloads.
+Keep spare disk capacity for browser profiles, uploads and backups.
+
+| What you observe                                 | What to check next                                                                                                                              |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Computer is busy` as a task finishes            | Inspect the real pod mount; an old unmounted pod still exports its home. Also check for an active boot, recovery or another computer operation. |
+| Container restarts or `OOMKilled`                | Check pod events and memory usage. Increase the affected container's memory only after confirming memory pressure.                              |
+| CPU stays at its limit                           | Compare usage and CPU throttling with the configured limit; increasing that limit may help.                                                     |
+| A new pod stays `Pending`                        | Describe the pod: inspect quota, available resources, claim binding and affinity. A local disk cannot follow the pod to another node.           |
+| Screen reconnects but the computer stays running | Check the screen-proxy/WebSocket path and authorization separately from disk persistence.                                                       |
+
+Use `kubectl top pods -n <namespace>` for current CPU/memory and
+`kubectl describe pod -n <namespace> <computer-pod>` for scheduling and restart evidence.
+Repeat a small task and a large-file task separately, measuring startup, file operations and
+checkpoint time. A quick first reply does not mean the file operation or save has completed.
+
+The API and worker service account needs this in the computer namespace:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cortexai-agent-hub-computers
+  namespace: cortexai-agent-hub-sandboxes
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+```
+
+Bind it to the service account the API and worker run as with a `RoleBinding`. A NetworkPolicy
+that admits only the API, worker and web pods to the computer pods, and denies their egress to
+private ranges, is recommended.
+
+## `incus`
+
+Each computer is an [Incus](https://linuxcontainers.org/incus/) application container started
+from the published computer image through Incus's OCI support (Incus 6.11 or newer; the start
+command's uid needs the `oci.uid` and `oci.gid` keys). The API and
+worker call the Incus REST API with a client certificate; no supervisor or Docker socket is
+involved.
+
+| Variable                                                       | Default                                   | Notes                                                                                                                    |
+| -------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `INCUS_SANDBOX_URL`                                            | none                                      | The Incus API, such as `https://incus.example.test:8443`                                                                 |
+| `INCUS_SANDBOX_CLIENT_CERT` / `_CLIENT_KEY`                    | none                                      | PEM client certificate and key; `\n` escapes are accepted. API and worker only                                           |
+| `INCUS_SANDBOX_SERVER_CERT`                                    | unset                                     | The server's own certificate (`incus info` shows it), trusted exactly. Unset uses the system CAs and the URL's host name |
+| `INCUS_SANDBOX_PROJECT`                                        | `default`                                 | Use a project of its own, below                                                                                          |
+| `INCUS_SANDBOX_COMPUTER_IMAGE`                                 | `ghcr.io/tukatek/agent-hub/computer:edge` | Pin a release tag or digest in production                                                                                |
+| `INCUS_SANDBOX_CPU_LIMIT` / `_MEMORY_LIMIT` / `_PROCESS_LIMIT` | `2` / `2GiB` / `2048`                     | Incus `limits.cpu`, `limits.memory` and `limits.processes` of each computer                                              |
+
+Computers without the URL, certificate or key fall back to `none`.
+
+Each instance is unprivileged, without nesting, with an isolated id map (its own range of host
+uids) and the limits above, all set on the instance so a profile cannot loosen them. The image's
+own start command and every command run as uid 1000, set on the instance and on each exec rather
+than taken from the image's user, with no privilege
+escalation, the same boundary as a Docker computer, so a custom image must keep that command.
+
+Each start creates a new instance named `cortexai-agent-hub-<uuid>` and labelled `user.cortexai-agent-hub-bot-id=<bot id>`;
+one carrying another bot's id is never reused or deleted. Instances are ephemeral: Incus deletes
+one when it stops, and the saved workspace is the persistence boundary, copied in when a computer
+starts and saved back when it stops, as on Kubernetes. Only cache paths and the screen size are set
+in the instance environment. Incus computers do not bill while running, so
+`COMPUTER_MAX_ACTIVE_UNBILLED_MS` caps them when set.
+The first computer downloads the image into the project, which can take a few minutes.
+
+The instance's root disk and network come from the project's default profile. Screens use the
+image's desktop gateway on the instance address, so the API, the worker and the web screen proxy
+must reach that network on port `6100`, for example by running them on the Incus host or in an
+instance on a network the host routes to the computers.
+
+### Restricted project and certificate
+
+Give CortexAI Agent Hub a project and a client certificate that can reach nothing else. A restricted
+certificate cannot change its project's restrictions or limits. On the Incus host:
+
+```bash
+incus network create cortexai-agent-hub0
+incus network acl create cortexai-agent-hub-computers
+# Public internet only: no host, LAN, link-local, multicast or cloud-metadata addresses.
+incus network acl rule add cortexai-agent-hub-computers egress action=reject \
+  destination=0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.168.0.0/16,198.18.0.0/15,224.0.0.0/3
+incus network acl rule add cortexai-agent-hub-computers egress action=reject protocol=tcp \
+  destination=::1/128,fc00::/7,fe80::/10,ff00::/8
+incus network acl rule add cortexai-agent-hub-computers egress action=reject protocol=udp \
+  destination=::1/128,fc00::/7,fe80::/10,ff00::/8
+incus network acl rule add cortexai-agent-hub-computers egress action=reject protocol=icmp6 icmp_type=128 \
+  destination=::1/128,fc00::/7,fe80::/10
+# Screens, from the address the API, worker and web connect from.
+incus network acl rule add cortexai-agent-hub-computers ingress action=allow protocol=tcp \
+  source=<cortexai-agent-hub-server-address> destination_port=6100
+
+incus project create cortexai-agent-hub -c features.images=true -c features.profiles=true \
+  -c restricted=true -c restricted.networks.access=cortexai-agent-hub0 \
+  -c restricted.images.servers=ghcr.io
+incus profile device add default root disk path=/ pool=default --project cortexai-agent-hub
+incus profile device add default eth0 nic network=cortexai-agent-hub0 --project cortexai-agent-hub \
+  security.acls=cortexai-agent-hub-computers security.acls.default.egress.action=allow \
+  security.ipv4_filtering=true security.ipv6_filtering=true
+
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -nodes -days 3650 \
+  -subj /CN=cortexai-agent-hub -keyout cortexai-agent-hub.key -out cortexai-agent-hub.crt
+incus config trust add-certificate cortexai-agent-hub.crt --restricted --projects cortexai-agent-hub
+```
+
+The ACL sits on each computer's network device, so it also keeps computers from reaching each
+other and other instances on the bridge; it needs the `nftables` firewall driver. Connections to a
+computer are refused except to the screen port. IPv6 neighbour discovery keeps working because only
+echo requests are refused among ICMPv6 messages to private addresses; DHCP and DNS from the bridge are
+allowed by Incus before any ACL rule. The IP filtering options stop
+a computer from spoofing addresses or sending router advertisements to the host. Set
+`INCUS_SANDBOX_PROJECT=cortexai-agent-hub` and the certificate and key from `cortexai-agent-hub.crt` and `cortexai-agent-hub.key`.
+
+## `local-vm`
+
+Each computer is one lightweight Linux VM on the Mac running CortexAI Agent Hub, started from the published
+computer image by Apple's [`container`](https://github.com/apple/container) runtime
+(Virtualization.framework). It needs Apple silicon and macOS 26 or newer, with the `container`
+system service started; no Docker, supervisor or socket is involved.
+
+| Variable                  | Default                                   | Notes                                        |
+| ------------------------- | ----------------------------------------- | -------------------------------------------- |
+| `LOCAL_VM_CLI`            | `container`                               | Path to the `container` CLI                  |
+| `LOCAL_VM_COMPUTER_IMAGE` | `ghcr.io/tukatek/agent-hub/computer:edge` | Must include `nft`; older images are refused |
+| `LOCAL_VM_CPUS`           | `2`                                       | CPUs of each VM                              |
+| `LOCAL_VM_MEMORY`         | `2g`                                      | Memory of each VM                            |
+
+Each start creates a VM and a network of its own, both named `cortexai-agent-hub-<uuid>`, labelled
+`cortexai-agent-hub.bot-id=<bot id>`; one carrying another bot's id is never reused or removed. The image's
+start command and every command run as uid 1000 with no capabilities and no privilege escalation.
+As with Incus, VMs are removed when they stop: the saved workspace is copied in when a computer
+starts and saved back when it stops. The API, worker and web reach the screen on the VM's address.
+
+Before a computer is used, CortexAI Agent Hub loads an nftables firewall into the VM as root and checks it is
+in place; if that fails, the VM is removed and the start fails. The firewall allows the public
+internet and DNS to the VM's gateway, and rejects everything else to the Mac, the LAN,
+link-local and cloud-metadata, CGNAT, multicast and other private addresses (the same list as the
+Incus ACL above). Incoming connections are dropped except from the Mac to the screen ports. The
+bot's uid 1000 cannot change it.
+
+## `wuying`
+
+Bot computers run on one existing Wuying (无影) cloud computer. An admin can also set this up in
+**Settings → Computer** instead of these variables; see [Wuying cloud computers](./wuying-computers.md)
+for the full setup. Each computer's home is a folder
+under the desktop user's profile (`%USERPROFILE%\cortexai-agent-hub\<home>`), and the desktop's own disk
+keeps it between stops, so nothing is copied in or out. Commands run in PowerShell; files,
+screenshots and input go through the desktop's MCP gateway. Stopping the last computer on it
+powers the desktop off; deleting one removes only its home folder, never the desktop.
+
+| Variable                                            | Notes                                                                                                                                    |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `WUYING_ACCESS_KEY_ID` / `WUYING_ACCESS_KEY_SECRET` | RAM user allowed `ecd:DescribeDesktops`, `ecd:StartDesktops`, `ecd:StopDesktops` and `appstream-center:GetAuthCode`. API and worker only |
+| `WUYING_REGION_ID`                                  | Defaults to `cn-hangzhou`                                                                                                                |
+| `WUYING_DESKTOP_ID`                                 | The cloud computer, assigned to the end user below                                                                                       |
+| `WUYING_END_USER_ID`                                | Screen logins are issued for this user                                                                                                   |
+| `WUYING_MCP_URL` / `WUYING_MCP_TOKEN`               | The desktop's MCP gateway and its bearer token                                                                                           |
+
+The web and Electron screen is drawn by the Wuying Web SDK in `/computer-screen/screen.html`, served by
+the web app. Mobile rejects the custom screen URL and does not embed this SDK. The
+SDK is not committed; fetch the pinned release before building the web app:
+
+```bash
+node scripts/wuying-web-sdk.mjs
+```
+
+The SDK runs in an opaque-origin sandboxed frame with an in-memory storage shim and a no-op
+cookie accessor in both its launcher and nested runtime. A CSP scoped to `/computer-screen/` permits
+the vendor hosts, blob workers and WebAssembly compilation. The one-time login code stays
+only in the URL fragment, outside HTTP requests and Referer.
+
+All bots, users and spaces configured with this provider, including Private Computers, share
+the same Windows desktop and account permissions, including files outside their workspace
+folders. Use it only in a trusted deployment.
+The gateway bounds each call to one minute, 16 KiB of command output and 1,000 folder entries.
+A command allowed longer than a minute runs detached with its output in files under
+`%USERPROFILE%\cortexai-agent-hub\.runs`, read back every second and removed when it ends or is cancelled.
 
 ## `none`
 
@@ -67,11 +447,17 @@ Runs API/web without provisioning bot computers.
 
 Set `SANDBOX_PROVIDER` to exactly one of:
 
-| Value | Credential | Notes |
-| --- | --- | --- |
-| `e2b` | `E2B_API_KEY` | Hosted sandboxes |
-| `daytona` | `DAYTONA_API_KEY` | Optional `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` |
-| `boat` | `BOAT_API_KEY` | Optional `BOAT_API_URL` (see `.env.example`) |
+| Value      | Credential                                       | Notes                                                                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2b`      | `E2B_API_KEY`                                    | Hosted sandboxes                                                                                                                                                                                                                                                                  |
+| `novita`   | `NOVITA_API_KEY`                                 | Build the desktop template first; optional `SANDBOX_TEMPLATE`                                                                                                                                                                                                                     |
+| `daytona`  | `DAYTONA_API_KEY`                                | Optional `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT`                                                                                                                                                                                                                  |
+| `boat`     | `BOAT_API_KEY`                                   | Optional `BOAT_API_URL` (see `.env.example`)                                                                                                                                                                                                                                      |
+| `boxd`     | `BOXD_API_KEY`                                   | Optional `BOXD_ORG` to create computers in a boxd organization                                                                                                                                                                                                                    |
+| `instabox` | `INSTABOX_API_KEY`                               | Computers start in the key's organization; see [instabox computers](#instabox-computers)                                                                                                                                                                                          |
+| `createos` | `CREATEOS_SANDBOX_API_KEY`                       | Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, `CREATEOS_SANDBOX_ROOTFS`                                                                                                                                                                                         |
+| `railway`  | `RAILWAY_API_TOKEN` and `RAILWAY_ENVIRONMENT_ID` | Optional `RAILWAY_SANDBOX_REGION`; `RAILWAY_MAX_WORKSPACE_FILE_BYTES` (default 64 MiB) caps each workspace file CortexAI Agent Hub reads or saves. Railway supplies the environment ID when CortexAI Agent Hub runs there; see the [Railway template](../infra/railway/README.md) |
+| `wuying`   | `WUYING_*` (below)                               | One existing Wuying cloud computer (Windows)                                                                                                                                                                                                                                      |
 
 Remote paths still need a working API/worker; they do not replace Postgres or
 the web UI. They require egress to the provider. For air-gapped hosts prefer
@@ -79,13 +465,78 @@ the web UI. They require egress to the provider. For air-gapped hosts prefer
 
 A run starts its computer only when it first uses a computer tool. With idle sleep on,
 a computer suspends after `SANDBOX_IDLE_MS` idle. On providers that bill while running
-(E2B, Daytona, Boat, CreateOS, Railway), setting `COMPUTER_MAX_ACTIVE_MS` (off by default;
+(E2B, Daytona, Boat, boxd, instabox, CreateOS, Railway), setting `COMPUTER_MAX_ACTIVE_MS` (off by default;
 `7200000` is 2 hours) also suspends it after that long up in one stretch, even with
-background work or an open screen, unless a run is executing on it or a user is in control
-of its screen.
+background work or an open screen, unless a run is executing on it, a user is in control of
+its screen, or a coding agent CLI (Codex, Claude Code, OpenCode) wrote its session within the
+last `SANDBOX_IDLE_MS`. An agent waiting at its prompt writes nothing, so it does not hold the
+computer.
 That exception lifts only the uptime cap; idle suspension after `SANDBOX_IDLE_MS` still
 applies once nothing holds the computer.
-Docker and this-Mac computers are never capped. The next use resumes it.
+Docker, Kubernetes and Incus computers are capped only when `COMPUTER_MAX_ACTIVE_UNBILLED_MS` is set
+(off by default; minimum 60000), with the same exceptions, so an abandoned background command
+cannot keep one running for days. Like every cap, it needs idle sleep on: `SANDBOX_IDLE_MS=0`
+turns it off too. This-Mac computers are never capped. The next use resumes it.
+Asking for takeover restarts the idle timer, and on providers that do not bill while running the run
+also holds the computer for 30 minutes after asking, so the user can answer the push on
+the same open page.
+
+### Computer run time
+
+Each stretch a computer runs at its provider is a row in `computer_runs`, attributed to the
+computer's owner and space. A run starts when the computer becomes ready (boot time is not
+counted) and ends when it stops. `endReason` says how: `stopped`, `idle`, `active_limit`,
+`replaced` (update, recovery, or reset), `gone` (the provider had already stopped or lost
+the sandbox), `deleted`, or `reconciled` (the end was never seen; the worker found the
+computer no longer running). For `gone` and `reconciled`, `endedAt` is when CortexAI Agent Hub
+noticed, so the true end may be earlier. The worker also opens the run of a running
+computer whose start was not recorded. An open run whose computer still reads as running
+is a computer that may be left on. Deleting a user or space keeps their runs with
+`userId` and `spaceId` cleared. This-Mac computers are not recorded.
+
+The table has row-level security, so query it as the database owner. Timestamps are UTC.
+Run hours per user over the last 7 days, counting runs still open up to now:
+
+```sql
+WITH now_utc AS (SELECT now() AT TIME ZONE 'UTC' AS at)
+SELECT r."userId", u.email,
+       round(sum(extract(epoch FROM
+         coalesce(r."endedAt", n.at) - greatest(r."startedAt", n.at - interval '7 days')
+       )) / 3600, 1) AS hours
+FROM computer_runs r
+CROSS JOIN now_utc n
+LEFT JOIN "user" u ON u.id = r."userId"
+WHERE coalesce(r."endedAt", n.at) > n.at - interval '7 days'
+GROUP BY r."userId", u.email
+ORDER BY hours DESC;
+```
+
+Runs open longer than 6 hours:
+
+```sql
+SELECT r."computerId", r."userId", r."spaceId", r.kind, r."startedAt",
+       round(extract(epoch FROM (now() AT TIME ZONE 'UTC') - r."startedAt") / 3600, 1) AS hours_open
+FROM computer_runs r
+WHERE r."endedAt" IS NULL
+  AND r."startedAt" < (now() AT TIME ZONE 'UTC') - interval '6 hours'
+ORDER BY r."startedAt";
+```
+
+### Linux background-work inspection
+
+The fallback background-work probe and cancellation commands require Bash,
+Python 3.7 or newer, and a readable/searchable `/proc` root. Both supplied images
+install `python3` explicitly in `infra/sandboxes/computer/Dockerfile` and
+`infra/sandboxes/desktop/Dockerfile`. Custom and remote images must provide this
+capability. The scanner itself never installs Python.
+
+The scanner reads marker file descriptors regardless of the holder's UID,
+including duplicated, inherited, and deleted-but-open markers. Individual
+entries that disappear or deny access are skipped because their links cannot
+be observed. A failed root traversal, unexpected filesystem error, or missing
+Python capability makes inspection unknown. Such failures do not authorize marker
+cleanup or cancellation signals from partial scanner output. Cancellation
+rechecks each selected PID's marker descriptors before signaling it.
 
 ### E2B computer template
 
@@ -100,6 +551,40 @@ E2B_API_KEY=<deployment key> pnpm sandbox:e2b-template
 
 Until it exists, new computers use the stock desktop template. Existing computers keep
 the size they were created with until they are replaced.
+
+### Novita computer template
+
+Set `SANDBOX_PROVIDER=novita` and `NOVITA_API_KEY` on both the API and worker.
+Build the desktop template once in the account that owns that key:
+
+```bash
+NOVITA_API_KEY=<deployment-key> pnpm sandbox:novita-template
+```
+
+The `cortexai-agent-hub-computer` template uses Novita's desktop image at 2 vCPU and 4 GB.
+The provider requires this template and does not fall back to the larger stock desktop.
+To use another desktop template, set `SANDBOX_TEMPLATE` to the same name when building
+and on both services. Rebuild when the template definition changes; existing computers
+keep their original template and resources.
+
+Computers pause on idle timeout and on stop, preserving files, browser profiles, and
+running-process memory. Reconnecting resumes the same computer. Destruction deletes
+it without resuming it. Stop retries pause requests and checks the remote state. Command
+cancellation and deadlines retry termination; if termination cannot be confirmed, the
+adapter attempts to pause the computer and reports that the command may remain suspended.
+An unconfirmed command stop also quarantines the computer in the shared database, so
+API heartbeats, worker jobs, and restarts cannot silently resume it. Use the existing
+Recover or Reset action to replace it from saved work; the paused guest is preserved
+until that explicit action. Normal reads and heartbeats do not resume a paused Novita
+computer.
+An outage can prevent both operations; the configured idle timeout remains the final
+auto-pause boundary. This recovery does not delete the saved computer. Paused storage remains subject to Novita's storage billing
+and retention terms. This provider uses the shared Linux desktop runtime for screens,
+takeover, terminal, and portable workspace transfer.
+
+A missing key disables computers without preventing startup. A present but invalid key,
+a missing template, or a quota failure surfaces when a computer starts; an authentication
+or network error does not authorize replacing an existing computer.
 
 ### Boat computer snapshot
 
@@ -117,6 +602,40 @@ first computer, in the Boat account that owns `BOAT_API_KEY`:
 BOAT_API_KEY=<deployment key> pnpm sandbox:boat-snapshot
 ```
 
+### boxd computers
+
+boxd computers are isolated microVMs: no boxd credentials inside, and no route to the
+account's other machines. They start from a snapshot, `cortexai-agent-hub-computer-<hash>`, with the
+desktop tools and Chrome installed, built the same way as Boat's: once in the background
+when missing, from a fresh machine that is deleted afterwards. To build it ahead of the
+first computer:
+
+```bash
+BOXD_API_KEY=<deployment key> pnpm sandbox:boxd-snapshot
+```
+
+The desktop is served on the machine's own public HTTPS address; every screen and terminal
+still needs its own token, which the desktop gateway checks. Stopping a computer suspends it
+with its memory, so programs it was running continue when it resumes.
+
+### instabox computers
+
+instabox computers start from instabox's own desktop image, which already has Chromium; the
+first start installs the rest of the desktop tools in a few seconds. They are created without
+the instabox account's vault, so secrets saved on that account never reach a bot's computer.
+
+The desktop is served on the computer's public HTTPS address; every screen and terminal still
+needs its own token, which the desktop gateway checks. Stopping a computer suspends it with its
+memory. instabox also pauses a computer after 30 idle minutes, later than the default
+`SANDBOX_IDLE_MS`, so CortexAI Agent Hub normally stops it first. One key's computers share its account's
+limits on requests at once (API calls, and connections to screens and terminals), so a
+deployment with many active computers at the same time can see them slow down.
+
+New computers start at the computer size of the space's plan. Standard is instabox's default.
+Large and xlarge need an instabox plan that offers that size; otherwise the computer starts at
+the size it can have. A stopped computer moves to its plan's size when it next starts, which
+restarts it, so its running programs end. A running computer keeps its size.
+
 ## Verify a provider change
 
 After changing provider or keys (from the published-images drop directory that
@@ -127,7 +646,7 @@ docker compose --env-file .env -f docker-compose.images.yml up -d
 curl -fsS http://127.0.0.1:3100/internal/health
 ```
 
-Confirm `sandbox` equals the intended provider (`e2b`, `daytona`, or `boat`).
+Confirm `sandbox` equals the intended provider (`e2b`, `novita`, `daytona`, `boat`, `boxd`, or `instabox`).
 HTTP 200 alone does not verify a remote provider: a missing API key falls back to `sandbox: "none"`.
 A present but invalid key still reports the selected provider. Open a bot's computer to verify
 provisioning and desktop access.

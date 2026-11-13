@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PRIVATE_MODEL_ENDPOINT_MESSAGE } from "./openai-compatible-url.js";
 import {
   DEFAULT_COMPATIBLE_STT_MODEL,
   DEFAULT_COMPATIBLE_TTS_MODEL,
@@ -55,14 +56,14 @@ describe("serializeOpenAiCompatibleVoiceSecret", () => {
   it("refuses a private speech server unless private endpoints are allowed", async () => {
     expect(() =>
       serializeOpenAiCompatibleVoiceSecret({ baseUrl: "http://192.168.1.20:8880" }),
-    ).toThrow("Private model endpoints require operator authorization.");
+    ).toThrow(PRIVATE_MODEL_ENDPOINT_MESSAGE);
     const fetchMock = vi.fn();
     const denied = new OpenAiCompatibleVoiceProvider({
       fetch: fetchMock as unknown as typeof fetch,
     });
     await expect(
       denied.synthesize({ text: "hi", voiceId: "af_heart", apiKey: keyed }, ctx),
-    ).rejects.toThrow("Private model endpoints require operator authorization.");
+    ).rejects.toThrow(PRIVATE_MODEL_ENDPOINT_MESSAGE);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -81,8 +82,9 @@ describe("serializeOpenAiCompatibleVoiceSecret", () => {
   });
 
   it("blocks public hosts, metadata hosts, and cleartext keys to public servers", () => {
+    vi.stubEnv("CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC", "0");
     expect(() => serializeAsOwner({ baseUrl: "https://speech.example.com" })).toThrow(
-      /Public model endpoints are blocked/,
+      /Public model endpoints are disabled/,
     );
     expect(() => serializeAsOwner({ baseUrl: "http://169.254.169.254" })).toThrow(/blocked/);
     vi.stubEnv("CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC", "1");
@@ -241,6 +243,18 @@ describe("OpenAiCompatibleVoiceProvider", () => {
     });
   });
 
+  it("falls back to the standard OpenAI voices when the speech model is not Kokoro", async () => {
+    const hosted = serializeAsOwner({
+      baseUrl: "https://speech.example.test/api/v1",
+      apiKey: "test-key-123",
+      ttsModel: "openai/gpt-4o-mini-tts",
+    });
+    const missing = vi.fn().mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const voices = await provider(missing).listVoices(hosted, ctx);
+    expect(voices[0]?.id).toBe("alloy");
+    expect(voices.some((voice) => voice.id === "af_heart")).toBe(false);
+  });
+
   it("speaks MP3 with the saved model and the voice's Kokoro language", async () => {
     const fetchMock = vi
       .fn()
@@ -325,6 +339,40 @@ describe("OpenAiCompatibleVoiceProvider", () => {
       provider(fetchMock).synthesize({ text: "Hi", voiceId: "af_heart", apiKey: keyless }, ctx),
     ).rejects.toThrow("speaking failed: Model not found");
   });
+
+  it.each(["speaking", "transcribing"])(
+    "surfaces and sanitizes a nested server error when %s fails",
+    async (operation) => {
+      const detail = `Model fake-tts was not found\nlocal-test-key ${"x".repeat(200)}`;
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: { message: detail } }), { status: 404 }),
+        );
+      const voice = provider(fetchMock);
+      const result =
+        operation === "speaking"
+          ? voice.synthesize({ text: "Hi", voiceId: "alloy", apiKey: keyed }, ctx)
+          : voice.transcribe(
+              { audio: new Uint8Array([1]), mimeType: "audio/webm", apiKey: keyed },
+              ctx,
+            );
+      const error = await result.catch((caught: Error) => caught);
+      expect((error as Error).message).toBe(
+        `${operation} failed: ${`Model fake-tts was not found [redacted] ${"x".repeat(200)}`.slice(0, 160)}`,
+      );
+    },
+  );
+
+  it.each(["not JSON", "null", '{"error":{"message":42}}'])(
+    "falls back to the status for an invalid error body: %s",
+    async (body) => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 404 }));
+      await expect(
+        provider(fetchMock).synthesize({ text: "Hi", voiceId: "alloy", apiKey: keyless }, ctx),
+      ).rejects.toThrow("speaking failed (404)");
+    },
+  );
 
   it("reads an insufficient_quota 429 as spent credit", async () => {
     const fetchMock = vi

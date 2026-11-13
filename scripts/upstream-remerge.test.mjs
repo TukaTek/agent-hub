@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { remerge } from "./upstream-remerge.mjs";
 
@@ -13,7 +13,10 @@ function git(cwd, ...args) {
 }
 
 function write(cwd, files) {
-  for (const [path, text] of Object.entries(files)) writeFileSync(join(cwd, path), text);
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(cwd, path)), { recursive: true });
+    writeFileSync(join(cwd, path), text);
+  }
 }
 
 function commit(cwd, message) {
@@ -170,5 +173,40 @@ describe("remerge", () => {
     expect(readFileSync(join(cwd, "added.ts"), "utf8")).toContain("@cortexai-agent-hub/core");
     expect(report.manual).toEqual([`mail.md: resolve by hand: security@${old}.com`]);
     expect(git(cwd, "diff", "--name-only")).toBe("");
+  });
+
+  it("moves upstream additions into the directories the fork renamed", () => {
+    const module = `modules/${old}-notes`;
+    const fork = "modules/cortexai-agent-hub-notes";
+    const cwd = forkMidMerge({
+      base: {
+        [`${module}/src/com/${old}/notes/Store.kt`]: `package com.${old}.notes\n`,
+        [`${module}/src/com/${old}/notes/Poll.kt`]: `package com.${old}.notes\n`,
+      },
+      ours: {
+        [`${fork}/src/com/tukatek/cortexai/agenthub/notes/Store.kt`]:
+          "package com.tukatek.cortexai.agenthub.notes\n",
+        [`${fork}/src/com/tukatek/cortexai/agenthub/notes/Poll.kt`]:
+          "package com.tukatek.cortexai.agenthub.notes\n",
+      },
+      oursRemoved: [
+        `${module}/src/com/${old}/notes/Store.kt`,
+        `${module}/src/com/${old}/notes/Poll.kt`,
+      ],
+      upstream: {
+        [`${module}/src/com/${old}/notes/Call.kt`]: `package com.${old}.notes\n`,
+        [`${module}/res/drawable/ic_${old}_call.xml`]: "<vector />\n",
+      },
+    });
+
+    const report = remerge({ cwd, format: false });
+
+    expect(unmerged(cwd)).toEqual([]);
+    expect(report.keptDeleted).toEqual([]);
+    expect(
+      readFileSync(join(cwd, `${fork}/src/com/tukatek/cortexai/agenthub/notes/Call.kt`), "utf8"),
+    ).toBe("package com.tukatek.cortexai.agenthub.notes\n");
+    expect(existsSync(join(cwd, `${fork}/res/drawable/ic_cortexai_agent_hub_call.xml`))).toBe(true);
+    expect(git(cwd, "ls-files").includes(old)).toBe(false);
   });
 });

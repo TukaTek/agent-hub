@@ -12,6 +12,7 @@ export function authCapabilities(
     emailCode?: boolean;
     passkeyRpId?: string | null;
     nativePasskeys?: { ios: boolean; android: boolean };
+    crispWebsiteId?: string | null;
   },
 ): AuthCapabilitiesResponse {
   if (env.hubAuth) {
@@ -44,5 +45,6 @@ export function authCapabilities(
     billing: options.billing,
     passkeyRpId: options.passkeyRpId ?? null,
     ...(options.nativePasskeys ? { nativePasskeys: options.nativePasskeys } : {}),
+    crispWebsiteId: options.billing ? (options.crispWebsiteId ?? null) : null,
   };
 }

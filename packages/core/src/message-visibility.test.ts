@@ -41,6 +41,18 @@ const peerExchange = [
 ];
 
 describe("user-visible messages", () => {
+  it("hides a delivery that woke the bot but keeps the bot's reply", () => {
+    const delivery = {
+      ...message("delivery", "run-1", [
+        { kind: "delivery" },
+        { kind: "text", text: 'Run routine "CRM sync":\nAdd the contact.' },
+      ]),
+      role: "user",
+    };
+    const reply = message("reply", "run-1", [{ kind: "text", text: "Added Ada." }]);
+    expect(userVisibleMessages([delivery, reply]).map((item) => item.id)).toEqual(["reply"]);
+  });
+
   it("keeps ordinary group replies inline when a member sends a peer message", () => {
     const messages: ThreadMessage[] = [
       { ...message("first", "group-run", [{ kind: "text", text: "Checking" }]), botId: "first" },
@@ -197,6 +209,63 @@ describe("user-visible messages", () => {
       "file_reply",
       "image_reply",
     ]);
+  });
+
+  it("folds chart-only peer replies under their received marker and expands them", () => {
+    const chartReply = message("chart_reply", "run-peer", [
+      { kind: "chart", name: "Results", spec: {}, data: [] },
+    ]);
+    const activity = message("activity", "run-peer", [
+      { kind: "steps", steps: [{ label: "Work", count: 1 }] },
+    ]);
+    const transcript = foldPeerReplies([received, activity, chartReply], {
+      includePeerReceipts: true,
+    });
+
+    expect(transcript.messages).toEqual([received]);
+    expect(transcript.folded.get("received")).toEqual([chartReply]);
+    expect(transcript.markerOf.get("chart_reply")).toBe("received");
+    expect(expandPeerReplies(transcript, new Set())).toEqual([received]);
+    expect(expandPeerReplies(transcript, new Set(["received"]))).toEqual([received, chartReply]);
+  });
+
+  it("folds page-only peer replies under their received marker", () => {
+    const pageReply = message("page_reply", "run-peer", [
+      { kind: "page", pageId: "page-1", version: 1, title: "Results" },
+    ]);
+    const transcript = foldPeerReplies([received, pageReply], { includePeerReceipts: true });
+
+    expect(transcript.messages).toEqual([received]);
+    expect(transcript.folded.get("received")).toEqual([pageReply]);
+  });
+
+  it("keeps chart-only relays inline", () => {
+    const relayReceipt = { ...received, replyToMessageId: "sent" };
+    const chartReply = message("chart_reply", "run-peer", [
+      { kind: "chart", name: "Results", spec: {}, data: [] },
+    ]);
+    const transcript = foldPeerReplies([relayReceipt, chartReply], {
+      includePeerReceipts: true,
+      includeDelegatedReplyText: false,
+    });
+
+    expect(transcript.messages).toEqual([relayReceipt, chartReply]);
+    expect(transcript.folded.size).toBe(0);
+  });
+
+  it("hides chart-only background replies even when their peer receipt is expanded", () => {
+    const chartReply = message("chart_reply", "run-peer", [
+      { kind: "chart", name: "Results", spec: {}, data: [] },
+    ]);
+    const transcript = foldPeerReplies([received, chartReply], {
+      includePeerReceipts: true,
+      backgroundRunIds: ["run-peer"],
+    });
+
+    expect(transcript.messages).toEqual([]);
+    expect(transcript.folded.size).toBe(0);
+    expect(transcript.markerOf.size).toBe(0);
+    expect(expandPeerReplies(transcript, new Set(["received"]))).toEqual([]);
   });
 
   it("keeps peer-run user-input cards inline while folding the reply", () => {

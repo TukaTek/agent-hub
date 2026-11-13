@@ -1,9 +1,19 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import type { Readable } from "node:stream";
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT } from "@cortexai-agent-hub/contracts";
 import type * as LarkSdk from "@larksuiteoapi/node-sdk";
-import type { Adapter, AdapterPostableMessage, ChatInstance, WebhookOptions } from "chat";
+import type {
+  Adapter,
+  AdapterPostableMessage,
+  Attachment,
+  ChatInstance,
+  WebhookOptions,
+} from "chat";
 import { Message, parseMarkdown } from "chat";
 import type { LarkAdapterConfig } from "./lazy-adapter.js";
 import { LarkAdapterBase } from "./lazy-adapter.js";
+import type { LarkTextPart } from "./text-parts.js";
+import { setLarkTextParts } from "./text-parts.js";
 
 interface WebhookPayload {
   encrypt?: string;
@@ -143,6 +153,7 @@ export class LarkAdapter extends LarkAdapterBase implements Adapter {
           message.author.fullName = name;
           message.author.userName = name;
         }
+        message.attachments = await this.inboundImages(raw.message);
         return message;
       },
       options,
@@ -150,13 +161,53 @@ export class LarkAdapter extends LarkAdapterBase implements Adapter {
     return Response.json({});
   }
 
+  /** The format is only known from the bytes, so images are downloaded before delivery. */
+  private inboundImages(msg: LarkMessageEvent["message"]): Promise<Attachment[]> {
+    const keys = inboundImageKeys(msg.content, msg.message_type).slice(0, ATTACHMENT_MAX_COUNT);
+    return Promise.all(
+      keys.map((key, index) => this.downloadImage(msg.message_id, key, index + 1)),
+    );
+  }
+
+  private async downloadImage(
+    messageId: string,
+    imageKey: string,
+    position: number,
+  ): Promise<Attachment> {
+    try {
+      const resource = await this.client.im.messageResource.get({
+        path: { message_id: messageId, file_key: imageKey },
+        params: { type: "image" },
+      });
+      const bytes = await readCapped(resource.getReadableStream(), ATTACHMENT_MAX_BYTES);
+      const format = imageFormat(bytes);
+      if (!format) throw new Error("Lark image has an unsupported format");
+      return {
+        type: "image",
+        name: `image-${position}${format.extension}`,
+        mimeType: format.mimeType,
+        size: bytes.byteLength,
+        fetchData: async () => bytes,
+      };
+    } catch (error) {
+      // Without a MIME type the inbound handler reports this attachment as unavailable.
+      return {
+        type: "image",
+        name: `image-${position}`,
+        fetchData: async () => {
+          throw error;
+        },
+      };
+    }
+  }
+
   parseMessage(raw: unknown) {
     const event = raw as LarkMessageEvent;
     const msg = event.message;
     const id = event.sender.sender_id?.open_id ?? "";
-    let text = inboundText(msg.content, msg.message_type);
-    for (const mention of msg.mentions ?? [])
-      text = text.replaceAll(mention.key, `@${mention.name}`);
+    const { text, parts } = inboundText(msg.content, msg.message_type, msg.mentions ?? []);
+    const formatted = parseMarkdown(text);
+    if (parts) setLarkTextParts(formatted, parts);
     const name = this.users.get(id) ?? id;
     return new Message({
       id: msg.message_id,
@@ -165,7 +216,7 @@ export class LarkAdapter extends LarkAdapterBase implements Adapter {
         ...(msg.thread_id ? { threadId: msg.thread_id } : {}),
       }),
       text,
-      formatted: parseMarkdown(text),
+      formatted,
       raw,
       author: {
         userId: id || "unknown",
@@ -199,28 +250,41 @@ export class LarkAdapter extends LarkAdapterBase implements Adapter {
     this.directChats.add(chatId);
     return this.encodeThreadId({ chatId });
   }
-  private content(message: AdapterPostableMessage) {
-    const text =
+  private payload(message: AdapterPostableMessage): { msgType: string; content: string } {
+    const markdown =
       typeof message === "string"
-        ? message
+        ? null
         : "markdown" in message
           ? message.markdown
-          : "raw" in message
-            ? message.raw
-            : "ast" in message
-              ? this.renderFormatted(message.ast)
-              : "";
+          : "ast" in message
+            ? this.renderFormatted(message.ast)
+            : null;
+    if (markdown) {
+      // Rich text accepts a whole Markdown body as one md block.
+      return {
+        msgType: "post",
+        content: JSON.stringify({ zh_cn: { content: [[{ tag: "md", text: markdown }]] } }),
+      };
+    }
+    const text = typeof message === "string" ? message : "raw" in message ? message.raw : "";
     if (typeof text !== "string" || !text)
       throw new Error("Lark message content is empty or unsupported");
-    return JSON.stringify({ text });
+    return { msgType: "text", content: JSON.stringify({ text }) };
   }
-  async postMessage(threadId: string, message: AdapterPostableMessage) {
+  /** `idempotencyKey` makes Lark drop a repeat of this send for an hour. */
+  async postMessage(threadId: string, message: AdapterPostableMessage, idempotencyKey?: string) {
     const decoded = this.decodeThreadId(threadId);
     if (decoded.threadId) throw new Error("Lark group thread replies are not supported");
+    const { msgType, content } = this.payload(message);
     const result = checked(
       await this.client.im.message.create({
         params: { receive_id_type: "chat_id" },
-        data: { receive_id: decoded.chatId, msg_type: "text", content: this.content(message) },
+        data: {
+          receive_id: decoded.chatId,
+          msg_type: msgType,
+          content,
+          ...(idempotencyKey ? { uuid: larkDedupeId(idempotencyKey) } : {}),
+        },
       }),
     );
     const id = result.data?.message_id;
@@ -228,10 +292,11 @@ export class LarkAdapter extends LarkAdapterBase implements Adapter {
     return { id, threadId, raw: { message_id: id } };
   }
   async editMessage(threadId: string, messageId: string, message: AdapterPostableMessage) {
+    const { msgType, content } = this.payload(message);
     checked(
       await this.client.im.message.update({
         path: { message_id: messageId },
-        data: { msg_type: "text", content: this.content(message) },
+        data: { msg_type: msgType, content },
       }),
     );
     return { id: messageId, threadId, raw: { message_id: messageId } };
@@ -239,6 +304,11 @@ export class LarkAdapter extends LarkAdapterBase implements Adapter {
   async deleteMessage(_threadId: string, messageId: string) {
     checked(await this.client.im.message.delete({ path: { message_id: messageId } }));
   }
+}
+
+/** Lark's dedupe id is at most 50 characters; message keys can be longer. */
+function larkDedupeId(idempotencyKey: string): string {
+  return createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 32);
 }
 
 function checked<T extends { code?: number; msg?: string }>(result: T): T {
@@ -255,41 +325,163 @@ function forbidden() {
   return new Response("Forbidden", { status: 403 });
 }
 
-function inboundText(content: string, type: string): string {
-  if (type !== "text" && type !== "post") return "";
+function inboundText(
+  content: string,
+  type: string,
+  mentions: NonNullable<LarkMessageEvent["message"]["mentions"]>,
+): { text: string; parts?: LarkTextPart[] } {
+  const mentionNames = new Map(
+    mentions.filter((mention) => mention.key).map((mention) => [mention.key, `@${mention.name}`]),
+  );
+  const mentionPattern = mentionNames.size
+    ? new RegExp(
+        `(?:${[...mentionNames.keys()]
+          .sort((a, b) => b.length - a.length)
+          .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join("|")})(?!\\w)`,
+        "g",
+      )
+    : null;
+  const replaceMentions = (value: string) =>
+    mentionPattern ? value.replace(mentionPattern, (key) => mentionNames.get(key) ?? key) : value;
+  const plain = (value: string) => ({ text: replaceMentions(value) });
+  if (type !== "text" && type !== "post") return plain("");
   try {
     const parsed = JSON.parse(content);
-    if (typeof parsed.text === "string") return parsed.text;
+    if (typeof parsed.text === "string") return plain(parsed.text);
     const posts = parsed.post ?? parsed;
     const post = Array.isArray(posts.content)
       ? posts
       : (posts.zh_cn ?? posts.en_us ?? Object.values(posts)[0]);
-    if (!post || typeof post !== "object") return "";
+    if (!post || typeof post !== "object") return plain("");
     const rich = post as {
       title?: string;
-      content?: { tag: string; text?: string; href?: string; user_name?: string }[][];
+      content?: {
+        tag: string;
+        text?: string;
+        href?: string;
+        user_name?: string;
+        user_id?: string;
+      }[][];
     };
-    return [
-      rich.title ? `# ${rich.title}` : undefined,
-      ...(rich.content ?? []).map((row) =>
-        row
-          .map((item) =>
-            item.tag === "a"
-              ? `[${item.text ?? ""}](${item.href ?? ""})`
-              : item.tag === "at"
-                ? `@${item.user_name ?? "unknown"}`
-                : item.tag === "text"
-                  ? (item.text ?? "")
-                  : "",
-          )
-          .join(""),
-      ),
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const itemText = (item: NonNullable<typeof rich.content>[number][number]) =>
+      item.tag === "a"
+        ? `[${item.text ?? ""}](${item.href ?? ""})`
+        : item.tag === "at"
+          ? item.user_name
+            ? `@${item.user_name}`
+            : item.user_id || "@unknown"
+          : item.tag === "text" || item.tag === "code_block"
+            ? (item.text ?? "")
+            : "";
+    if ((rich.content ?? []).some((row) => row.some((item) => item.tag === "code_block"))) {
+      const rows: LarkTextPart[][] = (rich.content ?? []).map((row) =>
+        row.map((item) => ({ text: itemText(item), literal: item.tag === "code_block" })),
+      );
+      const nonemptyRows = rows.filter((row) => row.some((part) => part.text));
+      const groups = [
+        ...(rich.title ? [[{ text: `# ${rich.title}`, literal: false }]] : []),
+        ...nonemptyRows,
+      ];
+      const parts: LarkTextPart[] = [];
+      const append = (part: LarkTextPart) => {
+        if (!part.text) return;
+        const last = parts.at(-1);
+        if (!part.literal && last && !last.literal) last.text += part.text;
+        else parts.push({ ...part });
+      };
+      groups.forEach((row, index) => {
+        if (index) append({ text: "\n", literal: false });
+        row.forEach(append);
+      });
+      for (const part of parts) if (!part.literal) part.text = replaceMentions(part.text);
+      return { text: parts.map((part) => part.text).join(""), parts };
+    }
+    return plain(
+      [
+        rich.title ? `# ${rich.title}` : undefined,
+        ...(rich.content ?? []).map((row) => row.map(itemText).join("")),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
   } catch {
-    return content;
+    return plain(content);
   }
+}
+
+interface RichPost {
+  title?: string;
+  content?: {
+    tag: string;
+    text?: string;
+    href?: string;
+    user_name?: string;
+    image_key?: string;
+  }[][];
+}
+
+/** A post's body, whether or not it is wrapped in a locale key. */
+function richPost(parsed: { post?: unknown; content?: unknown }): RichPost | null {
+  const posts = (parsed.post ?? parsed) as Record<string, unknown>;
+  const post = Array.isArray(posts.content)
+    ? posts
+    : (posts.zh_cn ?? posts.en_us ?? Object.values(posts)[0]);
+  return post && typeof post === "object" ? (post as RichPost) : null;
+}
+
+// Keys end up in an API path, so accept only the characters Lark itself issues.
+const IMAGE_KEY = /^[\w-]+$/;
+
+function inboundImageKeys(content: string, type: string): string[] {
+  let keys: unknown[];
+  try {
+    const parsed = JSON.parse(content);
+    if (type === "image") keys = [parsed.image_key];
+    else if (type === "post")
+      keys = (richPost(parsed)?.content ?? [])
+        .flat()
+        .filter((item) => item.tag === "img")
+        .map((item) => item.image_key);
+    else return [];
+  } catch {
+    return [];
+  }
+  const valid = keys.filter((key): key is string => typeof key === "string" && IMAGE_KEY.test(key));
+  return [...new Set(valid)];
+}
+
+async function readCapped(stream: Readable, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += chunk.length;
+    if (total > limit) {
+      stream.destroy();
+      throw new Error("Lark image exceeds the attachment size limit");
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** The attachment pipeline accepts these four image types. */
+function imageFormat(bytes: Buffer): { mimeType: string; extension: string } | null {
+  if (bytes.subarray(0, 8).equals(PNG_SIGNATURE))
+    return { mimeType: "image/png", extension: ".png" };
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+    return { mimeType: "image/jpeg", extension: ".jpg" };
+  const head = bytes.subarray(0, 4).toString("latin1");
+  if (
+    bytes.subarray(0, 6).toString("latin1") === "GIF87a" ||
+    bytes.subarray(0, 6).toString("latin1") === "GIF89a"
+  )
+    return { mimeType: "image/gif", extension: ".gif" };
+  if (head === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP")
+    return { mimeType: "image/webp", extension: ".webp" };
+  return null;
 }
 export async function createLarkAdapter(config: LarkAdapterConfig) {
   const sdk = await import("@larksuiteoapi/node-sdk");

@@ -18,7 +18,7 @@
 
     <main class="shell">
       <h1 class="heading">Welcome to CortexAI Agent Hub</h1>
-      <p class="subheading">Choose which server this app should use.</p>
+      <p class="subheading">Choose where CortexAI Agent Hub runs.</p>
 
       <form id="setup" novalidate>
         <fieldset class="choices">
@@ -26,17 +26,26 @@
 
           <label id="choice-cloud" class="choice" for="mode-cloud" hidden>
             <input id="mode-cloud" type="radio" name="mode" value="cloud" />
-            <span class="choice-title">CortexAI Agent Hub Cloud</span>
+            <span class="choice-text">
+              <span class="choice-title">CortexAI Agent Hub Cloud</span>
+              <span class="choice-description">Nothing to install.</span>
+            </span>
           </label>
 
           <label class="choice" for="mode-new">
             <input id="mode-new" type="radio" name="mode" value="new" checked />
-            <span class="choice-title">This computer</span>
+            <span class="choice-text">
+              <span class="choice-title">This computer</span>
+              <span class="choice-description">Your data stays on this computer.</span>
+            </span>
           </label>
 
           <label class="choice" for="mode-existing">
             <input id="mode-existing" type="radio" name="mode" value="existing" />
-            <span class="choice-title">Existing instance</span>
+            <span class="choice-text">
+              <span class="choice-title">Existing instance</span>
+              <span class="choice-description">Connect to a server you or your team already run.</span>
+            </span>
           </label>
         </fieldset>
 
@@ -72,11 +81,11 @@
             </div>
             <p id="stack-detail" class="stack-detail"></p>
             <pre id="stack-output" class="stack-output" hidden></pre>
-            <div id="stack-docker-help" class="stack-help" hidden>
-              <button class="link" type="button" data-link="docker-desktop">Docker Desktop</button>
-              <button class="link" type="button" data-link="orbstack">OrbStack</button>
-              <button class="link" type="button" data-link="docker-engine">Docker Engine</button>
-            </div>
+            <p id="stack-hint" class="stack-hint" hidden></p>
+            <p id="stack-waiting" class="stack-waiting" hidden>
+              <span class="pulse" aria-hidden="true"></span>
+              <span id="stack-waiting-text"></span>
+            </p>
           </div>
         </section>
 
@@ -90,6 +99,18 @@
             autocomplete="off"
             placeholder="https://cortexai-agent-hub.example.com"
           />
+          <details id="server-headers-section" class="headers">
+            <summary>Headers</summary>
+            <textarea
+              id="server-headers"
+              class="field"
+              rows="2"
+              spellcheck="false"
+              autocomplete="off"
+              aria-label="Headers"
+              placeholder="Name: value"
+            ></textarea>
+          </details>
         </section>
 
         <p id="status" class="status" role="status" aria-live="polite"></p>

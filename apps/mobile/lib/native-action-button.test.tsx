@@ -2,6 +2,8 @@
 
 import { tokensForAppearance } from "@cortexai-agent-hub/ui-tokens";
 import type { CSSProperties, ReactNode } from "react";
+import { act, useState } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NativeActionButton as FallbackButton } from "../components/native-action-button";
@@ -14,6 +16,10 @@ const swiftLabel = vi.hoisted(() => vi.fn());
 const appearance = vi.hoisted(() => ({ value: "light" as "light" | "dark" }));
 const swiftHost = vi.hoisted(() => vi.fn());
 const swiftText = vi.hoisted(() => vi.fn());
+const nativeView = vi.hoisted(() => vi.fn());
+const hapticImpact = vi.hoisted(() => vi.fn());
+
+vi.mock("./haptics", () => ({ hapticImpact }));
 
 vi.mock("react-native", () => ({
   useWindowDimensions: () => ({ fontScale: 1 }),
@@ -26,20 +32,23 @@ vi.mock("react-native", () => ({
     accessibilityState,
     accessibilityLabel,
     android_ripple,
+    onPress,
   }: {
     children: ReactNode;
     android_ripple?: { color: string; foreground: boolean };
     accessibilityState?: { selected?: boolean; disabled?: boolean };
     accessibilityLabel?: string;
+    onPress?: () => void;
     style: (state: { pressed: boolean }) => CSSProperties[];
   }) => {
-    pressable({ android_ripple });
+    pressable({ android_ripple, onPress });
     return (
       <button
         type="button"
         aria-label={accessibilityLabel}
         aria-pressed={accessibilityState?.selected}
         disabled={accessibilityState?.disabled}
+        onClick={onPress}
         style={Object.assign({}, ...style({ pressed: false }))}
       >
         {children}
@@ -49,6 +58,10 @@ vi.mock("react-native", () => ({
   Text: ({ children, style }: { children: ReactNode; style: CSSProperties }) => (
     <span style={style}>{children}</span>
   ),
+  View: (props: { children: ReactNode }) => {
+    nativeView(props);
+    return <div>{props.children}</div>;
+  },
 }));
 vi.mock("../components/native-symbol", () => ({ NativeSymbol: () => <i /> }));
 vi.mock("./native", () => ({
@@ -61,8 +74,10 @@ vi.mock("./native", () => ({
   },
 }));
 vi.mock("@expo/ui/swift-ui", () => ({
-  Host: (props: { children: ReactNode }) => {
-    swiftHost(props);
+  Host: (props: { children: ReactNode; matchContents?: unknown }) => {
+    // Like the native host, these measurement axes are fixed for a mounted instance.
+    const [mountedMatchContents] = useState(() => props.matchContents);
+    swiftHost({ ...props, mountedMatchContents });
     return <div>{props.children}</div>;
   },
   Button: (props: { children?: ReactNode }) => {
@@ -81,23 +96,30 @@ vi.mock("@expo/ui/swift-ui", () => ({
 }));
 vi.mock("@expo/ui/swift-ui/modifiers", () => {
   const modifier = (name: string) => (value: unknown) => ({ name, value });
-  return Object.fromEntries(
-    [
-      "accessibilityLabel",
-      "accessibilityAddTraits",
-      "accessibilityRemoveTraits",
-      "labelStyle",
-      "buttonStyle",
-      "controlSize",
-      "disabled",
-      "font",
-      "foregroundStyle",
-      "frame",
-      "padding",
-      "progressViewStyle",
-      "tint",
-    ].map((name) => [name, modifier(name)]),
-  );
+  return {
+    ...Object.fromEntries(
+      [
+        "accessibilityLabel",
+        "accessibilityHidden",
+        "accessibilityAddTraits",
+        "accessibilityRemoveTraits",
+        "labelStyle",
+        "buttonStyle",
+        "controlSize",
+        "disabled",
+        "font",
+        "foregroundStyle",
+        "frame",
+        "padding",
+        "progressViewStyle",
+        "tint",
+        "background",
+        "fixedSize",
+        "strokeBorder",
+      ].map((name) => [name, modifier(name)]),
+    ),
+    shapes: { roundedRectangle: modifier("roundedRectangle") },
+  };
 });
 
 beforeEach(() => {
@@ -107,9 +129,104 @@ beforeEach(() => {
   swiftLabel.mockClear();
   swiftHost.mockClear();
   swiftText.mockClear();
+  nativeView.mockClear();
+  pressable.mockClear();
+  hapticImpact.mockClear();
+});
+
+describe("action haptics", () => {
+  it.each([
+    ["fallback", FallbackButton, pressable],
+    ["iOS", IosButton, swiftButton],
+  ] as const)("emits one impact when an enabled %s action is pressed", (_name, Button, capture) => {
+    const onPress = vi.fn();
+    renderToStaticMarkup(<Button label="Create" onPress={onPress} />);
+    expect(hapticImpact).not.toHaveBeenCalled();
+    capture.mock.lastCall?.[0].onPress();
+    expect(hapticImpact).toHaveBeenCalledTimes(1);
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["fallback", FallbackButton, pressable],
+    ["iOS", IosButton, swiftButton],
+  ] as const)("keeps disabled and busy %s actions silent", (_name, Button, capture) => {
+    const onPress = vi.fn();
+    for (const state of [{ disabled: true }, { busy: true }]) {
+      renderToStaticMarkup(<Button label="Create" onPress={onPress} {...state} />);
+      expect(capture.mock.lastCall?.[0].onPress).toBeUndefined();
+    }
+    expect(hapticImpact).not.toHaveBeenCalled();
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it("uses one impact for iOS accessibility activation and preserves custom menu actions", () => {
+    const onPress = vi.fn();
+    const onAccessibilityAction = vi.fn();
+    renderToStaticMarkup(
+      <IosButton
+        label="Approve"
+        onPress={onPress}
+        accessibilityActions={[{ name: "menu", label: "More" }]}
+        onAccessibilityAction={onAccessibilityAction}
+      />,
+    );
+    const props = nativeView.mock.lastCall?.[0];
+    expect(props.onAccessibilityAction).toBe(onAccessibilityAction);
+    expect(swiftButton.mock.lastCall?.[0].modifiers).toContainEqual({
+      name: "accessibilityHidden",
+      value: true,
+    });
+    props.onAccessibilityTap();
+    expect(hapticImpact).toHaveBeenCalledTimes(1);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(onAccessibilityAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps disabled and busy iOS accessibility activation silent", () => {
+    const onPress = vi.fn();
+    for (const state of [{ disabled: true }, { busy: true }]) {
+      renderToStaticMarkup(
+        <IosButton
+          label="Approve"
+          onPress={onPress}
+          accessibilityActions={[{ name: "menu", label: "More" }]}
+          {...state}
+        />,
+      );
+      expect(nativeView.mock.lastCall?.[0].onAccessibilityTap).toBeUndefined();
+    }
+    expect(hapticImpact).not.toHaveBeenCalled();
+    expect(onPress).not.toHaveBeenCalled();
+  });
 });
 
 describe("iOS action styling", () => {
+  it("updates native measurement axes when recovery buttons stack and return to a row", () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const root = createRoot(document.createElement("div"));
+    try {
+      for (const fill of [false, true, false]) {
+        act(() =>
+          root.render(
+            <IosButton
+              label="Set your own key"
+              fill={fill}
+              style={fill ? { width: 280 } : undefined}
+              onPress={() => {}}
+            />,
+          ),
+        );
+        expect(swiftHost.mock.lastCall?.[0].mountedMatchContents).toEqual(
+          fill ? { vertical: true } : true,
+        );
+      }
+    } finally {
+      act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([18, 26])("keeps quiet actions small and muted on iOS %s", (version) => {
     platform.Version = version;
     renderToStaticMarkup(<IosButton label="Continue" prominence="quiet" onPress={() => {}} />);

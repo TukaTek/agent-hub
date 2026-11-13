@@ -1,4 +1,5 @@
-import { ANDROID_APK_URL, IOS_APP_STORE_URL } from "@cortexai-agent-hub/contracts";
+import type { NavLink } from "@cortexai-agent-hub/contracts";
+import { ANDROID_APP_STORE_URL, IOS_APP_STORE_URL } from "@cortexai-agent-hub/contracts";
 import {
   AppMarkStack,
   Button,
@@ -10,17 +11,22 @@ import {
 import { Trans, useLingui } from "@lingui/react/macro";
 import {
   BookOpen,
+  Check,
   Download,
   FolderOpen,
   Gauge,
+  Link2,
   LogOut,
   Plug,
+  ScrollText,
   Settings,
   Smartphone,
   SquareKanban,
+  UserPlus,
   UserRound,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
+import type { Organization } from "../lib/organizations";
 import { useSidebarUpdate } from "./DesktopUpdates";
 import { IconTooltip } from "./IconTooltip";
 
@@ -34,13 +40,22 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onIntegrations: () => void;
+  onSkills: () => void;
   onBoard?: () => void;
+  links?: NavLink[];
+  onLink?: (link: NavLink) => void;
   onArtifacts: () => void;
   onSettings: () => void;
-  onUsage: () => void;
+  /** How much of the member's allowance is used; the Usage row shows only with one. */
+  usage?: string | null;
+  onUsage?: () => void;
+  onInvite?: () => void;
   onLogOut: () => void;
   signingOut: boolean;
   logOutError: string | null;
+  organizations?: Organization[];
+  activeOrganizationId?: string | null;
+  onSwitchOrganization?: (organization: Organization) => void;
 };
 
 // Marks are 24px wide, overlap by 2px, and need 2px for the outer ring.
@@ -58,13 +73,21 @@ export function SidebarFooter({
   open,
   onOpenChange,
   onIntegrations,
+  onSkills,
   onBoard,
+  links = [],
+  onLink,
   onArtifacts,
   onSettings,
+  usage,
   onUsage,
+  onInvite,
   onLogOut,
   signingOut,
   logOutError,
+  organizations = [],
+  activeOrganizationId,
+  onSwitchOrganization,
 }: Props) {
   const { t } = useLingui();
   const update = useSidebarUpdate();
@@ -101,7 +124,7 @@ export function SidebarFooter({
         <PopoverTrigger
           data-testid="user-menu-trigger"
           aria-label={t`Account menu for ${name}`}
-          className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border border-border bg-brand text-sm font-semibold text-brand-foreground outline-none hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring"
+          className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border border-border bg-brand text-body font-semibold text-brand-foreground outline-none hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring"
         >
           {image && failedImage !== image ? (
             <img
@@ -127,11 +150,31 @@ export function SidebarFooter({
               data-testid="account-menu-header"
               className="mb-1 min-w-0 border-b border-border px-2.5 py-2.5"
             >
-              <p className="truncate text-sm font-medium">{name}</p>
+              <p className="truncate text-body font-medium">{name}</p>
               {email && email !== name ? (
-                <p className="truncate text-xs text-muted-foreground">{email}</p>
+                <p className="truncate text-label text-muted-foreground">{email}</p>
               ) : null}
             </div>
+            {organizations.length > 1 ? (
+              <>
+                {organizations.map((organization) => {
+                  const active = organization.id === activeOrganizationId;
+                  return (
+                    <Button
+                      key={organization.id}
+                      variant="ghost"
+                      aria-current={active ? "true" : undefined}
+                      className="h-9 w-full justify-between gap-2.5 font-normal"
+                      onClick={() => onSwitchOrganization?.(organization)}
+                    >
+                      <span className="min-w-0 truncate">{organization.name}</span>
+                      {active ? <Check aria-hidden="true" strokeWidth={1.75} /> : null}
+                    </Button>
+                  );
+                })}
+                <div className="my-1 border-t border-border" />
+              </>
+            ) : null}
             {mini ? (
               <Button
                 variant="ghost"
@@ -142,32 +185,44 @@ export function SidebarFooter({
                 <Trans>Connect apps</Trans>
               </Button>
             ) : null}
+            {usage ? (
+              <Button
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                onClick={onUsage}
+              >
+                <Gauge className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Usage</Trans>
+                <span className="ms-auto text-body-sm tabular-nums text-muted-foreground">
+                  {usage}
+                </span>
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               className="h-9 w-full justify-start gap-2.5 font-normal"
-              onClick={onUsage}
+              aria-label={t`Settings`}
+              onClick={onSettings}
             >
-              <Gauge className="text-muted-foreground" strokeWidth={1.75} />
-              <Trans>Usage</Trans>
+              <Settings className="text-muted-foreground" strokeWidth={1.75} />
+              <Trans>Settings</Trans>
             </Button>
-            <a
-              className={`${buttonVariants({ variant: "ghost" })} h-9 w-full justify-start gap-2.5 font-normal`}
-              href={/Android/i.test(navigator.userAgent) ? ANDROID_APK_URL : IOS_APP_STORE_URL}
-              target="_blank"
-              rel="noreferrer"
+            <Button
+              variant="ghost"
+              className="h-9 w-full justify-start gap-2.5 font-normal"
+              onClick={onSkills}
             >
-              <Smartphone className="text-muted-foreground" strokeWidth={1.75} />
-              <Trans>Get the mobile app</Trans>
-            </a>
-            <a
-              className={`${buttonVariants({ variant: "ghost" })} h-9 w-full justify-start gap-2.5 font-normal`}
-              href="https://github.com/TukaTek/agent-hub/blob/main/docs/self-host.md"
-              target="_blank"
-              rel="noreferrer"
+              <ScrollText className="text-muted-foreground" strokeWidth={1.75} />
+              <Trans>Skills</Trans>
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-9 w-full justify-start gap-2.5 font-normal"
+              onClick={onArtifacts}
             >
-              <BookOpen className="text-muted-foreground" strokeWidth={1.75} />
-              <Trans>Docs</Trans>
-            </a>
+              <FolderOpen className="text-muted-foreground" strokeWidth={1.75} />
+              <Trans>Artifacts</Trans>
+            </Button>
             {onBoard ? (
               <Button
                 variant="ghost"
@@ -178,23 +233,48 @@ export function SidebarFooter({
                 <Trans>Board</Trans>
               </Button>
             ) : null}
-            <Button
-              variant="ghost"
-              className="h-9 w-full justify-start gap-2.5 font-normal"
-              onClick={onArtifacts}
+            {links.map((link) => (
+              <Button
+                key={link.id}
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                onClick={() => onLink?.(link)}
+              >
+                <Link2 className="text-muted-foreground" strokeWidth={1.75} />
+                {link.label}
+              </Button>
+            ))}
+            <div className="my-1 border-t border-border" />
+            <a
+              className={`${buttonVariants({ variant: "ghost" })} h-9 w-full justify-start gap-2.5 font-normal`}
+              href={
+                /Android/i.test(navigator.userAgent) ? ANDROID_APP_STORE_URL : IOS_APP_STORE_URL
+              }
+              target="_blank"
+              rel="noreferrer"
             >
-              <FolderOpen className="text-muted-foreground" strokeWidth={1.75} />
-              <Trans>Artifacts</Trans>
-            </Button>
-            <Button
-              variant="ghost"
-              className="h-9 w-full justify-start gap-2.5 font-normal"
-              aria-label={t`Settings`}
-              onClick={onSettings}
+              <Smartphone className="text-muted-foreground" strokeWidth={1.75} />
+              <Trans>Get the mobile app</Trans>
+            </a>
+            {onInvite ? (
+              <Button
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                onClick={onInvite}
+              >
+                <UserPlus className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Invite friends</Trans>
+              </Button>
+            ) : null}
+            <a
+              className={`${buttonVariants({ variant: "ghost" })} h-9 w-full justify-start gap-2.5 font-normal`}
+              href="https://github.com/TukaTek/agent-hub/blob/main/docs/self-host.md"
+              target="_blank"
+              rel="noreferrer"
             >
-              <Settings className="text-muted-foreground" strokeWidth={1.75} />
-              <Trans>Settings</Trans>
-            </Button>
+              <BookOpen className="text-muted-foreground" strokeWidth={1.75} />
+              <Trans>Docs</Trans>
+            </a>
             <div className="my-1 border-t border-border" />
             <Button
               variant="ghost"
@@ -206,7 +286,7 @@ export function SidebarFooter({
               <Trans>Log out</Trans>
             </Button>
             {logOutError ? (
-              <p role="alert" className="px-2.5 pt-1 pb-2 text-[13px] text-destructive">
+              <p role="alert" className="px-2.5 pt-1 pb-2 text-body-sm text-destructive">
                 {logOutError}
               </p>
             ) : null}
@@ -218,7 +298,7 @@ export function SidebarFooter({
           variant="outline"
           ref={pillRef}
           onClick={onIntegrations}
-          className="h-9 min-w-0 flex-1 justify-between rounded-full bg-sidebar-accent hover:border-foreground/30 hover:bg-sidebar-accent dark:hover:bg-sidebar-accent"
+          className="h-9 min-w-0 flex-1 justify-between bg-sidebar-accent hover:border-foreground/30 hover:bg-sidebar-accent dark:hover:bg-sidebar-accent"
         >
           <span ref={labelRef} className="min-w-0 truncate">
             <Trans>Connect apps</Trans>

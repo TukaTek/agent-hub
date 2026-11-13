@@ -1,8 +1,11 @@
 import type { ConnectedAccountStatus } from "@composio/core";
 import type { AdapterContext, ConnectorEvent } from "@cortexai-agent-hub/adapter-kit";
+import { ConnectorAuthUnavailableError } from "@cortexai-agent-hub/adapter-kit";
+import { CONNECTOR_AUTH_UNAVAILABLE } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
-import { ComposioConnector, createConnectorStack } from "./composio-connector.js";
+import { ComposioConnector } from "./composio-connector.js";
 import { FakeComposioClient } from "./composio-fake.js";
+import { createConnectorStack } from "./connector-registry.js";
 
 const USER = "user-1";
 
@@ -69,6 +72,63 @@ describe("ComposioConnector over the fake Composio client", () => {
     await expect(connector.catalog(context(), "git")).resolves.toEqual([
       expect.objectContaining({ slug: "GITHUB", name: "GitHub", connected: false }),
     ]);
+  });
+
+  it("hides apps nobody can sign in to until the project sets up their auth", async () => {
+    const fake = new FakeComposioClient([
+      { slug: "GMAIL", name: "Gmail", logo: null, noAuth: false },
+      { slug: "SHOPIFY", name: "Shopify", logo: null, noAuth: false, needsSignInSetup: true },
+    ]);
+    const hidden = new ComposioConnector({ client: fake });
+    await expect(hidden.catalog(context())).resolves.toEqual([
+      expect.objectContaining({ slug: "GMAIL" }),
+    ]);
+    await expect(connect(hidden, "SHOPIFY")).rejects.toBeInstanceOf(ConnectorAuthUnavailableError);
+
+    fake.authConfigs.list = async () => ({
+      items: [{ toolkit: { slug: "shopify" }, status: "ENABLED" }],
+      nextCursor: null,
+    });
+    await expect(new ComposioConnector({ client: fake }).catalog(context())).resolves.toEqual([
+      expect.objectContaining({ slug: "GMAIL" }),
+      expect.objectContaining({ slug: "SHOPIFY" }),
+    ]);
+    await expect(connect(new ComposioConnector({ client: fake }), "SHOPIFY")).resolves.toMatch(
+      /^ca_/,
+    );
+  });
+
+  it("lists every app when the sign-in lookup fails", async () => {
+    const fake = new FakeComposioClient([
+      { slug: "SHOPIFY", name: "Shopify", logo: null, noAuth: false, needsSignInSetup: true },
+    ]);
+    fake.authConfigs.list = async () => {
+      throw new Error("auth configs unavailable");
+    };
+    await expect(new ComposioConnector({ client: fake }).catalog(context())).resolves.toEqual([
+      expect.objectContaining({ slug: "SHOPIFY" }),
+    ]);
+  });
+
+  it("fails connect with a typed error when Composio has no managed auth for the toolkit", async () => {
+    const { fake, connector } = setup();
+    const create = fake.create.bind(fake);
+    fake.create = async (userId, config) => ({
+      ...(await create(userId, config)),
+      authorize: async () => {
+        throw new Error(
+          '400 {"error":{"message":"Composio does not manage auth for toolkit twitter.","code":4308,"slug":"ToolRouterV2_NoManagedAuth","status":400}}',
+        );
+      },
+    });
+
+    const failure = await connector
+      .begin({ provider: "TWITTER", redirectUrl: "http://example.test/callback" }, context())
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ConnectorAuthUnavailableError);
+    expect(failure).toMatchObject({ code: CONNECTOR_AUTH_UNAVAILABLE });
+    expect((failure as Error).message).not.toContain("ToolRouterV2_NoManagedAuth");
   });
 
   it("isolates connections by user and deletes the account on revoke", async () => {
@@ -243,7 +303,11 @@ describe("ComposioConnector over the fake Composio client", () => {
     await expect(
       run(connector, "COMPOSIO_MULTI_EXECUTE_TOOL", { tools: [listing("ca_other")] }, ctx),
     ).resolves.toEqual([
-      { type: "error", message: "Toolkit for DROPBOX_LIST_FOLDERS is not enabled in this session" },
+      {
+        type: "error",
+        message:
+          "The account requested for DROPBOX_LIST_FOLDERS is not connected to this workspace.",
+      },
     ]);
     expect(fake.executions).toEqual([]);
   });

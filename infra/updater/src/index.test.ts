@@ -3,12 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import type { ServerUpdateRun } from "@cortexai-agent-hub/contracts";
 import { afterEach, describe, expect, it } from "vitest";
+import type { UpdaterCommandRunner } from "./index.js";
 import {
   commandEnvironment,
   createUpdaterApp,
   restoreCheckoutArgv,
   runHostCommand,
-  type UpdaterCommandRunner,
 } from "./index.js";
 import { resolveUpdaterConfig } from "./updater-logic.js";
 
@@ -46,11 +46,11 @@ async function deployment(
 }
 
 function ok(output = "") {
-  return { ok: true, exitCode: 0, output };
+  return { ok: true, exitCode: 0, stdout: output, output };
 }
 
 function failed(output: string) {
-  return { ok: false, exitCode: 1, output };
+  return { ok: false, exitCode: 1, stdout: "", output };
 }
 
 function request(app: ReturnType<typeof createUpdaterApp>, pathname: string, body?: unknown) {
@@ -165,6 +165,32 @@ describe("updater HTTP surface", () => {
     const response = await app.request("/state", { headers: authorized });
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/\.env/) });
+  });
+
+  it("refuses a failed plan without leaving a rejection that could stop the process", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const subject = createUpdaterApp(
+        resolveUpdaterConfig({
+          CORTEXAI_AGENT_HUB_DEPLOY_DIR: "/cortexai-agent-hub-updater-tests-no-such-directory",
+          CORTEXAI_AGENT_HUB_UPDATER_TOKEN: token,
+        }),
+      );
+      const input = { repoUrl: "https://github.com/TukaTek/agent-hub", branch: "main" };
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await request(subject, "/plan", input);
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+          error: expect.stringMatching(/\.env/),
+        });
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
   });
 });
 
@@ -444,7 +470,7 @@ describe("child process environment", () => {
   it("declares the deployment directory safe so git works on a non-root checkout", () => {
     // The child environment is rebuilt from an allowlist, so GIT_CONFIG_* set on the Compose
     // service never reaches git. Without these three, every git call exits 128 with "detected
-    // dubious ownership" on the layout docs/self-host.md recommends.
+    // dubious ownership" on the layout docs/self-host-production.md recommends.
     const env = commandEnvironment({ CORTEXAI_AGENT_HUB_DEPLOY_DIR: "/srv/cortexai-agent-hub" });
     expect(env.GIT_CONFIG_COUNT).toBe("1");
     expect(env.GIT_CONFIG_KEY_0).toBe("safe.directory");
@@ -548,6 +574,7 @@ describe("runHostCommand", () => {
     expect(refused).toEqual({
       ok: false,
       exitCode: null,
+      stdout: "",
       output: "Refusing to run an unexpected program.",
     });
     await expect(readFile(marker, "utf8")).rejects.toThrow();
@@ -556,6 +583,7 @@ describe("runHostCommand", () => {
     expect(nul).toEqual({
       ok: false,
       exitCode: null,
+      stdout: "",
       output: "Refusing to run an unexpected program.",
     });
   });

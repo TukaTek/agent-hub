@@ -4,7 +4,8 @@ import type {
   MemoryDocument,
 } from "@cortexai-agent-hub/contracts";
 import { isDeletableMemoryDocument, isEmptyBotMemory } from "@cortexai-agent-hub/contracts";
-import { Badge, Button, Skeleton, Textarea } from "@cortexai-agent-hub/ui-web";
+import { fetchFresh, writeSaved } from "@cortexai-agent-hub/core/query";
+import { Badge, Button, SectionHeading, Skeleton, Textarea } from "@cortexai-agent-hub/ui-web";
 import {
   Tooltip,
   TooltipContent,
@@ -12,47 +13,37 @@ import {
 } from "@cortexai-agent-hub/ui-web/components/ui/tooltip";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { ORPCError } from "@orpc/client";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { SettingsSectionHeading } from "../components/SettingsSectionHeading";
+import {
+  AvailabilityControl,
+  AvailabilityLabel,
+  reachesOtherSpaces,
+  useOwnSpaces,
+} from "../components/integrations/space-availability";
 import { downloadArtifactBytes } from "../lib/artifact-open";
+import { useSpaceQueries } from "../lib/query";
 import { useSpaceRpc } from "../lib/space-rpc";
 
-const fieldClass = "mt-2 w-full font-mono text-[13px] leading-relaxed";
+const NO_DOCS: MemoryDocument[] = [];
+const NO_SKILLS: AgentSkillCatalogEntry[] = [];
+
+const fieldClass = "mt-2 w-full font-mono text-body-sm leading-relaxed";
 
 function rowClass(open: boolean): string {
   return `h-auto w-full justify-start whitespace-normal px-2.5 py-2.5 text-start ${open ? "bg-muted" : ""}`;
 }
 
 /**
- * Bot memory and the current user's skills in this space.
- * User-scoped memory shared across bots lives in the Memory settings overlay.
+ * Bot memory. Skills belong to the person in a space, not to one bot, so they live in
+ * the Skills dialog; memory shared across bots lives in the Memory settings overlay.
  */
-export function KnowledgeSection({
-  botId,
-  onSkillsChange,
-  skillsOnly = false,
-}: {
-  botId: string;
-  onSkillsChange: (skills: AgentSkillCatalogEntry[]) => void;
-  skillsOnly?: boolean;
-}) {
-  const rpc = useSpaceRpc();
-  if (skillsOnly)
-    return (
-      <section data-testid="bot-knowledge">
-        <h3 className="mb-2 text-xs font-medium text-muted-foreground">
-          <Trans>Skills</Trans>
-        </h3>
-        <div className="rounded-xl bg-muted/50 p-4">
-          <AgentSkills onSkillsChange={onSkillsChange} />
-        </div>
-      </section>
-    );
+export function KnowledgeSection({ botId }: { botId: string }) {
   return (
     <MemoryDocumentList
       key={botId}
-      load={() => rpc.memory.list({ botId, scope: "bot" })}
+      input={{ botId, scope: "bot" }}
       testId="bot-knowledge-memory"
       compact
     />
@@ -61,71 +52,73 @@ export function KnowledgeSection({
 
 /** The space's shared memory documents, mounted in the Memory settings overlay. */
 export function SpaceMemorySection() {
-  const rpc = useSpaceRpc();
   return (
     <section
       className="rounded-xl border border-border px-4 py-4"
       data-testid="space-memory-documents"
     >
-      <SettingsSectionHeading className="mb-0">
-        <Trans>Shared documents</Trans>
-      </SettingsSectionHeading>
+      <SectionHeading variant="heading">
+        <Trans>Shared memory</Trans>
+      </SectionHeading>
+      <p className="mt-1 text-body-sm text-muted-foreground">
+        <Trans>Every bot in this space reads these notes and keeps them up to date.</Trans>
+      </p>
       <div className="mt-3">
-        <MemoryDocumentList
-          load={() => rpc.memory.list({ scope: "user" })}
-          testId="space-memory-list"
-        />
+        <MemoryDocumentList input={{ scope: "user" }} testId="space-memory-list" />
       </div>
     </section>
   );
 }
 
 function MemoryDocumentList({
-  load,
+  input,
   testId,
   compact = false,
 }: {
-  load: () => Promise<MemoryDocument[]>;
+  input: { botId?: string; scope: "bot" | "user" };
   testId: string;
   compact?: boolean;
 }) {
   const rpc = useSpaceRpc();
   const { t } = useLingui();
+  const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
+  const list = queries.memory.list.queryOptions({ input });
+  // Bots write memory as they run, so every open refreshes behind the cached list.
+  const listQuery = useQuery({ ...list, refetchOnMount: "always" });
+  const docs = listQuery.data ?? NO_DOCS;
+  const loading = listQuery.isPending;
+  const budgetInput = input.scope === "bot" && input.botId ? { botId: input.botId } : null;
+  const budgetOptions = budgetInput
+    ? queries.memory.budget.queryOptions({ input: budgetInput })
+    : null;
+  const budgetQuery = useQuery(
+    budgetOptions ?? { queryKey: ["memory-budget", "none"], queryFn: skipToken },
+  );
+  const budget = budgetInput && budgetQuery.data ? budgetQuery.data : null;
+  const bytesLeftOut = budget
+    ? budget.omitted.reduce((sum, entry) => sum + entry.totalBytes, 0) +
+      budget.documents.reduce((sum, entry) => sum + entry.totalBytes - entry.includedBytes, 0)
+    : 0;
+  const kb = Math.ceil(bytesLeftOut / 1024);
   const [showAll, setShowAll] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [docs, setDocs] = useState<MemoryDocument[]>([]);
-  const [memoryVisible, setMemoryVisible] = useState(false);
+  // Once shown, memory stays visible while the panel is open, even if emptied.
+  const [memoryShown, setMemoryShown] = useState(false);
+  const memoryVisible = memoryShown || docs.some((doc) => !isEmptyBotMemory(doc));
+  if (memoryVisible && !memoryShown) setMemoryShown(true);
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [loadedRevision, setLoadedRevision] = useState<number | undefined>();
   const [conflicted, setConflicted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? (listQuery.isError ? t`Could not load` : null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const generation = useRef(0);
-  const loadRef = useRef(load);
-  loadRef.current = load;
 
-  useEffect(() => {
-    const current = ++generation.current;
-    void loadRef
-      .current()
-      .then((list) => {
-        if (current !== generation.current) return;
-        setDocs(list);
-        setMemoryVisible((visible) => visible || list.some((doc) => !isEmptyBotMemory(doc)));
-        setLoading(false);
-      })
-      .catch(() => {
-        if (current !== generation.current) return;
-        setDocs([]);
-        setLoading(false);
-        setError(t`Could not load`);
-      });
-    return () => {
-      generation.current += 1;
-    };
-  }, [t]);
+  async function setDocs(update: (current: MemoryDocument[]) => MemoryDocument[]) {
+    await writeSaved(queryClient, list.queryKey, (current) => update(current ?? []));
+    if (budgetOptions) void queryClient.invalidateQueries({ queryKey: budgetOptions.queryKey });
+  }
 
   function openDoc(doc: MemoryDocument) {
     setLoadedRevision(doc.revision);
@@ -152,7 +145,7 @@ function MemoryDocumentList({
     setError(null);
     try {
       await rpc.memory.remove({ documentId: doc.id });
-      setDocs((current) => current.filter((entry) => entry.id !== doc.id));
+      await setDocs((current) => current.filter((entry) => entry.id !== doc.id));
       closeDoc();
     } catch {
       setError(t`Could not remove`);
@@ -171,13 +164,15 @@ function MemoryDocumentList({
         content: draft,
         expectedRevision: loadedRevision,
       });
-      setDocs((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+      await setDocs((current) =>
+        current.map((entry) => (entry.id === updated.id ? updated : entry)),
+      );
       closeDoc();
     } catch (err) {
       if (err instanceof ORPCError && err.code === "CONFLICT") {
         setConflicted(true);
         try {
-          setDocs(await loadRef.current());
+          await fetchFresh(queryClient, list);
         } catch {
           // Keep the draft and conflict state even if refreshing fails.
         }
@@ -194,7 +189,7 @@ function MemoryDocumentList({
     setBusy(true);
     setError(null);
     try {
-      const latest = (await loadRef.current()).find((entry) => entry.id === doc.id);
+      const latest = (await fetchFresh(queryClient, list)).find((entry) => entry.id === doc.id);
       if (!latest) throw new Error("Document unavailable");
       downloadArtifactBytes(
         latest.path.split("/").at(-1) ?? latest.path,
@@ -212,20 +207,25 @@ function MemoryDocumentList({
   return (
     <section className={compact ? "mt-6" : undefined}>
       {compact ? (
-        <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+        <SectionHeading variant="label" className="mb-2">
           <Trans>Memory</Trans>
-        </h3>
+        </SectionHeading>
       ) : null}
       <div data-testid={testId} className={compact ? "rounded-xl bg-muted/50 p-4" : undefined}>
-        {error ? <div className="pb-2 text-[13px] text-destructive">{error}</div> : null}
+        {error ? <div className="pb-2 text-body-sm text-destructive">{error}</div> : null}
+        {kb > 0 ? (
+          <p className="pb-2 text-body-sm text-muted-foreground" data-testid="memory-budget-note">
+            {t`About ${kb} KB of memory no longer reaches the bot.`}
+          </p>
+        ) : null}
         {conflicted ? (
-          <div className="pb-2 text-[13px] text-destructive">
+          <div className="pb-2 text-body-sm text-destructive">
             <Trans>Document changed. Reopen to edit the latest version.</Trans>
           </div>
         ) : null}
         {loading ? <Skeleton className="h-10 w-full" /> : null}
         {!compact && !loading && docs.length === 0 && !error ? (
-          <div className="py-1 text-[13px] text-muted-foreground">
+          <div className="py-1 text-body-sm text-muted-foreground">
             <Trans>Nothing remembered yet</Trans>
           </div>
         ) : null}
@@ -241,7 +241,7 @@ function MemoryDocumentList({
                   className="-ms-2 h-auto min-w-0 flex-1 justify-start whitespace-normal px-2 py-2.5 text-start"
                 >
                   <span
-                    className="min-w-0 truncate text-[14px] font-normal text-foreground"
+                    className="min-w-0 truncate text-body font-normal text-foreground"
                     dir="auto"
                   >
                     {doc.path}
@@ -279,7 +279,6 @@ function MemoryDocumentList({
                       type="button"
                       disabled={busy || conflicted || draft === doc.content}
                       onClick={() => void save(doc)}
-                      className="rounded-full"
                     >
                       <Trans>Save</Trans>
                     </Button>
@@ -330,7 +329,7 @@ function SkillSourceBadge({ source }: { source: AgentSkillCatalogEntry["source"]
   return (
     <Badge
       variant="secondary"
-      className="rounded-full px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
+      className="rounded-full px-1.5 py-0 text-caption font-normal text-muted-foreground"
     >
       {source === "builtin" ? <Trans>Built-in</Trans> : <Trans>Plugin</Trans>}
     </Badge>
@@ -345,52 +344,37 @@ description: What this skill does and when the agent should use it.
 Steps the agent should follow.
 `;
 
-function AgentSkills({
-  onSkillsChange,
-}: {
-  onSkillsChange: (skills: AgentSkillCatalogEntry[]) => void;
-}) {
+/** Your own skills in this space, plus the built-in ones; plugin skills are listed by plugin. */
+export function AgentSkills() {
   const rpc = useSpaceRpc();
   const { t } = useLingui();
-  const [loading, setLoading] = useState(true);
-  const [skills, setSkills] = useState<AgentSkillCatalogEntry[]>([]);
+  const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
+  // The same list the composer offers as skill mentions, so a change here shows there at once.
+  const list = queries.agentSkills.list.queryOptions();
+  const listQuery = useQuery({ ...list, refetchOnMount: "always" });
+  const skills = (listQuery.data ?? NO_SKILLS).filter((skill) => skill.source !== "plugin");
+  const loading = listQuery.isPending;
   const [open, setOpen] = useState<AgentSkill | null>(null);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? (listQuery.isError ? t`Could not load` : null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const generation = useRef(0);
   const selection = useRef(0);
+  const spaceCount = useOwnSpaces().length;
 
   async function refresh() {
-    const current = ++generation.current;
-    const list = await rpc.agentSkills.list();
-    if (current !== generation.current) return;
-    setSkills(list);
-    onSkillsChange(list);
+    return fetchFresh(queryClient, list);
   }
 
-  useEffect(() => {
-    const current = ++generation.current;
-    void rpc.agentSkills
-      .list()
-      .then((list) => {
-        if (current !== generation.current) return;
-        setSkills(list);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (current !== generation.current) return;
-        setSkills([]);
-        setLoading(false);
-        setError(t`Could not load`);
-      });
-    return () => {
-      generation.current += 1;
+  useEffect(
+    () => () => {
       selection.current += 1;
-    };
-  }, [t]);
+    },
+    [],
+  );
 
   async function openSkill(entry: AgentSkillCatalogEntry) {
     if (busy) return;
@@ -465,10 +449,10 @@ function AgentSkills({
   const editorOpen = creating || open;
   return (
     <div data-testid="bot-knowledge-skills">
-      {error ? <div className="px-2.5 pb-2 text-[13px] text-destructive">{error}</div> : null}
+      {error ? <div className="px-2.5 pb-2 text-body-sm text-destructive">{error}</div> : null}
       {loading ? <Skeleton className="h-10 w-full" /> : null}
       {!loading && skills.length === 0 && !editorOpen && !error ? (
-        <div className="px-2.5 py-1 text-[13.5px] text-muted-foreground">
+        <div className="px-2.5 py-1 text-body text-muted-foreground">
           <Trans>No skills yet</Trans>
         </div>
       ) : null}
@@ -483,31 +467,51 @@ function AgentSkills({
               className={`${rowClass(false)} -mx-2.5 w-[calc(100%+1.25rem)] block`}
             >
               <span className="flex w-full items-center justify-between gap-3">
-                <span
-                  className="min-w-0 truncate text-[14px] font-normal text-foreground"
-                  dir="auto"
-                >
+                <span className="min-w-0 truncate text-body font-normal text-foreground" dir="auto">
                   {entry.name}
                 </span>
-                <SkillSourceBadge source={entry.source} />
+                <span className="flex shrink-0 items-center gap-2">
+                  <AvailabilityLabel availability={entry.availability} />
+                  <SkillSourceBadge source={entry.source} />
+                </span>
               </span>
-              <span
-                className="mt-0.5 block truncate text-[12.5px] text-muted-foreground"
-                dir="auto"
-              >
+              <span className="mt-0.5 block truncate text-body-sm text-muted-foreground" dir="auto">
                 {entry.description}
               </span>
             </Button>
           ))
         : null}
       {editorOpen ? (
-        <div className="px-2.5 pb-2">
+        <div className="pb-2">
           {open ? (
-            <div className="flex items-center gap-2 pb-1">
-              <div className="min-w-0 truncate text-[14px] font-normal text-foreground" dir="auto">
+            <div className="flex min-h-7 items-center gap-2">
+              <div className="min-w-0 truncate text-body font-normal text-foreground" dir="auto">
                 {open.name}
               </div>
               <SkillSourceBadge source={open.source} />
+              {open.source === "user" ? (
+                <div className="ms-auto">
+                  <AvailabilityControl
+                    kind="skill"
+                    id={open.id}
+                    availability={open.availability}
+                    onChanged={async () => {
+                      // Another skill may have been opened while this was saving; leave it alone.
+                      const opened = selection.current;
+                      // Narrowed away from this space, the skill can no longer be read here.
+                      const here = (await refresh()).some((entry) => entry.id === open.id);
+                      if (selection.current !== opened) return;
+                      if (!here) {
+                        selection.current += 1;
+                        setOpen(null);
+                        return;
+                      }
+                      const fresh = await rpc.agentSkills.get({ skillId: open.id });
+                      if (selection.current === opened) setOpen(fresh);
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
           <Textarea
@@ -527,7 +531,7 @@ function AgentSkills({
                 type="button"
                 disabled={busy || !draft.trim() || (!creating && draft === open?.content)}
                 onClick={() => void save()}
-                className="rounded-lg bg-muted px-3 py-1.5 text-[13px] text-foreground disabled:opacity-50"
+                className="bg-muted px-3 py-1.5 text-body-sm text-foreground disabled:opacity-50"
               >
                 <Trans>Save</Trans>
               </Button>
@@ -542,7 +546,7 @@ function AgentSkills({
                 setCreating(false);
                 setConfirmingDelete(false);
               }}
-              className="rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground"
+              className="px-3 py-1.5 text-body-sm text-muted-foreground"
             >
               {open?.readOnly ? <Trans>Close</Trans> : <Trans>Cancel</Trans>}
             </Button>
@@ -552,11 +556,19 @@ function AgentSkills({
                 type="button"
                 disabled={busy}
                 onClick={() => void remove(open)}
-                className={`ms-auto rounded-lg px-3 py-1.5 text-[13px] ${
+                className={`ms-auto px-3 py-1.5 text-body-sm ${
                   confirmingDelete ? "bg-destructive/10 text-destructive" : "text-destructive"
                 }`}
               >
-                {confirmingDelete ? <Trans>Confirm delete</Trans> : <Trans>Delete</Trans>}
+                {confirmingDelete ? (
+                  reachesOtherSpaces(open.availability, spaceCount) ? (
+                    <Trans>Remove from every space?</Trans>
+                  ) : (
+                    <Trans>Confirm delete</Trans>
+                  )
+                ) : (
+                  <Trans>Delete</Trans>
+                )}
               </Button>
             ) : null}
           </div>
@@ -574,7 +586,7 @@ function AgentSkills({
             setDraft(NEW_SKILL_TEMPLATE);
             setError(null);
           }}
-          className="-mx-2.5 mt-2 h-auto min-h-11 w-[calc(100%+1.25rem)] justify-between px-2.5 py-2.5 text-sm font-normal text-foreground"
+          className="-mx-2.5 mt-2 h-auto min-h-11 w-[calc(100%+1.25rem)] justify-between px-2.5 py-2.5 text-body font-normal text-foreground"
         >
           <Trans>New skill</Trans>
           <Plus aria-hidden="true" className="size-4 text-muted-foreground" />

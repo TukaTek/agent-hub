@@ -33,6 +33,15 @@ export async function fetchGithubStars(fetchImpl: typeof fetch = fetch): Promise
   }
 }
 
+let githubStars: Promise<number | null> | undefined;
+
+/** One lookup per build: anonymous requests share a 60/hour limit, and every page shows the count. */
+export async function githubStarsLabel(): Promise<string> {
+  githubStars ??= fetchGithubStars();
+  const count = await githubStars;
+  return count === null ? "GitHub" : formatStarCount(count);
+}
+
 function cancelResponseBody(response: Response): void {
   try {
     void Promise.resolve(response.body?.cancel()).catch(() => undefined);

@@ -1,4 +1,7 @@
 import { DEFAULT_MODEL_MAX_TOKENS } from "@cortexai-agent-hub/contracts";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { LOCAL_PROVIDER_ID } from "./pi-local-provider-id.js";
+import { sliceWellFormed } from "./utf8.js";
 
 /** Per-attempt wait for response headers; this does not cap active streaming duration. */
 export const MODEL_STREAM_TIMEOUT_MS = 120_000;
@@ -30,7 +33,9 @@ function boundedMs(value: string | undefined, min: number, fallback: number): nu
   return Number.isInteger(raw) && raw >= min && raw <= MAX_STREAM_TIMEOUT_MS ? raw : fallback;
 }
 
+/** 0 turns the stall watchdog off; otherwise 30s to 15 min. */
 export function modelStreamIdleTimeoutMs(value = process.env.MODEL_STREAM_IDLE_TIMEOUT_MS): number {
+  if (value?.trim() === "0") return 0;
   return boundedMs(value, MIN_IDLE_TIMEOUT_MS, MODEL_STREAM_IDLE_TIMEOUT_MS);
 }
 
@@ -44,11 +49,47 @@ export function modelStreamFirstEventTimeoutMs(
   );
 }
 
+/**
+ * Options for an undici `Agent` that carries model streams. undici otherwise drops a
+ * response after 5 minutes without headers or body data, which caps the timeouts
+ * above and fails as a bare "terminated". The SDK's `timeoutMs` and the stream idle
+ * watchdog bound both waits instead.
+ */
+export const MODEL_STREAM_AGENT_TIMEOUTS = { headersTimeout: 0, bodyTimeout: 0 } as const;
+
 /** More retries extend the worst-case turn; the executor heartbeat renews its leases. */
 export function modelStreamMaxRetries(): number {
   const value = process.env.MODEL_STREAM_MAX_RETRIES?.trim();
   const raw = Number(value || DEFAULT_MODEL_STREAM_MAX_RETRIES);
   return Number.isInteger(raw) && raw >= 0 && raw <= 5 ? raw : DEFAULT_MODEL_STREAM_MAX_RETRIES;
+}
+
+/**
+ * Parse a configurable timeout in whole milliseconds. Invalid or blank values
+ * retain the existing default. Node timers support delays up to 2^31 - 1 ms.
+ * Provider HTTP transports may impose additional independent limits.
+ */
+function timeoutMsFromEnv(
+  value: string | undefined,
+  fallback: number,
+  min: number = 1_000,
+  max: number = 300_000,
+): number {
+  const raw = Number(value?.trim() || fallback);
+  return Number.isInteger(raw) && raw >= min && raw <= max ? raw : fallback;
+}
+
+export function modelStreamTimeoutMs(): number {
+  return timeoutMsFromEnv(
+    process.env.MODEL_STREAM_TIMEOUT_MS,
+    MODEL_STREAM_TIMEOUT_MS,
+    1_000,
+    2_147_483_647,
+  );
+}
+
+export function modelConnectTimeoutMs(): number {
+  return timeoutMsFromEnv(process.env.MODEL_CONNECT_TIMEOUT_MS, MODEL_CONNECT_TIMEOUT_MS);
 }
 
 /** About 25k tokens; longer results are saved to the bot computer when one is available. */
@@ -76,7 +117,7 @@ export function clipToolResultText(text: string, limit: number = TOOL_RESULT_TEX
 }
 
 function clipText(text: string, keep: number, limit: number): string {
-  return `${text.slice(0, keep)}…\n${toolResultTruncationNotice(limit)}`;
+  return `${sliceWellFormed(text, keep)}…\n${toolResultTruncationNotice(limit)}`;
 }
 
 /**
@@ -162,11 +203,26 @@ export function effectiveOutputReserve(contextWindow: number, maxTokens: number)
 }
 
 /**
+ * The output cap the operator chose for a model that has no per-connection field: the local
+ * model server's own limit, when CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS is set. Unset, and for other providers,
+ * the defaults apply.
+ */
+export function operatorMaxTokens(
+  model: Pick<Model<Api>, "provider" | "maxTokens">,
+): number | undefined {
+  return model.provider === LOCAL_PROVIDER_ID &&
+    process.env.CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS?.trim()
+    ? model.maxTokens
+    : undefined;
+}
+
+/**
  * Completions default to a modest output cap so OpenRouter-style providers do not
  * hold credit for a model card's 128k ceiling. A configured maxTokens overrides this
  * default, still bounded to a quarter of the context window when it is supplied.
  * Reasoning models get the wider default because their thinking is billed against
  * the same ceiling: at 4k a hard question can leave no room for the reply at all.
+ * An operator-set limit (operatorMaxTokens) replaces both defaults.
  */
 export function resolveCompletionMaxTokens(
   modelMaxTokens?: number,
@@ -174,13 +230,16 @@ export function resolveCompletionMaxTokens(
   optionsMaxTokens?: number,
   reasoning?: boolean,
   contextWindow?: number,
+  operatorDefault?: number,
 ): number {
   const userCap =
     typeof configuredMaxTokens === "number" && configuredMaxTokens >= 1
       ? configuredMaxTokens
-      : reasoning
-        ? REASONING_MODEL_MAX_TOKENS
-        : DEFAULT_MODEL_MAX_TOKENS;
+      : operatorDefault !== undefined && operatorDefault >= 1
+        ? operatorDefault
+        : reasoning
+          ? REASONING_MODEL_MAX_TOKENS
+          : DEFAULT_MODEL_MAX_TOKENS;
   const optionCap =
     typeof optionsMaxTokens === "number" && optionsMaxTokens >= 1
       ? Math.min(optionsMaxTokens, userCap)

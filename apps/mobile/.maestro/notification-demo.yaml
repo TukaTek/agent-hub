@@ -8,7 +8,7 @@ name: Android live working status demonstration
 # A cold API 34 emulator can show a launcher ANR over the healthy app.
 - extendedWaitUntil:
     visible: "Sign up for CortexAI Agent Hub|Pixel Launcher isn't responding"
-    timeout: 30000
+    timeout: 60000
 - runFlow:
     when:
       visible: "Pixel Launcher isn't responding"
@@ -21,9 +21,6 @@ name: Android live working status demonstration
 - runFlow: helpers/server.yaml
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
-- tapOn:
-    text: "Use password"
-    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
 - hideKeyboard
@@ -34,7 +31,7 @@ name: Android live working status demonstration
 
 # Only the public demo is recorded; sign-in uses disposable fixture credentials.
 - startRecording: ${CORTEXAI_AGENT_HUB_NOTIFICATION_VIDEO}
-- openLink: "cortexai-agent-hub:///account"
+- openLink: "cortexai-agent-hub:///general"
 - scrollUntilVisible:
     element: "Live working status"
     direction: DOWN
@@ -73,7 +70,7 @@ name: Android live working status demonstration
 - extendedWaitUntil:
     notVisible: "Stop"
     timeout: 30000
-- openLink: "cortexai-agent-hub:///account"
+- openLink: "cortexai-agent-hub:///general"
 - scrollUntilVisible:
     element: "Live working status"
     direction: DOWN

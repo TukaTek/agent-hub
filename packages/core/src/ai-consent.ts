@@ -1,5 +1,10 @@
-import type { AiConsentStatus, AiDataUse, AiRecipient } from "@cortexai-agent-hub/contracts";
-import { AI_CONSENT_REQUIRED } from "@cortexai-agent-hub/contracts";
+import type {
+  AiConsentStatus,
+  AiDataUse,
+  AiRecipient,
+  SettingsScope,
+} from "@cortexai-agent-hub/contracts";
+import { AI_CONSENT_REQUIRED, SettingsScopeSchema } from "@cortexai-agent-hub/contracts";
 
 /** A foreground check failed before the requested mutation was dispatched. */
 export class AiConsentBlocked extends Error {
@@ -28,6 +33,7 @@ export function aiDataUsesForProcedure(procedure: string, input?: unknown): AiDa
   if (
     [
       "threads/send",
+      "threads/sendWithRoutines",
       "artifacts/create",
       "threads/followUp",
       "threads/react",
@@ -84,8 +90,31 @@ export function aiConsentTarget(input: unknown): {
   botId?: string;
   groupId?: string;
   routineId?: string;
+  settingsScope?: SettingsScope;
 } {
   if (!input || typeof input !== "object") return {};
+  // A request that names a settings copy is asked about that copy's recipients.
+  const scope = SettingsScopeSchema.safeParse((input as { scope?: unknown }).scope).data;
+  const thread = threadConsentTarget(input);
+  return scope ? { ...thread, settingsScope: scope } : thread;
+}
+
+/** A send that starts routines is also checked as each routine's own test run would be. */
+export function aiConsentTargets(input: unknown): ReturnType<typeof aiConsentTarget>[] {
+  const routineIds = (input as { routineIds?: unknown } | null | undefined)?.routineIds;
+  return [
+    aiConsentTarget(input),
+    ...(Array.isArray(routineIds) ? routineIds : [])
+      .filter((routineId): routineId is string => typeof routineId === "string")
+      .map((routineId) => ({ routineId })),
+  ];
+}
+
+function threadConsentTarget(input: object): {
+  botId?: string;
+  groupId?: string;
+  routineId?: string;
+} {
   const target = input as { botId?: unknown; groupId?: unknown; routineId?: unknown };
   const routineId = typeof target.routineId === "string" ? target.routineId : undefined;
   if (typeof target.groupId === "string") {

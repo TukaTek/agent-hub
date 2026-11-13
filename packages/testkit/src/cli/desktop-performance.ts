@@ -1,35 +1,43 @@
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { brotliCompressSync, gzipSync } from "node:zlib";
+import type { createApp } from "@cortexai-agent-hub/api/app";
 import { abortableDelay } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
-import { createThreadMessage, type PrismaClient } from "@cortexai-agent-hub/db";
+import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { createThreadMessage } from "@cortexai-agent-hub/db";
 import { serve } from "@hono/node-server";
+import type { ElectronApplication, Page } from "@playwright/test";
+import { _electron as electron, expect } from "@playwright/test";
+import type { PerformanceReport } from "../performance-report.js";
 import {
-  type CDPSession,
-  type ElectronApplication,
-  _electron as electron,
-  expect,
-  type Page,
-} from "@playwright/test";
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import type { createApp } from "../../../../apps/api/src/app.ts";
-import {
-  type NumericSummary,
   PERFORMANCE_REPORT_SCHEMA_VERSION,
-  type PerformanceReport,
   parseTcpPort,
+  roundedSummary,
   roundMetric,
-  summarize,
 } from "../performance-report.js";
+import {
+  argument,
+  benchmarkEnvironment,
+  cdpMetrics,
+  migrateDatabase,
+  output,
+  positiveInteger,
+  repositoryRoot as root,
+  run,
+  safeName,
+  startPreview,
+  stopProcess,
+  waitForUrl,
+} from "./performance-stack.js";
+import { startPostgres } from "./postgres.js";
 
 loadRootEnv();
 
-const root = path.resolve(import.meta.dirname, "../../../..");
 const desktopRoot = path.join(root, "apps/desktop");
 const webRoot = path.join(root, "apps/web");
 const outputLabel = argument("--label") ?? "baseline";
@@ -54,7 +62,7 @@ const temporaryRoot = await mkdtemp(
   path.join(os.tmpdir(), "cortexai-agent-hub-desktop-performance-"),
 );
 
-const container = await new PostgreSqlContainer("postgres:18-alpine").start();
+const container = await startPostgres();
 let preview: ChildProcess | undefined;
 let server: ReturnType<typeof serve> | undefined;
 let handles: Awaited<ReturnType<typeof createApp>> | undefined;
@@ -67,7 +75,7 @@ try {
   if (!skipBuild) buildProductionArtifacts(benchmarkEnv);
   migrateDatabase(benchmarkEnv);
 
-  const { createApp } = await import("../../../../apps/api/src/app.ts");
+  const { createApp } = await import("@cortexai-agent-hub/api/app");
   handles = await createApp({ databaseUrl, prisma: undefined });
   server = serve({
     fetch: (request) => handles!.app.fetch(request),
@@ -76,7 +84,7 @@ try {
   });
   await waitForUrl(`${apiOrigin}/health`);
 
-  preview = startPreview(benchmarkEnv);
+  preview = startPreview(benchmarkEnv, webPort);
   await waitForUrl(webOrigin);
 
   const executablePath = await packagedExecutable();
@@ -152,72 +160,21 @@ try {
 
 function performanceEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
   return {
-    ...process.env,
-    NODE_ENV: "production",
-    DATABASE_URL: databaseUrl,
-    REALTIME_DATABASE_URL: databaseUrl,
-    VERIFY_DATABASE: "1",
-    WAKEUP_DRIVER: "memory",
-    SANDBOX_PROVIDER: "fake",
-    AGENT_RUNTIME: "scripted",
-    COMPOSIO_API_KEY: "",
-    OPENROUTER_API_KEY: "",
-    E2B_API_KEY: "",
-    DAYTONA_API_KEY: "",
-    BETTER_AUTH_SECRET: "cortexai-agent-hub-benchmark-auth-secret-over-32-characters",
-    ENCRYPTION_KEY: "cortexai-agent-hub-benchmark-encryption-key-over-32-characters",
-    SANDBOX_SUPERVISOR_TOKEN: "cortexai-agent-hub-benchmark-supervisor-token-over-32-characters",
-    SCREEN_PROXY_SECRET: "cortexai-agent-hub-benchmark-screen-proxy-secret-over-32-characters",
-    BETTER_AUTH_URL: webOrigin,
-    WEB_ORIGIN: webOrigin,
-    API_PORT: String(apiPort),
-    API_URL: apiOrigin,
-    API_PROXY_TARGET: apiOrigin,
-    WEB_PORT: String(webPort),
-    CORTEXAI_AGENT_HUB_HOST: "127.0.0.1",
-    CORTEXAI_AGENT_HUB_WEB_URL: webOrigin,
+    ...benchmarkEnvironment({
+      databaseUrl,
+      webPort,
+      apiPort,
+      dataDir: path.join(temporaryRoot, "data"),
+    }),
     CORTEXAI_AGENT_HUB_DISABLE_BUNDLED_RENDERER: remoteRenderer ? "1" : "0",
     CORTEXAI_AGENT_HUB_DISABLE_WARM_WINDOW: disableWarmWindow ? "1" : "0",
     CORTEXAI_AGENT_HUB_PERFORMANCE_ASSET_DELAY_MS: String(assetDelayMs),
-    DATA_DIR: path.join(temporaryRoot, "data"),
-    SIGNUPS_ENABLED: "true",
-    SIGNUP_ALLOWLIST: "",
-    PUBLIC_POSTHOG_KEY: "",
-    CI: "",
     CSC_IDENTITY_AUTO_DISCOVERY: "false",
   };
 }
 
 function buildProductionArtifacts(env: NodeJS.ProcessEnv) {
   run("pnpm", ["--filter", "@cortexai-agent-hub/desktop", "pack:dir"], env);
-}
-
-function migrateDatabase(env: NodeJS.ProcessEnv) {
-  run("pnpm", ["--filter", "@cortexai-agent-hub/db", "generate"], env);
-  run("pnpm", ["--filter", "@cortexai-agent-hub/db", "exec", "prisma", "migrate", "deploy"], env);
-}
-
-function run(command: string, args: string[], env: NodeJS.ProcessEnv) {
-  execFileSync(command, args, { cwd: root, env, stdio: "inherit" });
-}
-
-function startPreview(env: NodeJS.ProcessEnv) {
-  return spawn(
-    "pnpm",
-    [
-      "--filter",
-      "@cortexai-agent-hub/web",
-      "exec",
-      "vite",
-      "preview",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(webPort),
-      "--strictPort",
-    ],
-    { cwd: root, env, stdio: "inherit" },
-  );
 }
 
 async function packagedExecutable() {
@@ -305,10 +262,9 @@ async function seedBenchmarkThread(prisma: PrismaClient) {
   if (!threadId) throw new Error("Benchmark onboarding did not create a thread");
   await prisma.$transaction([
     prisma.message.deleteMany({ where: { threadId } }),
-    prisma.thread.update({
-      where: { id: threadId },
-      data: { nextMessageSeq: 0, unread: false },
-    }),
+    prisma.thread.update({ where: { id: threadId }, data: { nextMessageSeq: 0 } }),
+    // The chat starts read for everyone.
+    prisma.threadRead.deleteMany({ where: { threadId } }),
   ]);
   for (let index = 0; index < 100; index += 1) {
     const role = index % 2 === 0 ? "user" : "bot";
@@ -662,13 +618,6 @@ async function waitForWindowVisible(app: ElectronApplication) {
   throw new Error("Desktop window did not become visible");
 }
 
-async function cdpMetrics(session: CDPSession) {
-  const response = (await session.send("Performance.getMetrics")) as {
-    metrics: Array<{ name: string; value: number }>;
-  };
-  return Object.fromEntries(response.metrics.map((metric) => [metric.name, metric.value]));
-}
-
 function metricDelta(before: Record<string, number>, after: Record<string, number>) {
   return Object.fromEntries(
     ["LayoutCount", "LayoutDuration", "RecalcStyleCount", "RecalcStyleDuration", "TaskDuration"]
@@ -808,17 +757,6 @@ function summarizeReport(
   };
 }
 
-function roundedSummary(values: number[]): NumericSummary {
-  const summary = summarize(values);
-  return {
-    count: summary.count,
-    min: roundMetric(summary.min),
-    median: roundMetric(summary.median),
-    p95: roundMetric(summary.p95),
-    max: roundMetric(summary.max),
-  };
-}
-
 function renderMarkdown(report: PerformanceReport) {
   const summary = report.summary;
   return `# CortexAI Agent Hub desktop performance — ${report.label}
@@ -848,58 +786,9 @@ function bytesToMib(value: number) {
   return roundMetric(value / 1024 / 1024);
 }
 
-async function waitForUrl(url: string) {
-  const started = Date.now();
-  let detail = "no response";
-  while (Date.now() - started < 30_000) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-      detail = `HTTP ${response.status}`;
-    } catch (error) {
-      detail = error instanceof Error ? error.message : String(error);
-    }
-    await abortableDelay(200);
-  }
-  throw new Error(`Timed out waiting for ${url}: ${detail}`);
-}
-
-async function stopProcess(child: ChildProcess) {
-  if (child.exitCode !== null) return;
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  child.kill("SIGTERM");
-  await Promise.race([exited, abortableDelay(5_000)]);
-  if (child.exitCode === null) {
-    child.kill("SIGKILL");
-    await exited;
-  }
-}
-
-function output(command: string, args: string[]) {
-  return execFileSync(command, args, { cwd: root, encoding: "utf8" }).trim();
-}
-
-function argument(name: string) {
-  const inline = process.argv.find((arg) => arg.startsWith(`${name}=`));
-  if (inline) return inline.slice(name.length + 1);
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
-}
-
-function positiveInteger(value: string) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1)
-    throw new Error(`Expected a positive integer: ${value}`);
-  return parsed;
-}
-
 function nonnegativeInteger(value: string) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0)
     throw new Error(`Expected a non-negative integer: ${value}`);
   return parsed;
-}
-
-function safeName(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
 }

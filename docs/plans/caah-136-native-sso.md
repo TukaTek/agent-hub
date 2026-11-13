@@ -51,15 +51,15 @@ Body `{ email, client: "desktop" | "mobile", returnTo, appChallenge }`. Register
 
 New table `hub_sso_native` (additive migration; the previous release never reads it):
 
-| column | meaning |
-| --- | --- |
-| `stateKey` (PK) | `hub-sso:<sha256(state)>`, the same key as the pending `verification` row |
-| `client` | `desktop` or `mobile` |
-| `returnTo` | the validated returnTo |
-| `appChallenge` | the app's S256 challenge |
-| `handoffHash` (unique, null until the callback succeeds) | SHA-256 hex of the handoff code |
-| `grantCipher` (null until then) | the Hub grant, encrypted with the token encryption key |
-| `expiresAt` | 10 minutes at start; 60 s from handoff issue |
+| column                                                   | meaning                                                                   |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `stateKey` (PK)                                          | `hub-sso:<sha256(state)>`, the same key as the pending `verification` row |
+| `client`                                                 | `desktop` or `mobile`                                                     |
+| `returnTo`                                               | the validated returnTo                                                    |
+| `appChallenge`                                           | the app's S256 challenge                                                  |
+| `handoffHash` (unique, null until the callback succeeds) | SHA-256 hex of the handoff code                                           |
+| `grantCipher` (null until then)                          | the Hub grant, encrypted with the token encryption key                    |
+| `expiresAt`                                              | 10 minutes at start; 60 s from handoff issue                              |
 
 The Hub PKCE verifier stays in the existing hashed, encrypted `verification` row. Better Auth owns that table, so the native fields live beside it rather than in it. Expired native rows are deleted (revoking any unredeemed grant at Hub, best effort) whenever a native sign-in starts, as expired web rows are.
 

@@ -1,21 +1,24 @@
-import { isIP } from "node:net";
-import { isLocalMcpHost } from "@cortexai-agent-hub/contracts";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { lookup } from "node:dns/promises";
+import {
+  ipVersion,
+  isCloudMetadataAddress,
+  isLocalhostOrLoopbackIp,
+  isNonPublicAddress,
+} from "@cortexai-agent-hub/contracts";
+import { cancelResponseBody } from "@cortexai-agent-hub/core";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Agent } from "undici";
-import { combineSignals } from "./connector-safety.js";
 import {
-  createAddressCheckedLookup,
-  isCloudMetadataAddress,
-  isPrivateAddress,
-  type ResolvedAddress,
-  type ResolveHostname,
-} from "./network-address.js";
-import {
-  createSafeRemoteFetch,
-  type RemoteTransportDependencies,
-  type SafeRemoteFetch,
-} from "./remote-mcp.js";
+  combineSignals,
+  redactConnectorPayload,
+  sanitizeConnectorError,
+} from "./connector-safety.js";
+import { createMcpClient } from "./mcp-output-schema.js";
+import type { ResolvedAddress, ResolveHostname } from "./network-address.js";
+import { createAddressCheckedLookup } from "./network-address.js";
+import type { RemoteTransportDependencies, SafeRemoteFetch } from "./remote-mcp.js";
+import { createSafeRemoteFetch } from "./remote-mcp.js";
 import { fetchPairedWithDispatcher } from "./undici-fetch.js";
 import { isBlockedHostname } from "./web-ssrf.js";
 
@@ -102,8 +105,8 @@ function hostnameOf(url: URL): string {
 export function serenityEndpointRequiresPrivateEndpoint(endpoint: string): boolean {
   const url = parseSerenityEndpoint(endpoint);
   const host = hostnameOf(url);
-  if (isLocalMcpHost(host) || isBlockedHostname(host)) return true;
-  if (isIP(host) !== 0) return isPrivateAddress(host);
+  if (isLocalhostOrLoopbackIp(host) || isBlockedHostname(host)) return true;
+  if (ipVersion(host) !== 0) return isNonPublicAddress(host);
   // Unresolved public-looking hostnames may still be LAN DNS over HTTP.
   return url.protocol === "http:";
 }
@@ -120,11 +123,7 @@ export async function classifySerenityEndpointTrust(
   if (serenityEndpointRequiresPrivateEndpoint(url.href)) return "private";
   const host = hostnameOf(url);
   const resolve =
-    resolveHostname ??
-    (async (hostname: string) => {
-      const { lookup } = await import("node:dns/promises");
-      return lookup(hostname, { all: true, verbatim: true });
-    });
+    resolveHostname ?? ((hostname: string) => lookup(hostname, { all: true, verbatim: true }));
   const addresses = await resolve(host);
   if (addresses.length === 0) {
     throw new Error("Serenity endpoint did not resolve to an address.");
@@ -132,7 +131,7 @@ export async function classifySerenityEndpointTrust(
   if (addresses.some((entry) => isCloudMetadataAddress(entry.address))) {
     throw new Error("Serenity endpoint targets a blocked address.");
   }
-  if (addresses.some((entry) => isPrivateAddress(entry.address))) return "private";
+  if (addresses.some((entry) => isNonPublicAddress(entry.address))) return "private";
   return "public";
 }
 
@@ -143,7 +142,7 @@ function assertAllowedSerenityEndpoint(url: URL): void {
   }
   if (url.protocol === "http:") {
     // Bearer tokens stay on the wire; only loopback may use cleartext HTTP.
-    if (!isLocalMcpHost(host)) {
+    if (!isLocalhostOrLoopbackIp(host)) {
       throw new Error(
         "Serenity HTTP endpoints are limited to loopback (localhost / 127.0.0.1 / ::1); use HTTPS for LAN or public hosts.",
       );
@@ -204,6 +203,7 @@ function verbErrorMessage(payload: unknown, fallback: string): string {
 /** Surface hosted gateway rate limits plainly instead of as an opaque transport error. */
 function assertNotRateLimited(response: Response): Response {
   if (response.status !== 429) return response;
+  cancelResponseBody(response);
   const retryAfter = response.headers.get("retry-after")?.trim();
   // Retry-After is either delta-seconds or an HTTP date.
   const when = !retryAfter ? null : /^\d+$/.test(retryAfter) ? `${retryAfter}s` : retryAfter;
@@ -224,16 +224,13 @@ function serenityFetchPath(
   url: URL,
 ): "private-literal" | "private-dns" | "public" {
   if (config.endpointTrust === "private" || serenityEndpointRequiresPrivateEndpoint(url.href)) {
-    return isIP(hostnameOf(url)) !== 0 ? "private-literal" : "private-dns";
+    return ipVersion(hostnameOf(url)) !== 0 ? "private-literal" : "private-dns";
   }
   return "public";
 }
 
 function defaultResolveHostname(): ResolveHostname {
-  return async (hostname: string) => {
-    const { lookup } = await import("node:dns/promises");
-    return lookup(hostname, { all: true, verbatim: true });
-  };
+  return (hostname: string) => lookup(hostname, { all: true, verbatim: true });
 }
 
 function assertPrivateLanAddresses(addresses: ResolvedAddress[]): void {
@@ -243,7 +240,7 @@ function assertPrivateLanAddresses(addresses: ResolvedAddress[]): void {
   if (addresses.some((entry) => isCloudMetadataAddress(entry.address))) {
     throw new Error("Serenity endpoint targets a blocked address.");
   }
-  if (addresses.some((entry) => !isPrivateAddress(entry.address))) {
+  if (addresses.some((entry) => !isNonPublicAddress(entry.address))) {
     throw new Error("Serenity endpoint no longer resolves to a private address.");
   }
 }
@@ -277,8 +274,11 @@ export function createSerenityPrivateLanFetch(
         dispatcher,
       } as RequestInit & { dispatcher: Agent });
       if (response.status >= 300 && response.status < 400) {
+        cancelResponseBody(response);
         throw new Error("Serenity MCP redirects are not permitted; configure the final URL.");
       }
+      // The dispatcher must be able to close before the caller can inspect the response.
+      if (response.status === 429) cancelResponseBody(response);
       return response;
     } catch (error) {
       throw new Error(
@@ -324,15 +324,20 @@ async function withSerenityClient<T>(
       if (pinnedFetch) return assertNotRateLimited(await pinnedFetch(input, init));
       const response = await localFetch(input, { ...init, redirect: "manual" });
       if (response.status >= 300 && response.status < 400) {
+        cancelResponseBody(response);
         throw new Error("Serenity MCP redirects are not permitted; configure the final URL.");
       }
       return assertNotRateLimited(response);
     },
   });
-  const client = new Client({ name: "cortexai-agent-hub", version: "0.1.0" }, { capabilities: {} });
+  const client = createMcpClient(
+    { name: "cortexai-agent-hub", version: "0.1.0" },
+    { capabilities: {} },
+  );
   try {
     await client.connect(transport, { signal: requestSignal, timeout: SERENITY_TIMEOUT_MS });
-    return await run(client, requestSignal);
+    // A server or proxy may echo the bearer token it received; never hand it to the model.
+    return redactConnectorPayload(await run(client, requestSignal), [config.token]) as T;
   } finally {
     // Each verb opens its own MCP session; end it server-side instead of leaving it to expire.
     // The SDK's DELETE ignores our request signal, so bound it before closing.
@@ -383,7 +388,7 @@ export async function probeSerenity(
   } catch (error) {
     return {
       ok: false,
-      error: `Serenity is unreachable: ${error instanceof Error ? error.message : String(error)}`,
+      error: `Serenity is unreachable: ${sanitizeConnectorError(error, [config.token])}`,
     };
   }
 }
@@ -429,7 +434,7 @@ export async function recallSerenity(
   } catch (error) {
     return {
       ok: false,
-      error: `Serenity recall failed: ${error instanceof Error ? error.message : String(error)}`,
+      error: `Serenity recall failed: ${sanitizeConnectorError(error, [config.token])}`,
     };
   }
 }
@@ -500,7 +505,7 @@ export async function rememberSerenity(
   } catch (error) {
     return {
       ok: false,
-      error: `Serenity remember failed: ${error instanceof Error ? error.message : String(error)}`,
+      error: `Serenity remember failed: ${sanitizeConnectorError(error, [config.token])}`,
     };
   }
 }
@@ -559,7 +564,7 @@ export async function forgetSerenity(
   } catch (error) {
     return {
       ok: false,
-      error: `Serenity forget failed: ${error instanceof Error ? error.message : String(error)}`,
+      error: `Serenity forget failed: ${sanitizeConnectorError(error, [config.token])}`,
     };
   }
 }

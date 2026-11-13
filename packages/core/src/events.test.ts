@@ -1,3 +1,4 @@
+import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it } from "vitest";
 import {
   appendTextSegment,
@@ -10,17 +11,26 @@ import {
   isRunTerminalEvent,
   liveActivityLine,
   normalizeResponseStreamingPreference,
+  noteLastToolStep,
   projectMessages,
+  redactSecrets,
+  redactSecretsAfter,
   reduceLiveMessageBlocks,
   responseStreamingEnabled,
   runFailureError,
   sanitizeJsonValue,
   sanitizeUtf16ForJson,
+  splitToolHistory,
   stripLiveStreamingProgress,
+  toolNameFromLabel,
   trackToolCallStreak,
   trackToolNameStreak,
   withLiveStreamingProgress,
+  withoutLastToolStepNotes,
+  withToolHistory,
+  withToolStepOutcomes,
 } from "./events.js";
+import { modelFallbackFailure, normalizeRunError } from "./run-error.js";
 
 describe("containsSecret", () => {
   it("detects secrets that JSON escaping changes", () => {
@@ -140,6 +150,46 @@ describe("reduceLiveMessageBlocks", () => {
       { kind: "steps", steps: [{ label: "Shell", count: 1 }] },
     ]);
   });
+
+  it("keeps a tool waiting on an unfinished sentence when a reset drops the text", () => {
+    let blocks = reduceLiveMessageBlocks([], {
+      type: "progress",
+      payload: { text: "Checking totals" },
+    });
+    blocks = reduceLiveMessageBlocks(blocks, { type: "tool", name: "shell" });
+    blocks = reduceLiveMessageBlocks(blocks, {
+      type: "progress",
+      payload: { reset: true, text: "Checking totals", activity: true },
+    });
+    expect(blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Shell", count: 1 }] },
+      { kind: "progress", text: "Checking totals", activity: true },
+    ]);
+  });
+
+  it("drops streamed text on a reset, keeps the steps, and shows the note as the working line", () => {
+    let blocks = reduceLiveMessageBlocks([], {
+      type: "progress",
+      payload: { text: "Checking the totals." },
+    });
+    blocks = reduceLiveMessageBlocks(blocks, { type: "tool", name: "shell" });
+    blocks = reduceLiveMessageBlocks(blocks, {
+      type: "progress",
+      payload: { reset: true, text: "Checking the totals.", activity: true },
+    });
+    expect(blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Shell", count: 1 }] },
+      { kind: "progress", text: "Checking the totals.", activity: true },
+    ]);
+    expect(liveActivityLine([{ id: "progress:run-1", blocks }])).toBe("Checking the totals.");
+    // The next text the bot writes replaces the working line.
+    expect(
+      reduceLiveMessageBlocks(blocks, { type: "progress", payload: { text: "They match." } }),
+    ).toEqual([
+      { kind: "steps", steps: [{ label: "Shell", count: 1 }] },
+      { kind: "progress", text: "They match." },
+    ]);
+  });
 });
 
 describe("runFailureError", () => {
@@ -162,6 +212,25 @@ describe("runFailureError", () => {
     const long = runFailureError({ type: "run.failed", payload: { error: "x".repeat(400) } });
     expect(long).toHaveLength(301);
     expect(long?.endsWith("…")).toBe(true);
+  });
+
+  it("clamps each model's diagnostic so an exhausted backup chain stays readable", () => {
+    const error = modelFallbackFailure("Request timed out.", [
+      {
+        provider: "fake-provider",
+        modelId: "fake-model",
+        status: "failed",
+        reason: "x".repeat(400),
+      },
+      { provider: "fake-provider", modelId: "fake-other", status: "failed", reason: "Timeout" },
+    ]);
+    const shown = runFailureError({ type: "run.failed", payload: { error } });
+    expect(normalizeRunError(shown!).summary).toBe(
+      "Your model provider took too long to respond. Try again. Your backup models also failed.",
+    );
+    expect(normalizeRunError(shown!).details).toBe(
+      `Request timed out.\nfake-provider fake-model: ${"x".repeat(300)}…\nfake-provider fake-other: Timeout`,
+    );
   });
 });
 
@@ -570,6 +639,13 @@ describe("projectMessages", () => {
   });
 });
 
+describe("toolNameFromLabel", () => {
+  it("turns a displayed name back into the tool name", () => {
+    expect(toolNameFromLabel(" Write  file ")).toBe("Write_file");
+    expect(toolNameFromLabel("write_file")).toBe("write_file");
+  });
+});
+
 describe("humanizeToolName", () => {
   it("turns a Composio-style constant into a readable label", () => {
     expect(humanizeToolName("SLACK_FIND_CHANNELS")).toBe("Slack find channels");
@@ -607,14 +683,14 @@ describe("trackToolCallStreak", () => {
   it("starts a streak of 1 for the first call", () => {
     expect(
       trackToolCallStreak({ key: undefined, count: 0 }, "SLACK_FIND_CHANNELS", { cursor: "a" }),
-    ).toEqual({ key: 'SLACK_FIND_CHANNELS:{"cursor":"a"}', count: 1 });
+    ).toMatchObject({ key: 'SLACK_FIND_CHANNELS:{"cursor":"a"}', count: 1 });
   });
 
   it("increments the count when the same tool and args repeat", () => {
     const first = trackToolCallStreak({ key: undefined, count: 0 }, "SLACK_FIND_CHANNELS", {
       cursor: "a",
     });
-    expect(trackToolCallStreak(first, "SLACK_FIND_CHANNELS", { cursor: "a" })).toEqual({
+    expect(trackToolCallStreak(first, "SLACK_FIND_CHANNELS", { cursor: "a" })).toMatchObject({
       key: 'SLACK_FIND_CHANNELS:{"cursor":"a"}',
       count: 2,
     });
@@ -624,7 +700,7 @@ describe("trackToolCallStreak", () => {
     const first = trackToolCallStreak({ key: undefined, count: 0 }, "SLACK_FIND_CHANNELS", {
       cursor: "a",
     });
-    expect(trackToolCallStreak(first, "SLACK_FIND_CHANNELS", { cursor: "b" })).toEqual({
+    expect(trackToolCallStreak(first, "SLACK_FIND_CHANNELS", { cursor: "b" })).toMatchObject({
       key: 'SLACK_FIND_CHANNELS:{"cursor":"b"}',
       count: 1,
     });
@@ -634,9 +710,25 @@ describe("trackToolCallStreak", () => {
     const first = trackToolCallStreak({ key: undefined, count: 0 }, "SLACK_FIND_CHANNELS", {
       cursor: "a",
     });
-    expect(trackToolCallStreak(first, "SLACK_FETCH_CONVERSATION_HISTORY", { cursor: "a" })).toEqual(
-      { key: 'SLACK_FETCH_CONVERSATION_HISTORY:{"cursor":"a"}', count: 1 },
-    );
+    expect(
+      trackToolCallStreak(first, "SLACK_FETCH_CONVERSATION_HISTORY", { cursor: "a" }),
+    ).toMatchObject({ key: 'SLACK_FETCH_CONVERSATION_HISTORY:{"cursor":"a"}', count: 1 });
+  });
+
+  it("counts calls whose text arguments differ only by digits as one similar streak", () => {
+    let streak = trackToolCallStreak({ key: undefined, count: 0 }, "shell", {
+      command: "echo noop-1",
+    });
+    streak = trackToolCallStreak(streak, "shell", { command: "echo noop-22" });
+    expect(streak).toMatchObject({ count: 1, shapeCount: 2 });
+    streak = trackToolCallStreak(streak, "shell", { command: "echo other-3" });
+    expect(streak).toMatchObject({ count: 1, shapeCount: 1 });
+  });
+
+  it("does not blank numbers that are not part of a text argument", () => {
+    let streak = trackToolCallStreak({ key: undefined, count: 0 }, "read_file", { offset: 1 });
+    streak = trackToolCallStreak(streak, "read_file", { offset: 2 });
+    expect(streak).toMatchObject({ count: 1, shapeCount: 1 });
   });
 });
 
@@ -743,7 +835,110 @@ describe("appendToolCallSegment", () => {
   });
 });
 
+describe("step notes", () => {
+  it("puts each note on the step it came before, in order", () => {
+    let segments = appendToolCallSegment([], "read_file");
+    segments = noteLastToolStep(segments, "The meeting is with Anna.");
+    segments = appendToolCallSegment(segments, "read_file");
+    segments = appendToolCallSegment(segments, "read_file");
+    segments = noteLastToolStep(segments, "Saving it.");
+    expect(segments).toEqual([
+      {
+        kind: "steps",
+        steps: [
+          { label: "Read file", count: 2, note: "The meeting is with Anna." },
+          { label: "Read file", count: 1, note: "Saving it." },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves text and a message without steps alone", () => {
+    const text = [{ kind: "text" as const, text: "hi" }];
+    expect(noteLastToolStep(text, "Note.")).toEqual(text);
+  });
+
+  it("removes only the newest notes", () => {
+    let segments = appendToolCallSegment([], "read_file");
+    segments = noteLastToolStep(segments, "One.");
+    segments = appendToolCallSegment(segments, "shell");
+    segments = noteLastToolStep(segments, "Two.");
+    segments = appendToolCallSegment(segments, "shell");
+    expect(withoutLastToolStepNotes(segments, 1)).toEqual([
+      {
+        kind: "steps",
+        steps: [
+          { label: "Read file", count: 1, note: "One." },
+          { label: "Shell", count: 2 },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("redactSecretsAfter", () => {
+  it("hides the rest of a value that started in the text before", () => {
+    expect(redactSecretsAfter("The token is hunter", "abcxyz saved.", ["hunterabcxyz"])).toBe(
+      "[redacted] saved.",
+    );
+    expect(redactSecretsAfter("hunterabcxyz", " and abc", ["hunterabcxyz"])).toBe(" and abc");
+    expect(redactSecretsAfter("", "key hunterabcxyz", ["hunterabcxyz"])).toBe("key [redacted]");
+  });
+});
+
+describe("redactSecrets", () => {
+  it("hides a longer value whole when a shorter one appears inside it", () => {
+    expect(redactSecrets("password=hunter123xyz", ["123", "hunter123xyz"])).toBe(
+      "password=[redacted]",
+    );
+    expect(redactSecrets("a 123 b", ["123", "hunter123xyz", ""])).toBe("a [redacted] b");
+  });
+
+  it("hides values that overlap without one containing the other", () => {
+    expect(redactSecrets("x=pre-hunter123xyz;", ["pre-hun", "hunter123xyz"])).toBe("x=[redacted];");
+    expect(redactSecrets("abab abab", ["abab"])).toBe("[redacted] [redacted]");
+    expect(redactSecrets("aaaaaa", ["aaaa"])).toBe("[redacted]");
+    expect(redactSecrets("keyfake-keyfake-", ["fake-", "key"])).toBe(
+      "[redacted][redacted][redacted][redacted]",
+    );
+  });
+
+  it("hides each body line of a multi-line value when output splits or rejoins its lines", () => {
+    const key =
+      "-----BEGIN FAKE KEY-----\r\nAAAAfakeKeyLineOne01\nBBBBfakeKeyLineTwo02\nshort\n-----END FAKE KEY-----\n";
+    expect(redactSecrets(`key: ${key}`, [key])).toBe("key: [redacted]");
+    // An unquoted `echo $KEY` joins the lines with spaces.
+    expect(
+      redactSecrets(
+        "-----BEGIN FAKE KEY----- AAAAfakeKeyLineOne01 BBBBfakeKeyLineTwo02 short -----END",
+        [key],
+      ),
+    ).toBe("-----BEGIN FAKE KEY----- [redacted] [redacted] short -----END");
+    expect(redactSecrets("tail: BBBBfakeKeyLineTwo02", [key])).toBe("tail: [redacted]");
+    expect(containsSecret({ out: "AAAAfakeKeyLineOne01" }, [key])).toBe(true);
+    // Short lines and spaced lines like the header also appear in ordinary text.
+    expect(containsSecret({ out: "short -----BEGIN FAKE KEY-----" }, [key])).toBe(false);
+  });
+});
+
 describe("createStreamingRedactor", () => {
+  it("hides a value split between skipped text and the next chunk", () => {
+    const redactor = createStreamingRedactor(["hunter123xyz"]);
+    const before = redactor.push("Checking hunter1");
+    redactor.skip();
+    const after = redactor.push("23xyz now.") + redactor.finish();
+    expect(before).not.toContain("hunter1");
+    expect(after).toBe(" now.");
+    expect(`${before}${after}`).not.toMatch(/23xyz|hunter/);
+  });
+
+  it("drops skipped text without changing what follows", () => {
+    const redactor = createStreamingRedactor(["hunter123xyz"]);
+    redactor.push("A short note.");
+    redactor.skip();
+    expect(redactor.push("Next text") + redactor.finish()).toBe("Next text");
+  });
+
   it("never emits a secret split across streaming chunks", () => {
     const redactor = createStreamingRedactor(["fake-secret-123"]);
     const output = [
@@ -753,6 +948,39 @@ describe("createStreamingRedactor", () => {
     ].join("");
     expect(output).toBe("before [redacted] after");
     expect(output).not.toContain("fake-secret-123");
+  });
+
+  it("hides overlapping values whole, however the text is split", () => {
+    const secrets = ["pre-hun", "hunter123xyz", "123"];
+    const text = "x=pre-hunter123xyz; y=123; z=hunter123xyz";
+    for (let size = 1; size <= text.length; size += 1) {
+      const redactor = createStreamingRedactor(secrets);
+      let output = "";
+      for (let at = 0; at < text.length; at += size)
+        output += redactor.push(text.slice(at, at + size));
+      output += redactor.finish();
+      expect(output).toBe(redactSecrets(text, secrets));
+      expect(output).toBe("x=[redacted]; y=[redacted]; z=[redacted]");
+    }
+  });
+
+  it("shows a long run of a value that overlaps itself as it streams, without holding it", () => {
+    const redactor = createStreamingRedactor(["0000"]);
+    const outputs = Array.from({ length: 10_000 }, () => redactor.push("0000"));
+    // One placeholder as soon as the first match is known; later matches extend it.
+    expect(outputs[0]).toBe("[redacted]");
+    expect(outputs.slice(1).every((output) => output === "")).toBe(true);
+    expect(redactor.push(" done") + redactor.finish()).toBe(" done");
+  });
+
+  it("hides a line of a multi-line value split across chunks", () => {
+    const redactor = createStreamingRedactor(["header\nAAAAfakeKeyLineOne01\n"]);
+    const output = [
+      redactor.push("x AAAAfake"),
+      redactor.push("KeyLineOne01 y"),
+      redactor.finish(),
+    ];
+    expect(output.join("")).toBe("x [redacted] y");
   });
 
   it("does not delay chunks when there are no known secrets", () => {
@@ -878,5 +1106,75 @@ describe("liveActivityLine", () => {
     expect(
       liveActivityLine([{ id: "m1", blocks: [{ kind: "text", text: "Done" }] }]),
     ).toBeUndefined();
+  });
+});
+
+describe("withToolStepOutcomes", () => {
+  it("tallies each call's outcome on the step it showed as, in order", () => {
+    const segments = noteLastToolStep(
+      appendToolCallSegment(
+        appendToolCallSegment(appendToolCallSegment([], "shell"), "shell"),
+        "web_search",
+      ),
+      "Looking it up.",
+    );
+    expect(
+      withToolStepOutcomes(segments, [
+        { label: "Shell", outcome: "succeeded" },
+        { label: "Shell", outcome: "failed" },
+        { label: "Web search", outcome: undefined },
+      ]),
+    ).toEqual([
+      {
+        kind: "steps",
+        steps: [
+          { label: "Shell", count: 2, outcomes: { succeeded: 1, failed: 1 } },
+          { label: "Web search", count: 1, note: "Looking it up." },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves the steps as they were when the calls do not line up", () => {
+    const segments = appendToolCallSegment([], "shell");
+    expect(withToolStepOutcomes(segments, [{ label: "Web search", outcome: "failed" }])).toEqual(
+      segments,
+    );
+    expect(withToolStepOutcomes(segments, [])).toEqual(segments);
+  });
+});
+
+describe("a reply's kept tool calls", () => {
+  it("split off the blocks as one entry per step and merge back unchanged", () => {
+    const kept = {
+      tool: "shell",
+      calls: [{ arguments: '{"command":"ls"}', result: "notes.txt" }],
+    };
+    const blocks = [
+      {
+        kind: "steps",
+        steps: [
+          { label: "Shell", count: 1, ...kept },
+          { label: "Web fetch", count: 2 },
+        ],
+      },
+      { kind: "text", text: "Done." },
+      { kind: "steps", steps: [{ label: "Shell", count: 1, ...kept }] },
+    ] as MessageBlock[];
+    const { blocks: shown, toolHistory } = splitToolHistory(blocks);
+    expect(JSON.stringify(shown)).not.toMatch(/"tool"|"calls"|notes\.txt/);
+    expect(toolHistory).toEqual({ steps: [kept, null, kept] });
+    expect(withToolHistory(shown, toolHistory)).toEqual([
+      {
+        kind: "steps",
+        steps: [
+          { label: "Shell", count: 1, ...kept },
+          { label: "Web fetch", count: 2 },
+        ],
+      },
+      { kind: "text", text: "Done." },
+      { kind: "steps", steps: [{ label: "Shell", count: 1, ...kept }] },
+    ]);
+    expect(splitToolHistory(shown).toolHistory).toBeUndefined();
   });
 });

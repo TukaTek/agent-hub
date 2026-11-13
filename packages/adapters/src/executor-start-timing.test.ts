@@ -1,3 +1,5 @@
+import type * as DbModule from "@cortexai-agent-hub/db";
+import { RunHistoryWriteError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
@@ -8,6 +10,13 @@ const leases = vi.hoisted(() => ({
   acquire: vi.fn(),
   dedicated: vi.fn(),
   release: vi.fn(),
+}));
+
+const settleTakeoverCards = vi.hoisted(() => vi.fn());
+
+vi.mock("@cortexai-agent-hub/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof DbModule>()),
+  settleReleasedTakeoverCards: settleTakeoverCards,
 }));
 
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
@@ -25,16 +34,29 @@ const lease = {
 };
 const sink = createTestSink();
 
-function fixture(options: { startedAt?: Date; switching?: boolean; dedicated?: boolean } = {}) {
+function fixture(
+  options: {
+    startedAt?: Date;
+    switching?: boolean;
+    dedicated?: boolean;
+    heldBy?: string;
+    checkpoint?: string;
+  } = {},
+) {
   const run = {
     id: "run-1",
     botId: "bot-1",
     status: "queued",
     leaseFence: 0,
-    checkpoint: null,
+    checkpoint: options.checkpoint ?? null,
     startedAt: options.startedAt ?? null,
   };
   const prisma = {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+    $queryRaw: vi.fn(async () => []),
+    space: { findUnique: vi.fn(async () => null) },
+    user: { findUnique: vi.fn(async () => null) },
+    spaceMember: { findUnique: async () => ({ id: "member-1" }) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => ({ ...run, status: "leased" })),
@@ -48,6 +70,9 @@ function fixture(options: { startedAt?: Date; switching?: boolean; dedicated?: b
         computerSwitching: options.switching ?? false,
         computer: { scope: options.dedicated ? "dedicated" : "team" },
       })),
+    },
+    computerExecutionLease: {
+      findFirst: vi.fn(async () => (options.heldBy ? { id: options.heldBy } : null)),
     },
     // Stop at attempt setup so the fixture exercises only the real startup path.
     attempt: {
@@ -93,6 +118,18 @@ describe("execution start timing", () => {
       expect(enqueue).toHaveBeenCalledOnce();
     },
   );
+
+  it("waits without a retry timer while another run of the bot holds the computer", async () => {
+    leases.acquire.mockRejectedValue(new ComputerBusyError());
+    const { prisma, enqueue, start } = fixture({ heldBy: "lease-of-run-0" });
+    await start();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(prisma.run.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "queued", wakeAt: null }),
+      }),
+    );
+  });
 
   it.each([undefined, new Date("2026-01-01T00:00:00Z")])(
     "stamps execution after acquiring the computer and preserves the first start (%s)",
@@ -147,4 +184,18 @@ describe("execution start timing", () => {
       expect(sink.events.some((event) => event.message === "run.execution_started")).toBe(false);
     },
   );
+});
+
+it("stops a superseded claim before it settles the new attempt's takeover cards", async () => {
+  vi.clearAllMocks();
+  settleTakeoverCards.mockRejectedValue(new RunHistoryWriteError());
+  const { prisma, start } = fixture({ checkpoint: "takeover-skipped" });
+  await start();
+  expect(settleTakeoverCards).toHaveBeenCalledWith(
+    prisma,
+    expect.objectContaining({ runId: "run-1", lease: { owner: "worker-1", fence: 1 } }),
+    expect.any(Function),
+  );
+  expect(leases.acquire).not.toHaveBeenCalled();
+  expect(prisma.attempt.create).not.toHaveBeenCalled();
 });

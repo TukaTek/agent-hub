@@ -1,15 +1,21 @@
 import dns from "node:dns";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createServer as createNetServer } from "node:net";
 import { fetch as undiciFetch } from "undici";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_MCP_RESPONSE_BYTES } from "./mcp-response-limit.js";
 import {
   assertSafeRemoteUrl,
+  ConnectorRedirectError,
   callRemoteMcpTool,
   createPrivateNetworkFetch,
   createSafeLookup,
   createSafeRemoteFetch,
   limitRemoteMcpPayload,
+  RemoteRequestSentError,
 } from "./remote-mcp.js";
+import { toolCompletionAuditPayload } from "./tool-completion-audit.js";
 
 const publicResolver = async () => [{ address: "203.0.113.10", family: 4 as const }];
 
@@ -30,14 +36,53 @@ describe("remote MCP URL policy", () => {
 
   it("blocks private hosts by default", async () => {
     await expect(assertSafeRemoteUrl("https://10.0.0.8/mcp", publicResolver)).rejects.toThrow(
-      /private host/i,
+      "Connector URL targets a private host. Set MCP_ALLOW_PRIVATE_ENDPOINT=true on the API and worker to allow it.",
     );
     await expect(
       assertSafeRemoteUrl("http://192.168.1.20:3927/mcp", publicResolver),
-    ).rejects.toThrow(/HTTPS/i);
+    ).rejects.toThrow(
+      "Connector URL must use HTTPS. Set MCP_ALLOW_PRIVATE_ENDPOINT=true on the API and worker to allow it.",
+    );
     await expect(
       assertSafeRemoteUrl("https://host.docker.internal/mcp", publicResolver),
     ).rejects.toThrow(/private host/i);
+    await expect(assertSafeRemoteUrl("http://203.0.113.10/mcp", publicResolver)).rejects.toThrow(
+      /^Connector URL must use HTTPS$/,
+    );
+  });
+
+  it("offers the private-endpoint setting only where it decides the outcome before DNS", async () => {
+    const hint = "Set MCP_ALLOW_PRIVATE_ENDPOINT=true on the API and worker to allow it.";
+    for (const raw of ["http://localhost:3927/mcp", "http://127.0.0.1:3927/mcp"]) {
+      await expect(assertSafeRemoteUrl(raw, publicResolver)).rejects.toThrow(hint);
+    }
+    // A private-looking name can still resolve to a public address, which the setting does not allow over HTTP.
+    await expect(assertSafeRemoteUrl("http://mcp.internal/mcp", publicResolver)).rejects.toThrow(
+      /^Connector URL must use HTTPS$/,
+    );
+    await expect(
+      assertSafeRemoteUrl("http://mcp.internal/mcp", publicResolver, {
+        allowPrivateEndpoint: true,
+      }),
+    ).rejects.toThrow("Connector URL must use HTTPS");
+    await expect(assertSafeRemoteUrl("https://mcp.internal/mcp", publicResolver)).rejects.toThrow(
+      /^Connector URL targets a private host$/,
+    );
+  });
+
+  it("does not offer the private-endpoint setting for link-local hosts it would not allow", async () => {
+    for (const raw of [
+      "https://169.254.10.20/mcp",
+      "https://[fe80::1]/mcp",
+      "http://169.254.10.20/mcp",
+    ]) {
+      await expect(assertSafeRemoteUrl(raw, publicResolver)).rejects.toThrow(
+        /^Connector URL (targets a private host|must use HTTPS)$/,
+      );
+      await expect(
+        assertSafeRemoteUrl(raw, publicResolver, { allowPrivateEndpoint: true }),
+      ).rejects.toThrow("Connector URL resolves to a private address");
+    }
   });
 
   it("allows private LAN hosts when the deployment-owner escape is enabled", async () => {
@@ -76,6 +121,27 @@ describe("remote MCP URL policy", () => {
       ).rejects.toThrow(/private host/i);
     },
   );
+
+  it.each([
+    "http://[::ffff:a9fe:aa02]/credentials",
+    "https://[::ffff:169.254.170.2]/credentials",
+    "http://[::ffff:a9fe:1234]/mcp",
+    "https://[fe80::1234]/mcp",
+  ])("blocks link-local literals with private endpoints enabled: %s", async (endpoint) => {
+    const resolve = vi.fn(publicResolver);
+    const fetch = vi.fn();
+    const safeFetch = createSafeRemoteFetch(fetch, resolve, { allowPrivateEndpoint: true });
+    try {
+      await expect(
+        assertSafeRemoteUrl(endpoint, resolve, { allowPrivateEndpoint: true }),
+      ).rejects.toThrow(/private/);
+      await expect(safeFetch(endpoint)).rejects.toThrow(/private/);
+      expect(resolve).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      await safeFetch.close();
+    }
+  });
 
   it("rejects a private-suffix hostname that resolves to link-local metadata", async () => {
     await expect(
@@ -361,11 +427,8 @@ describe("remote MCP URL policy", () => {
   });
 
   it("drives the guarded dispatcher with a fetch from the same undici", async () => {
-    // A fetch from a different undici than the Agent fails at dispatch with
-    // "invalid onRequestStart method" before the lookup runs. Failing inside
-    // the lookup proves the request reached the guarded Agent. Node's fetch
-    // is a different major, so omit, builtin, and a captured builtin must
-    // all use the package fetch that matches the Agent.
+    // A fetch from a different undici than the Agent fails at dispatch before the lookup runs,
+    // so failing inside the lookup proves the request reached the guarded Agent.
     expect(undiciFetch).not.toBe(globalThis.fetch);
 
     const capturedNodeFetch = globalThis.fetch;
@@ -601,17 +664,22 @@ describe("remote MCP tool result", () => {
       },
     });
 
-  /** Streamable HTTP peer answering one raw tool result body (with `$ID` for the request id). */
-  function toolResultFetch(result: string) {
+  /** Streamable HTTP peer answering one fixed tool result over an injected
+   * fetch. A raw body string (with `$ID` for the request id) can carry JSON
+   * number digits a JavaScript value cannot hold exactly. */
+  function toolResultFetch(result: Record<string, unknown> | string) {
     return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const request = new Request(input, init);
       if (request.method !== "POST") return new Response(null, { status: 405 });
       const message = (await request.json()) as { id?: number; method?: string };
       if (message.method === "initialize") return initialize(message.id);
-      if (message.method === "tools/call")
-        return new Response(result.replace("$ID", String(message.id)), {
-          headers: { "content-type": "application/json" },
-        });
+      if (message.method === "tools/call") {
+        if (typeof result === "string")
+          return new Response(result.replace("$ID", String(message.id)), {
+            headers: { "content-type": "application/json" },
+          });
+        return Response.json({ jsonrpc: "2.0", id: message.id, result });
+      }
       return new Response(null, { status: 202 });
     });
   }
@@ -633,6 +701,151 @@ describe("remote MCP tool result", () => {
       `{"jsonrpc":"2.0","id":$ID,"result":{"content":[{"type":"text","text":"${"x".repeat(MAX_MCP_RESPONSE_BYTES)}"}]}}`,
     );
     await expect(callTool(fetch)).rejects.toThrow("MCP server response exceeds 16 MB");
+  });
+
+  const memory = { results: [{ text: "first memory" }, { text: "second memory" }] };
+
+  it("keeps one copy when a text block repeats structuredContent", async () => {
+    const fetch = toolResultFetch({
+      content: [{ type: "text", text: JSON.stringify(memory) }],
+      structuredContent: memory,
+    });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [],
+      structuredContent: memory,
+      isError: false,
+    });
+  });
+
+  it("drops a duplicate text block however the server formatted the JSON", async () => {
+    const fetch = toolResultFetch({
+      content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
+      structuredContent: memory,
+    });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [],
+      structuredContent: memory,
+      isError: false,
+    });
+  });
+
+  it("keeps both copies when the text is different data", async () => {
+    const other = { results: [{ text: "different" }] };
+    const fetch = toolResultFetch({
+      content: [{ type: "text", text: JSON.stringify(other) }],
+      structuredContent: memory,
+    });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [{ type: "text", text: JSON.stringify(other) }],
+      structuredContent: memory,
+      isError: false,
+    });
+  });
+
+  it("keeps a text-only result unchanged", async () => {
+    const fetch = toolResultFetch({ content: [{ type: "text", text: "plain answer" }] });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [{ type: "text", text: "plain answer" }],
+      isError: false,
+    });
+  });
+
+  it("keeps a structured-only result unchanged", async () => {
+    const fetch = toolResultFetch({ content: [], structuredContent: memory });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [],
+      structuredContent: memory,
+      isError: false,
+    });
+  });
+
+  it("keeps images and other text blocks, dropping only the duplicate text", async () => {
+    const image = { type: "image", data: "aGk=", mimeType: "image/png" };
+    const fetch = toolResultFetch({
+      content: [
+        image,
+        { type: "text", text: JSON.stringify(memory) },
+        { type: "text", text: "a note beside the data" },
+      ],
+      structuredContent: memory,
+    });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [image, { type: "text", text: "a note beside the data" }],
+      structuredContent: memory,
+      isError: false,
+    });
+  });
+
+  it("keeps both copies when the shared JSON holds an integer beyond the safe range", async () => {
+    // Parsing rounds both copies of 9007199254740993 to 9007199254740992, so
+    // they would compare deep-equal; only the text still carries the exact id.
+    const exact = '{"id":9007199254740993}';
+    const fetch = toolResultFetch(
+      `{"jsonrpc":"2.0","id":$ID,"result":{"content":[{"type":"text","text":${JSON.stringify(
+        exact,
+      )}}],"structuredContent":{"id":9007199254740993}}}`,
+    );
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [{ type: "text", text: exact }],
+      structuredContent: { id: 9007199254740992 },
+      isError: false,
+    });
+  });
+
+  it.each([
+    ["9.007199254740993e15", 9007199254740992],
+    ["1.0000000000000001", 1],
+  ])(
+    "keeps both copies when the decimal %s cannot survive a JavaScript number",
+    async (token, rounded) => {
+      const exact = `{"id":${token}}`;
+      const fetch = toolResultFetch(
+        `{"jsonrpc":"2.0","id":$ID,"result":{"content":[{"type":"text","text":${JSON.stringify(
+          exact,
+        )}}],"structuredContent":{"id":${token}}}}`,
+      );
+      await expect(callTool(fetch)).resolves.toEqual({
+        content: [{ type: "text", text: exact }],
+        structuredContent: { id: rounded },
+        isError: false,
+      });
+    },
+  );
+
+  it("still drops the duplicate when big digits appear only inside strings", async () => {
+    const data = { note: "id 9007199254740993 in prose", count: 3 };
+    const fetch = toolResultFetch({
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      structuredContent: data,
+    });
+    await expect(callTool(fetch)).resolves.toEqual({
+      content: [],
+      structuredContent: data,
+      isError: false,
+    });
+  });
+
+  it("keeps an error result's text, so audits report the specific failure", async () => {
+    const failure = { error: { message: "Missing permission: updates" } };
+    const fetch = toolResultFetch({
+      content: [{ type: "text", text: JSON.stringify(failure) }],
+      structuredContent: failure,
+      isError: true,
+    });
+    const envelope = await callTool(fetch);
+    expect(envelope).toEqual({
+      content: [{ type: "text", text: JSON.stringify(failure) }],
+      structuredContent: failure,
+      isError: true,
+    });
+    const audit = toolCompletionAuditPayload({
+      name: "recall",
+      executionId: "exec-1",
+      durationMs: 3,
+      result: envelope,
+    });
+    expect(audit.outcome).toBe("error");
+    expect(audit.error).toContain("Missing permission: updates");
   });
 });
 
@@ -661,16 +874,17 @@ describe("createPrivateNetworkFetch", () => {
     expect(String(baseFetch.mock.calls[0]?.[0])).toBe("http://192.168.2.10:8080/v1/items");
   });
 
-  it("rejects an opted-in host that resolves to a mapped link-local address", async () => {
-    const baseFetch = mockFetch();
-    const fetch = createPrivateNetworkFetch(baseFetch, async () => [
-      { address: "::ffff:169.254.170.2", family: 6 as const },
-    ]);
-    await expect(fetch("http://nas.local:8080/v1/items", { method: "GET" })).rejects.toThrow(
-      "non-private address",
-    );
-    expect(baseFetch).not.toHaveBeenCalled();
-  });
+  it.each(["::ffff:169.254.170.2", "::ffff:a9fe:a9fe", "::ffff:a9fe:101"])(
+    "rejects an opted-in host that resolves to the mapped link-local address %s",
+    async (address) => {
+      const baseFetch = mockFetch();
+      const fetch = createPrivateNetworkFetch(baseFetch, async () => [{ address, family: 6 }]);
+      await expect(fetch("http://nas.local:8080/v1/items", { method: "GET" })).rejects.toThrow(
+        "non-private address",
+      );
+      expect(baseFetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects an opted-in host that resolves to a public address", async () => {
     const baseFetch = mockFetch();
@@ -708,5 +922,165 @@ describe("createPrivateNetworkFetch", () => {
     await expect(fetch("http://192.168.2.10:8080/v1/items", { method: "GET" })).rejects.toThrow(
       "redirects are not allowed",
     );
+  });
+
+  it("releases a refused redirect body in both connector fetches so close() does not wait on it", async () => {
+    // Larger than undici buffers, so an unread body holds the connection open.
+    const server = createServer((_request, response) => {
+      response.writeHead(302, { location: "http://localhost/elsewhere" });
+      response.end("x".repeat(1_000_000));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const loopbackResolver = async () => [{ address: "127.0.0.1", family: 4 as const }];
+    try {
+      for (const [fetch, refusal] of [
+        [
+          createSafeRemoteFetch(undefined, loopbackResolver, { allowPrivateEndpoint: true }),
+          ConnectorRedirectError,
+        ],
+        [createPrivateNetworkFetch(undefined, loopbackResolver), "redirects are not allowed"],
+      ] as const) {
+        await expect(fetch(`http://localhost:${port}/mcp`)).rejects.toThrow(refusal);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const closed = await Promise.race([
+          fetch.close().then(() => true),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(false), 2_000);
+          }),
+        ]);
+        clearTimeout(timer);
+        expect(closed).toBe(true);
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+describe("a guarded fetch that fails", () => {
+  const coded = (code: string) => Object.assign(new Error(`failed ${code}`), { code });
+  const failingWith = (cause: unknown) => async () => {
+    throw new TypeError("fetch failed", { cause });
+  };
+  const fetchers = [
+    ["public", (cause: unknown) => createSafeRemoteFetch(failingWith(cause), publicResolver)],
+    [
+      "private network",
+      (cause: unknown) =>
+        createPrivateNetworkFetch(failingWith(cause), async () => [
+          { address: "192.168.2.10", family: 4 as const },
+        ]),
+    ],
+  ] as const;
+  const failure = async (
+    create: (cause: unknown) => ReturnType<typeof createSafeRemoteFetch>,
+    cause: unknown,
+  ) => {
+    const fetch = create(cause);
+    try {
+      return await fetch("https://connectors.example.test/mcp").then(
+        () => null,
+        (error: unknown) => error,
+      );
+    } finally {
+      await fetch.close();
+    }
+  };
+
+  // As Node reports them: the call that failed says whether the socket ever connected.
+  const during = (syscall: string, code: string) =>
+    Object.assign(new Error(`${syscall} ${code}`), { code, syscall });
+  // No connection was made, so nothing of the request, its credential included, left.
+  const neverConnected = [
+    during("connect", "ECONNREFUSED"),
+    during("connect", "EHOSTUNREACH"),
+    during("connect", "ENETUNREACH"),
+    during("connect", "ECONNRESET"),
+    during("connect", "ETIMEDOUT"),
+    during("getaddrinfo", "ENOTFOUND"),
+    coded("ENOTFOUND"),
+    coded("EAI_AGAIN"),
+    coded("UND_ERR_CONNECT_TIMEOUT"),
+    // Verified during the handshake, before the request is written.
+    coded("CERT_HAS_EXPIRED"),
+    coded("DEPTH_ZERO_SELF_SIGNED_CERT"),
+    coded("UNABLE_TO_VERIFY_LEAF_SIGNATURE"),
+    coded("ERR_TLS_CERT_ALTNAME_INVALID"),
+    // Every address of a dual-stack host refused.
+    new AggregateError([during("connect", "ECONNREFUSED"), during("connect", "ENETUNREACH")], ""),
+  ];
+  // Connected, or not known not to be: the request may have been written.
+  const maybeSent = [
+    coded("UND_ERR_HEADERS_TIMEOUT"),
+    coded("UND_ERR_BODY_TIMEOUT"),
+    coded("UND_ERR_SOCKET"),
+    during("read", "ECONNRESET"),
+    during("write", "EPIPE"),
+    // An established connection that times out reports the unreachable error it last saw.
+    during("read", "EHOSTUNREACH"),
+    during("read", "ETIMEDOUT"),
+    // Without the call that failed, these may have come after the connection.
+    coded("ECONNREFUSED"),
+    coded("EHOSTUNREACH"),
+    coded("ECONNRESET"),
+    coded("ETIMEDOUT"),
+    // A bad TLS record may arrive once the session is up and the request written.
+    coded("ERR_SSL_WRONG_VERSION_NUMBER"),
+    coded("ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC"),
+    new DOMException("This operation was aborted", "AbortError"),
+    new AggregateError([during("connect", "ECONNREFUSED"), during("read", "ECONNRESET")], ""),
+    // Text alone is never trusted: a code is.
+    new Error("connect ECONNREFUSED 203.0.113.10:443"),
+    undefined,
+  ];
+
+  for (const [name, create] of fetchers) {
+    it(`says no request left a ${name} fetch that never connected`, async () => {
+      for (const cause of neverConnected) {
+        const error = await failure(create, cause);
+        expect(error, String((cause as { code?: string }).code)).toBeInstanceOf(Error);
+        expect(error, String((cause as { code?: string }).code)).not.toBeInstanceOf(
+          RemoteRequestSentError,
+        );
+        expect((error as Error).message).toMatch(/^Could not reach connectors\.example\.test/);
+      }
+    });
+
+    it(`counts a ${name} fetch that may have sent its request as sent`, async () => {
+      for (const cause of maybeSent) {
+        const error = await failure(create, cause);
+        expect(error, String((cause as { code?: string } | undefined)?.code)).toBeInstanceOf(
+          RemoteRequestSentError,
+        );
+      }
+    });
+  }
+
+  it("tells a refused connection from a request cut off, over real sockets", async () => {
+    const owner = { allowPrivateEndpoint: true };
+    const loopback = async () => [{ address: "127.0.0.1", family: 4 as const }];
+    const listen = async (server: ReturnType<typeof createNetServer>) => {
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      return (server.address() as AddressInfo).port;
+    };
+    const closed = createNetServer();
+    const closedPort = await listen(closed);
+    await new Promise((resolve) => closed.close(resolve));
+    // Reads the request, then resets the connection.
+    const cutOff = createNetServer((socket) => socket.once("data", () => socket.resetAndDestroy()));
+    const cutOffPort = await listen(cutOff);
+    const fetch = createSafeRemoteFetch(undefined, loopback, owner);
+    try {
+      const refused = await fetch(`http://127.0.0.1:${closedPort}/mcp`).catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(Error);
+      expect(refused).not.toBeInstanceOf(RemoteRequestSentError);
+      const reset = await fetch(`http://127.0.0.1:${cutOffPort}/mcp`).catch((e: unknown) => e);
+      expect(reset).toBeInstanceOf(RemoteRequestSentError);
+    } finally {
+      await fetch.close();
+      await new Promise((resolve) => cutOff.close(resolve));
+    }
   });
 });

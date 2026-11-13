@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bootComputerOnce,
+  createScreenRefocus,
   embeddableScreenUrl,
   isProxiedScreenUrl,
   loadComputerScreen,
   probeScreen,
+  probeScreenStatus,
+  sameEmbeddedComputerScreen,
   screenFrameError,
   screenFrameMessage,
   screenFrameStarted,
@@ -90,6 +93,33 @@ describe("computer screen requests", () => {
   });
 });
 
+describe("sameEmbeddedComputerScreen", () => {
+  const screen = (code: string, viewOnly = "true", desktop = "ecd-1") =>
+    `embedded-screen://desktop?desktop_id=${desktop}&region_id=cn-hangzhou&auth_code=${code}&view_only=${viewOnly}`;
+
+  it("keeps a connected embedded screen when only its login code changes", () => {
+    expect(sameEmbeddedComputerScreen(screen("a"), screen("b"))).toBe(true);
+    expect(sameEmbeddedComputerScreen(screen("a"), screen("b", "false"))).toBe(false);
+    expect(sameEmbeddedComputerScreen(screen("a"), screen("b", "true", "ecd-2"))).toBe(false);
+    expect(sameEmbeddedComputerScreen(null, screen("b"))).toBe(false);
+    expect(
+      sameEmbeddedComputerScreen("http://127.0.0.1:5173/novnc/a", "http://127.0.0.1:5173/novnc/a"),
+    ).toBe(false);
+  });
+});
+
+describe("embedded frame isolation", () => {
+  it("sandboxes the vendor page without same-origin access and uses frame state probing", () => {
+    vi.stubGlobal("window", { location: { href: "https://app.example/chat" } });
+    const url = embeddableScreenUrl(
+      "embedded-screen://desktop?auth_code=fake-once&desktop_id=ecd-fake",
+    );
+    expect(screenIframeSandbox(url)).toBe("allow-scripts allow-pointer-lock");
+    expect(isProxiedScreenUrl(url)).toBe(true);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("embeddableScreenUrl", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -99,6 +129,17 @@ describe("embeddableScreenUrl", () => {
     vi.stubGlobal("window", { location: { href: "http://localhost:5173/" } });
     expect(embeddableScreenUrl("http://127.0.0.1:6080/vnc.html")).toBeNull();
     expect(embeddableScreenUrl("http://localhost:6080/vnc.html")).toBeNull();
+  });
+
+  it("draws an embedded desktop in the page that carries its Web SDK", () => {
+    vi.stubGlobal("window", { location: { href: "http://localhost:5173/chat" } });
+    expect(
+      embeddableScreenUrl(
+        "embedded-screen://desktop?desktop_id=ecd-1&auth_code=once&view_only=true",
+      ),
+    ).toBe(
+      "http://localhost:5173/computer-screen/screen.html#desktop_id=ecd-1&auth_code=once&view_only=true",
+    );
   });
 
   it("serves the screen proxy from the page origin", () => {
@@ -235,10 +276,10 @@ describe("screen frame reports", () => {
     expect(screenFrameError({ cortexAiAgentHubScreen: "connected" }, "fallback")).toBeNull();
     expect(
       screenFrameError({ cortexAiAgentHubScreen: "failed", detail: "Refused" }, "fallback"),
-    ).toBe("Refused");
+    ).toBe("fallback");
     expect(screenFrameError({ cortexAiAgentHubScreen: "failed" }, "fallback")).toBe("fallback");
     expect(screenFrameError({ cortexAiAgentHubScreen: "disconnected" }, "fallback")).toBe(
-      "fallback",
+      "The screen connection closed.",
     );
   });
 
@@ -251,6 +292,10 @@ describe("screen frame reports", () => {
 });
 
 describe("probeScreen", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   const url = "http://127.0.0.1:5173/novnc/session/view/1.t/vnc.html";
   const response = (status: number, body = "", type = "basic") =>
     ({ ok: status >= 200 && status < 300, status, type, text: async () => body }) as Response;
@@ -270,15 +315,25 @@ describe("probeScreen", () => {
       probeScreen(url, "fallback", async () =>
         response(403, "Invalid or expired screen capability"),
       ),
-    ).resolves.toBe("Invalid or expired screen capability");
+    ).resolves.toBe("The screen link expired.");
     await expect(
       probeScreen(url, "fallback", async () =>
         response(502, "Screen unavailable (upstream_timeout)"),
       ),
-    ).resolves.toBe("Screen unavailable (upstream_timeout)");
-    await expect(probeScreen(url, "fallback", async () => response(503))).resolves.toBe(
-      "fallback (HTTP 503)",
-    );
+    ).resolves.toBe("The screen did not respond.");
+  });
+
+  it("reads an access check that couldn't reach the API as a connection problem", async () => {
+    await expect(
+      probeScreen(url, "fallback", async () => response(503, "Screen unavailable")),
+    ).resolves.toBe("fallback");
+    await expect(probeScreen(url, "fallback", async () => response(503))).resolves.toBe("fallback");
+  });
+
+  it("never shows untrusted plain text", async () => {
+    await expect(
+      probeScreen(url, "fallback", async () => response(500, "private token")),
+    ).resolves.toBe("fallback");
   });
 
   it("never shows an upstream HTML error page as the reason", async () => {
@@ -286,14 +341,12 @@ describe("probeScreen", () => {
       probeScreen(url, "fallback", async () =>
         response(502, "<!DOCTYPE html><html><body><h1>Bad gateway</h1></body></html>"),
       ),
-    ).resolves.toBe("fallback (HTTP 502)");
+    ).resolves.toBe("fallback");
     const html = {
       ...response(500, "Bad gateway"),
       headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
     } as Response;
-    await expect(probeScreen(url, "fallback", async () => html)).resolves.toBe(
-      "fallback (HTTP 500)",
-    );
+    await expect(probeScreen(url, "fallback", async () => html)).resolves.toBe("fallback");
   });
 
   it("falls back when the page cannot be fetched or would leave the app", async () => {
@@ -305,5 +358,173 @@ describe("probeScreen", () => {
     await expect(
       probeScreen(url, "fallback", async () => response(0, "", "opaqueredirect")),
     ).resolves.toBe("fallback");
+  });
+
+  it("sends the session cookie only for a same-origin http(s) screen", async () => {
+    vi.stubGlobal("window", { location: { href: "http://127.0.0.1:5173/chat" } });
+    const sameOrigin = vi.fn(async () => response(200, "<html>"));
+    await expect(probeScreen(url, "fallback", sameOrigin)).resolves.toBeNull();
+    expect(sameOrigin).toHaveBeenCalledWith(url, {
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "manual",
+    });
+
+    const relative = vi.fn(async () => response(200, "<html>"));
+    await probeScreen("/novnc/session/view/1.t/vnc.html", "fallback", relative);
+    expect(relative).toHaveBeenCalledWith(
+      "/novnc/session/view/1.t/vnc.html",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+
+    const crossOrigin = vi.fn(async () => response(200, "<html>"));
+    await probeScreen("https://screen.example/vnc.html", "fallback", crossOrigin);
+    expect(crossOrigin).toHaveBeenCalledWith(
+      "https://screen.example/vnc.html",
+      expect.objectContaining({ credentials: "omit" }),
+    );
+
+    const otherPort = vi.fn(async () => response(200, "<html>"));
+    await probeScreen("http://127.0.0.1:6080/novnc/vnc.html", "fallback", otherPort);
+    expect(otherPort).toHaveBeenCalledWith(
+      "http://127.0.0.1:6080/novnc/vnc.html",
+      expect.objectContaining({ credentials: "omit" }),
+    );
+  });
+
+  it("keeps cookies off non-http screen schemes, including an embedded login URL", async () => {
+    vi.stubGlobal("window", { location: { href: "https://app.example/chat" } });
+    const embeddedScreen = vi.fn(async () => response(200));
+    await probeScreen(
+      "embedded-screen://desktop?desktop_id=ecd-1&auth_code=once",
+      "fallback",
+      embeddedScreen,
+    );
+    expect(embeddedScreen).toHaveBeenCalledWith(
+      "embedded-screen://desktop?desktop_id=ecd-1&auth_code=once",
+      expect.objectContaining({ credentials: "omit" }),
+    );
+    const otherScheme = vi.fn(async () => response(200));
+    await probeScreen("crypto:screen", "fallback", otherScheme);
+    expect(otherScheme).toHaveBeenCalledWith(
+      "crypto:screen",
+      expect.objectContaining({ credentials: "omit" }),
+    );
+
+    const page = vi.fn(async () => response(200, "<html>"));
+    const screenPage =
+      "https://app.example/computer-screen/screen.html#desktop_id=ecd-1&auth_code=once";
+    await expect(probeScreen(screenPage, "fallback", page)).resolves.toBeNull();
+    expect(page).toHaveBeenCalledWith(
+      screenPage,
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+  });
+
+  it("still treats an opaque redirect as leaving the app when the cookie was sent", async () => {
+    vi.stubGlobal("window", { location: { href: "http://127.0.0.1:5173/chat" } });
+    const fetchImpl = vi.fn(async () => response(0, "", "opaqueredirect"));
+    await expect(probeScreen(url, "fallback", fetchImpl)).resolves.toBe("fallback");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      url,
+      expect.objectContaining({ credentials: "same-origin", redirect: "manual" }),
+    );
+  });
+});
+
+describe("probeScreenStatus", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const url = "http://127.0.0.1:5173/novnc/session/control/1.t/vnc.html";
+
+  it("returns only the status and drops the body unread", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const text = vi.fn(async () => "Invalid or expired screen capability");
+    const fetchImpl = vi.fn(
+      async () => ({ status: 403, type: "basic", body: { cancel }, text }) as unknown as Response,
+    );
+    await expect(probeScreenStatus(url, fetchImpl)).resolves.toBe(403);
+    expect(text).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledWith(url, {
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "manual",
+    });
+  });
+
+  it("gives the request the wait's abort signal, so a stalled probe can be dropped", async () => {
+    const stop = new AbortController();
+    const fetchImpl = vi.fn(async () => ({ status: 204, type: "basic" }) as unknown as Response);
+    await probeScreenStatus(url, fetchImpl, stop.signal);
+    expect(fetchImpl).toHaveBeenCalledWith(url, expect.objectContaining({ signal: stop.signal }));
+  });
+
+  it("says when the page couldn't be asked or would leave the app", async () => {
+    await expect(
+      probeScreenStatus(url, async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      probeScreenStatus(url, async () => ({ status: 0, type: "opaqueredirect" }) as Response),
+    ).resolves.toBe(0);
+  });
+
+  it("includes the session cookie for a same-origin probe and withholds it elsewhere", async () => {
+    vi.stubGlobal("window", { location: { href: "http://127.0.0.1:5173/chat" } });
+    const sameOrigin = vi.fn(async () => ({ status: 204, type: "basic" }) as Response);
+    await expect(probeScreenStatus(url, sameOrigin)).resolves.toBe(204);
+    expect(sameOrigin).toHaveBeenCalledWith(url, {
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "manual",
+      signal: undefined,
+    });
+    const crossOrigin = vi.fn(async () => ({ status: 204, type: "basic" }) as Response);
+    await probeScreenStatus("https://screen.example/novnc/x", crossOrigin);
+    expect(crossOrigin).toHaveBeenCalledWith(
+      "https://screen.example/novnc/x",
+      expect.objectContaining({ credentials: "omit" }),
+    );
+    const embeddedScreen = vi.fn(async () => ({ status: 204, type: "basic" }) as Response);
+    await probeScreenStatus("embedded-screen://desktop?auth_code=once", embeddedScreen);
+    expect(embeddedScreen).toHaveBeenCalledWith(
+      "embedded-screen://desktop?auth_code=once",
+      expect.objectContaining({ credentials: "omit" }),
+    );
+  });
+});
+
+describe("giving a reconnected screen the keyboard back", () => {
+  const frame = { name: "frame" } as unknown as Element;
+  const body = { name: "body" } as unknown as Element;
+  const chatBox = { name: "chat box" } as unknown as Element;
+
+  it("refocuses once, when the screen had the keyboard and nothing else took it", () => {
+    const refocus = createScreenRefocus();
+    refocus.dropped(true);
+    expect(refocus.connected(body, frame, body)).toBe(true);
+    expect(refocus.connected(body, frame, body)).toBe(false);
+    refocus.dropped(true);
+    expect(refocus.connected(null, frame, body)).toBe(true);
+  });
+
+  it("leaves the keyboard where the user put it during the wait", () => {
+    const refocus = createScreenRefocus();
+    refocus.dropped(true);
+    expect(refocus.connected(chatBox, frame, body)).toBe(false);
+    refocus.dropped(true);
+    refocus.forget();
+    expect(refocus.connected(body, frame, body)).toBe(false);
+  });
+
+  it("doesn't refocus a screen that didn't have the keyboard, or that a page says connected", () => {
+    const refocus = createScreenRefocus();
+    expect(refocus.connected(body, frame, body)).toBe(false);
+    refocus.dropped(false);
+    expect(refocus.connected(body, frame, body)).toBe(false);
   });
 });

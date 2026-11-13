@@ -8,8 +8,7 @@ import { asSystem, runAsSystem, runAsTenant } from "./row-security.js";
 import { createSpaceForMember } from "./spaces.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
 /** Rows Postgres returned for one statement that reads `messages`. */
 interface MessageRead {
@@ -152,7 +151,6 @@ describePostgres("cross-space bot sidebar previews (PostgreSQL)", () => {
     return runAsTenant(who, async () => {
       const created = await createRepos(prisma).createBot(who, {
         name,
-        title: "",
         description: "",
         instructions: "",
         notifyOnFinish: true,
@@ -190,7 +188,12 @@ describePostgres("cross-space bot sidebar previews (PostgreSQL)", () => {
       });
       await prisma.thread.update({
         where: { id: created.threadId },
-        data: { nextMessageSeq: spec.count, unread: spec.unread },
+        data: {
+          nextMessageSeq: spec.count,
+          ...(spec.unread
+            ? { reads: { create: { spaceId: who.spaceId, userId: who.userId, unread: true } } }
+            : {}),
+        },
       });
     });
     return {
@@ -241,7 +244,7 @@ describePostgres("cross-space bot sidebar previews (PostgreSQL)", () => {
   it("previews the newest message of each bot in another space and reads at most one message row per thread", async () => {
     const { result: listed, rowCount } = await messageRowsDuring("listSpaceBotsForSpaces", () =>
       runAsSystem("space navigation across the member's Spaces", () =>
-        createRepos(prisma).listSpaceBotsForSpaces(actor, [spaceB]),
+        createRepos(prisma).listSpaceBotsForSpaces([spaceB], owner.userId),
       ),
     );
     expect(
@@ -262,7 +265,7 @@ describePostgres("cross-space bot sidebar previews (PostgreSQL)", () => {
       "listSpaceBotsForSpaces empty",
       () =>
         runAsSystem("space navigation across the member's Spaces", () =>
-          createRepos(prisma).listSpaceBotsForSpaces(actor, []),
+          createRepos(prisma).listSpaceBotsForSpaces([], owner.userId),
         ),
     );
     expect(result).toEqual([]);

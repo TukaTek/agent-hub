@@ -1,4 +1,12 @@
-import { readBoundedResponseBytes } from "@cortexai-agent-hub/core";
+import type { SettingsScope } from "@cortexai-agent-hub/contracts";
+import {
+  readVoiceAudio,
+  readVoiceError,
+  requestDeadline,
+  VOICE_RESPONSE_TIMEOUT_MS,
+  withAbort,
+} from "@cortexai-agent-hub/core";
+import { t } from "@lingui/core/macro";
 import { rpc, selectedSpaceId, withSpaceHeaders } from "./rpc.js";
 import { errorText, voiceAccountErrorText } from "./user-error.js";
 
@@ -14,17 +22,18 @@ export interface SpeechSnapshot {
 
 interface SpeakOptions {
   spaceId?: string | null;
+  /** Which copy of the voice settings to use; omitted means whichever applies in the space. */
+  scope?: SettingsScope;
   voiceId?: string;
   botId?: string;
   messageId?: string;
 }
 
-type TtsErrorBody = { error?: string; code?: string };
-
 const IDLE: SpeechSnapshot = { status: "idle" };
-export const VOICE_RESPONSE_TIMEOUT_MS = 70_000;
-export const MAX_VOICE_AUDIO_BYTES = 16 * 1024 * 1024;
-const MAX_VOICE_ERROR_BYTES = 64 * 1024;
+const SILENT_CLIP =
+  "data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+type PlaybackEnd = "ended" | "stopped" | "blocked" | "failed";
 
 export class Speaker {
   private snapshot: SpeechSnapshot = IDLE;
@@ -32,7 +41,7 @@ export class Speaker {
   private token = 0;
   private audio: HTMLAudioElement | null = null;
   private objectUrl: string | null = null;
-  private settlePlayback: ((finished: boolean) => void) | null = null;
+  private settlePlayback: ((end: PlaybackEnd) => void) | null = null;
   private request: AbortController | null = null;
 
   subscribe(fn: (s: SpeechSnapshot) => void): () => void {
@@ -61,16 +70,28 @@ export class Speaker {
     this.token += 1;
     this.request?.abort();
     this.request = null;
-    if (this.settlePlayback) this.settlePlayback(false);
+    if (this.settlePlayback) this.settlePlayback("stopped");
     else this.teardownAudio();
     if (this.snapshot.status !== "idle" || this.snapshot.error) this.set(IDLE);
+  }
+
+  unlock() {
+    if (this.settlePlayback) return;
+    const audio = this.element();
+    audio.src = SILENT_CLIP;
+    void audio.play().catch(() => undefined);
+  }
+
+  private element(): HTMLAudioElement {
+    this.audio ??= new Audio();
+    return this.audio;
   }
 
   private teardownAudio() {
     if (this.audio) {
       this.audio.pause();
-      this.audio.src = "";
-      this.audio = null;
+      this.audio.removeAttribute("src");
+      this.audio.load();
     }
     if (this.objectUrl) {
       URL.revokeObjectURL(this.objectUrl);
@@ -90,8 +111,9 @@ export class Speaker {
     this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
     let utterances: string[];
     try {
-      utterances = await withAbort(controller.signal, () =>
+      utterances = await withAbort(
         this.prepare(text, opts, controller.signal, spaceId),
+        controller.signal,
       );
     } catch (error) {
       const failure = live() ? errorText(error) : undefined;
@@ -131,11 +153,15 @@ export class Speaker {
         messageId: opts.messageId,
         caption: utterances[i],
       });
-      const finished = await this.play(rendered.blob, live);
-      if (!finished || !live()) {
-        if (live()) this.set(IDLE);
+      const end = await this.play(rendered.blob, live);
+      if (end !== "ended" || !live()) {
+        const failure =
+          live() && (end === "failed" || end === "blocked")
+            ? t`Could not play that clip.`
+            : undefined;
+        if (live()) this.set(failure ? { ...IDLE, error: failure } : IDLE);
         if (this.request === controller) this.request = null;
-        return;
+        return end === "blocked" ? undefined : failure;
       }
     }
     if (live()) this.set(IDLE);
@@ -149,11 +175,11 @@ export class Speaker {
     spaceId: string | null,
   ): Promise<string[]> {
     const body = await rpc.voice.prepare(
-      { text, voiceId: opts.voiceId, botId: opts.botId },
+      { text, voiceId: opts.voiceId, botId: opts.botId, scope: opts.scope },
       { signal, context: { spaceId } },
     );
     if (!body.ready) {
-      throw new Error("Add a voice provider key and pick a voice in Voice settings.");
+      throw new Error(t`Add a voice provider key and pick a voice in Voice settings.`);
     }
     return body.utterances ?? [];
   }
@@ -164,22 +190,32 @@ export class Speaker {
     signal: AbortSignal,
     spaceId: string | null,
   ): Promise<Blob> {
-    const deadline = requestDeadline(signal, VOICE_RESPONSE_TIMEOUT_MS);
+    const deadline = requestDeadline(
+      VOICE_RESPONSE_TIMEOUT_MS,
+      t`Voice request timed out.`,
+      signal,
+    );
     try {
-      const res = await withAbort(deadline.signal, () =>
+      const res = await withAbort(
         fetch("/api/voice/speak", {
           method: "POST",
           headers: withSpaceHeaders({ "content-type": "application/json" }, spaceId),
           credentials: "include",
-          body: JSON.stringify({ text, voiceId: opts.voiceId, botId: opts.botId }),
+          body: JSON.stringify({
+            text,
+            voiceId: opts.voiceId,
+            botId: opts.botId,
+            scope: opts.scope,
+          }),
           signal: deadline.signal,
         }),
+        deadline.signal,
       );
       if (!res.ok) {
         const body = await readVoiceError(res, deadline.signal);
         throw new Error(voiceAccountErrorText(body) ?? body.error ?? "");
       }
-      const bytes = await readResponseBytes(res, MAX_VOICE_AUDIO_BYTES, deadline.signal);
+      const bytes = await readVoiceAudio(res, deadline.signal);
       return new Blob([new Uint8Array(bytes)], {
         type: res.headers.get("content-type") ?? "audio/mpeg",
       });
@@ -188,103 +224,36 @@ export class Speaker {
     }
   }
 
-  private play(blob: Blob, live: () => boolean): Promise<boolean> {
+  private play(blob: Blob, live: () => boolean): Promise<PlaybackEnd> {
     return new Promise((resolve) => {
-      if (!live()) return resolve(false);
+      if (!live()) return resolve("stopped");
       this.teardownAudio();
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      this.audio = audio;
+      const audio = this.element();
+      audio.src = url;
       this.objectUrl = url;
       let settled = false;
-      const done = (ok: boolean) => {
+      const done = (end: PlaybackEnd) => {
         if (settled) return;
         settled = true;
         audio.onended = null;
         audio.onerror = null;
         if (this.settlePlayback === done) this.settlePlayback = null;
-        if (this.audio === audio) this.teardownAudio();
-        resolve(ok);
+        this.teardownAudio();
+        resolve(end);
       };
       this.settlePlayback = done;
-      audio.onended = () => done(true);
-      audio.onerror = () => done(false);
-      audio.play().catch(() => done(false));
+      audio.onended = () => done("ended");
+      audio.onerror = () => done("failed");
+      audio
+        .play()
+        .catch((error: unknown) =>
+          done(
+            (error as { name?: unknown } | null)?.name === "NotAllowedError" ? "blocked" : "failed",
+          ),
+        );
     });
   }
 }
 
 export const speaker = new Speaker();
-
-function withAbort<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
-  if (signal.aborted) {
-    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    run().then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
-}
-
-function requestDeadline(parent: AbortSignal, timeoutMs: number) {
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort(parent.reason);
-  if (parent.aborted) abortFromParent();
-  else parent.addEventListener("abort", abortFromParent, { once: true });
-  const timer = setTimeout(
-    () => controller.abort(new Error("Voice request timed out.")),
-    timeoutMs,
-  );
-  return {
-    signal: controller.signal,
-    dispose() {
-      clearTimeout(timer);
-      parent.removeEventListener("abort", abortFromParent);
-    },
-  };
-}
-
-async function readVoiceError(response: Response, signal: AbortSignal): Promise<TtsErrorBody> {
-  const bytes = await readResponseBytes(response, MAX_VOICE_ERROR_BYTES, signal);
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as TtsErrorBody) : {};
-  } catch {
-    return {};
-  }
-}
-
-async function readResponseBytes(
-  response: Response,
-  maxBytes: number,
-  signal: AbortSignal,
-): Promise<Uint8Array> {
-  const declared = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    cancelResponse(response);
-    throw new Error("Voice response is too large.");
-  }
-  return readBoundedResponseBytes(response, {
-    maxBytes,
-    tooLargeMessage: "Voice response is too large.",
-    read: (operation) => withAbort(signal, operation),
-  });
-}
-
-function cancelResponse(response: Response): void {
-  try {
-    void Promise.resolve(response.body?.cancel()).catch(() => undefined);
-  } catch {
-    // Response cleanup is best-effort.
-  }
-}

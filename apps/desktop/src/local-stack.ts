@@ -3,15 +3,14 @@ import { copyFile, lstat, mkdir, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import type { DesktopLocalStackState } from "@cortexai-agent-hub/contracts";
+import type { DockerFailureKind, RunDocker, RunDockerResult } from "./docker-cli.js";
 import {
   classifyDockerFailure,
   composeSupportsWaitTimeout,
-  type DockerFailureKind,
   dockerSpawnEnv,
-  type RunDocker,
-  type RunDockerResult,
   resolveDockerBinary,
 } from "./docker-cli.js";
+import { t } from "./i18n.js";
 import { readPrivateFile, writePrivateFile } from "./setup-store.js";
 
 export const STACK_DIR_NAME = "stack";
@@ -35,12 +34,12 @@ export async function readStackWebUrl(dir: string, fallback: string): Promise<st
     : fallback;
 }
 
-/** Docker owns the final bind; a racing listener is handled by bounded up retries. */
-export async function allocateLoopbackPort(): Promise<number> {
+/** Binds and releases `port` on loopback (0 picks a free one); resolves to the port it bound. */
+function bindLoopback(port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       const address = server.address();
       server.close((error) => {
         if (error) reject(error);
@@ -51,6 +50,18 @@ export async function allocateLoopbackPort(): Promise<number> {
   });
 }
 
+/** Docker owns the final bind; a racing listener is handled by bounded up retries. */
+export function allocateLoopbackPort(): Promise<number> {
+  return bindLoopback(0);
+}
+
+export function portFreeOnLoopback(port: number): Promise<boolean> {
+  return bindLoopback(port).then(
+    () => true,
+    () => false,
+  );
+}
+
 const HEALTH_POLL_INTERVAL_MS = 2_000;
 const COMPOSE_VERSION_TIMEOUT_MS = 15_000;
 const DOCKER_INFO_TIMEOUT_MS = 20_000;
@@ -58,6 +69,8 @@ const PULL_TIMEOUT_MS = 30 * 60_000;
 const UP_TIMEOUT_MS = (COMPOSE_WAIT_TIMEOUT_S + 60) * 1_000;
 const LOGS_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 90_000;
+/** After this long, a Docker app setup opened has likely quit or is waiting on the person. */
+const DOCKER_APP_START_GRACE_MS = 90_000;
 const MAX_STACK_TOKEN_BYTES = 1024;
 
 /** The compose project lives under the app's user data, next to the `.env` it generates. */
@@ -128,8 +141,23 @@ export function renderStackEnv(template: string, randomHex: (bytes: number) => s
 const ADDED_SECRETS = ["POSTGRES_APP_PASSWORD"];
 
 /** Lines to append so an existing `.env` has every added secret, or "" when it already does. */
+/** The `.env` assignments as Compose reads them: the last assignment of a name wins. */
+export function parseStackEnv(env: string): Map<string, string> {
+  const values = new Map<string, string>();
+  // Consume quoted values across lines so their contents cannot become assignments.
+  const assignments = env.matchAll(
+    /^[\t ]*(?:export[\t ]+)?([^\s=#]+)[\t ]*=[\t ]*(?:"((?:\\[\s\S]|[^"\\])*)"(?=[\t ]*(?:#.*)?\r?$)|'((?:\\[\s\S]|[^'\\])*)'(?=[\t ]*(?:#.*)?\r?$)|([^\r\n]*))/gm,
+  );
+  for (const match of assignments) {
+    values.set(match[1]!, match[2] ?? match[3] ?? match[4]!.trim());
+  }
+  return values;
+}
+
 export function missingStackSecrets(env: string, randomHex: (bytes: number) => string): string {
-  return ADDED_SECRETS.filter((name) => !new RegExp(`^${name}=\\S`, "m").test(env))
+  const values = parseStackEnv(env);
+  // Compose uses the last assignment; empty quotes still fail its required-value check.
+  return ADDED_SECRETS.filter((name) => (values.get(name) ?? "") === "")
     .map((name) => `${name}=${randomHex(GENERATED_SECRETS[name]!)}\n`)
     .join("");
 }
@@ -189,8 +217,9 @@ export type LocalStackEvent =
   | { type: "up-start" }
   | { type: "wait-start" }
   | { type: "output"; line: string }
+  | { type: "download"; name: string; bytes: number }
   | { type: "ready" }
-  | { type: "failed"; message: string };
+  | { type: "failed"; message: string; output?: string[] };
 
 export function initialStackState(imageTag: string): DesktopLocalStackState {
   return { phase: "idle", message: null, output: [], layerBytes: {}, imageTag };
@@ -246,17 +275,28 @@ export function reduceStackState(
         output: [...state.output, event.line].slice(-STACK_OUTPUT_LINES),
         layerBytes: reduceLayerBytes(state.layerBytes, event.line),
       };
+    case "download":
+      if (state.phase !== "pulling" || event.bytes <= (state.layerBytes[event.name] ?? 0)) {
+        return state;
+      }
+      return { ...state, layerBytes: { ...state.layerBytes, [event.name]: event.bytes } };
     case "ready":
       return { ...state, phase: "ready", message: null };
     case "failed":
-      return { ...state, phase: "failed", message: event.message };
+      return {
+        ...state,
+        phase: "failed",
+        message: event.message,
+        output: [...state.output, ...(event.output ?? [])].slice(-STACK_OUTPUT_LINES),
+      };
   }
 }
 
-const DOCKER_GROUP_HINT =
-  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), sign out and back in, then check again.";
-const STOP_FAILED = "Could not stop the local stack. Check that Docker is running, then try again.";
-const START_INTERRUPTED = "The start was interrupted. Retry to continue.";
+const dockerGroupHint = () =>
+  t(
+    "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), then sign out and back in.",
+  );
+export const startInterrupted = () => t("The start was interrupted. Retry to continue.");
 
 /** Docker output may contain paths and hostnames, so the person only ever sees these. */
 export function stackFailureMessage(
@@ -266,23 +306,29 @@ export function stackFailureMessage(
 ): string {
   switch (kind) {
     case "image-not-found":
-      return `Images for ${imageTag} are not published yet. Try again in a few minutes.`;
+      return t("Images for {tag} are not published yet. Try again in a few minutes.", {
+        tag: imageTag,
+      });
     case "port-in-use":
-      return "Could not bind a local port after retrying. Retry to choose another port.";
+      return t("Could not bind a local port after retrying. Retry to choose another port.");
     case "address-pool-exhausted":
-      return "Docker has no free network address pools. Remove unused Docker networks or expand Docker’s address pools, then retry.";
+      return t(
+        "Docker has no free network address pools. Remove unused Docker networks or expand Docker’s address pools, then retry.",
+      );
     case "network":
-      return "Could not reach the image registry. Check the internet connection, then retry.";
+      return t("Could not reach the image registry. Check the internet connection, then retry.");
     case "daemon-down":
-      return "Docker stopped answering. Start Docker, then retry.";
+      return t("Docker stopped answering. Start Docker, then retry.");
     case "socket-permission":
-      return DOCKER_GROUP_HINT;
+      return dockerGroupHint();
     case "compose-missing":
-      return "Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin, then retry.";
+      return t(
+        "Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin, then retry.",
+      );
     case "other":
       return phase === "pulling"
-        ? "Downloading CortexAI Agent Hub images failed. Check the output below, then retry."
-        : "CortexAI Agent Hub services did not start. Check the output below, then retry.";
+        ? t("Downloading CortexAI Agent Hub images failed. Check the output below, then retry.")
+        : t("CortexAI Agent Hub services did not start. Check the output below, then retry.");
   }
 }
 
@@ -301,6 +347,9 @@ export interface LocalStackDeps {
   env: NodeJS.ProcessEnv;
   exists: (file: string) => boolean;
   run: RunDocker;
+  /** Starts the app that owns `binary` (Docker Desktop, OrbStack); resolves to its name, or null. */
+  launchDockerApp?: (binary: string) => Promise<string | null>;
+  now?: () => number;
   stackDir: string;
   resourceDir: string;
   localWebUrl: string;
@@ -315,8 +364,18 @@ export interface LocalStackDeps {
   healthTimeoutMs?: number;
 }
 
+/** What the app needs from whichever controller runs This computer. */
+export interface StackController {
+  webUrl(): string;
+  state(): DesktopLocalStackState;
+  matchesDesiredStack(): Promise<boolean>;
+  start(): Promise<DesktopLocalStackState>;
+  stop(): Promise<DesktopLocalStackState>;
+  abort(): void;
+}
+
 /** Resolves early on abort so a stop never waits out a health poll. */
-function defaultSleep(ms: number, signal: AbortSignal) {
+export function defaultSleep(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
     const timer = setTimeout(done, ms);
     function done() {
@@ -329,13 +388,13 @@ function defaultSleep(ms: number, signal: AbortSignal) {
 }
 
 /**
- * Installs and starts the compose stack under the app's user data. Every docker call
- * uses a fixed argv and an allowlisted environment; the setup window polls `state()`.
+ * The start/stop lifecycle both controllers share: one attempt at a time, a stop that cancels
+ * it and voids starts queued before it, and state pushed on every change. Each backend supplies
+ * the attempt, how a thrown attempt fails, and what stopping does.
  */
-export class LocalStackController {
-  private current: DesktopLocalStackState;
-  private currentWebUrl: string;
-  private currentStackToken: string | null = null;
+export abstract class StackLifecycle implements StackController {
+  protected current: DesktopLocalStackState;
+  protected currentWebUrl: string;
   private running: Promise<DesktopLocalStackState> | null = null;
   private stopping: Promise<DesktopLocalStackState> | null = null;
   private inFlight: AbortController | null = null;
@@ -343,10 +402,19 @@ export class LocalStackController {
   /** Starts ticketed at or below this were superseded by a later stop and must not run. */
   private voidBefore = 0;
 
-  constructor(private readonly deps: LocalStackDeps) {
-    this.current = initialStackState(deps.imageTag);
-    this.currentWebUrl = deps.localWebUrl;
+  constructor(
+    imageTag: string,
+    webUrl: string,
+    private readonly onState?: (state: DesktopLocalStackState) => void,
+  ) {
+    this.current = initialStackState(imageTag);
+    this.currentWebUrl = webUrl;
   }
+
+  abstract matchesDesiredStack(): Promise<boolean>;
+  protected abstract attempt(signal: AbortSignal): Promise<void>;
+  protected abstract attemptFailed(error: unknown, signal: AbortSignal): Promise<void>;
+  protected abstract shutdown(): Promise<void>;
 
   webUrl(): string {
     return this.currentWebUrl;
@@ -354,6 +422,84 @@ export class LocalStackController {
 
   state(): DesktopLocalStackState {
     return this.current;
+  }
+
+  /**
+   * Idempotent while a start is in flight; otherwise begins a fresh attempt from any
+   * phase, after any stop still running so a start and a stop never overlap.
+   */
+  start(): Promise<DesktopLocalStackState> {
+    if (this.running !== null) return this.running;
+    const ticket = ++this.ticket;
+    const attempt = (this.stopping ?? Promise.resolve())
+      .then(() => (ticket <= this.voidBefore ? this.current : this.run()))
+      .finally(() => {
+        if (this.running === attempt) this.running = null;
+      });
+    this.running = attempt;
+    return attempt;
+  }
+
+  /** Cancels the in-flight step; whatever already started keeps running. */
+  abort() {
+    this.inFlight?.abort();
+  }
+
+  stop(): Promise<DesktopLocalStackState> {
+    this.voidBefore = this.ticket;
+    // Join a stop already running unless a start was queued behind it; the latest
+    // intent is "stopped", so that start is voided and a fresh stop follows it.
+    if (this.stopping !== null && this.running === null) return this.stopping;
+    this.abort();
+    // Release the attempt now so a start requested during this stop queues a fresh
+    // attempt behind it instead of joining the one being torn down.
+    const settled = [this.stopping, this.running].map((pending) => pending?.catch(() => undefined));
+    this.running = null;
+    const stopping = Promise.all(settled)
+      .then(() => this.shutdown())
+      .then(() => this.current)
+      .finally(() => {
+        if (this.stopping === stopping) this.stopping = null;
+      });
+    this.stopping = stopping;
+    return stopping;
+  }
+
+  protected push(event: LocalStackEvent) {
+    this.setState(reduceStackState(this.current, event));
+  }
+
+  protected setState(next: DesktopLocalStackState) {
+    if (next === this.current) return;
+    this.current = next;
+    this.onState?.(next);
+  }
+
+  private async run(): Promise<DesktopLocalStackState> {
+    const controller = new AbortController();
+    this.inFlight = controller;
+    try {
+      await this.attempt(controller.signal);
+    } catch (error) {
+      await this.attemptFailed(error, controller.signal);
+    } finally {
+      if (this.inFlight === controller) this.inFlight = null;
+    }
+    return this.current;
+  }
+}
+
+/**
+ * Installs and starts the compose stack under the app's user data. Every docker call
+ * uses a fixed argv and an allowlisted environment; the setup window polls `state()`.
+ */
+export class LocalStackController extends StackLifecycle {
+  private currentStackToken: string | null = null;
+  /** Set once setup has tried to start the Docker app, so a re-check never reopens it on top of the person's work. */
+  private dockerAppLaunch: { app: string | null; at: number } | undefined;
+
+  constructor(private readonly deps: LocalStackDeps) {
+    super(deps.imageTag, deps.localWebUrl, deps.onState);
   }
 
   /** Fast path for launch: only a stack with our private token and desired image may be reused. */
@@ -377,89 +523,41 @@ export class LocalStackController {
     }
   }
 
-  /**
-   * Idempotent while a start is in flight; otherwise begins a fresh attempt from any
-   * phase, after any stop still running so `compose up` and `compose stop` never overlap.
-   */
-  start(): Promise<DesktopLocalStackState> {
-    if (this.running !== null) return this.running;
-    const ticket = ++this.ticket;
-    const attempt = (this.stopping ?? Promise.resolve())
-      .then(() => (ticket <= this.voidBefore ? this.current : this.run()))
-      .finally(() => {
-        if (this.running === attempt) this.running = null;
-      });
-    this.running = attempt;
-    return attempt;
-  }
-
-  /** Kills the in-flight docker command; containers already started keep running. */
-  abort() {
-    this.inFlight?.abort();
-  }
-
   /** Stops the containers (`compose stop`); volumes and images stay for the next start. */
-  stop(): Promise<DesktopLocalStackState> {
-    this.voidBefore = this.ticket;
-    // Join a stop already running unless a start was queued behind it; the latest
-    // intent is "stopped", so that start is voided and a fresh stop follows it.
-    if (this.stopping !== null && this.running === null) return this.stopping;
-    this.abort();
-    // Release the attempt now so a start requested during this stop queues a fresh
-    // attempt behind it instead of joining the one being torn down.
-    const settled = [this.stopping, this.running].map((pending) => pending?.catch(() => undefined));
-    this.running = null;
-    const stopping = Promise.all(settled)
-      .then(() => this.runStop())
-      .finally(() => {
-        if (this.stopping === stopping) this.stopping = null;
-      });
-    this.stopping = stopping;
-    return stopping;
-  }
-
-  private async runStop(): Promise<DesktopLocalStackState> {
+  protected async shutdown() {
     const binary = resolveDockerBinary(this.deps.platform, this.deps.env, this.deps.exists);
     const stopped = binary === null ? null : await this.compose(binary, ["stop"], STOP_TIMEOUT_MS);
     this.setState(
       stopped?.code === 0
         ? initialStackState(this.deps.imageTag)
-        : { ...this.current, phase: "failed", message: STOP_FAILED },
+        : {
+            ...this.current,
+            phase: "failed",
+            message: t(
+              "Could not stop the local stack. Check that Docker is running, then try again.",
+            ),
+          },
     );
-    return this.current;
   }
 
-  private push(event: LocalStackEvent) {
-    this.setState(reduceStackState(this.current, event));
+  protected async attemptFailed() {
+    // Copying the bundled compose files failed; the path would not help the person.
+    this.push({ type: "failed", message: t("Could not prepare the local stack. Retry.") });
   }
 
-  private setState(next: DesktopLocalStackState) {
-    if (next === this.current) return;
-    this.current = next;
-    this.deps.onState?.(next);
-  }
-
-  private async run(): Promise<DesktopLocalStackState> {
-    const controller = new AbortController();
-    this.inFlight = controller;
-    try {
-      await this.attempt(controller.signal);
-    } catch {
-      // Copying the bundled compose files failed; the path would not help the person.
-      this.push({ type: "failed", message: "Could not prepare the local stack. Retry." });
-    } finally {
-      if (this.inFlight === controller) this.inFlight = null;
-    }
-    return this.current;
-  }
-
-  private async attempt(signal: AbortSignal) {
+  protected async attempt(signal: AbortSignal) {
     this.push({ type: "check-start" });
     await mkdir(this.deps.stackDir, { recursive: true, mode: 0o700 });
 
     const binary = resolveDockerBinary(this.deps.platform, this.deps.env, this.deps.exists);
     if (binary === null) {
-      this.push({ type: "docker-missing", message: "Docker is not installed on this computer." });
+      this.push({
+        type: "docker-missing",
+        message:
+          this.deps.platform === "linux"
+            ? t("CortexAI Agent Hub needs Docker to run on this computer.")
+            : t("CortexAI Agent Hub needs Docker Desktop to run on this computer."),
+      });
       return;
     }
     const version = await this.docker(
@@ -469,13 +567,26 @@ export class LocalStackController {
       signal,
     );
     if (interrupted(signal, version))
-      return this.push({ type: "failed", message: START_INTERRUPTED });
+      return this.push({ type: "failed", message: startInterrupted() });
     if (version.code !== 0) {
-      this.push({
-        type: "docker-missing",
-        message:
-          "Docker is installed, but Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin.",
-      });
+      if (failureKind(version) === "compose-missing") {
+        // Docker itself is installed, so the Docker download would not help.
+        this.push({
+          type: "failed",
+          message: t(
+            "Docker is installed, but Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin.",
+          ),
+        });
+      } else {
+        this.push({
+          type: "failed",
+          message: t("Could not check Docker Compose. Check the output below, then retry."),
+          output: [
+            ...`${version.stdout}\n${version.stderr}`.split(/\r?\n/).filter((line) => line !== ""),
+            `docker compose version --short exited with code ${version.code}.`,
+          ],
+        });
+      }
       return;
     }
     const info = await this.docker(
@@ -484,17 +595,33 @@ export class LocalStackController {
       DOCKER_INFO_TIMEOUT_MS,
       signal,
     );
-    if (interrupted(signal, info)) return this.push({ type: "failed", message: START_INTERRUPTED });
+    if (interrupted(signal, info))
+      return this.push({ type: "failed", message: startInterrupted() });
     if (info.code !== 0) {
+      if (failureKind(info) === "socket-permission") {
+        this.push({ type: "docker-not-running", message: dockerGroupHint() });
+        return;
+      }
+      const now = this.deps.now ?? Date.now;
+      if (this.dockerAppLaunch === undefined) {
+        // A daemon chosen by DOCKER_HOST or another context is not the app behind this CLI.
+        const app = usesLocalDaemon(this.deps.env)
+          ? ((await this.deps.launchDockerApp?.(binary)) ?? null)
+          : null;
+        this.dockerAppLaunch = { app, at: now() };
+      }
+      const { app, at } = this.dockerAppLaunch;
       this.push({
         type: "docker-not-running",
         message:
-          failureKind(info) === "socket-permission"
-            ? DOCKER_GROUP_HINT
-            : "Docker is installed but not running. Start Docker, then check again.",
+          app !== null && now() - at < DOCKER_APP_START_GRACE_MS
+            ? t("Starting {app}…", { app })
+            : notRunningMessage(this.deps.platform),
       });
       return;
     }
+    // Docker answered; if it is quit later, the next start may open it again.
+    this.dockerAppLaunch = undefined;
 
     this.push({ type: "prepare" });
     await copyFile(
@@ -506,16 +633,20 @@ export class LocalStackController {
     const stackToken = await ensureStackToken(this.deps.stackDir, this.deps.randomHex);
     this.currentStackToken = stackToken;
 
-    this.push({ type: "pull-start" });
-    const pulled = await this.compose(binary, ["pull"], PULL_TIMEOUT_MS, signal);
-    if (interrupted(signal, pulled))
-      return this.push({ type: "failed", message: START_INTERRUPTED });
-    if (pulled.code !== 0) {
-      this.push({
-        type: "failed",
-        message: stackFailureMessage(failureKind(pulled), "pulling", this.deps.imageTag),
-      });
-      return;
+    const imagesCached = await this.hasLocalReleaseImages(binary, signal);
+    if (signal.aborted) return this.push({ type: "failed", message: startInterrupted() });
+    if (!imagesCached) {
+      this.push({ type: "pull-start" });
+      const pulled = await this.compose(binary, ["pull"], PULL_TIMEOUT_MS, signal);
+      if (interrupted(signal, pulled))
+        return this.push({ type: "failed", message: startInterrupted() });
+      if (pulled.code !== 0) {
+        this.push({
+          type: "failed",
+          message: stackFailureMessage(failureKind(pulled), "pulling", this.deps.imageTag),
+        });
+        return;
+      }
     }
 
     this.push({ type: "up-start" });
@@ -535,7 +666,7 @@ export class LocalStackController {
       await writePrivateFile(path.join(this.deps.stackDir, STACK_WEB_URL_FILE), this.currentWebUrl);
       up = await this.compose(binary, upArgs, UP_TIMEOUT_MS, signal);
     }
-    if (interrupted(signal, up)) return this.push({ type: "failed", message: START_INTERRUPTED });
+    if (interrupted(signal, up)) return this.push({ type: "failed", message: startInterrupted() });
     if (up.code !== 0) {
       // Best effort: recent service logs usually name the failing service.
       await this.compose(binary, ["logs", "--tail", "30", "--no-color"], LOGS_TIMEOUT_MS, signal);
@@ -565,9 +696,31 @@ export class LocalStackController {
     this.push({
       type: "failed",
       message: signal.aborted
-        ? START_INTERRUPTED
-        : "The stack started but the web app did not answer. Retry, and check the output below.",
+        ? startInterrupted()
+        : t("The stack started but the web app did not answer. Retry, and check the output below."),
     });
+  }
+
+  private async hasLocalReleaseImages(binary: string, signal: AbortSignal): Promise<boolean> {
+    // Moving tags must still check the registry for newer images.
+    if (!this.deps.imageTag.startsWith("v") || !STABLE_VERSION.test(this.deps.imageTag.slice(1)))
+      return false;
+    const config = await this.compose(
+      binary,
+      ["config", "--images"],
+      DOCKER_INFO_TIMEOUT_MS,
+      signal,
+    );
+    if (interrupted(signal, config) || config.code !== 0) return false;
+    const images = [...new Set(config.stdout.split(/\s+/).filter(Boolean))];
+    if (images.length === 0) return false;
+    const inspected = await this.docker(
+      binary,
+      ["image", "inspect", "--format", "{{.Id}}", ...images],
+      DOCKER_INFO_TIMEOUT_MS,
+      signal,
+    );
+    return !interrupted(signal, inspected) && inspected.code === 0;
   }
 
   private hostConfigIdentity() {
@@ -590,6 +743,8 @@ export class LocalStackController {
         // Content stays on this computer, under its own disk encryption; a lost key
         // would otherwise lose every conversation. Existing ciphertext still reads.
         CONTENT_ENCRYPTION: "off",
+        // Only this computer can reach the stack, so its own model and tool servers are fair game.
+        MCP_ALLOW_PRIVATE_ENDPOINT: "true",
         ...(this.currentStackToken === null
           ? {}
           : { CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN: this.currentStackToken }),
@@ -624,4 +779,20 @@ export class LocalStackController {
       signal,
     );
   }
+}
+
+/** Contexts Docker Desktop and OrbStack create for their own local daemon. */
+const LOCAL_DOCKER_CONTEXTS = new Set(["default", "desktop-linux", "orbstack"]);
+
+function usesLocalDaemon(env: NodeJS.ProcessEnv): boolean {
+  if (env.DOCKER_HOST?.trim()) return false;
+  const context = env.DOCKER_CONTEXT?.trim();
+  return !context || LOCAL_DOCKER_CONTEXTS.has(context);
+}
+
+/** Linux runs Docker Engine as a service, which is started rather than opened. */
+function notRunningMessage(platform: string): string {
+  return platform === "linux"
+    ? t("Docker is installed but not running. Start the Docker service to continue.")
+    : t("Docker is installed but not running. Open it to continue.");
 }

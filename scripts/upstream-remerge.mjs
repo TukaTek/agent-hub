@@ -3,11 +3,19 @@
 // because of our rebrand or Biome formatting, keeps files the fork deleted, rebrands upstream
 // files that merged cleanly, and leaves the rest in diff3 form for a person.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rebrand } from "./upstream-rebrand.mjs";
+import { rebrand, rebrandPath } from "./upstream-rebrand.mjs";
 
 const old = ["ra", "kazo"].join("");
 const KEEP = new Set(["LICENSE", "NOTICE"]);
@@ -114,21 +122,65 @@ function mergeFile(ours, base, theirs) {
   }
 }
 
+/** Drops directories the merge created only to hold a file the fork keeps deleted. */
+function removeEmptyParents(cwd, path) {
+  for (let dir = dirname(path); dir !== "."; dir = dirname(dir)) {
+    try {
+      rmdirSync(join(cwd, dir));
+    } catch {
+      return;
+    }
+  }
+}
+
 function noteUnresolved(report, path, text) {
   for (const value of rebrand(text).unresolved)
     report.manual.push(`${path}: resolve by hand: ${value}`);
 }
 
 export function remerge({ cwd = process.cwd(), format = true } = {}) {
-  const report = { resolved: [], conflicted: [], keptDeleted: [], rebranded: [], manual: [] };
+  const report = {
+    resolved: [],
+    conflicted: [],
+    keptDeleted: [],
+    rebranded: [],
+    renamed: [],
+    manual: [],
+  };
   const content = [];
   const conflicted = new Set();
 
   for (const [path, stage] of unmergedStages(cwd)) {
+    if (!stage[1] && !stage[2]) {
+      // Added upstream inside a directory the fork renamed: take it, then rebrand it below.
+      const file = join(cwd, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, git(cwd, ["cat-file", "blob", stage[3]]));
+      git(cwd, ["add", "--", path]);
+      continue;
+    }
     conflicted.add(path);
     if (!stage[2]) {
       git(cwd, ["rm", "-q", "--cached", "--", path]);
       rmSync(join(cwd, path), { force: true });
+      removeEmptyParents(cwd, path);
+      // Changed upstream at the old name of a file the fork keeps under its own name: merge there.
+      const forkPath = rebrandPath(path);
+      if (stage[1] && stage[3] && forkPath !== path && existsSync(join(cwd, forkPath))) {
+        const [base, theirs] = [stage[1], stage[3]].map((blob) =>
+          git(cwd, ["cat-file", "blob", blob]).toString("utf8"),
+        );
+        content.push({
+          path: forkPath,
+          texts: {
+            base: rebrand(base, forkPath).text,
+            ours: readFileSync(join(cwd, forkPath), "utf8"),
+            theirs: rebrand(theirs, forkPath).text,
+          },
+        });
+        report.renamed.push(`${path} -> ${forkPath} (merged)`);
+        continue;
+      }
       report.keptDeleted.push(path);
       continue;
     }
@@ -148,9 +200,9 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
     content.push({
       path,
       texts: {
-        base: base === undefined ? undefined : rebrand(base).text,
+        base: base === undefined ? undefined : rebrand(base, path).text,
         ours,
-        theirs: rebrand(theirs).text,
+        theirs: rebrand(theirs, path).text,
       },
     });
   }
@@ -178,15 +230,25 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
     .toString("utf8")
     .split("\0")
     .filter((path) => path && !conflicted.has(path) && !KEEP.has(path));
-  for (const path of changed) {
-    if (path.toLowerCase().includes(old)) report.manual.push(`${path}: rename the path`);
+  for (let path of changed) {
+    if (path.toLowerCase().includes(old)) {
+      const target = rebrandPath(path);
+      if (target === path || existsSync(join(cwd, target))) {
+        report.manual.push(`${path}: rename the path`);
+      } else {
+        mkdirSync(dirname(join(cwd, target)), { recursive: true });
+        git(cwd, ["mv", "--", path, target]);
+        report.renamed.push(`${path} -> ${target}`);
+        path = target;
+      }
+    }
     const file = join(cwd, path);
     if (!existsSync(file)) continue;
     const buffer = readFileSync(file);
     if (isBinary(buffer)) continue;
     const source = buffer.toString("utf8");
     noteUnresolved(report, path, source);
-    const { text } = rebrand(source);
+    const { text } = rebrand(source, path);
     if (text === source) continue;
     writeFileSync(file, text);
     git(cwd, ["add", "--", path]);
@@ -201,9 +263,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const report = remerge({ format: !process.argv.includes("--no-format") });
   console.log(
     `resolved ${report.resolved.length}, still conflicted ${report.conflicted.length}, ` +
-      `kept deleted ${report.keptDeleted.length}, rebranded ${report.rebranded.length}`,
+      `kept deleted ${report.keptDeleted.length}, rebranded ${report.rebranded.length}, ` +
+      `renamed ${report.renamed.length}`,
   );
   for (const path of report.conflicted) console.log(`conflict: ${path}`);
   for (const path of report.keptDeleted) console.log(`kept deleted: ${path}`);
+  for (const move of report.renamed) console.log(`renamed: ${move}`);
   for (const note of report.manual) console.log(`manual: ${note}`);
 }

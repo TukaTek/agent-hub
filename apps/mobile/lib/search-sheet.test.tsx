@@ -5,7 +5,7 @@ import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SearchSheet from "../app/search";
-import { selectSpace } from "./api";
+import { selectSpace } from "./api-server";
 import type { InboxSpace } from "./inbox-spaces";
 import { searchKindLabel } from "./search-sheet";
 
@@ -13,8 +13,8 @@ const state = vi.hoisted(() => ({
   search: vi.fn(),
   replace: vi.fn(),
   back: vi.fn(),
-  addListener: vi.fn(),
   lifecycle: new Map<string, () => void>(),
+  transitionStart: undefined as undefined | ((event: { data: { closing: boolean } }) => void),
   selectSpace: vi.fn(),
   selectionSeq: 0,
   spaceId: "space-a" as string | null,
@@ -41,7 +41,11 @@ const group = {
   spaceId: "space-b",
   members: [],
 };
-const spaces = [{ id: "space-a", bots: [bot], groups: [group] }] as unknown as InboxSpace[];
+// An archived bot sits in the roster while its read-only chat opens; search must skip it.
+const archived = { ...bot, id: "bot-archived", name: "Old helper", archivedAt: "2026-01-02" };
+const spaces = [
+  { id: "space-a", bots: [bot, archived], groups: [group] },
+] as unknown as InboxSpace[];
 const message = {
   kind: "message" as const,
   botId: "bot-a",
@@ -50,9 +54,17 @@ const message = {
   snippet: "A **matching** line",
   messageId: "message-a",
 };
+const navigation = {
+  addListener: (_event: string, listener: typeof state.transitionStart) => {
+    state.transitionStart = listener;
+    return () => {
+      if (state.transitionStart === listener) state.transitionStart = undefined;
+    };
+  },
+};
 vi.mock("expo-router", () => ({
   useRouter: () => state,
-  useNavigation: () => state,
+  useNavigation: () => navigation,
   useFocusEffect: (effect: () => () => void) =>
     useEffect(() => {
       const cleanup = effect();
@@ -60,11 +72,15 @@ vi.mock("expo-router", () => ({
       return cleanup;
     }, [effect]),
 }));
-vi.mock("./api", () => ({
+vi.mock("./api-server", () => ({
   selectSpace: (id: string) => {
     state.selectionSeq++;
     return state.selectSpace(id);
   },
+}));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
+vi.mock("./api", () => ({
   spaceSelectionSeq: () => state.selectionSeq,
   selectedSpaceId: () => state.spaceId,
   currentApiBase: () => state.apiBase,
@@ -80,10 +96,6 @@ vi.mock("./appearance", () => ({
   resolveMobileAppearance: () => "dark",
 }));
 vi.mock("./native", () => ({ native: {}, useThemedStyles: (factory: () => unknown) => factory() }));
-vi.mock("./i18n", () => ({
-  t: (text: string) => text,
-  useI18n: () => ({ t: (text: string) => text, locale: "en" }),
-}));
 vi.mock("react-native-keyboard-controller", () => ({
   KeyboardController: { dismiss: state.dismiss },
 }));
@@ -93,6 +105,13 @@ vi.mock("react-native-safe-area-context", () => ({
 vi.mock("../components/bot-avatar", () => ({ BotAvatar: () => <span>bot avatar</span> }));
 vi.mock("../components/group-avatar", () => ({ GroupAvatar: () => <span>group avatar</span> }));
 vi.mock("../components/native-symbol", () => ({ NativeSymbol: () => null }));
+vi.mock("../components/native-action-button", () => ({
+  NativeActionButton: ({ label, onPress }: { label: string; onPress: () => void }) => (
+    <button type="button" onClick={onPress}>
+      {label}
+    </button>
+  ),
+}));
 vi.mock("../components/glass-icon-button", () => ({
   GlassIconButton: ({ testID, onPress }: { testID: string; onPress: () => void }) => (
     <button type="button" data-testid={testID} onClick={onPress}>
@@ -106,7 +125,9 @@ vi.mock("react-native", () => ({
   StyleSheet: { create: (styles: unknown) => styles },
   useWindowDimensions: () => ({ width: 390 }),
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  Text: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  Text: ({ children, accessibilityRole }: { children: ReactNode; accessibilityRole?: string }) => (
+    <span role={accessibilityRole}>{children}</span>
+  ),
   TextInput: ({
     ref,
     value,
@@ -144,15 +165,18 @@ vi.mock("react-native", () => ({
     data,
     renderItem,
     ListEmptyComponent,
+    ListFooterComponent,
   }: {
     data: { key: string }[];
     renderItem: (info: { item: unknown }) => ReactNode;
     ListEmptyComponent: ReactNode;
+    ListFooterComponent?: ReactNode;
   }) => (
     <div>
       {data.length
         ? data.map((item) => <div key={item.key}>{renderItem({ item })}</div>)
         : ListEmptyComponent}
+      {ListFooterComponent}
     </div>
   ),
 }));
@@ -163,10 +187,6 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   state.lifecycle.clear();
-  state.addListener.mockImplementation((event: string, listener: () => void) => {
-    state.lifecycle.set(event, listener);
-    return () => state.lifecycle.delete(event);
-  });
   state.platform.OS = "ios";
   state.search.mockResolvedValue([]);
   state.spaceId = "space-a";
@@ -189,8 +209,11 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+/** A button by its label; a result row's label starts with its title and kind, then the preview. */
 function row(label: string) {
-  return container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+  return container.querySelector<HTMLButtonElement>(
+    `button[aria-label="${label}"], button[aria-label^="${label}, "]`,
+  )!;
 }
 async function type(text: string) {
   await act(async () => {
@@ -208,6 +231,9 @@ it("renders inbox chats before typing and closes with the close button", async (
   );
   expect(state.back).toHaveBeenCalledOnce();
 });
+it("leaves out an archived bot that is only in the roster while its chat opens", () => {
+  expect(row("Old helper, Bot")).toBeNull();
+});
 it("debounces typing, renders server hits and preserves the message jump destination", async () => {
   state.search.mockResolvedValue([message, message]);
   await type("matching");
@@ -216,8 +242,8 @@ it("debounces typing, renders server hits and preserves the message jump destina
   expect(state.search).not.toHaveBeenCalled();
   await act(async () => vi.advanceTimersByTime(1));
   expect(state.search).toHaveBeenCalledWith("matching");
-  expect(container.querySelectorAll('button[aria-label="Found note, Message"]')).toHaveLength(1);
-  expect(row("Found note, Message").textContent).toContain("Scout · A matching line");
+  expect(container.querySelectorAll('button[aria-label^="Found note, Message, "]')).toHaveLength(1);
+  expect(row("Found note, Message").textContent).toContain("Scout: A matching line");
   await act(async () => row("Found note, Message").click());
   expect(state.selectSpace).toHaveBeenCalledWith("space-a");
   expect(state.dismiss).toHaveBeenCalledOnce();
@@ -233,7 +259,7 @@ it("keeps local name matching and does not duplicate conversation hits", async (
   state.search.mockResolvedValue([{ ...message, kind: "conversation", title: "Scout" }]);
   await type("Scout");
   await act(async () => vi.advanceTimersByTime(200));
-  expect(container.querySelectorAll('button[aria-label="Scout, Bot"]')).toHaveLength(1);
+  expect(container.querySelectorAll('button[aria-label^="Scout, Bot, "]')).toHaveLength(1);
   expect(row("Team, Group")).toBeNull();
 });
 it("opens a group after switching spaces and keeps the sheet on switch failure", async () => {
@@ -265,6 +291,60 @@ it("ignores stale server responses and restores chats when cleared", async () =>
   expect(row("Found note, Message")).toBeNull();
   await type("");
   expect(row("Scout, Bot")).not.toBeNull();
+});
+it("says the search failed instead of no results, ignoring superseded and cleared requests", async () => {
+  const pending: {
+    resolve: (hits: (typeof message)[]) => void;
+    reject: (error: unknown) => void;
+  }[] = [];
+  state.search.mockImplementation(
+    () =>
+      new Promise((resolve, reject) => {
+        pending.push({ resolve, reject });
+      }),
+  );
+  async function search(text: string) {
+    await type(text);
+    await act(async () => vi.advanceTimersByTime(200));
+  }
+  await search("first");
+  await act(async () => pending[0]!.reject(new Error("Search is unavailable right now")));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    "Search is unavailable right now",
+  );
+  expect(container.textContent).not.toContain("No results");
+
+  await act(async () =>
+    [...container.querySelectorAll("button")].find((b) => b.textContent === "Try again")!.click(),
+  );
+  expect(container.textContent).toBe("CloseSearching…");
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(state.search).toHaveBeenLastCalledWith("first");
+  await act(async () => pending[1]!.resolve([]));
+  expect(container.textContent).toBe("CloseNo results");
+
+  await search("Scout");
+  expect(container.textContent).not.toContain("Search is unavailable right now");
+  await act(async () => pending[2]!.reject(new Error("Search is unavailable right now")));
+  expect(row("Scout, Bot")).not.toBeNull();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    "Search is unavailable right now",
+  );
+
+  await search("third");
+  await search("fourth");
+  await act(async () => pending[3]!.reject(new Error("Search is unavailable right now")));
+  expect(container.textContent).toBe("CloseSearching…");
+  await act(async () => pending[4]!.resolve([message]));
+  expect(row("Found note, Message")).not.toBeNull();
+  expect(container.textContent).not.toContain("Search is unavailable right now");
+
+  await search("fifth");
+  await type("");
+  await act(async () => pending[5]!.reject(new Error("Search is unavailable right now")));
+  expect(row("Scout, Bot")).not.toBeNull();
+  expect(container.textContent).not.toContain("Search is unavailable right now");
+  expect(state.search).toHaveBeenCalledTimes(6);
 });
 it.each([
   ["conversation", "Bot"],
@@ -345,7 +425,7 @@ it.each(["space switch", "keyboard dismiss"] as const)(
 );
 
 it.each(
-  ["beforeRemove", "blur", "unmount"].flatMap((event) =>
+  ["blur", "unmount"].flatMap((event) =>
     ["space switch", "keyboard dismiss"].map((stage) => ({ event, stage })),
   ),
 )("cancels pending $stage on $event and restores the space", async ({ event, stage }) => {
@@ -374,8 +454,42 @@ it.each(
   expect(state.persistedSpaceId).toBe("space-a");
 });
 
+it.each(["space switch", "keyboard dismiss"])(
+  "cancels a pending %s as soon as a native dismissal starts",
+  async (stage) => {
+    let resolve!: () => void;
+    const pending = new Promise<void>((done) => {
+      resolve = done;
+    });
+    if (stage === "space switch") {
+      state.selectSpace.mockImplementationOnce(async (id: string) => {
+        state.spaceId = id;
+        await pending;
+        state.persistedSpaceId = id;
+        return true;
+      });
+    } else {
+      state.dismiss.mockReturnValueOnce(pending);
+    }
+    await act(async () => row("Team, Group").click());
+    // The sheet is still focused: blur only follows once the dismissal animation ends.
+    act(() => state.transitionStart?.({ data: { closing: true } }));
+    await act(async () => resolve());
+    expect(state.replace).not.toHaveBeenCalled();
+    expect(state.spaceId).toBe("space-a");
+    expect(state.persistedSpaceId).toBe("space-a");
+  },
+);
+
+it("opens results again after an abandoned dismissal gesture", async () => {
+  act(() => state.transitionStart?.({ data: { closing: true } }));
+  act(() => state.transitionStart?.({ data: { closing: false } }));
+  await act(async () => row("Team, Group").click());
+  expect(state.replace).toHaveBeenCalledOnce();
+});
+
 it("keeps the selected space when successful navigation removes the sheet", async () => {
-  state.replace.mockImplementationOnce(() => state.lifecycle.get("beforeRemove")!());
+  state.replace.mockImplementationOnce(() => state.lifecycle.get("blur")!());
   await act(async () => row("Team, Group").click());
   expect(state.replace).toHaveBeenCalledOnce();
   expect(state.spaceId).toBe("space-b");

@@ -1,14 +1,15 @@
-import {
-  type Actor,
-  AutomatedSenderPoliciesSchema,
-  type ExternalConversation,
-  type ExternalConversationPolicy,
+import type {
+  Actor,
+  ExternalConversation,
+  ExternalConversationPolicy,
 } from "@cortexai-agent-hub/contracts";
+import { AutomatedSenderPoliciesSchema } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "./client.js";
 import { Prisma } from "./client.js";
 import { withNewestThreadMessages } from "./preview-messages.js";
 import { IsolationError } from "./scope.js";
 import { previewFromBlocks } from "./thread-listing.js";
+import { readStateFor, unreadFor } from "./thread-reads.js";
 
 interface ExternalBotSenderRow {
   externalConversationId: string;
@@ -18,12 +19,11 @@ interface ExternalBotSenderRow {
 
 export function createExternalConversationRepos(prisma: PrismaClient) {
   return {
-    async listForSpaces(actor: Actor, spaceIds: string[]): Promise<ExternalConversation[]> {
+    async listForSpaces(spaceIds: string[], userId: string): Promise<ExternalConversation[]> {
       if (spaceIds.length === 0) return [];
       const rows = await prisma.externalConversation.findMany({
         where: {
           spaceId: { in: spaceIds },
-          userId: actor.userId,
           bot: { archivedAt: null },
           thread: { isNot: null },
         },
@@ -38,12 +38,7 @@ export function createExternalConversationRepos(prisma: PrismaClient) {
           teamChatRules: true,
           automatedSenderPolicies: true,
           updatedAt: true,
-          thread: {
-            select: {
-              id: true,
-              unread: true,
-            },
-          },
+          thread: { select: { id: true, reads: readStateFor(userId) } },
         },
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       });
@@ -104,7 +99,7 @@ export function createExternalConversationRepos(prisma: PrismaClient) {
           ],
           threadId: conversation.thread.id,
           preview: previewFromBlocks(conversation.thread.messages[0]?.blocks),
-          unread: conversation.thread.unread,
+          unread: unreadFor(conversation.thread),
           updatedAt: conversation.updatedAt.toISOString(),
         };
       });
@@ -115,6 +110,8 @@ export function createExternalConversationRepos(prisma: PrismaClient) {
       externalConversationId: string,
       policy: ExternalConversationPolicy,
     ): Promise<ExternalConversationPolicy> {
+      // Visible to the whole space, but the policy decides when the bot acts with the
+      // linking member's chat connection, so only that member changes it.
       const result = await prisma.externalConversation.updateMany({
         where: {
           id: externalConversationId,

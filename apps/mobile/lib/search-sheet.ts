@@ -1,9 +1,9 @@
 import type { SearchHit, SpaceBot, SpaceGroup } from "@cortexai-agent-hub/contracts";
 import { dedupeSearchHits, searchHitListKey } from "@cortexai-agent-hub/core";
-import type { MobileBot, MobileGroup } from "./api";
-import { t } from "./i18n";
+import { t } from "@lingui/core/macro";
 import { filterBots } from "./inbox";
 import type { InboxSpace } from "./inbox-spaces";
+import type { MobileBot, MobileGroup } from "./mobile-types";
 import { previewSnippet } from "./preview";
 import { mobileSearchDestination } from "./search-destination";
 import { searchHitRowPreview } from "./search-list";
@@ -23,15 +23,15 @@ export type SearchSheetRow = {
 export function searchKindLabel(hit: SearchHit): string {
   switch (hit.kind) {
     case "conversation":
-      return hit.groupId ? t("Group") : t("Bot");
+      return hit.groupId ? t`Group` : t`Bot`;
     case "message":
-      return t("Message");
+      return t`Message`;
     case "file":
-      return t("File");
+      return t`File`;
     case "link":
-      return t("Link");
+      return t`Link`;
     case "routine":
-      return t("Routine");
+      return t`Routine`;
   }
 }
 
@@ -40,7 +40,10 @@ export function searchSheetRows(
   query: string,
   hits: readonly SearchHit[],
 ): SearchSheetRow[] {
-  const bots = spaces.flatMap((space) => space.bots);
+  // An archived bot is in the roster only while its read-only chat opens; search skips it.
+  const bots = spaces
+    .flatMap((space) => space.bots)
+    .filter((bot) => !("archivedAt" in bot && bot.archivedAt));
   const groups = spaces.flatMap((space) => space.groups);
   const needle = query.trim().toLowerCase();
   const rows: SearchSheetRow[] = [
@@ -48,8 +51,8 @@ export function searchSheetRows(
       (bot): SearchSheetRow => ({
         key: `bot-${bot.id}`,
         title: bot.name,
-        preview: previewSnippet(bot.preview, 40) || bot.title || t("No messages yet"),
-        label: t("Bot"),
+        preview: previewSnippet(bot.preview, 40) || t`No messages yet`,
+        label: t`Bot`,
         bot,
         kind: "conversation",
         spaceId: bot.spaceId,
@@ -65,7 +68,7 @@ export function searchSheetRows(
           preview:
             previewSnippet(group.preview, 40) ||
             group.members.map((member) => member.name).join(", "),
-          label: t("Group"),
+          label: t`Group`,
           group,
           kind: "conversation",
           spaceId: group.spaceId,

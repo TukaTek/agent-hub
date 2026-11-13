@@ -4,7 +4,7 @@
 
 **Goal:** When a model stream returns 2xx and then goes silent before any content or tool call, retry that model call up to 2 times, using the space's backup model for the final retry when one fits. Never retry once output has started. Make the idle and first-event bounds configurable, log every model call, and give subagents the same backup-model fallback as the main agent.
 
-**Architecture:** The retry lives in one place: `fallbackAwareModelStream`, which already owns the backup chain. It gains a per-call *stall budget* and is provider-neutral: it retries any stream that ends in a watchdog stall. The watchdog (`codexStreamIdleWatchdog`) gains a first-event timer. Both timers abort with today's `Codex stream idle timeout` message and tag the terminal message with the stall reason. The main agent and subagents route every call through the wrapper, with or without backups, so there is one retry path instead of three.
+**Architecture:** The retry lives in one place: `fallbackAwareModelStream`, which already owns the backup chain. It gains a per-call _stall budget_ and is provider-neutral: it retries any stream that ends in a watchdog stall. The watchdog (`codexStreamIdleWatchdog`) gains a first-event timer. Both timers abort with today's `Codex stream idle timeout` message and tag the terminal message with the stall reason. The main agent and subagents route every call through the wrapper, with or without backups, so there is one retry path instead of three.
 
 **Tech stack:** TypeScript in `packages/adapters`, Vitest with fake timers and the existing fake-provider harness in `pi-runtime-fallback.test.ts` and `pi-runtime-stream-idle.test.ts`. Offline and deterministic.
 
@@ -19,24 +19,24 @@
 
 ## Today
 
-| Layer | Where | What it retries | After 2xx? |
-| --- | --- | --- | --- |
-| pi SDK retry | `reliableStreamOptions` sets `maxRetries` (`MODEL_STREAM_MAX_RETRIES`, default 1). `observedPiStream` forces `0` when a `ModelCallObserver` is present, which is the case in production. | Transport failures before headers | Never |
-| Codex watchdog | `codexStreamIdleWatchdog` (`pi-runtime.ts` ~2852). Armed on a 2xx `onResponse`, re-armed on every event, 180s. | Nothing: it aborts and relabels the error as `Codex stream idle timeout` | — |
-| Backup switch | `fallbackAwareModelStream` (~2574), main agent only, only when `request.fallbackModels` is non-empty | Any `isRetryableProviderUnavailable` failure before output. The idle message matches `timeout`, so **a stall switches to the backup on the first stall** (test "switches after a Codex idle timeout before output"). | Yes, if no output yet |
-| Subagents | `executeSubagent` (~1478) calls `reliableModelStream` directly | Nothing | — |
-| Run level | Executor | No run re-execution on model failure | — |
+| Layer          | Where                                                                                                                                                                                    | What it retries                                                                                                                                                                                                      | After 2xx?            |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| pi SDK retry   | `reliableStreamOptions` sets `maxRetries` (`MODEL_STREAM_MAX_RETRIES`, default 1). `observedPiStream` forces `0` when a `ModelCallObserver` is present, which is the case in production. | Transport failures before headers                                                                                                                                                                                    | Never                 |
+| Codex watchdog | `codexStreamIdleWatchdog` (`pi-runtime.ts` ~2852). Armed on a 2xx `onResponse`, re-armed on every event, 180s.                                                                           | Nothing: it aborts and relabels the error as `Codex stream idle timeout`                                                                                                                                             | —                     |
+| Backup switch  | `fallbackAwareModelStream` (~2574), main agent only, only when `request.fallbackModels` is non-empty                                                                                     | Any `isRetryableProviderUnavailable` failure before output. The idle message matches `timeout`, so **a stall switches to the backup on the first stall** (test "switches after a Codex idle timeout before output"). | Yes, if no output yet |
+| Subagents      | `executeSubagent` (~1478) calls `reliableModelStream` directly                                                                                                                           | Nothing                                                                                                                                                                                                              | —                     |
+| Run level      | Executor                                                                                                                                                                                 | No run re-execution on model failure                                                                                                                                                                                 | —                     |
 
 So with no backups a single stall ends the run (the incident). With backups, the main agent abandons the primary after one stall and never retries it. Subagents can't fall back at all (the comment's incident).
 
-**Task 0 findings (pi-ai 0.87.1, `api/openai-codex-responses.js`):** the SSE path pushes `start` immediately after a 2xx response, *before* reading the body. `response.created` produces no pi event. So `start` can't mark the first event. The provider does honor `options.fetch` (line 267), so the first-event timer clears on the first body chunk of the 2xx response.
+**Task 0 findings (pi-ai 0.87.1, `api/openai-codex-responses.js`):** the SSE path pushes `start` immediately after a 2xx response, _before_ reading the body. `response.created` produces no pi event. So `start` can't mark the first event. The provider does honor `options.fetch` (line 267), so the first-event timer clears on the first body chunk of the 2xx response.
 
 ## Design
 
 ### 1. Timeouts (`pi-runtime-limits.ts`)
 
 ```ts
-export const MODEL_STREAM_IDLE_TIMEOUT_MS = 180_000;        // unchanged default
+export const MODEL_STREAM_IDLE_TIMEOUT_MS = 180_000; // unchanged default
 export const MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS = 120_000; // decision 2
 export const MODEL_STREAM_STALL_RETRIES = 2;
 
@@ -95,18 +95,18 @@ if stall && beforeOutput && stallRetries > 0:
 
 One structured line per attempt through `getLogger()`: `info` for `ok`, `warn` otherwise. The message is `"model call"`.
 
-| Field | Source |
-| --- | --- |
-| `runId`, `agentId` (`main` or the subagent ID) | state |
-| `provider`, `model` | active target |
-| `attempt` (1-3), `fallback` (boolean: running on a backup) | stall loop and state |
-| `requestSizeEstimate` (estimated tokens; the logger redacts any key containing "token") | `estimateModelContextTokens(context, estimatePiImageTokens)`, before context shortening |
-| `timeToFirstEventMs` | time to the first event other than `start` or `error` (pi emits `start` on headers), or `null` |
-| `durationMs` | from the attempt's start to its terminal event |
-| `lastEventType` | last pi event type seen, for example `start`, `text_delta`, `error` |
-| `outcome` | `ok`, `idle-timeout-retried` or `failed` (ticket wording), plus `switched` for today's non-stall provider-unavailable switch |
-| `stall` | `first-event` or `idle` when the attempt stalled |
-| `errorMessage` | for `failed` and `switched`, after `sanitizeError` (`error` is reserved by the logger) |
+| Field                                                                                   | Source                                                                                                                       |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `runId`, `agentId` (`main` or the subagent ID)                                          | state                                                                                                                        |
+| `provider`, `model`                                                                     | active target                                                                                                                |
+| `attempt` (1-3), `fallback` (boolean: running on a backup)                              | stall loop and state                                                                                                         |
+| `requestSizeEstimate` (estimated tokens; the logger redacts any key containing "token") | `estimateModelContextTokens(context, estimatePiImageTokens)`, before context shortening                                      |
+| `timeToFirstEventMs`                                                                    | time to the first event other than `start` or `error` (pi emits `start` on headers), or `null`                               |
+| `durationMs`                                                                            | from the attempt's start to its terminal event                                                                               |
+| `lastEventType`                                                                         | last pi event type seen, for example `start`, `text_delta`, `error`                                                          |
+| `outcome`                                                                               | `ok`, `idle-timeout-retried` or `failed` (ticket wording), plus `switched` for today's non-stall provider-unavailable switch |
+| `stall`                                                                                 | `first-event` or `idle` when the attempt stalled                                                                             |
+| `errorMessage`                                                                          | for `failed` and `switched`, after `sanitizeError` (`error` is reserved by the logger)                                       |
 
 No prompt text, keys or error bodies go in the log.
 

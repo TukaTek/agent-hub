@@ -1,5 +1,7 @@
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
+import { RunHistoryWriteError } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
+import type { AgentConnectionDeps } from "./agent-connections.js";
 import {
   connectAgent,
   messageConnectedAgent,
@@ -39,6 +41,8 @@ function createDeps(
     connectionRevokedInsideTx?: boolean;
     /** Simulates a revoke landing after the in-transaction approval read. */
     connectionRevokedAfterReadInsideTx?: boolean;
+    /** A newer claim of the sending run holds this lease. */
+    runLease?: { leaseOwner: string; leaseFence: number };
   } = {},
 ) {
   const policyRows = () =>
@@ -69,7 +73,7 @@ function createDeps(
         txCalls.runCreate.push(data);
         return { id: "run-wake", ...(data as object) };
       }),
-      findUnique: vi.fn(async () => ({ id: "run-1", status: "running" })),
+      findUnique: vi.fn(async () => ({ id: "run-1", status: "running", ...overrides.runLease })),
     },
     task: {
       create: vi.fn(async ({ data }: { data: unknown }) => {
@@ -83,6 +87,7 @@ function createDeps(
     thread: { update: vi.fn(async () => ({ nextMessageSeq: 4, nextEventSeq: 9 })) },
     bot: { findFirst: vi.fn(async () => ({ id: "bot-2" })) },
     // What a `SELECT ... FOR UPDATE` on the connection row would see.
+    $executeRaw: vi.fn(async () => 0),
     $queryRaw: vi.fn(async (query: TemplateStringsArray) => {
       if (query.join("").includes("FROM bots"))
         return policyRows().map((bot) => ({
@@ -183,6 +188,7 @@ function createDeps(
     user: { findUnique: vi.fn(async () => ({ id: "user-1", name: "Alice Owner" })) },
     thread: { findFirst: vi.fn(async () => ({ id: "thread-2" })) },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txMock)),
+    $executeRaw: vi.fn(async () => 0),
     $queryRaw: vi.fn(async (query: TemplateStringsArray) =>
       query.join("").includes("FROM bots") ? policyRows() : txMock.$queryRaw(query),
     ),
@@ -195,6 +201,27 @@ function createDeps(
   const sendUserMessage = vi.fn(async () => ({ messageId: "m", runId: "r", seq: 1 }));
   const notify = vi.fn(async () => undefined);
   const enqueue = vi.fn(async () => undefined);
+  // Records rows the way the delivery path does: a replaced key starts a fresh row.
+  const messagingDelivery = {
+    recordIn: vi.fn(
+      async (
+        tx: { messagingOutbound: typeof prisma.messagingOutbound },
+        _lane: unknown,
+        rows: Array<Record<string, unknown>>,
+        options: { replace?: boolean } = {},
+      ) => {
+        for (const row of rows) {
+          if (options.replace)
+            await tx.messagingOutbound.deleteMany({
+              where: { idempotencyKey: row.idempotencyKey as string },
+            });
+          await tx.messagingOutbound.createMany({ data: [row] });
+        }
+        return rows.map((_row, index) => `out-${index}`);
+      },
+    ),
+    send: vi.fn(async () => undefined),
+  };
   return {
     prisma: prisma as unknown as PrismaClient & typeof prisma,
     events: { sendUserMessage, notify } as unknown as Pick<
@@ -202,6 +229,8 @@ function createDeps(
       "sendUserMessage" | "notify"
     >,
     jobs: { enqueue },
+    messagingDelivery: messagingDelivery as typeof messagingDelivery &
+      NonNullable<AgentConnectionDeps["messagingDelivery"]>,
     outboundRows,
     txCalls,
     notify,
@@ -235,7 +264,7 @@ describe("connectAgent", () => {
         body: expect.stringMatching(/YES/),
       }),
     ]);
-    expect(deps.enqueue).toHaveBeenCalled();
+    expect(deps.messagingDelivery.send).toHaveBeenCalledWith([{ identityId: "mi-2" }]);
   });
 
   it("treats a concurrent first-time create as pending when the unique key loses", async () => {
@@ -371,6 +400,25 @@ describe("messageConnectedAgent", () => {
       }),
     );
     expect(deps.enqueue).toHaveBeenCalled();
+    expect(deps.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 20_000,
+    });
+  });
+
+  it("does not deliver from an attempt a newer claim superseded", async () => {
+    const deps = createDeps({
+      connection: { id: "ac-1", requesterBotId: "bot-1", targetBotId: "bot-2", status: "approved" },
+      runLease: { leaseOwner: "worker-2", leaseFence: 2 },
+    });
+    await expect(
+      messageConnectedAgent(
+        { ...deps, runLease: { runId: run.id, owner: "worker-1", fence: 1 } },
+        run,
+        sender,
+        { address: "+15552222222", message: "results are in" },
+      ),
+    ).rejects.toBeInstanceOf(RunHistoryWriteError);
+    expect(deps.enqueue).not.toHaveBeenCalled();
   });
 
   it("delivers repeated messages when each call has a distinct deliveryKey", async () => {

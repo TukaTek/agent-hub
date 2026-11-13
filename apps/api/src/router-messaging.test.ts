@@ -1,10 +1,11 @@
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import type { InferRouterInitialContext } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
-import { createRouter, type RouterDeps } from "./router.js";
+import type { RouterDeps } from "./router.js";
+import { createRouter } from "./router.js";
 
-/** Prisma filters the handlers use when scoping memberships to the caller. */
 type MembershipWhere = { id?: string; identityId?: { in: string[] } };
 
 const identity = {
@@ -72,6 +73,7 @@ function messagingDeps(
   const defaultChannel = { id: "ch-1", provider: "sendblue", name: "Family", members: [] };
   const connectionState = connection ? { ...connection } : null;
   const prisma = {
+    spaceMember: { count: vi.fn(async () => 1) },
     messagingIdentity: {
       findFirst: vi.fn(async () => resolvedIdentity),
       findMany: vi.fn(
@@ -150,9 +152,9 @@ function messagingDeps(
         }) => {
           // Handlers scope by every linked identity, so bot filters arrive
           // as { in: [...] } lists.
-          const matches = (filter: string | { in: string[] } | undefined, value: string) =>
+          const matches = (filter: string | { in: string[] } | undefined, value: unknown) =>
             filter === undefined ||
-            (typeof filter === "string" ? filter === value : filter.in.includes(value));
+            (typeof filter === "string" ? filter === value : filter.in.some((id) => id === value));
           if (!connection) return null;
           if (where?.id && connection.id !== where.id) return null;
           if (!matches(where?.targetBotId, connection.targetBotId)) return null;
@@ -224,26 +226,28 @@ function messagingDeps(
         where,
       }: {
         where: {
-          idempotencyKey?: string;
-          status?: string;
-          OR?: Array<{ status?: string; providerHandle?: null }>;
+          idempotencyKey?: string | { in: string[] };
+          status?: string | { in: string[] };
+          OR?: Array<{ status?: string | { in: string[] }; providerHandle?: null }>;
         };
       }) => {
+        const matches = (value: unknown, condition: string | { in: string[] } | undefined) =>
+          condition === undefined ||
+          (typeof condition === "string"
+            ? value === condition
+            : condition.in.includes(value as string));
+        const clause = (
+          row: Record<string, unknown>,
+          part: { status?: string | { in: string[] }; providerHandle?: null },
+        ) =>
+          matches(row.status ?? "pending", part.status) &&
+          (!("providerHandle" in part) || row.providerHandle == null);
         let count = 0;
         for (let i = outboundRows.length - 1; i >= 0; i -= 1) {
           const row = outboundRows[i]!;
-          if (where.idempotencyKey && row.idempotencyKey !== where.idempotencyKey) continue;
-          if (where.status && row.status !== where.status) continue;
-          if (where.OR) {
-            const matches = where.OR.some((clause) => {
-              if (clause.status && row.status !== clause.status) return false;
-              if ("providerHandle" in clause && clause.providerHandle === null) {
-                return row.providerHandle == null;
-              }
-              return true;
-            });
-            if (!matches) continue;
-          }
+          if (!matches(row.idempotencyKey, where.idempotencyKey)) continue;
+          if (!matches(row.status ?? "pending", where.status)) continue;
+          if (where.OR && !where.OR.some((part) => clause(row, part))) continue;
           outboundRows.splice(i, 1);
           count += 1;
         }
@@ -258,9 +262,29 @@ function messagingDeps(
     async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
   );
   const enqueue = vi.fn(async () => undefined);
+  // Records rows the way the delivery path does, in the caller's transaction.
+  const messagingDelivery = {
+    recordIn: vi.fn(
+      async (
+        tx: { messagingOutbound: typeof messagingOutbound },
+        _lane: unknown,
+        rows: Array<Record<string, unknown>>,
+        options: { replace?: boolean } = {},
+      ) => {
+        if (options.replace)
+          await tx.messagingOutbound.deleteMany({
+            where: { idempotencyKey: { in: rows.map((row) => row.idempotencyKey as string) } },
+          });
+        await tx.messagingOutbound.createMany({ data: rows });
+        return [];
+      },
+    ),
+    send: vi.fn(async () => undefined),
+  };
   const deps = {
     prisma,
     jobs: { enqueue },
+    messagingDelivery,
     env: {
       defaultProvider: "fake",
       defaultModel: "fake-model",
@@ -271,6 +295,7 @@ function messagingDeps(
     messaging: {
       enabled: overrides.enabled ?? true,
       providers: ["sendblue"],
+      addresses: { sendblue: "+15550001111" },
       openSignup: false,
     },
     dataDir: "/tmp/cortexai-agent-hub-router-test",
@@ -287,11 +312,17 @@ function messagingDeps(
     actor,
     outboundRows,
     enqueue,
+    messagingDelivery,
     handler: new RPCHandler(createRouter(deps)),
   };
 }
 
-async function call(handler: RPCHandler<never>, actor: Actor, path: string, body: unknown = {}) {
+async function call(
+  handler: RPCHandler<InferRouterInitialContext<ReturnType<typeof createRouter>>>,
+  actor: Actor,
+  path: string,
+  body: unknown = {},
+) {
   const { response } = await handler.handle(
     new Request(`http://127.0.0.1/rpc/${path}`, {
       method: "POST",
@@ -300,11 +331,12 @@ async function call(handler: RPCHandler<never>, actor: Actor, path: string, body
     }),
     { prefix: "/rpc", context: { actor } },
   );
+  if (!response) throw new Error("no response");
   return response;
 }
 
 describe("messaging.status", () => {
-  it("reports enablement, providers, and the caller's linked identities", async () => {
+  it("reports enablement, providers, line addresses, and the caller's linked identities", async () => {
     const { handler, actor } = messagingDeps({ enabled: true });
     const response = await call(handler, actor, "messaging/status");
     expect(response.status).toBe(200);
@@ -312,6 +344,7 @@ describe("messaging.status", () => {
       json: {
         enabled: true,
         providers: ["sendblue"],
+        addresses: { sendblue: "+15550001111" },
         openSignup: false,
         identities: [
           {
@@ -330,7 +363,13 @@ describe("messaging.status", () => {
     const { handler, actor } = messagingDeps({ identity: null });
     const response = await call(handler, actor, "messaging/status");
     await expect(response.json()).resolves.toEqual({
-      json: { enabled: true, providers: ["sendblue"], openSignup: false, identities: [] },
+      json: {
+        enabled: true,
+        providers: ["sendblue"],
+        addresses: { sendblue: "+15550001111" },
+        openSignup: false,
+        identities: [],
+      },
     });
   });
 });
@@ -376,6 +415,18 @@ describe("messaging.identities", () => {
         botName: "Assistant",
       },
     });
+  });
+
+  it("keeps a workspace-installed identity in its installation's space", async () => {
+    const { handler, actor, prisma } = messagingDeps({
+      identity: { ...identity, installationId: "inst-1", spaceId: "ws-other" },
+    });
+    const response = await call(handler, actor, "messaging/identities/setBot", {
+      identityId: "mi-1",
+      botId: "bot-2",
+    });
+    expect(response.status).toBe(400);
+    expect(prisma.messagingIdentity.update).not.toHaveBeenCalled();
   });
 
   it("unlinks only the caller's own identity", async () => {
@@ -568,7 +619,7 @@ describe("messaging.connections", () => {
   });
 
   it("approves a pending incoming connection and notifies the requester", async () => {
-    const { handler, actor, prisma, outboundRows, enqueue } = messagingDeps();
+    const { handler, actor, prisma, outboundRows, messagingDelivery } = messagingDeps();
     const response = await call(handler, actor, "messaging/connections/respond", {
       connectionId: "ac-1",
       accept: true,
@@ -589,7 +640,7 @@ describe("messaging.connections", () => {
         identityId: "mi-9",
       }),
     ]);
-    expect(enqueue).toHaveBeenCalled();
+    expect(messagingDelivery.send).toHaveBeenCalledWith([{ identityId: "mi-9" }]);
   });
 
   it("rejects respond from the requester side", async () => {
@@ -643,7 +694,7 @@ describe("messaging.connections", () => {
     expect(prisma.messagingOutbound.deleteMany).toHaveBeenCalledWith({
       where: {
         idempotencyKey: "connect:bot-1:bot-9",
-        OR: [{ status: "pending" }, { status: "sent", providerHandle: null }],
+        OR: [{ status: { in: ["pending", "retry"] } }, { status: "sent", providerHandle: null }],
       },
     });
     expect(outboundRows).toEqual([
@@ -669,7 +720,7 @@ describe("messaging.connections", () => {
       kind: "dm",
       status: "sent",
       providerHandle: null,
-      body: "claimed by drain",
+      body: "claimed by a sender",
     });
     outboundRows.push({
       idempotencyKey: "connect:bot-1:bot-9-delivered",

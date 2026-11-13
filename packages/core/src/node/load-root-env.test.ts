@@ -37,6 +37,13 @@ describe("root environment loading", () => {
     expect(process.env.DATA_DIR).toBe(path.join(root, "data"));
   });
 
+  it("reads no file when the host supplies the whole environment", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CORTEXAI_AGENT_HUB_ENV_FILE", "none");
+    loadRootEnv();
+    expect(process.env.CORTEXAI_AGENT_HUB_TEST_ENV_SENTINEL).toBeUndefined();
+  });
+
   it("preserves configuration supplied by the caller", () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("CORTEXAI_AGENT_HUB_TEST_ENV_SENTINEL", "caller");

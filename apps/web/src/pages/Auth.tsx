@@ -1,15 +1,18 @@
+import type {
+  HubSignInRefusalCode,
+  SignInContinueResponse,
+  SsoCallbackError,
+} from "@cortexai-agent-hub/core";
 import {
   credentialIssue,
   HUB_SIGN_IN_REFUSAL_CODES,
   HUB_SSO_ACCESS_DENIED,
-  type HubSignInRefusalCode,
   hubRefusalCallbackError,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   readBoundedJsonResponse,
-  type SignInContinueResponse,
-  type SsoCallbackError,
   signupRequiresEmailVerification,
+  suggestEmailCorrection,
 } from "@cortexai-agent-hub/core";
 import {
   Button,
@@ -21,13 +24,14 @@ import {
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { PasskeySignIn } from "../components/PasskeySignIn";
 import { authClient } from "../lib/auth";
 import type { AuthCapabilities } from "../lib/auth-capabilities";
 import { fetchAuthCapabilities } from "../lib/auth-capabilities";
 import { desktopBridge } from "../lib/desktop";
 import { clearSpaceSelection } from "../lib/rpc";
+import { newAccountDestination, signInNext } from "../lib/sign-in-next";
 import { runSsoFlow } from "../lib/sso-flow";
 import { authErrorText, credentialIssueText } from "../lib/user-error";
 import { WelcomePage } from "./Welcome";
@@ -39,16 +43,18 @@ type SignInStep =
   | "desktop_sso_unavailable";
 
 const fieldClass =
-  "mt-2 h-12 rounded-xl px-4 text-base focus-visible:border-brand focus-visible:ring-brand/30 md:text-base";
+  "mt-2 h-12 rounded-xl px-4 text-body-lg focus-visible:border-brand focus-visible:ring-brand/30 md:text-body-lg";
 export const submitClass =
-  "mt-3 h-12 w-full rounded-xl bg-brand text-base font-semibold text-brand-foreground hover:bg-brand/90 focus-visible:border-brand focus-visible:ring-brand/40";
+  "mt-3 h-12 w-full rounded-xl bg-brand text-body-lg font-semibold text-brand-foreground hover:bg-brand/90 focus-visible:border-brand focus-visible:ring-brand/40";
 const MAX_AUTH_RESPONSE_BYTES = 64 * 1024;
 const CODE_LENGTH = 6;
 
 export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) {
   const { t } = useLingui();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const next = signInNext(searchParams.get("next"));
+  // Switching between sign-in and sign-up keeps where the person was going.
+  const nextQuery = next ? `?next=${encodeURIComponent(next)}` : "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -78,12 +84,16 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
       : authErrorText({ code }, "") || null;
   });
   const [pending, setPending] = useState(false);
+  const [emailBlurred, setEmailBlurred] = useState(false);
+  const [warnedEmail, setWarnedEmail] = useState<string | null>(null);
+  const entering = useRef(false);
   const [resetSent, setResetSent] = useState(false);
   // Signup triggers a session refresh that remounts the anonymous auth page.
   const sent = resetSent || searchParams.get("verify") === "email";
   const [reset, setReset] = useState<AuthCapabilities | null>(null);
   const hubMode = reset?.mode === "hub";
   const mode = hubMode || requestedMode === "entry" ? "in" : requestedMode;
+  const emailSuggestion = mode === "up" ? suggestEmailCorrection(email) : null;
   // Hub mode always signs in with an email first, then Hub picks the method.
   const passwordForm = Boolean(reset?.passwordAuth || hubMode);
   const [capabilityError, setCapabilityError] = useState(false);
@@ -162,6 +172,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     });
     if (issue) {
       setError(credentialIssueText(issue));
+      return;
+    }
+    if (emailSuggestion && warnedEmail !== email) {
+      setWarnedEmail(email);
+      setEmailBlurred(true);
       return;
     }
     setPending(true);
@@ -266,14 +281,14 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
         return;
       }
       if (mode === "up" && signupRequiresEmailVerification(result.data)) {
-        setSearchParams({ verify: "email" });
+        setSearchParams({ verify: "email", ...(next ? { next } : {}) });
         return;
       }
       enterApp();
     } catch {
       setError(t`Could not reach the server`);
     } finally {
-      setPending(false);
+      if (!entering.current) setPending(false);
     }
   }
 
@@ -311,19 +326,16 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     } catch {
       setError(t`Could not reach the server`);
     } finally {
-      setPending(false);
+      if (!entering.current) setPending(false);
     }
   }
 
   function enterApp() {
     clearSpaceSelection();
-    navigate(
-      mode === "up"
-        ? "/onboarding"
-        : searchParams.get("next") === "/integrations/setup"
-          ? "/integrations/setup"
-          : "/app",
-    );
+    // The routes move a signed-in user on once the session refetch lands. Navigating
+    // first beats it, so the guards bounce through sign-in and the shell.
+    entering.current = true;
+    setPending(true);
   }
 
   function chooseMethod(next: "code" | "password") {
@@ -341,13 +353,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
           authClient.signIn.social({
             disableRedirect,
             provider: "oidc",
-            newUserCallbackURL: callbackURL("/onboarding"),
-            callbackURL: callbackURL(
-              searchParams.get("next") === "/integrations/setup" ? "/integrations/setup" : "/app",
-            ),
+            newUserCallbackURL: callbackURL(newAccountDestination(next)),
+            callbackURL: callbackURL(next ?? "/app"),
             errorCallbackURL: callbackURL("/sign-in"),
           }),
-        ["/app", "/onboarding", "/integrations/setup", "/sign-in"],
+        ["/app", "/onboarding", "/integrations/setup", "/sign-in", ...(next ? [next] : [])],
       );
       if (result.error) setError(authErrorText(result.error, t`Could not continue`));
     } catch {
@@ -386,7 +396,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     <AuthFrame onSubmit={submit} title={title}>
       {sent ? (
         <div className="w-full text-center">
-          <Link to="/sign-in" className="font-medium text-foreground">
+          <Link to={`/sign-in${nextQuery}`} className="font-medium text-foreground">
             <Trans>Back to sign in</Trans>
           </Link>
         </div>
@@ -403,7 +413,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             </Button>
           ) : null}
           {error ? (
-            <p role="alert" className="mt-3 text-sm text-destructive">
+            <p role="alert" className="mt-3 text-body text-destructive">
               {error}
             </p>
           ) : null}
@@ -444,7 +454,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                     <InputOTPSlot
                       key={index}
                       index={index}
-                      className="size-12 text-lg first:rounded-l-xl last:rounded-r-xl"
+                      className="size-12 text-heading3 first:rounded-l-xl last:rounded-r-xl"
                     />
                   ))}
                 </InputOTPGroup>
@@ -461,7 +471,11 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 name="email"
                 autoComplete={signInStep === "email" && !hubMode ? "username webauthn" : "username"}
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailBlurred(false);
+                }}
+                onBlur={() => setEmailBlurred(true)}
                 placeholder={t`Your email address`}
                 type="email"
                 required
@@ -472,8 +486,23 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 }
                 className={fieldClass}
               />
+              {emailSuggestion && emailBlurred ? (
+                <p role="status" className="mt-2 text-body text-warning">
+                  <Trans>
+                    Did you mean{" "}
+                    <button
+                      type="button"
+                      className="font-medium underline"
+                      onClick={() => setEmail(emailSuggestion)}
+                    >
+                      {emailSuggestion}
+                    </button>
+                    ?
+                  </Trans>
+                </p>
+              ) : null}
               {signInStep === "password" || signInUnavailable ? (
-                <div className="mt-2 text-right text-sm">
+                <div className="mt-2 text-right text-body">
                   <Button
                     type="button"
                     variant="link"
@@ -487,7 +516,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             </div>
           )}
           {signInStep === "sso_unavailable" ? (
-            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+            <p role="status" className="mt-4 w-full text-body text-muted-foreground">
               <Trans>
                 Microsoft sign-in for your organization isn't available in Agent Hub yet. Ask your
                 admin to enable password sign-in for your account.
@@ -495,7 +524,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             </p>
           ) : null}
           {signInStep === "desktop_sso_unavailable" ? (
-            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+            <p role="status" className="mt-4 w-full text-body text-muted-foreground">
               <Trans>
                 Microsoft sign-in isn't available in the desktop app yet. Open Agent Hub in your
                 browser.
@@ -506,7 +535,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             </p>
           ) : null}
           {signInStep === "other_sso_unavailable" ? (
-            <p role="status" className="mt-4 w-full text-sm text-muted-foreground">
+            <p role="status" className="mt-4 w-full text-body text-muted-foreground">
               <Trans>
                 Single sign-on for your organization isn't available in Agent Hub yet. Ask your
                 admin to enable password sign-in for your account.
@@ -533,7 +562,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
                 className={fieldClass}
               />
               {mode === "in" && reset?.passwordReset ? (
-                <div className="mt-2 text-right text-sm">
+                <div className="mt-2 text-right text-body">
                   <Link to="/forgot-password" className="font-medium text-foreground">
                     <Trans>Forgot password?</Trans>
                   </Link>
@@ -542,7 +571,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
             </div>
           ) : null}
           {error ? (
-            <p role="alert" className="mt-3 w-full text-sm text-destructive">
+            <p role="alert" className="mt-3 w-full text-body text-destructive">
               {error}
             </p>
           ) : null}
@@ -674,7 +703,7 @@ export function PasswordResetPage() {
     <AuthFrame onSubmit={submit} title={<Trans>Choose a new password</Trans>}>
       {complete ? (
         <div role="status" className="w-full text-center">
-          <p className="text-lg">
+          <p className="text-heading3">
             <Trans>Password updated</Trans>
           </p>
           <Link to="/sign-in" className="mt-6 inline-block font-medium">
@@ -697,7 +726,7 @@ export function PasswordResetPage() {
             className="mt-4"
           />
           {error ? (
-            <p role="alert" className="mt-3 w-full text-sm text-destructive">
+            <p role="alert" className="mt-3 w-full text-body text-destructive">
               {error}
             </p>
           ) : null}
@@ -727,6 +756,7 @@ export function AuthFrame({
   onSubmit: (event: React.FormEvent) => void;
   children: React.ReactNode;
 }) {
+  const server = desktopBridge()?.server;
   return (
     <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-brand-surface px-5 py-10 text-brand-surface-foreground sm:px-6 sm:py-16">
       <div
@@ -749,7 +779,7 @@ export function AuthFrame({
         />
         <h1
           aria-live="polite"
-          className="mb-9 mt-6 w-full text-center text-3xl font-medium tracking-tight sm:text-4xl"
+          className="mb-9 mt-6 w-full text-center text-display font-medium tracking-tight sm:text-display"
         >
           {title}
         </h1>

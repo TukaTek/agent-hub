@@ -10,6 +10,7 @@ import { InfisicalSecretStore } from "./infisical-secret-store.js";
 import {
   createIntegrationConnectorStack,
   IntegrationProviderSettings,
+  prepareManagedConnectorForTransaction,
 } from "./integration-provider-settings.js";
 import { infisicalFake } from "./secret-store-fake.js";
 import { EncryptedSecretStore } from "./secrets.js";
@@ -70,6 +71,16 @@ describe("integration provider settings", () => {
       apiKey: "fake-replacement-key",
     });
   });
+  it("lists connected plugin slugs for the user, or none before setup", async () => {
+    const f = fixture();
+    expect(await f.settings.listConnectedPluginSlugs("user-1")).toEqual([]);
+    await f.settings.save({ provider: "composio", apiKey: "fake-plugin-key" }, context);
+    vi.mocked(f.adapter.listConnectedExternalIds).mockResolvedValueOnce(["gmail"]);
+    expect(await f.settings.listConnectedPluginSlugs("user-1")).toEqual(["gmail"]);
+    expect(f.adapter.listConnectedExternalIds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: "user-1" }),
+    );
+  });
   it("preserves working settings and hides provider error details on failed verification", async () => {
     const f = fixture();
     await f.settings.save({ provider: "composio", apiKey: "fake-working-key" }, context);
@@ -82,16 +93,35 @@ describe("integration provider settings", () => {
     ).rejects.toThrow("Could not verify these credentials");
     expect(f.rows.get("composio")).toBe(before);
   });
-  it("returns no tools or catalog for unconfigured providers", async () => {
+  it("declines routeless lookups for unconfigured providers but still requires setup for routed calls", async () => {
     const f = fixture();
     for (const provider of f.settings.providers()) {
       expect(await provider.catalog(context)).toEqual([]);
       expect(await provider.discoverTools(context)).toEqual([]);
+      const call = { tool: "mcp__demo__read", args: {}, executionId: "watch" };
+      await expect(provider.resolveCall?.(call, context)).resolves.toBeUndefined();
+      await expect(
+        provider.resolveCall?.(
+          { ...call, route: { connectorId: provider.describe().id, toolName: "read" } },
+          context,
+        ),
+      ).rejects.toThrow("Set up an integration provider");
       await expect(
         provider.begin({ provider: "slack", redirectUrl: "https://example.test" }, context),
       ).rejects.toThrow("Set up an integration provider");
     }
     expect(f.factory).not.toHaveBeenCalled();
+  });
+  it("propagates configured provider resolution errors", async () => {
+    const f = fixture();
+    const error = new Error("Tool access denied");
+    const resolveCall = vi.fn().mockRejectedValue(error);
+    f.adapter.resolveCall = resolveCall;
+    await f.settings.save({ provider: "composio", apiKey: "fake-key" }, context);
+    const provider = f.settings.providers().find((entry) => entry.describe().id === "composio")!;
+    const call = { tool: "read", args: {}, executionId: "watch" };
+    await expect(provider.resolveCall?.(call, context)).rejects.toBe(error);
+    expect(resolveCall).toHaveBeenCalledWith(call, context);
   });
   it("warms directories only for configured providers", async () => {
     const f = fixture();
@@ -121,6 +151,49 @@ describe("integration provider settings", () => {
     await settings.save({ provider: "composio", apiKey: "fake-warm-key" }, context);
     settings.warmDirectories();
     await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
+  });
+  it.each([false, true, undefined])(
+    "forwards the prepared provider's reconnect requirement %s",
+    async (reconnect) => {
+      const f = fixture();
+      const needsReconnect = vi.fn(async () => reconnect ?? false);
+      if (reconnect !== undefined) f.adapter.needsReconnect = needsReconnect;
+      await f.settings.save({ provider: "composio", apiKey: "fake-key" }, context);
+      const wrapper = f.settings
+        .providers()
+        .find((provider) => provider.describe().id === "composio")!;
+      const { provider } = await prepareManagedConnectorForTransaction(wrapper);
+
+      expect(await provider?.needsReconnect?.(context, "gmail")).toBe(reconnect ?? false);
+      if (reconnect !== undefined) {
+        expect(needsReconnect).toHaveBeenCalledExactlyOnceWith(context, "gmail");
+      } else {
+        expect(needsReconnect).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it("exposes the prepared provider's account resolution bound to that provider", async () => {
+    const f = fixture();
+    class AccountAdapter {
+      private readonly accounts = new Map([["request-1", "account-1"]]);
+      async listConnectedExternalIds() {
+        return [];
+      }
+      async resolveConnectedAccountId(_userId: string, _slug: string, ref?: string | null) {
+        return ref ? this.accounts.get(ref) : undefined;
+      }
+    }
+    f.factory.mockReturnValue(new AccountAdapter() as unknown as ManagedConnectorProvider);
+    await f.settings.save({ provider: "composio", apiKey: "fake-key" }, context);
+    const wrapper = f.settings
+      .providers()
+      .find((provider) => provider.describe().id === "composio");
+
+    const { provider } = await prepareManagedConnectorForTransaction(wrapper!);
+    const resolve = provider?.resolveConnectedAccountId;
+
+    expect(provider?.cancelAuthorizationRequest).toBeUndefined();
+    await expect(resolve?.("user", "gmail", "request-1")).resolves.toBe("account-1");
   });
 });
 

@@ -1,13 +1,7 @@
-import { HUB_CONFIG_DOC, type HubConfigProblem } from "./hub-client.js";
-import {
-  type AppliedHubPolicy,
-  applyHubPolicyAtStartup,
-  createHubPolicy,
-  HUB_POLICY_POLL_MS,
-  type HubConfigFetch,
-  type HubPolicy,
-  type HubPolicySignal,
-} from "./hub-policy.js";
+import type { HubConfigProblem } from "./hub-client.js";
+import { HUB_CONFIG_DOC } from "./hub-client.js";
+import type { AppliedHubPolicy, HubConfigFetch, HubPolicy, HubPolicySignal } from "./hub-policy.js";
+import { applyHubPolicyAtStartup, createHubPolicy, HUB_POLICY_POLL_MS } from "./hub-policy.js";
 import type { HubPolicyStore } from "./hub-policy-store.js";
 
 export interface HubPolicyRuntime {

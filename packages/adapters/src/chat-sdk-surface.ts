@@ -16,8 +16,9 @@ import type {
   MessagingSurface,
 } from "@cortexai-agent-hub/adapter-kit";
 import { getLogger } from "@cortexai-agent-hub/logging";
-import type { Adapter, Message, PostableMarkdown, Thread } from "chat";
-import { Chat, isLinkNode, text, toPlainText, walkAst } from "chat";
+import type { Adapter, Message, PostableMarkdown, Root, Thread } from "chat";
+import { Chat, isLinkNode, paragraph, parseMarkdown, root, text, toPlainText, walkAst } from "chat";
+import { getLarkTextParts } from "./lark/text-parts.js";
 
 /**
  * Per-webhook drain of Chat SDK waitUntil work, plus the Chat dedupe keys of
@@ -26,7 +27,34 @@ import { Chat, isLinkNode, text, toPlainText, walkAst } from "chat";
 const webhookDrain = new AsyncLocalStorage<{
   pending: Promise<unknown>[];
   failedKeys: string[];
+  markdownChars: number;
 }>();
+
+/**
+ * Markdown parsing is superlinear on hostile text (unmatched emphasis, deep
+ * quotes), so past this many characters in one webhook the text stays literal.
+ */
+export const INBOUND_MARKDOWN_MAX_CHARS = 8_000;
+
+/** Bound the adapter's inbound text-to-markdown parsing per webhook; sends are untouched. */
+export function boundInboundMarkdown(adapter: Adapter): void {
+  const converter = (adapter as unknown as { formatConverter: { toAst(value: string): Root } })
+    .formatConverter;
+  const toAst = converter.toAst.bind(converter);
+  converter.toAst = (value) => {
+    const drain = webhookDrain.getStore();
+    if (!drain) return toAst(value);
+    drain.markdownChars += value.length;
+    if (drain.markdownChars <= INBOUND_MARKDOWN_MAX_CHARS) {
+      try {
+        return toAst(value);
+      } catch {
+        // Deep nesting overflows the parser's stack.
+      }
+    }
+    return root([paragraph([text(value)])]);
+  };
+}
 
 /** Inbound webhook bodies larger than this are rejected before parsing. */
 export const MESSAGING_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
@@ -52,6 +80,8 @@ export interface MessagingPlatform {
    * the adapter keeps its native ones. Defaults to `provider`.
    */
   adapterName?: string;
+  /** The line people message to reach this deployment (a phone number), when it has one. */
+  address?: string;
   /** Deterministic 1:1 thread id for platforms without openDM (sendblue). */
   directThreadId?: (address: string) => string;
   /** Delivery-status events the Chat SDK drops (sendblue is_outbound posts, WhatsApp statuses). */
@@ -64,10 +94,43 @@ export interface MessagingPlatform {
   redeliveryKeys?: (payload: unknown) => string[];
   /** Send errors that retrying cannot fix (unknown channel, blocked bot, revoked token). */
   isPermanentSendError?: (error: unknown) => boolean;
+  /**
+   * Posts with a key the vendor deduplicates on, for platforms whose API takes one, so a send
+   * repeated after a lost answer arrives once. `threadId` is the adapter's own.
+   */
+  postOnce?: (
+    threadId: string,
+    message: string | PostableMarkdown,
+    idempotencyKey: string,
+  ) => Promise<{ id: string }>;
   /** Group roster addresses from the raw inbound payload, excluding our line. */
   participants?: (raw: unknown) => string[];
-  /** Group display name from the raw inbound payload. */
+  /**
+   * When the raw payload says its roster was current, when the platform reports
+   * a time for the event; null when it reports none, so no comparison happens.
+   */
+  rosterAt?: (raw: unknown) => Date | null;
+  /**
+   * Member departures one raw payload reports, for platforms that send
+   * per-event leave notices instead of a roster (Telegram service messages).
+   * `botLeft` marks our own bot leaving the conversation; undefined when the
+   * payload reports no departure.
+   */
+  departures?: (raw: unknown) => { addresses: string[]; botLeft: boolean } | undefined;
   channelName?: (raw: unknown) => string | null;
+  /**
+   * Group-shaped raw payloads this platform still refuses (Telegram broadcast
+   * channel posts, which are not group conversations). Omitted by platforms
+   * that take every group message.
+   */
+  acceptsGroup?: (raw: unknown) => boolean;
+  /**
+   * Rewrites the adapter's native thread id for CortexAI Agent Hub thread identity when
+   * the SDK's granularity differs from the platform's conversations: Telegram
+   * marks a non-forum reply with the reply root as its message thread id,
+   * which is still the group's own conversation.
+   */
+  normalizeThreadId?: (threadId: string, raw: unknown) => string;
   /** User-facing transport carried by the raw message when it differs from the provider. */
   transport?: (raw: unknown) => string | null;
   /**
@@ -188,6 +251,7 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     return [...this.byProvider.values()].map(({ platform }) => ({
       provider: platform.provider,
       capabilities: platform.capabilities,
+      address: platform.address,
     }));
   }
 
@@ -201,15 +265,28 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     return this.dispatchWebhook(mounted, request);
   }
 
+  /**
+   * No Chat SDK adapter's post takes an abort signal, so a post that has started runs to its end
+   * (Slack and Sendblue clients bound it themselves). The signal stops a post that has not.
+   */
   async sendToThread(
     request: MessagingSendRequest,
-    _context: AdapterContext,
+    context: AdapterContext,
   ): Promise<MessagingSendResult> {
     const mounted = this.mountedForThread(request.threadId);
     await this.ensureInitialized();
-    // Telegram converts Markdown and retries parse errors as plain text. Keep
-    // other adapters' existing payloads (Slack markdown_text has a lower limit).
+    context.signal.throwIfAborted();
+    // Telegram converts Markdown and retries parse errors as plain text;
+    // WhatsApp renders it as its own formatting and Lark posts it as an md
+    // block; Photon's iMessage adapter renders it as native styled text. Keep
+    // the other adapters' plain payloads (Slack markdown_text has a lower
+    // limit, Sendblue's iMessage has no markup).
     const telegram = mounted.adapterName === "telegram";
+    const markdown =
+      telegram ||
+      mounted.adapterName === "whatsapp" ||
+      mounted.adapterName === "lark" ||
+      mounted.adapterName === "imessage";
     const { attachment } = request;
     if (telegram && attachment && attachment.data.byteLength > TELEGRAM_UPLOAD_MAX_BYTES) {
       throw new MessagingSendError(new Error("File is larger than Telegram accepts"), {
@@ -219,13 +296,20 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     }
     const message = attachment
       ? attachmentMessage(telegram, request.body, attachment)
-      : telegram
+      : markdown
         ? { markdown: request.body }
         : request.body;
     try {
-      const sent = await mounted.chat
-        .thread(toAdapterThreadId(mounted, request.threadId))
-        .post(message);
+      const threadId = toAdapterThreadId(mounted, request.threadId);
+      const postOnce = mounted.platform.postOnce;
+      const sent =
+        postOnce && request.idempotencyKey && !attachment
+          ? await postOnce(
+              threadId,
+              markdown ? { markdown: request.body } : request.body,
+              request.idempotencyKey,
+            )
+          : await mounted.chat.thread(threadId).post(message);
       const handle = "id" in sent && typeof sent.id === "string" ? sent.id : "";
       return { handle };
     } catch (error) {
@@ -381,7 +465,11 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     // only register the work via waitUntil. Drain that work before ACKing so
     // a vendor 200 cannot race ahead of provision/enqueue, and surface sink
     // failures as 5xx so the vendor retries.
-    const drain = { pending: [] as Promise<unknown>[], failedKeys: [] as string[] };
+    const drain = {
+      pending: [] as Promise<unknown>[],
+      failedKeys: [] as string[],
+      markdownChars: 0,
+    };
     const response = await webhookDrain.run(drain, async () => {
       const adapterResponse = await chat.webhooks[adapterName]!(forwarded, {
         waitUntil: (task) => {
@@ -419,22 +507,29 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
     if (message.author.isMe || message.author.isSystem) return null;
     const { platform } = mounted;
     if (!isDirect && !platform.capabilities.groups) return null;
+    if (!isDirect && platform.acceptsGroup?.(message.raw) === false) return null;
     const fromLabel = message.author.fullName || message.author.userName || null;
     const transport = platform.transport?.(message.raw) ?? null;
     const attachments = inboundAttachments(message);
+    const departures = isDirect ? undefined : platform.departures?.(message.raw);
+    const rosterAt = isDirect ? undefined : (platform.rosterAt?.(message.raw) ?? undefined);
     const base: MessagingInboundMessage = {
       type: "message",
       provider: platform.provider,
       ...(transport ? { transport } : {}),
       handle: message.id,
-      threadId: toProviderThreadId(mounted, threadId),
+      threadId: toProviderThreadId(
+        mounted,
+        platform.normalizeThreadId?.(threadId, message.raw) ?? threadId,
+      ),
       isDirect,
       from: message.author.userId,
       fromLabel: fromLabel === message.author.userId ? null : fromLabel,
       channelName: isDirect ? null : (platform.channelName?.(message.raw) ?? null),
       participants: isDirect ? [] : (platform.participants?.(message.raw) ?? []),
+      ...(rosterAt ? { rosterAt } : {}),
       content: [
-        plainTextWithLinks(message),
+        plainTextWithLinks(message, platform.provider === "lark"),
         ...(attachments.length
           ? message.attachments
               .filter((file) => !file.fetchData && file.url)
@@ -446,6 +541,7 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
       mediaUrl: message.attachments.find((attachment) => attachment.url)?.url ?? null,
       ...(attachments.length ? { attachments } : {}),
       ...(!isDirect && message.isMention ? { mentionsBot: true } : {}),
+      ...(departures ? { departures } : {}),
     };
     const enrichment = platform.enrichTeamRoom?.(message.raw, base) ?? {};
     return { ...base, ...enrichment };
@@ -494,9 +590,54 @@ function inboundAttachments(message: Message): MessagingInboundAttachment[] {
  * The SDK's message.text keeps only a link's label, so a Slack link labelled
  * `example.com/projects/…` reaches the model without its target.
  */
-function plainTextWithLinks(message: Message): string {
+function plainTextWithLinks(message: Message, lark: boolean): string {
+  const parts = lark ? getLarkTextParts(message.formatted) : undefined;
+  if (parts) {
+    const rendered = parts.map((part, index) => {
+      if (part.literal) return { value: part.text, addedTarget: false };
+      const value = part.text;
+      if (!value.trim()) return { value, addedTarget: false };
+      const result = renderLinks(parseMarkdown(value));
+      const first = result.ast.children.at(0);
+      const last = result.ast.children.at(-1);
+      const start = first?.position?.start.offset ?? 0;
+      const end = last?.position?.end.offset ?? value.length;
+      const prefix = value.slice(0, start);
+      const previous = parts[index - 1];
+      const sameLine = previous?.literal && !previous.text.endsWith("\n") && !prefix.includes("\n");
+      const leading = sameLine ? prefix : prefix.replace(/[^\r\n]/g, "");
+      let trailing = value.slice(end);
+      // Markdown drops spaces at a fragment boundary; preserve them when the
+      // next structured item is on the same row.
+      if (last?.type === "paragraph" && !trailing && parts[index + 1]?.literal)
+        trailing = value.match(/[ \t]+$/)?.[0] ?? "";
+      // A heading followed by a code row has the same paragraph separation as
+      // a heading followed by ordinary text in the SDK's plain-text renderer.
+      const headingBreak =
+        parts[index + 1]?.literal &&
+        result.ast.children.at(-1)?.type === "heading" &&
+        trailing === "\n"
+          ? "\n"
+          : "";
+      return {
+        value: leading + toPlainText(result.ast) + headingBreak + trailing,
+        addedTarget: result.addedTarget,
+      };
+    });
+    return rendered.some((part) => part.addedTarget)
+      ? rendered.map((part) => part.value).join("")
+      : (message.text ?? "");
+  }
+  const result = renderLinks(message.formatted);
+  return result.addedTarget ? toPlainText(result.ast) : (message.text ?? "");
+}
+
+function renderLinks(formatted: Message["formatted"]): {
+  ast: Message["formatted"];
+  addedTarget: boolean;
+} {
   let addedTarget = false;
-  const ast = walkAst(structuredClone(message.formatted), (node) => {
+  const ast = walkAst(structuredClone(formatted), (node) => {
     if (!isLinkNode(node)) return node;
     const label = toPlainText({ type: "root", children: node.children }).trim();
     const bare = node.url.replace(/^(?:https?:\/\/|mailto:)/, "");
@@ -509,11 +650,12 @@ function plainTextWithLinks(message: Message): string {
     addedTarget = true;
     return text(`${label} (${node.url})`);
   });
-  return addedTarget ? toPlainText(ast) : (message.text ?? "");
+  return { ast, addedTarget };
 }
 
 export function providerOfThreadId(threadId: string): string {
-  return threadId.split(":", 1)[0] ?? "";
+  // Installed surfaces reserve ~ for the installation namespace.
+  return threadId.split(":", 1)[0]?.split("~", 1)[0] ?? "";
 }
 
 /** Adapter-native thread id ("telegram:42") → CortexAI Agent Hub thread id ("telegram-work:42"). */
@@ -555,7 +697,7 @@ function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T>
  * trustworthy Content-Length) is cut off at the cap instead of being
  * buffered whole. Returns null once the cap is exceeded.
  */
-async function readBoundedText(request: Request, maxBytes: number): Promise<string | null> {
+export async function readBoundedText(request: Request, maxBytes: number): Promise<string | null> {
   const reader = request.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];

@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { approvalEffectKey } from "@cortexai-agent-hub/core/node/approval-effect-key";
 import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
 import { describe, expect, it, vi } from "vitest";
@@ -8,13 +10,39 @@ import {
   createApprovedEffectReplayQueue,
 } from "./approval-effect.js";
 import {
+  applyMcpSourcePreset,
   InstalledConnectorProvider,
   importOpenApiDocument,
+  MCP_SOURCE_PRESETS,
   prepareApiInstall,
   verifyMcpInstall,
 } from "./installed-connectors.js";
 import { parseConnectorToolArgs, SELECTED_SCHEMA_MAX_BYTES } from "./lazy-tool-catalog.js";
-import { parametersFor } from "./pi-runtime.js";
+import { parametersFor } from "./pi-runtime-tool-parameters.js";
+
+describe("MCP source presets", () => {
+  it("stores an open-URL preset as a custom bearer source", () => {
+    const open = MCP_SOURCE_PRESETS.find((preset) => !preset.url)!;
+    expect(applyMcpSourcePreset("https://mine.example/mcp", { preset: open.id })).toEqual({
+      source: "https://mine.example/mcp",
+      config: { preset: "custom", auth: { type: "bearer" } },
+    });
+  });
+
+  it("stores an unknown preset id as custom", () => {
+    expect(
+      applyMcpSourcePreset("https://mine.example/mcp", { preset: "not-offered" }).config,
+    ).toEqual({ preset: "custom" });
+  });
+
+  it("leaves custom sources untouched", () => {
+    const config = { preset: "custom", auth: { type: "header", name: "x-api-key" } };
+    expect(applyMcpSourcePreset("https://mine.example/mcp", config)).toEqual({
+      source: "https://mine.example/mcp",
+      config,
+    });
+  });
+});
 
 describe("OpenAPI connector import", () => {
   it("uses the bounded catalog for a real large installed OpenAPI source", async () => {
@@ -583,6 +611,185 @@ describe("OpenAPI connector import", () => {
     ]);
   });
 
+  it("prefers parameter descriptions while preserving schema descriptions as a fallback", () => {
+    const imported = importOpenApiDocument({
+      openapi: "3.1.0",
+      servers: [{ url: "https://api.example.test" }],
+      components: {
+        schemas: { Value: { type: "string", description: "Shared value" } },
+        parameters: {
+          Referenced: {
+            name: "referenced",
+            in: "query",
+            description: "Referenced parameter",
+            schema: { $ref: "#/components/schemas/Value" },
+          },
+        },
+      },
+      paths: {
+        "/items": {
+          get: {
+            operationId: "listItems",
+            parameters: [
+              {
+                name: "direct",
+                in: "query",
+                description: "Direct parameter",
+                schema: { $ref: "#/components/schemas/Value" },
+              },
+              { $ref: "#/components/parameters/Referenced" },
+              { name: "schemaOnly", in: "query", schema: { $ref: "#/components/schemas/Value" } },
+              {
+                name: "empty",
+                in: "query",
+                description: "",
+                schema: { $ref: "#/components/schemas/Value" },
+              },
+              { name: "plain", in: "query", schema: { type: "number" } },
+              { name: "fallback", in: "query", description: "Fallback parameter" },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(imported.operations[0]?.inputSchema.properties).toEqual({
+      direct: { type: "string", description: "Direct parameter" },
+      referenced: { type: "string", description: "Referenced parameter" },
+      schemaOnly: { type: "string", description: "Shared value" },
+      empty: { type: "string", description: "" },
+      plain: { type: "number" },
+      fallback: { type: "string", description: "Fallback parameter" },
+    });
+  });
+
+  it("expands server variable defaults without mutating the document", () => {
+    const document = {
+      servers: [
+        {
+          url: "https://{host}:{port}/{version}/{version}{suffix}",
+          variables: {
+            host: { default: "api.example.test" },
+            port: { default: "8443" },
+            version: { default: "v1" },
+            suffix: { default: "" },
+          },
+        },
+      ],
+      paths: { "/items": { get: { operationId: "listItems" } } },
+    };
+    expect(importOpenApiDocument(document).baseUrl).toBe("https://api.example.test:8443/v1/v1");
+    expect(document.servers[0]!.url).toContain("{version}");
+  });
+
+  it("treats replacement defaults literally", () => {
+    expect(
+      importOpenApiDocument({
+        servers: [
+          { url: "https://api.example.test/{value}", variables: { value: { default: "$&" } } },
+        ],
+        paths: { "/items": { get: { operationId: "listItems" } } },
+      }).baseUrl,
+    ).toBe("https://api.example.test/$&");
+  });
+
+  it.each([undefined, {}, { default: 1 }, { default: null }])(
+    "rejects server variables without string defaults: %j",
+    (variable) => {
+      expect(() =>
+        importOpenApiDocument({
+          servers: [
+            { url: "https://api.example.test/{version}", variables: { version: variable } },
+          ],
+          paths: { "/items": { get: { operationId: "listItems" } } },
+        }),
+      ).toThrow("OpenAPI server variable must define a string default");
+    },
+  );
+
+  it("checks credentials after expanding server defaults", () => {
+    expect(() =>
+      importOpenApiDocument({
+        servers: [
+          {
+            url: "https://api.example.test/{version}",
+            variables: { version: { default: "v1?token=fake-secret" } },
+          },
+        ],
+        paths: { "/items": { get: { operationId: "listItems" } } },
+      }),
+    ).toThrow("encrypted credential field");
+  });
+
+  it.each([
+    ["http://93.184.216.34", "must use HTTPS"],
+    ["https://127.0.0.1", "private"],
+    ["https://user:password@93.184.216.34", "credentials"],
+  ])(
+    "checks expanded server destinations with the existing URL policy: %s",
+    async (destination, error) => {
+      const fetch = vi.fn().mockResolvedValue(
+        Response.json({
+          servers: [
+            { url: "{destination}/v1", variables: { destination: { default: destination } } },
+          ],
+          paths: { "/items": { get: { operationId: "listItems" } } },
+        }),
+      );
+      await expect(
+        prepareApiInstall({
+          source: "https://93.184.216.34/openapi.json",
+          config: { openApi: true, auth: { type: "none" } },
+          remote: { fetch },
+        }),
+      ).rejects.toThrow(error);
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("persists the expanded server URL and uses it for installed requests", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      Response.json({
+        servers: [
+          { url: "https://93.184.216.34/{version}", variables: { version: { default: "v1" } } },
+        ],
+        paths: { "/items": { get: { operationId: "listItems" } } },
+      }),
+    );
+    const prepared = await prepareApiInstall({
+      source: "https://93.184.216.34/openapi.json",
+      config: { openApi: true, auth: { type: "none" } },
+      remote: { fetch },
+    });
+    expect(prepared.source).toBe("https://93.184.216.34/v1");
+    const install = {
+      id: "api-server-defaults",
+      kind: "api",
+      source: prepared.source,
+      secretId: null,
+      createdAt: new Date(0),
+      config: JSON.parse(JSON.stringify(prepared.config)),
+    };
+    const prisma = { capabilityInstall: { findFirst: vi.fn().mockResolvedValue(install) } };
+    fetch.mockReset();
+    fetch.mockImplementation(async () => Response.json({ ok: true }));
+    const provider = new InstalledConnectorProvider(prisma as never, {} as never, { fetch });
+    const events = [];
+    for await (const event of provider.execute(
+      {
+        tool: "listItems",
+        args: {},
+        executionId: "listItems",
+        route: { connectorId: "installed", resourceId: install.id, toolName: "listItems" },
+      },
+      { spaceId: "space-1", userId: "user-1", signal: AbortSignal.timeout(5_000) } as never,
+    )) {
+      events.push(event);
+    }
+    expect(events).toContainEqual({ type: "result", data: { status: 200, data: { ok: true } } });
+    expect(String(fetch.mock.calls[0]![0])).toBe("https://93.184.216.34/v1/items");
+  });
+
   it("refuses ambiguous specs without stable operation ids", () => {
     expect(() =>
       importOpenApiDocument({
@@ -616,6 +823,49 @@ describe("OpenAPI connector import", () => {
       }),
     ).toThrow("unsafe header Authorization");
   });
+
+  it.each([
+    { status: 503, size: 1_000_000, error: "OpenAPI document returned HTTP 503" },
+    { status: 200, size: 2_000_001, error: "OpenAPI document is too large" },
+  ])(
+    "releases a rejected OpenAPI response ($status, $size bytes) before closing",
+    async ({ status, size, error }) => {
+      const server = createServer((_request, response) => {
+        response.writeHead(status, { "content-length": String(size) });
+        // Keep the body open so dispatcher cleanup cannot finish without cancellation.
+        response.write("x");
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address() as AddressInfo;
+      const controller = new AbortController();
+      const prepared = prepareApiInstall({
+        source: `http://127.0.0.1:${port}/openapi`,
+        config: { openApi: true, auth: { type: "none" } },
+        signal: controller.signal,
+        allowPrivateEndpoint: true,
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await expect(
+          Promise.race([
+            prepared,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("OpenAPI rejection did not settle")),
+                2_000,
+              );
+            }),
+          ]),
+        ).rejects.toThrow(error);
+      } finally {
+        clearTimeout(timer);
+        controller.abort();
+        server.closeAllConnections();
+        await prepared.catch(() => undefined);
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 
   const prepareOpenApiFrom = (body: string) => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
@@ -871,6 +1121,106 @@ describe("OpenAPI connector import", () => {
       }),
     ).toThrow("unsafe header Authorization");
   });
+
+  it.each(["get", "delete", "post", "put", "patch"])(
+    "honors form query array explode settings for %s requests after import",
+    async (method) => {
+      const arraySchema = { type: "array", items: { type: "string" } };
+      const document = {
+        openapi: "3.1.0",
+        servers: [{ url: "https://93.184.216.34/v1" }],
+        components: {
+          parameters: {
+            tags: { name: "tags", in: "query", explode: false, schema: arraySchema },
+          },
+        },
+        paths: {
+          "/items": {
+            parameters: [{ $ref: "#/components/parameters/tags" }],
+            [method]: {
+              operationId: "items",
+              parameters: [
+                {
+                  name: "explicit",
+                  in: "query",
+                  style: "form",
+                  explode: false,
+                  schema: arraySchema,
+                },
+                { name: "defaults", in: "query", schema: arraySchema },
+                { name: "expanded", in: "query", explode: true, schema: arraySchema },
+                { name: "empty", in: "query", explode: false, schema: arraySchema },
+                { name: "scalar", in: "query", explode: false, schema: { type: "string" } },
+              ],
+            },
+          },
+        },
+      };
+      const fetch = vi.fn().mockResolvedValue(Response.json(document));
+      const prepared = await prepareApiInstall({
+        source: "https://93.184.216.34/openapi.json",
+        config: { openApi: true, auth: { type: "none" } },
+        remote: { fetch },
+      });
+      const install = {
+        id: "api-query-arrays",
+        kind: "api",
+        source: prepared.source,
+        secretId: null,
+        createdAt: new Date(0),
+        config: JSON.parse(JSON.stringify(prepared.config)),
+      };
+      const prisma = { capabilityInstall: { findFirst: vi.fn().mockResolvedValue(install) } };
+      fetch.mockReset();
+      fetch.mockImplementation(async () => Response.json({ ok: true }));
+      const provider = new InstalledConnectorProvider(prisma as never, {} as never, { fetch });
+      const values = ["alpha", "two words", "a&b"];
+      const args = {
+        tags: values,
+        explicit: values,
+        defaults: values,
+        expanded: values,
+        empty: [],
+        scalar: "one",
+      };
+      for await (const _event of provider.execute(
+        {
+          tool: "items",
+          args,
+          executionId: "items",
+          route: { connectorId: "installed", resourceId: install.id, toolName: "items" },
+        },
+        { spaceId: "space-1", userId: "user-1", signal: AbortSignal.timeout(5_000) } as never,
+      )) {
+        // Inspect the actual request after persisted config has been parsed again.
+      }
+      expect(fetch).toHaveBeenCalledOnce();
+      const [url, init] = fetch.mock.lastCall as [URL, RequestInit];
+      expect(url.searchParams.getAll("tags")).toEqual([values.join(",")]);
+      expect(url.searchParams.getAll("explicit")).toEqual([values.join(",")]);
+      expect(url.searchParams.getAll("defaults")).toEqual(values);
+      expect(url.searchParams.getAll("expanded")).toEqual(values);
+      expect(url.searchParams.getAll("empty")).toEqual([""]);
+      expect(url.searchParams.getAll("scalar")).toEqual(["one"]);
+      expect(init.body).toBe(["get", "delete"].includes(method) ? undefined : "{}");
+
+      // Previously installed connectors have no serialization metadata.
+      delete install.config.operations[0].commaSeparatedQueryParameters;
+      for await (const _event of provider.execute(
+        {
+          tool: "items",
+          args,
+          executionId: "legacy-items",
+          route: { connectorId: "installed", resourceId: install.id, toolName: "items" },
+        },
+        { spaceId: "space-1", userId: "user-1", signal: AbortSignal.timeout(5_000) } as never,
+      )) {
+        // Retain the historical repeated-key format until the source is reimported.
+      }
+      const [legacyUrl] = fetch.mock.lastCall as [URL, RequestInit];
+      expect(legacyUrl.searchParams.getAll("tags")).toEqual(values);
+    },
+  );
 
   it("sends shared $ref parameters where the spec declares them", async () => {
     const document = {
@@ -1521,6 +1871,279 @@ describe("OpenAPI connector import", () => {
   });
 });
 
+describe("installed MCP sessions last for a whole run", () => {
+  const publicResolver = async () => [{ address: "203.0.113.10", family: 4 as const }];
+
+  /** Streamable HTTP server that keeps its state per mcp-session-id, like a
+   * stateful executor: `pause` stores a paused execution under the calling
+   * session and `resume` only knows it in that same session. */
+  function statefulMcpServer() {
+    const sessions = new Set<string>();
+    const paused = new Map<string, string>();
+    const toolCalls: Array<{ session: string | null; tool: string; args: unknown }> = [];
+    const deletes: Array<string | null> = [];
+    let initializations = 0;
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const session = request.headers.get("mcp-session-id");
+      if (request.method === "GET") return new Response(null, { status: 405 });
+      if (request.method === "DELETE") {
+        deletes.push(session);
+        if (session) sessions.delete(session);
+        return new Response(null, { status: 202 });
+      }
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const message = JSON.parse(await request.text()) as {
+        id?: number;
+        method?: string;
+        params?: { name?: string; arguments?: Record<string, unknown> };
+      };
+      if (message.method === "initialize") {
+        initializations += 1;
+        const id = `session-${initializations}`;
+        sessions.add(id);
+        return Response.json(
+          {
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2025-11-25",
+              capabilities: { tools: {} },
+              serverInfo: { name: "stateful", version: "1" },
+            },
+          },
+          { headers: { "mcp-session-id": id } },
+        );
+      }
+      if (!session || !sessions.has(session)) return new Response(null, { status: 404 });
+      if (message.id === undefined) return new Response(null, { status: 202 });
+      if (message.method === "tools/list") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            tools: [
+              { name: "pause", inputSchema: { type: "object" } },
+              { name: "resume", inputSchema: { type: "object" } },
+            ],
+          },
+        });
+      }
+      if (message.method === "tools/call") {
+        const tool = message.params?.name ?? "";
+        toolCalls.push({ session, tool, args: message.params?.arguments });
+        if (tool === "pause") {
+          const executionId = `exec-of-${session}`;
+          paused.set(session, executionId);
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              content: [{ type: "text", text: "waiting for interaction" }],
+              structuredContent: { status: "waiting_for_interaction", executionId },
+            },
+          });
+        }
+        if (tool === "resume") {
+          const expected = paused.get(session);
+          if (expected !== message.params?.arguments?.executionId) {
+            return Response.json({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: {
+                code: -32000,
+                message: `Paused execution is unknown: ${String(
+                  message.params?.arguments?.executionId,
+                )}`,
+              },
+            });
+          }
+          paused.delete(session);
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { content: [{ type: "text", text: "resumed" }] },
+          });
+        }
+      }
+      return new Response(null, { status: 202 });
+    });
+    const install = {
+      id: "mcp-stateful",
+      kind: "mcp",
+      name: "Stateful MCP",
+      source: "https://mcp.example.test/mcp",
+      secretId: null,
+      createdAt: new Date(0),
+      config: { preset: "custom", auth: { type: "none" } },
+    };
+    return {
+      fetch,
+      install,
+      initializations: () => initializations,
+      toolCalls,
+      deletes,
+    };
+  }
+
+  function providerFor(server: ReturnType<typeof statefulMcpServer>) {
+    const prisma = {
+      capabilityInstall: { findFirst: vi.fn().mockResolvedValue(server.install) },
+    };
+    return new InstalledConnectorProvider(prisma as never, {} as never, {
+      fetch: server.fetch as unknown as typeof globalThis.fetch,
+      resolveHostname: publicResolver,
+    });
+  }
+
+  function runContext(runId: string) {
+    const controller = new AbortController();
+    const context = {
+      spaceId: "space-1",
+      userId: "user-1",
+      runId,
+      signal: controller.signal,
+    } as never;
+    return { context, controller };
+  }
+
+  async function callTool(
+    provider: InstalledConnectorProvider,
+    context: never,
+    tool: string,
+    args: Record<string, unknown>,
+  ): Promise<Array<{ type: string; data?: unknown; message?: string }>> {
+    const events: Array<{ type: string; data?: unknown; message?: string }> = [];
+    for await (const event of provider.execute(
+      {
+        tool,
+        args,
+        executionId: tool,
+        route: { connectorId: "installed", resourceId: "mcp-stateful", toolName: tool },
+      },
+      context,
+    )) {
+      events.push(event as never);
+    }
+    return events;
+  }
+
+  function pausedExecutionId(events: Array<{ type: string; data?: unknown }>): string {
+    const data = events[0] as { data: { structuredContent: { executionId: string } } };
+    return data.data.structuredContent.executionId;
+  }
+
+  it("keeps one session across a run's pause and resume calls", async () => {
+    const server = statefulMcpServer();
+    const provider = providerFor(server);
+    const { context } = runContext("run-1");
+
+    const pause = await callTool(provider, context, "pause", {});
+    expect(pause).toMatchObject([{ type: "result" }]);
+    const executionId = pausedExecutionId(pause);
+
+    const resume = await callTool(provider, context, "resume", { executionId });
+
+    expect(resume).toMatchObject([{ type: "result" }]);
+    expect(server.initializations()).toBe(1);
+  });
+
+  it("reuses the session on a run's next attempt after it waited for input", async () => {
+    const server = statefulMcpServer();
+    const provider = providerFor(server);
+    // One attempt is one continueRun pass: its own signal, the same run scope.
+    const waiting = runContext("run-1");
+    const pause = await callTool(provider, waiting.context, "pause", {});
+    const executionId = pausedExecutionId(pause);
+
+    // The run waits for the owner's answer (waiting_input), then the same run
+    // continues in this process with a fresh attempt and a fresh signal.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const resumed = runContext("run-1");
+
+    const resume = await callTool(provider, resumed.context, "resume", { executionId });
+
+    expect(resume).toMatchObject([{ type: "result" }]);
+    expect(server.initializations()).toBe(1);
+  });
+
+  it("does not share a session between two runs", async () => {
+    const server = statefulMcpServer();
+    const provider = providerFor(server);
+    const first = runContext("run-1");
+    const second = runContext("run-2");
+
+    const pause = await callTool(provider, first.context, "pause", {});
+    const executionId = pausedExecutionId(pause);
+
+    await expect(
+      callTool(provider, second.context, "resume", { executionId }),
+    ).resolves.toMatchObject([{ type: "error", message: /Paused execution is unknown/ }]);
+    expect(new Set(server.toolCalls.map((call) => call.session))).toEqual(
+      new Set(["session-1", "session-2"]),
+    );
+  });
+
+  it("keeps the session when an attempt aborts, so the run's next attempt reuses it", async () => {
+    const server = statefulMcpServer();
+    const provider = providerFor(server);
+    // One attempt is one continueRun pass: its own signal, the same run scope.
+    const waiting = runContext("run-1");
+    const pause = await callTool(provider, waiting.context, "pause", {});
+    const executionId = pausedExecutionId(pause);
+
+    // The run waits for the owner's answer; withRuntimeCleanup aborts this
+    // attempt's signal on the way out, which must not close the run's session.
+    waiting.controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(server.deletes).toEqual([]);
+
+    const resumed = runContext("run-1");
+    const resume = await callTool(provider, resumed.context, "resume", { executionId });
+
+    expect(resume).toMatchObject([{ type: "result" }]);
+    expect(server.initializations()).toBe(1);
+  });
+
+  it("closes the session when its run ends, and only that run's", async () => {
+    const server = statefulMcpServer();
+    const provider = providerFor(server);
+    const first = runContext("run-1");
+    await callTool(provider, first.context, "pause", {});
+    const second = runContext("run-2");
+    const executionId = pausedExecutionId(await callTool(provider, second.context, "pause", {}));
+
+    provider.endRun("run-1");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(server.deletes).toEqual(["session-1"]);
+    const resume = await callTool(provider, second.context, "resume", { executionId });
+    expect(resume).toMatchObject([{ type: "result" }]);
+    expect(server.initializations()).toBe(2);
+    await provider.close();
+  });
+
+  it("keeps the session after a JSON-RPC error response with code -32000", async () => {
+    const server = statefulMcpServer();
+    const provider = providerFor(server);
+    const { context } = runContext("run-1");
+
+    const pause = await callTool(provider, context, "pause", {});
+    const executionId = pausedExecutionId(pause);
+    // A recoverable server error between pause and resume, answered in a normal
+    // JSON-RPC error response: the connection itself is still healthy.
+    await expect(
+      callTool(provider, context, "resume", { executionId: "other" }),
+    ).resolves.toMatchObject([{ type: "error", message: /Paused execution is unknown/ }]);
+    expect(server.deletes).toEqual([]);
+
+    const resume = await callTool(provider, context, "resume", { executionId });
+
+    expect(resume).toMatchObject([{ type: "result" }]);
+    expect(server.initializations()).toBe(1);
+  });
+});
+
 describe("private installed connectors", () => {
   const LOCAL_API = "http://127.0.0.1:4000";
   const config = {
@@ -1577,7 +2200,11 @@ describe("private installed connectors", () => {
 
     await expect(execute("owner-1")).resolves.toMatchObject([{ type: "error" }]);
     await expect(execute("member-1")).resolves.toEqual([
-      { type: "error", message: "Connector URL must use HTTPS" },
+      {
+        type: "error",
+        message:
+          "Connector URL must use HTTPS. Set MCP_ALLOW_PRIVATE_ENDPOINT=true on the API and worker to allow it.",
+      },
     ]);
     await expect(execute("member-1", true)).resolves.toMatchObject([{ type: "result" }]);
     // Installed while this user owned the deployment: no longer reachable after the change.
@@ -1585,4 +2212,96 @@ describe("private installed connectors", () => {
     await expect(execute("owner-1")).resolves.toMatchObject([{ type: "error" }]);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("declared JSON request bodies", () => {
+  it.each([
+    ["DELETE", true, { body: { ids: ["item-1"] } }, '{"ids":["item-1"]}', "?dryRun=true"],
+    ["DELETE", true, { body: null }, "null", "?dryRun=true"],
+    ["POST", true, { body: null }, "null", "?dryRun=true"],
+    ["DELETE", "query", { body: "legacy" }, undefined, "?dryRun=true&body=legacy"],
+    ["DELETE", "header", { body: "legacy" }, undefined, "?dryRun=true"],
+    ["DELETE", false, { body: { ids: ["item-1"] } }, undefined, "?dryRun=true"],
+    ["POST", "query", { body: null }, "{}", "?dryRun=true"],
+    ["DELETE", true, {}, undefined, "?dryRun=true"],
+    ["POST", true, { title: "legacy" }, '{"title":"legacy"}', "?dryRun=true"],
+  ] as const)(
+    "preserves %s bodies (declared: %s, args: %j)",
+    async (method, declared, supplied, body, query) => {
+      const imported = importOpenApiDocument({
+        openapi: "3.1.0",
+        servers: [{ url: "https://93.184.216.34/v1" }],
+        paths: {
+          "/items/{itemId}": {
+            [method.toLowerCase()]: {
+              operationId: "changeItems",
+              parameters: [
+                { name: "itemId", in: "path", required: true, schema: { type: "string" } },
+                { name: "dryRun", in: "query", schema: { type: "boolean" } },
+                { name: "If-Match", in: "header", schema: { type: "string" } },
+                ...(typeof declared === "string"
+                  ? [{ name: "body", in: declared, schema: { type: ["string", "null"] } }]
+                  : []),
+              ],
+              ...(declared === true
+                ? {
+                    requestBody: {
+                      content: {
+                        "application/json": {
+                          schema: {
+                            type: ["object", "null"],
+                            properties: { ids: { type: "array", items: { type: "string" } } },
+                          },
+                        },
+                      },
+                    },
+                  }
+                : {}),
+            },
+          },
+        },
+      });
+      const args = parseConnectorToolArgs(imported.operations[0]!.inputSchema, {
+        itemId: "item/1",
+        dryRun: true,
+        "If-Match": "v2",
+        ...supplied,
+      });
+      const install = {
+        id: "json-body",
+        kind: "api",
+        source: imported.baseUrl,
+        secretId: null,
+        config: { auth: { type: "none" }, operations: imported.operations },
+      };
+      const fetch = vi.fn(async () => Response.json({ ok: true }));
+      const provider = new InstalledConnectorProvider(
+        { capabilityInstall: { findFirst: vi.fn(async () => install) } } as never,
+        {} as never,
+        { fetch },
+      );
+      const events = [];
+      for await (const event of provider.execute(
+        {
+          tool: "changeItems",
+          args,
+          executionId: "test",
+          route: { connectorId: "installed", resourceId: install.id, toolName: "changeItems" },
+        },
+        { spaceId: "space-1", userId: "user-1", signal: AbortSignal.timeout(5000) } as never,
+      ))
+        events.push(event);
+      expect(events).toMatchObject([{ type: "result" }]);
+      expect(fetch).toHaveBeenCalledOnce();
+      const [url, init] = fetch.mock.lastCall as unknown as [URL, RequestInit];
+      expect(String(url)).toBe(`https://93.184.216.34/v1/items/item%2F1${query}`);
+      expect(init.method).toBe(method);
+      expect(new Headers(init.headers).get("if-match")).toBe("v2");
+      expect(new Headers(init.headers).get("content-type")).toBe(
+        body === undefined ? null : "application/json",
+      );
+      expect(init.body).toBe(body);
+      if (declared === "header") expect(new Headers(init.headers).get("body")).toBe("legacy");
+    },
+  );
 });

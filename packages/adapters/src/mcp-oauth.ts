@@ -3,13 +3,14 @@ import { isDeepStrictEqual } from "node:util";
 import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import {
-  isLocalMcpHost,
+  isLocalhostOrLoopbackIp,
+  MCP_OAUTH_CLIENT_REQUIRED,
   mcpOAuthEnvReferences,
   parseMcpOAuthAuthorizationParams,
 } from "@cortexai-agent-hub/contracts";
 import { readBoundedResponseBytes } from "@cortexai-agent-hub/core";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
-import { runAsSystem } from "@cortexai-agent-hub/db";
+import { availableInSpace, itemSecretIn, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type {
   OAuthClientProvider,
@@ -29,8 +30,16 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { advisoryLock } from "./advisory-lock.js";
 import { sanitizeConnectorError } from "./connector-safety.js";
-import { secureFetch, validateUrl, withEndpointOriginFallback } from "./mcp-transport.js";
+import { MCP_DYNAMIC_REGISTRATION_UNSUPPORTED, needsMcpOAuthClient } from "./mcp-server-health.js";
+import {
+  MAX_AUTHORIZATION_URL_LENGTH,
+  secureFetch,
+  validateUrl,
+  withEndpointOriginFallback,
+} from "./mcp-transport.js";
+import { REFRESH_REQUEST_TIMEOUT_MS, withRefreshLock } from "./refresh-lock.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import { persistPreparedSecret } from "./secret-persistence.js";
 import { deleteSecretBestEffort, holdSecretNotifications } from "./secret-store-factory.js";
@@ -46,6 +55,8 @@ type OAuthState = {
 
 export type OAuthMaterial = {
   secret?: string;
+  /** Stdio launch arguments. */
+  args?: string[];
   env?: Record<string, string>;
   /** Credential files for a stdio server: the env variable that receives the file's
    * path, and the content template, which may use `{{oauth.*}}` references. */
@@ -56,17 +67,15 @@ export type OAuthMaterial = {
    * dynamic client registration for servers that do not offer it. */
   oauthClient?: PreRegisteredClient;
   oauth?: OAuthState;
+  /** Raised whenever the stored OAuth state is discarded, so a write from a flow that
+   * began before the discard cannot bring its tokens back. */
+  oauthGeneration?: number;
 };
 
 /** Values that must never appear in model-visible tool results or errors. */
 export function oauthMaterialSecrets(material: OAuthMaterial): string[] {
   const values: string[] = [];
-  const add = (value: string | undefined) => {
-    if (!value) return;
-    values.push(value);
-    const bearer = value.match(/^Bearer\s+(.+)$/i);
-    if (bearer?.[1]) values.push(bearer[1]);
-  };
+  const add = (value: string | undefined) => addSecret(values, value);
   add(material.secret);
   add(material.oauth?.tokens?.access_token);
   add(material.oauth?.tokens?.refresh_token);
@@ -76,30 +85,11 @@ export function oauthMaterialSecrets(material: OAuthMaterial): string[] {
     add(client.client_secret);
   }
   for (const [key, value] of Object.entries(material.headers ?? {})) {
-    if (isAuthHeaderKey(key)) {
-      // Cookie / X-Session / Authorization always carry auth material, including short values.
-      add(value);
-    } else if (
-      isExplicitCredentialKey(key) &&
-      looksLikeSecretValue(value, { allowNumeric: true })
-    ) {
-      add(value);
-    } else if (
-      isAmbiguousCredentialKey(key) &&
-      looksLikeSecretValue(value, { allowNumeric: false })
-    ) {
-      add(value);
-    }
+    // Cookie / X-Session / Authorization always carry auth material, including short values.
+    if (isAuthHeaderKey(key) || isConfiguredSecret(key, value)) add(value);
   }
   for (const [key, value] of Object.entries(material.env ?? {})) {
-    if (isExplicitCredentialKey(key) && looksLikeSecretValue(value, { allowNumeric: true })) {
-      add(value);
-    } else if (
-      isAmbiguousCredentialKey(key) &&
-      looksLikeSecretValue(value, { allowNumeric: false })
-    ) {
-      add(value);
-    }
+    if (isConfiguredSecret(key, value)) add(value);
   }
   // A file without references is a literal credential (for example a service-account key).
   // One that uses references is covered by the grant values it embeds.
@@ -113,11 +103,184 @@ export function oauthMaterialSecrets(material: OAuthMaterial): string[] {
   return [...new Set(values)];
 }
 
+/** Registers a credential and, for a Bearer or Basic value, the credential on its own. */
+function addSecret(values: string[], value: string | undefined): void {
+  if (!value) return;
+  values.push(value);
+  const bearer = value.match(/^(?:Bearer|Basic)\s+(.+)$/i);
+  if (bearer?.[1]) values.push(bearer[1]);
+}
+
+/** Credentials in stdio launch arguments, which the process can echo in output and errors. */
+export function launchArgSecrets(args: string[]): string[] {
+  const values: string[] = [];
+  const add = (value: string | undefined) => addSecret(values, value);
+  const addAssignment = (assignment: string) => {
+    const match = assignment.match(/^([A-Za-z_][\w.-]*)=([\s\S]*)$/);
+    if (match?.[1] && match[2] && isLaunchSecret(match[1], match[2])) add(match[2]);
+  };
+  for (const [index, arg] of args.entries()) {
+    for (const url of urlsIn(arg)) values.push(...urlSecrets(url));
+    const flag = arg.match(/^--?([A-Za-z][\w.-]*)(?:=([\s\S]*))?$/);
+    if (!flag?.[1]) {
+      addAssignment(arg);
+      continue;
+    }
+    const name = flag[1];
+    const next = args[index + 1];
+    const value = flag[2] ?? (next?.startsWith("-") ? undefined : next);
+    if (!value) continue;
+    const normalized = snakeName(name);
+    if (name === "H" || normalized === "header") {
+      const header = value.match(/^([^:]+):\s*([\s\S]*)$/);
+      if (!header?.[1] || !header[2]) continue;
+      const [, headerName, headerValue] = header;
+      // `--header Authorization:Bearer <token>` splits the token into the next argument, which
+      // may itself start with "-"; only an argument shaped like a flag is not the token.
+      if (isAuthHeaderKey(headerName) && /^bearer$/i.test(headerValue)) {
+        const token = args[index + 2];
+        if (flag[2] === undefined && !/^(--|-.$)/.test(token ?? "")) add(token);
+      } else if (
+        isAuthHeaderKey(headerName) ||
+        // Custom auth headers (an API gateway's subscription key) have no standard name, so any
+        // header but the content-negotiation ones follows the configured-header rule.
+        (!/^(accept|content|user-agent|cache-control|connection|host)/i.test(headerName.trim()) &&
+          isLaunchSecret(headerName, headerValue))
+      ) {
+        add(headerValue);
+      }
+    } else if (name === "e" || normalized === "env") {
+      addAssignment(value);
+    } else if (name.length === 1) {
+      // `-y` (as in `npx -y <package>`) takes no value; what follows it is the package.
+      if (name !== "y" && looksLikeOpaqueToken(value)) add(value);
+    } else if (isCredentialArg(name, value)) {
+      add(value);
+    }
+  }
+  return [...new Set(values)];
+}
+
+/** An assignment or header value: the configured env/header rule, or a credential name. */
+function isLaunchSecret(name: string, value: string): boolean {
+  return isConfiguredSecret(snakeName(name), value) || isCredentialArg(name, value);
+}
+
+/** A flag, query, or header value under a credential name. Only explicit credential names
+ * (`api_key`, `password`, `access_key`) take numeric values, so `?key=0` cannot redact every zero. */
+function isCredentialArg(name: string, value: string): boolean {
+  const normalized = snakeName(name);
+  return (
+    isCredentialName(normalized) &&
+    looksLikeSecretValue(value, {
+      allowNumeric: isExplicitCredentialKey(normalized) || NAMED_KEY.test(normalized),
+    })
+  );
+}
+
+/** Key names that say which credential they hold (`access_key`, not a bare `key`). */
+const NAMED_KEY = /(?:^|_)(access_key|private_key|secret_key)$/;
+
+/** Flag and query names that carry a credential (`api_key`, `token`, `client_auth`, `pat`). */
+function isCredentialName(normalized: string): boolean {
+  return (
+    isExplicitCredentialKey(normalized) ||
+    isAmbiguousCredentialKey(normalized) ||
+    NAMED_KEY.test(normalized) ||
+    /^(key|pat|auth)$/.test(normalized) ||
+    // `--client-auth <token>`, but not a switch such as `--no-auth`, whose next argument is not its value.
+    (/_auth$/.test(normalized) && !/^(no|disable|enable|skip|use|require)_/.test(normalized))
+  );
+}
+
+/** `apiKey`, `APIKey`, `api.key` and `api-key` → `api_key`, so they match the snake_case rules. */
+function snakeName(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])|([A-Z])([A-Z][a-z])/g, (_, a, b, c, d) =>
+      a ? `${a}_${b}` : `${c}_${d}`,
+    )
+    .toLowerCase()
+    .replace(/[-.]/g, "_");
+}
+
+/** A one-letter flag's value is a credential only when it reads like a generated token,
+ * not a word, path, or number. */
+function looksLikeOpaqueToken(value: string): boolean {
+  return /^[\w+=.-]{16,}$/.test(value) && /\d/.test(value) && /[A-Za-z]/.test(value);
+}
+
+/** Each whitespace- or quote-separated word containing `scheme://`, from the scheme on. A scan,
+ * not a global regex, so a long argument cannot make matching quadratic. */
+function urlsIn(text: string): string[] {
+  const urls: string[] = [];
+  for (const word of text.split(/[\s"'<>]+/)) {
+    const separator = word.indexOf("://");
+    let start = separator;
+    while (start > 0 && /[a-z\d+.-]/i.test(word.charAt(start - 1))) start--;
+    while (start < separator && !/[a-z]/i.test(word.charAt(start))) start++;
+    if (start < separator) urls.push(word.slice(start));
+  }
+  return urls;
+}
+
+/** The userinfo of a URL (`user:password@`, or a bare token as the user) and its
+ * credential-named query values. */
+function urlSecrets(text: string): string[] {
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return [];
+  }
+  const values: string[] = [];
+  const addEncoded = (value: string) => values.push(value, decodeURIComponentSafe(value));
+  if (url.password) addEncoded(url.password);
+  // An HTTP(S) user name without a password is how a token is passed (`https://<token>@host`);
+  // otherwise, as for `ssh://git@host` or `user:password@`, it counts only when it reads like one.
+  const username = decodeURIComponentSafe(url.username);
+  if (
+    !url.password && /^https?:$/.test(url.protocol)
+      ? username.length >= MIN_NEUTRAL_SECRET_LENGTH
+      : looksLikeOpaqueToken(username)
+  )
+    addEncoded(url.username);
+  for (const pair of url.search.slice(1).split("&")) {
+    const [[key, value] = []] = new URLSearchParams(pair);
+    if (!key || !value) continue;
+    // Both the decoded value and its spelling in the argument, which the server may echo.
+    if (isCredentialArg(key, value)) {
+      addSecret(values, value);
+      values.push(pair.slice(pair.indexOf("=") + 1));
+    }
+  }
+  return values;
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Redaction replaces substrings, so a short value under a neutral name would mangle output. */
+const MIN_NEUTRAL_SECRET_LENGTH = 8;
+
+/** A user can put a credential under any env or header name, so only short or ordinary
+ * config values under names that do not say credential stay visible. */
+function isConfiguredSecret(key: string, value: string): boolean {
+  if (isExplicitCredentialKey(key)) return looksLikeSecretValue(value, { allowNumeric: true });
+  if (!looksLikeSecretValue(value, { allowNumeric: false })) return false;
+  return isAmbiguousCredentialKey(key) || value.trim().length >= MIN_NEUTRAL_SECRET_LENGTH;
+}
+
 /** Headers whose values are credentials even when short (e.g. Cookie, X-Session). */
 function isAuthHeaderKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/-/g, "_");
   return (
     normalized === "authorization" ||
+    normalized === "proxy_authorization" ||
     normalized === "cookie" ||
     normalized === "set_cookie" ||
     normalized === "x_session" ||
@@ -231,6 +394,12 @@ function boundClient(
 type ServerRef = { id: string; endpoint: string | null; secretId: string | null };
 type ActorRef = { spaceId: string; userId: string };
 
+class McpCredentialRefusedError extends Error {}
+
+function isCredentialRefusal(error: unknown): boolean {
+  return error instanceof McpCredentialRefusedError || error instanceof McpOAuthServerMismatchError;
+}
+
 /** Our own text, so callers may show it as is. */
 export class McpOAuthServerMismatchError extends Error {
   constructor() {
@@ -238,6 +407,16 @@ export class McpOAuthServerMismatchError extends Error {
       "MCP OAuth authorization server differs from the one this client was first used with; reconfigure the server's OAuth client",
     );
     this.name = "McpOAuthServerMismatchError";
+  }
+}
+
+/** The authorization server cannot register a client, so the user must enter one. */
+export class McpOAuthClientRequiredError extends Error {
+  readonly code = MCP_OAUTH_CLIENT_REQUIRED;
+  /** @param revision The server revision the attempt used. */
+  constructor(readonly revision: number) {
+    super(MCP_DYNAMIC_REGISTRATION_UNSUPPORTED);
+    this.name = "McpOAuthClientRequiredError";
   }
 }
 
@@ -270,6 +449,8 @@ type ProviderOptions = {
   onPersisted?: (record: { id: string; ref: string; material: OAuthMaterial }) => void;
   /** Renews the grant under the server's credential lock and returns the grant now stored. */
   refresh?: (heldRefreshToken: string) => Promise<TokenGrant>;
+  /** The instance opt-in that lets OAuth URLs use plain HTTP on a private network. */
+  allowPrivateEndpoint?: boolean;
 };
 
 /** Refresh before expiry to cover clock skew and request time. */
@@ -299,10 +480,13 @@ function accessTokenExpired(oauth: OAuthState | undefined): boolean {
 // advertise an internal alias for their public origin, so cross-host
 // resources are allowed, but malformed or cleartext resources are rejected
 // and the SDK falls back to deriving the resource from the server URL.
-function canonicalResource(resource: string | undefined): URL | undefined {
+function canonicalResource(
+  resource: string | undefined,
+  allowPrivateEndpoint = false,
+): URL | undefined {
   if (!resource) return undefined;
   try {
-    return validateUrl(resource);
+    return validateUrl(resource, { allowPrivateEndpoint });
   } catch {
     return undefined;
   }
@@ -329,6 +513,46 @@ function requestOfflineAccess(
   const scopes = scope.split(/\s+/);
   if (scopes.includes(OFFLINE_ACCESS)) return;
   authorizationUrl.searchParams.set("scope", [...scopes, OFFLINE_ACCESS].join(" "));
+}
+
+/**
+ * Client-authentication methods this client can perform, most preferred first: a
+ * public client proving itself with PKCE, then a secret in the body, then one in
+ * a Basic header. Anything else (`private_key_jwt`, mTLS) needs key material
+ * this client does not hold.
+ */
+const REGISTRATION_AUTH_METHODS = ["none", "client_secret_post", "client_secret_basic"];
+
+/**
+ * The client-authentication method to register with (RFC 7591).
+ *
+ * A public client -- `none`, holding no secret and proving itself with PKCE -- is
+ * the right shape here, but asserting it unconditionally breaks registration
+ * outright on an authorization server that does not offer it: the server rejects
+ * the whole document with `invalid_client_metadata` rather than registering us
+ * with a method it prefers. So the choice follows what the server advertises
+ * (RFC 8414), narrowed to the methods above.
+ *
+ * When the server advertises nothing, the field is omitted so the server applies
+ * its own default -- `client_secret_basic` per RFC 8414 S2. A registration that
+ * comes back with a client secret is stored and used like any other; the SDK
+ * picks the matching method for the token request from the same metadata.
+ *
+ * A server that advertises methods but none this client can perform is a
+ * different case, and omitting the field there would quietly register for
+ * `client_secret_basic` -- a method it never offered -- leaving a client that
+ * cannot authenticate. Only a client registered out of band can sign in to such
+ * a server, which is what the pre-registered client exists for.
+ */
+function registrationAuthMethod(discovery: OAuthDiscoveryState | undefined): string | undefined {
+  const advertised = discovery?.authorizationServerMetadata?.token_endpoint_auth_methods_supported;
+  if (!Array.isArray(advertised) || advertised.length === 0) return undefined;
+  const usable = REGISTRATION_AUTH_METHODS.find((method) => advertised.includes(method));
+  if (!usable)
+    throw new Error(
+      `${MCP_DYNAMIC_REGISTRATION_UNSUPPORTED} with a client-authentication method this client can perform; it accepts only ${advertised.join(", ")}`,
+    );
+  return usable;
 }
 
 function applyGrant(oauth: OAuthState, grant: TokenGrant): void {
@@ -370,12 +594,18 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
     if (!redirectUri) throw new McpReauthorizationRequiredError(this.serverId);
     const hostname = new URL(redirectUri).hostname;
     const applicationType = hostname === "localhost" || hostname === "127.0.0.1" ? "native" : "web";
+    // Only a registration this client is about to make has to match the server; a
+    // pre-registered client was given its method out of band, and this document is
+    // then read for its scope alone.
+    const authMethod = this.material.oauthClient
+      ? undefined
+      : registrationAuthMethod(this.material.oauth?.discoveryState);
     return {
       redirect_uris: [redirectUri],
       client_name: "CortexAI Agent Hub",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none",
+      ...(authMethod ? { token_endpoint_auth_method: authMethod } : {}),
       application_type: applicationType,
       ...(this.configuredScope ? { scope: this.configuredScope } : {}),
     } as OAuthClientMetadata;
@@ -454,6 +684,19 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
     };
   }
 
+  /**
+   * The server refused the held access token before its stated expiry. Renew it, or drop
+   * it so the server reads as needing a reconnect when no refresh can replace it.
+   */
+  async replaceRejectedToken(): Promise<void> {
+    const held = this.material.oauth?.tokens;
+    await this.renew();
+    const tokens = this.material.oauth?.tokens;
+    if (tokens && tokens !== held) return;
+    if (tokens) await this.invalidateCredentials("tokens");
+    throw new McpReauthorizationRequiredError(this.serverId);
+  }
+
   /** Renews under the credential lock; concurrent callers share one refresh. */
   private renew(): Promise<void> {
     this.refreshing ??= this.refreshHeldGrant().finally(() => {
@@ -466,7 +709,14 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
     const oauth = this.material.oauth;
     const held = oauth?.tokens;
     if (!oauth || !held?.refresh_token || !this.options.refresh) return;
-    const grant = await this.options.refresh(held.refresh_token);
+    let grant: TokenGrant;
+    try {
+      grant = await this.options.refresh(held.refresh_token);
+    } catch (error) {
+      if (isCredentialRefusal(error) && this.material.oauth === oauth && oauth.tokens === held)
+        applyGrant(oauth, {});
+      throw error;
+    }
     // A write that landed while the refresh ran is newer than the grant it replaced.
     if (this.material.oauth !== oauth || oauth.tokens !== held) return;
     applyGrant(oauth, grant);
@@ -485,7 +735,11 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
   async redirectToAuthorization(url: URL): Promise<void> {
     let authorizationUrl: URL;
     try {
-      authorizationUrl = validateUrl(url, { allowHttpLocalhost: true });
+      authorizationUrl = validateUrl(url, {
+        allowHttpLocalhost: true,
+        allowPrivateEndpoint: this.options.allowPrivateEndpoint,
+        maxUrlLength: MAX_AUTHORIZATION_URL_LENGTH,
+      });
     } catch (error) {
       if (!this.options.onAuthorization) {
         await this.invalidateCredentials("tokens");
@@ -498,6 +752,11 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
         if (!authorizationUrl.searchParams.has(key)) authorizationUrl.searchParams.set(key, value);
     }
     requestOfflineAccess(authorizationUrl, this.material.oauth?.discoveryState);
+    // Configured parameters are added after validation; keep the final URL within bounds too.
+    if (authorizationUrl.href.length > MAX_AUTHORIZATION_URL_LENGTH) {
+      if (!this.options.onAuthorization) await this.invalidateCredentials("tokens");
+      throw new Error(`MCP authorization URL exceeds ${MAX_AUTHORIZATION_URL_LENGTH} characters`);
+    }
     this.authorizationUrl = authorizationUrl;
     if (this.options.onAuthorization) {
       this.options.onAuthorization(authorizationUrl);
@@ -517,11 +776,15 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
     return verifier;
   }
   async validateResourceURL(_serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
-    return canonicalResource(resource);
+    return canonicalResource(resource, this.options.allowPrivateEndpoint);
   }
   async saveDiscoveryState(value: OAuthDiscoveryState): Promise<void> {
     this.oauth().discoveryState = value;
     await this.persist();
+  }
+  /** When the held access token lapses, if the grant says. */
+  accessTokenExpiresAt(): number | undefined {
+    return accessTokenExpiresAt(this.material.oauth);
   }
   discoveryState(): OAuthDiscoveryState | undefined {
     return this.material.oauth?.discoveryState;
@@ -572,6 +835,8 @@ type Pending = {
   /** The MCP endpoint, or for a stdio server (which has none) its authorization server. */
   endpoint: string;
   stdio: boolean;
+  /** The stored authorization generation this flow began at. */
+  generation: number;
   provider: StoredMcpOAuthProvider;
   createdAt: number;
   expiry?: ReturnType<typeof setTimeout>;
@@ -595,7 +860,7 @@ function oauthFetch(
   publicError: (error: unknown, message: string) => Error;
 } {
   const url = new URL(endpoint);
-  const localHttp = url.protocol === "http:" && isLocalMcpHost(url.hostname);
+  const localHttp = url.protocol === "http:" && isLocalhostOrLoopbackIp(url.hostname);
   const headers = {
     ...material.headers,
     ...(material.secret
@@ -804,18 +1069,12 @@ type MaterialSnapshot = {
   secret: { id: string; ciphertext: string } | null;
 };
 
-/**
- * A refresh holds the credential lock across one token request and the write.
- * The lock wait runs inside the transaction, so it gets its own cap. Whatever
- * is left after the wait and the request goes to the secret write: a rotated
- * token that never commits is lost.
- */
-const REFRESH_LOCK_WAIT_MS = 10_000;
-const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
-const REFRESH_TRANSACTION_MS = 60_000;
-
-function lockMaterial(tx: Prisma.TransactionClient, serverId: string): Promise<number> {
-  return tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('mcp-oauth-material'), hashtext(${serverId}))`;
+/** Serializes changes to one MCP server's stored credential across the API and worker. */
+export function lockMcpOAuthMaterial(
+  tx: Prisma.TransactionClient,
+  serverId: string,
+): Promise<unknown> {
+  return advisoryLock(tx, "mcp-oauth-material", serverId);
 }
 
 /** One refresh-token grant against the stored authorization server. */
@@ -823,6 +1082,7 @@ async function requestRefresh(
   material: OAuthMaterial,
   refreshToken: string,
   fetchFn: typeof fetch,
+  allowPrivateEndpoint: boolean,
 ): Promise<OAuthTokens> {
   const discovery = material.oauth?.discoveryState;
   const clientInformation = material.oauthClient
@@ -834,7 +1094,7 @@ async function requestRefresh(
     metadata: discovery.authorizationServerMetadata,
     clientInformation,
     refreshToken,
-    resource: canonicalResource(discovery.resourceMetadata?.resource),
+    resource: canonicalResource(discovery.resourceMetadata?.resource, allowPrivateEndpoint),
     fetchFn: (input, init) =>
       fetchFn(input, { ...init, signal: AbortSignal.timeout(REFRESH_REQUEST_TIMEOUT_MS) }),
   });
@@ -877,11 +1137,30 @@ function conflictsWithBinding(stored: PreRegisteredClient | undefined, flow: OAu
 export type McpOAuthSummary = {
   status: "none" | "connected" | "reconnect";
   clientId: string | null;
+  /** Whether the stored material holds a credential; a lone generation marker holds none. */
+  credential: boolean;
 };
+
+/** Whether the material holds anything beyond OAuth bookkeeping. */
+function hasCredential(material: OAuthMaterial): boolean {
+  return Boolean(
+    material.secret ||
+      material.args?.length ||
+      Object.keys(material.env ?? {}).length ||
+      Object.keys(material.files ?? {}).length ||
+      Object.keys(material.headers ?? {}).length ||
+      material.oauthClient ||
+      material.oauth,
+  );
+}
 
 function summarize(material: OAuthMaterial): McpOAuthSummary {
   const status = material.oauth?.tokens ? "connected" : material.oauth ? "reconnect" : "none";
-  return { status, clientId: material.oauthClient?.client_id ?? null };
+  return {
+    status,
+    clientId: material.oauthClient?.client_id ?? null,
+    credential: hasCredential(material),
+  };
 }
 
 export class McpOAuthBroker {
@@ -933,8 +1212,7 @@ export class McpOAuthBroker {
     const server = await this.prisma.mcpServer.findFirst({
       where: {
         id: input.serverId,
-        spaceId: input.spaceId,
-        userId: input.userId,
+        ...availableInSpace(input),
         enabled: true,
       },
     });
@@ -997,6 +1275,7 @@ export class McpOAuthBroker {
       }
     } catch (error) {
       if (error instanceof McpOAuthServerMismatchError) throw error;
+      if (needsMcpOAuthClient(error)) throw new McpOAuthClientRequiredError(server.revision);
       if (!authorizationUrl) throw networkFetch.publicError(error, "Could not start MCP OAuth");
     } finally {
       await networkFetch.close().catch(() => undefined);
@@ -1043,6 +1322,7 @@ export class McpOAuthBroker {
       userId: input.userId,
       endpoint: target,
       stdio: !server.endpoint,
+      generation: loaded.material.oauthGeneration ?? 0,
       provider,
       createdAt: Date.now(),
       expiry,
@@ -1060,7 +1340,7 @@ export class McpOAuthBroker {
     state: string;
     spaceId: string;
     userId: string;
-  }): Promise<void> {
+  }): Promise<{ serverId: string; revision: number }> {
     await this.sweepExpiredPending();
     if (input.state !== input.sessionId) {
       throw new Error("MCP OAuth session is invalid or expired");
@@ -1082,8 +1362,7 @@ export class McpOAuthBroker {
       const server = await this.prisma.mcpServer.findFirst({
         where: {
           id: session.serverId,
-          spaceId: input.spaceId,
-          userId: input.userId,
+          ...availableInSpace(input),
           enabled: true,
         },
       });
@@ -1099,6 +1378,7 @@ export class McpOAuthBroker {
         userId: input.userId,
         endpoint: session.endpoint,
         stdio: !server.endpoint,
+        generation: loaded.material.oauthGeneration ?? 0,
         provider: this.createProvider(server, context, loaded, {
           redirectUri: session.redirectUri,
           state: session.id,
@@ -1122,7 +1402,7 @@ export class McpOAuthBroker {
     // The exchange sends the client secret: check it against the binding stored now, not
     // the one this flow started with, in case an overlapping flow bound the client first.
     const current = await this.prisma.mcpServer.findFirst({
-      where: { id: pending.serverId, spaceId: input.spaceId, userId: input.userId },
+      where: { id: pending.serverId, ...availableInSpace(input) },
       select: { id: true, endpoint: true, secretId: true },
     });
     if (current) {
@@ -1156,12 +1436,32 @@ export class McpOAuthBroker {
     } finally {
       await networkFetch.close().catch(() => undefined);
     }
-    if (!(await pending.provider.tokens())) throw new Error("MCP OAuth authorization failed");
-    // Bump the revision so cached runtime sessions rebuild with the fresh tokens.
-    await this.prisma.mcpServer.update({
-      where: { id: pending.serverId },
-      data: { revision: { increment: 1 } },
-    });
+    const tokens = await pending.provider.tokens();
+    // A disconnect raised the stored generation after this sign-in began, so its tokens
+    // cannot connect the server; reject the completion instead of reporting it, however
+    // the exchange itself went. So is an endpoint edit since. The revision is bumped under
+    // the same lock, so runtime sessions rebuild and a later edit keeps its newer revision.
+    // The secret read can be a remote call, so the lock gets refresh's limits, not the
+    // default transaction timeout.
+    const { revision } = await withRefreshLock(
+      this.prisma,
+      (tx) => lockMcpOAuthMaterial(tx, pending.serverId),
+      async (tx) => {
+        const endpoint = pending.stdio ? null : pending.endpoint;
+        const snapshot = await this.snapshot(tx, pending.serverId, input, endpoint);
+        const material = snapshot.secret
+          ? await this.read(snapshot.secret.ciphertext, snapshot.secret.id)
+          : {};
+        if ((material.oauthGeneration ?? 0) !== pending.generation)
+          throw new Error("MCP OAuth session is invalid or expired");
+        if (!tokens) throw new Error("MCP OAuth authorization failed");
+        return tx.mcpServer.update({
+          where: { id: pending.serverId },
+          data: { revision: { increment: 1 } },
+        });
+      },
+    );
+    return { serverId: pending.serverId, revision };
   }
 
   private async sweepExpiredPending(): Promise<void> {
@@ -1181,18 +1481,50 @@ export class McpOAuthBroker {
     this.pending.delete(sessionId);
   }
 
-  async disconnect(input: { serverId: string; spaceId: string; userId: string }): Promise<void> {
+  /** Returns the revision the disconnect committed, or undefined when the server is not found. */
+  async disconnect(input: {
+    serverId: string;
+    spaceId: string;
+    userId: string;
+  }): Promise<number | undefined> {
+    // End this actor's pending sign-ins for the server too, so a callback that lands after
+    // the disconnect cannot finish an authorization the user called off.
+    for (const [sessionId, pending] of this.pending) {
+      if (
+        pending.serverId === input.serverId &&
+        pending.spaceId === input.spaceId &&
+        pending.userId === input.userId
+      )
+        this.discardPending(sessionId, pending);
+    }
+    await this.prisma.mcpOAuthSession.deleteMany({
+      where: { serverId: input.serverId, spaceId: input.spaceId, userId: input.userId },
+    });
     const server = await this.prisma.mcpServer.findFirst({
-      where: { id: input.serverId, spaceId: input.spaceId, userId: input.userId },
+      where: { id: input.serverId, ...availableInSpace(input) },
     });
-    if (!server?.secretId) return;
-    const row = await this.prisma.secret.findFirst({
-      where: { id: server.secretId, spaceId: input.spaceId, userId: input.userId },
-    });
-    if (!row) return;
-    const material = await this.read(row.ciphertext, row.id);
+    if (!server) return undefined;
+    // With no stored credential the generation is still raised, so a first authorization
+    // still in flight cannot connect the server after the disconnect.
+    const row = server.secretId
+      ? await this.prisma.secret.findFirst({
+          where: { id: server.secretId, ...itemSecretIn(input) },
+        })
+      : null;
+    const material = row ? await this.read(row.ciphertext, row.id) : {};
     delete material.oauth;
-    await this.replaceMaterial(server.id, material, input, { incrementRevision: true });
+    // The generation is raised from the stored value inside each retry of the write, so
+    // this disconnect ends every flow still in flight, including one that began after an
+    // earlier disconnect committed.
+    let revision: number | undefined;
+    await this.replaceMaterial(server.id, material, input, {
+      incrementRevision: true,
+      raiseGeneration: true,
+      onCommitted: (committed) => {
+        revision = committed;
+      },
+    });
+    return revision;
   }
 
   private async loadMaterial(
@@ -1201,7 +1533,7 @@ export class McpOAuthBroker {
   ): Promise<{ material: OAuthMaterial; secretId?: string }> {
     if (!server.secretId) return { material: {} };
     const row = await this.prisma.secret.findFirst({
-      where: { id: server.secretId, spaceId: context.spaceId, userId: context.userId },
+      where: { id: server.secretId, ...itemSecretIn(context) },
     });
     return row
       ? { material: await this.read(row.ciphertext, row.id), secretId: row.id }
@@ -1244,6 +1576,7 @@ export class McpOAuthBroker {
                 ),
             }
           : {}),
+        allowPrivateEndpoint: this.allowPrivateEndpoint,
         ...options,
       },
     );
@@ -1267,16 +1600,17 @@ export class McpOAuthBroker {
     // Resolve the network before taking a connection for the lock.
     const network = oauthFetch(target, this.network, {}, this.allowPrivateEndpoint);
     let stored: { id: string; ciphertext: string } | undefined;
+    let rotated: { material: OAuthMaterial; grant: TokenGrant; spent: string } | undefined;
     try {
       const result = await persistPreparedSecret(
         this.prisma,
         this.secrets,
         undefined,
         () =>
-          this.prisma.$transaction(
+          withRefreshLock(
+            this.prisma,
+            (tx) => lockMcpOAuthMaterial(tx, serverId),
             async (tx) => {
-              await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${REFRESH_LOCK_WAIT_MS}ms`}, true)`;
-              await lockMaterial(tx, serverId);
               const snapshot = await this.snapshot(tx, serverId, context, endpoint);
               const material = snapshot.secret
                 ? await this.read(snapshot.secret.ciphertext, snapshot.secret.id)
@@ -1287,7 +1621,14 @@ export class McpOAuthBroker {
                 return { grant: { tokens: oauth?.tokens, obtainedAt: oauth?.obtainedAt } };
               let grant: TokenGrant;
               try {
-                grant = { tokens: await requestRefresh(material, current, network.fetch) };
+                grant = {
+                  tokens: await requestRefresh(
+                    material,
+                    current,
+                    network.fetch,
+                    this.allowPrivateEndpoint,
+                  ),
+                };
                 grant.obtainedAt = Date.now();
               } catch (error) {
                 // Under the lock `current` is the stored token, so a rejection
@@ -1296,12 +1637,12 @@ export class McpOAuthBroker {
                 grant = {};
               }
               applyGrant(oauth, grant);
+              if (grant.tokens) rotated = { material, grant, spent: current };
               stored = await this.putMaterial(material, context);
               if (!(await this.commitMaterial(tx, serverId, context, snapshot, stored)))
                 throw new Error("MCP credentials changed during refresh; retry");
               return { grant, record: { id: stored.id, ref: stored.ciphertext, material } };
             },
-            { maxWait: REFRESH_LOCK_WAIT_MS, timeout: REFRESH_TRANSACTION_MS },
           ),
         (result) => {
           if (result.record) onPersisted?.(result.record);
@@ -1310,7 +1651,27 @@ export class McpOAuthBroker {
       return result.grant;
     } catch (error) {
       if (stored) await deleteSecretBestEffort(this.secrets, stored.ciphertext, stored.id);
-      throw error;
+      if (isCredentialRefusal(error) || !rotated) throw error;
+      // The authorization server already rotated the grant, so the stored one is spent.
+      // Store the new one over the grant it replaced; a login or disconnect that landed
+      // meanwhile wins. On a transient failure, keep observed state or the issued grant.
+      getLogger().warn("MCP OAuth refresh commit failed; storing the rotated grant again");
+      let observed: TokenGrant | undefined;
+      try {
+        const kept = await this.replaceMaterial(serverId, rotated.material, context, {
+          expectedEndpoint: endpoint,
+          onPersisted,
+          storedRefreshToken: rotated.spent,
+          replaceCleared: true,
+          onKept: (grant) => {
+            observed = grant;
+          },
+        });
+        return kept ?? rotated.grant;
+      } catch (fallbackError) {
+        if (isCredentialRefusal(fallbackError)) throw fallbackError;
+        return observed ?? rotated.grant;
+      }
     } finally {
       await network.close().catch(() => undefined);
     }
@@ -1325,6 +1686,11 @@ export class McpOAuthBroker {
       expectedEndpoint?: string | null;
       onPersisted?: ProviderOptions["onPersisted"];
       storedRefreshToken?: string | null;
+      replaceCleared?: boolean;
+      /** Raise the stored authorization generation from the value each retry re-reads. */
+      raiseGeneration?: boolean;
+      onKept?: (grant: TokenGrant) => void;
+      onCommitted?: (revision: number) => void;
     } = {},
   ): Promise<TokenGrant | undefined> {
     // Take a DB-only snapshot, then do provider I/O with no transaction open.
@@ -1342,32 +1708,58 @@ export class McpOAuthBroker {
         // OAuth state belongs to the client that obtained it; a client changed in
         // settings meanwhile has already dropped the grant this write carries.
         if (!sameOAuthClient(material.oauthClient, nextMaterial.oauthClient))
-          throw new Error("MCP OAuth client changed during authorization; reconnect this server");
+          throw new McpCredentialRefusedError(
+            "MCP OAuth client changed during authorization; reconnect this server",
+          );
         // Overlapping flows may have bound the same unbound client to different servers;
         // the first binding saved wins and any other flow's state is refused.
         if (conflictsWithBinding(nextMaterial.oauthClient, material))
           throw new McpOAuthServerMismatchError();
+        // A disconnect discarded the stored state and raised its generation; a write from
+        // that earlier flow, issued tokens included, must not bring the grant back.
+        const superseded = (material.oauthGeneration ?? 0) !== (nextMaterial.oauthGeneration ?? 0);
         const bound = material.oauthClient?.authorization_server;
-        if (nextMaterial.oauthClient && bound && !nextMaterial.oauthClient.authorization_server)
+        // A superseded write keeps the stored client exactly as stored: a first-use
+        // binding belongs to an authorization the user ended.
+        if (
+          !superseded &&
+          nextMaterial.oauthClient &&
+          bound &&
+          !nextMaterial.oauthClient.authorization_server
+        )
           nextMaterial.oauthClient = { ...nextMaterial.oauthClient, authorization_server: bound };
         nextMaterial.oauth = structuredClone(material.oauth);
+        // A process that spent the rotated-away token meanwhile cleared the grant this write renews.
+        const staleClear = options.replaceCleared && storedOAuth && !storedOAuth.tokens;
         if (
-          options.storedRefreshToken !== undefined &&
-          (storedOAuth?.tokens?.refresh_token ?? null) !== options.storedRefreshToken
+          superseded ||
+          (options.storedRefreshToken !== undefined &&
+            (storedOAuth?.tokens?.refresh_token ?? null) !== options.storedRefreshToken &&
+            !staleClear)
         ) {
           // Another process rotated or replaced the grant; never overwrite it with an older one.
+          // A disconnect removed the state altogether, and this write must not bring it back.
           kept = { tokens: storedOAuth?.tokens, obtainedAt: storedOAuth?.obtainedAt };
-          applyGrant(nextMaterial.oauth, kept);
+          options.onKept?.(kept);
+          if (superseded && storedOAuth) {
+            // The stored state belongs to a newer authorization, so keep it whole: its client
+            // and discovery too, not just its grant, or a later refresh pairs one flow's
+            // tokens with another's client.
+            nextMaterial.oauth = structuredClone(storedOAuth);
+          } else if (storedOAuth) applyGrant(nextMaterial.oauth, kept);
+          else delete nextMaterial.oauth;
         }
       } else delete nextMaterial.oauth;
-      const hasMaterial = Boolean(
-        nextMaterial.secret ||
-          Object.keys(nextMaterial.env ?? {}).length ||
-          Object.keys(nextMaterial.files ?? {}).length ||
-          Object.keys(nextMaterial.headers ?? {}).length ||
-          nextMaterial.oauthClient ||
-          nextMaterial.oauth,
-      );
+      if (options.raiseGeneration) {
+        // Raised from what this attempt re-read, so a disconnect that commits after another
+        // one still ends flows that began after the earlier disconnect.
+        nextMaterial.oauthGeneration = (nextMaterial.oauthGeneration ?? 0) + 1;
+      } else {
+        // Never lower the stored generation, so a superseded flow cannot undo a disconnect.
+        nextMaterial.oauthGeneration =
+          Math.max(material.oauthGeneration ?? 0, nextMaterial.oauthGeneration ?? 0) || undefined;
+      }
+      const hasMaterial = hasCredential(nextMaterial) || Boolean(nextMaterial.oauthGeneration);
       const stored = hasMaterial ? await this.putMaterial(nextMaterial, context) : undefined;
       const committed = await persistPreparedSecret(
         this.prisma,
@@ -1375,7 +1767,7 @@ export class McpOAuthBroker {
         stored,
         () =>
           this.prisma.$transaction(async (tx) => {
-            await lockMaterial(tx, serverId);
+            await lockMcpOAuthMaterial(tx, serverId);
             return this.commitMaterial(
               tx,
               serverId,
@@ -1394,9 +1786,12 @@ export class McpOAuthBroker {
             });
         },
       );
-      if (committed) return kept;
+      if (committed) {
+        options.onCommitted?.(committed.revision);
+        return kept;
+      }
     }
-    throw new Error("MCP credentials changed during authorization; retry");
+    throw new McpCredentialRefusedError("MCP credentials changed during authorization; retry");
   }
 
   private async snapshot(
@@ -1406,15 +1801,17 @@ export class McpOAuthBroker {
     expectedEndpoint?: string | null,
   ): Promise<MaterialSnapshot> {
     const server = await tx.mcpServer.findFirst({
-      where: { id: serverId, spaceId: context.spaceId, userId: context.userId },
+      where: { id: serverId, ...availableInSpace(context) },
       select: { endpoint: true, secretId: true },
     });
-    if (!server) throw new Error("MCP server is unavailable");
+    if (!server) throw new McpCredentialRefusedError("MCP server is unavailable");
     if (expectedEndpoint !== undefined && server.endpoint !== expectedEndpoint)
-      throw new Error("MCP server endpoint changed during authorization; reconnect this server");
+      throw new McpCredentialRefusedError(
+        "MCP server endpoint changed during authorization; reconnect this server",
+      );
     const secret = server.secretId
       ? await tx.secret.findFirst({
-          where: { id: server.secretId, spaceId: context.spaceId, userId: context.userId },
+          where: { id: server.secretId, ...itemSecretIn(context) },
         })
       : null;
     return { server, secret };
@@ -1442,12 +1839,12 @@ export class McpOAuthBroker {
     snapshot: MaterialSnapshot,
     stored: { id: string; ciphertext: string } | undefined,
     incrementRevision = false,
-  ): Promise<boolean> {
+  ): Promise<false | { revision: number }> {
     const server = await tx.mcpServer.findFirst({
-      where: { id: serverId, spaceId: context.spaceId, userId: context.userId },
-      select: { endpoint: true, secretId: true },
+      where: { id: serverId, ...availableInSpace(context) },
+      select: { endpoint: true, secretId: true, spaceId: true, allSpaces: true },
     });
-    if (!server) throw new Error("MCP server is unavailable");
+    if (!server) throw new McpCredentialRefusedError("MCP server is unavailable");
     if (
       server.endpoint !== snapshot.server.endpoint ||
       server.secretId !== snapshot.server.secretId
@@ -1457,21 +1854,26 @@ export class McpOAuthBroker {
       await tx.$queryRaw`SELECT id FROM secrets WHERE id = ${server.secretId} FOR UPDATE`;
     const current = server.secretId
       ? await tx.secret.findFirst({
-          where: { id: server.secretId, spaceId: context.spaceId, userId: context.userId },
+          where: { id: server.secretId, ...itemSecretIn(context) },
         })
       : null;
     if (current?.ciphertext !== snapshot.secret?.ciphertext) return false;
+    // A server available beyond this space keeps its credential on the account, for every space.
+    const shared =
+      server.allSpaces ||
+      server.spaceId !== context.spaceId ||
+      (await tx.mcpServerSpace.count({ where: { serverId } })) > 0;
     if (stored)
       await tx.secret.create({
         data: {
           id: stored.id,
-          spaceId: context.spaceId,
+          spaceId: shared ? null : context.spaceId,
           userId: context.userId,
           kind: "mcp",
           ciphertext: stored.ciphertext,
         },
       });
-    await tx.mcpServer.update({
+    const { revision } = await tx.mcpServer.update({
       where: { id: serverId },
       data: {
         secretId: stored?.id ?? null,
@@ -1480,7 +1882,7 @@ export class McpOAuthBroker {
     });
     if (server.secretId && server.secretId !== stored?.id)
       await tx.secret.deleteMany({ where: { id: server.secretId } });
-    return true;
+    return { revision };
   }
 
   private async read(ciphertext: string, recordId: string): Promise<OAuthMaterial> {

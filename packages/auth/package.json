@@ -15,15 +15,23 @@
     "test": "vitest run --root ../.. packages/auth/src"
   },
   "dependencies": {
-    "@better-auth/expo": "1.7.16",
-    "@better-auth/passkey": "1.7.16",
+    "@better-auth/expo": "1.7.18",
+    "@better-auth/passkey": "1.7.18",
+    "@better-auth/scim": "1.7.18",
     "@cortexai-agent-hub/adapter-kit": "workspace:*",
+    "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/db": "workspace:*",
-    "better-auth": "1.7.16"
+    "@cortexai-agent-hub/ui-tokens": "workspace:*",
+    "better-auth": "1.7.18",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-email": "6.11.8"
   },
   "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.12"
+    "vitest": "5.1.0"
   }
 }

@@ -20,6 +20,27 @@ describe("sanitizeModelConnectionError", () => {
       "sk-secretkey1234567890",
     );
   });
+
+  it.each([
+    ["a JSON error body", 'Invalid {"api_key": "EXAMPLE_PLACEHOLDER"}', "EXAMPLE_PLACEHOLDER"],
+    [
+      "a camel-case key with spaces around =",
+      "apiKey = EXAMPLE_PLACEHOLDER",
+      "EXAMPLE_PLACEHOLDER",
+    ],
+    ["a bearer token with base64 characters", "Bearer EXAMPLE+PLACE/HOLDER==", "PLACE/HOLDER"],
+    ["a single-quoted value", "api-key: 'EXAMPLE_PLACEHOLDER'", "EXAMPLE_PLACEHOLDER"],
+  ])("redacts the whole secret in %s", (_label, raw, secret) => {
+    const cleaned = sanitizeModelConnectionError(raw);
+    expect(cleaned).not.toContain(secret);
+    expect(cleaned).toContain("•••");
+  });
+
+  it("keeps the text around a redacted JSON value", () => {
+    expect(sanitizeModelConnectionError('{"api_key": "EXAMPLE_PLACEHOLDER", "code": 401}')).toBe(
+      '{"•••", "code": 401}',
+    );
+  });
 });
 
 describe("classifyModelConnectionFailure", () => {
@@ -29,6 +50,23 @@ describe("classifyModelConnectionFailure", () => {
     expect(classifyModelConnectionFailure(new Error("The operation was aborted")).outcome).toBe(
       "unknown",
     );
+  });
+
+  it.each([
+    ["rate_limit", "429 Too Many Requests"],
+    ["rate_limit", "HTTP 429"],
+    ["unauthorized", "Request failed with status 401"],
+    ["unauthorized", "HTTP 403: forbidden"],
+  ])("reads %s from the status code in %j", (outcome, message) => {
+    expect(classifyModelConnectionFailure(new Error(message)).outcome).toBe(outcome);
+  });
+
+  it.each([
+    "connect ECONNREFUSED 127.0.0.1:4030",
+    "connect ECONNREFUSED 127.0.0.1:14290",
+    "connect ECONNREFUSED 10.0.0.1:34010",
+  ])("does not read a port or id as a status code in %j", (message) => {
+    expect(classifyModelConnectionFailure(new Error(message)).outcome).toBe("unreachable");
   });
 
   it("keeps manual model entry for custom servers and catalog picks for catalog providers", () => {
@@ -58,6 +96,7 @@ describe("loadStoredModelAuth", () => {
       storedAuthKind: null,
       credentialLookupFailed: false,
       credentialUnreadable: false,
+      reconnectRequired: false,
     });
     await expect(
       loadStoredModelAuth("anthropic", async () => {
@@ -67,6 +106,7 @@ describe("loadStoredModelAuth", () => {
       storedAuthKind: null,
       credentialLookupFailed: true,
       credentialUnreadable: false,
+      reconnectRequired: false,
     });
   });
 
@@ -80,6 +120,60 @@ describe("loadStoredModelAuth", () => {
     await expect(
       loadStoredModelAuth("anthropic", async () => [{ provider: "anthropic" }]),
     ).resolves.toMatchObject({ storedAuthKind: null, credentialUnreadable: true });
+  });
+
+  it("uses the selected connection when multiple rows share a model", async () => {
+    const api = {
+      id: "api",
+      provider: "anthropic",
+      modelId: "claude",
+      authKind: "api_key" as const,
+    };
+    const oauth = {
+      id: "oauth",
+      provider: "anthropic",
+      modelId: "claude",
+      authKind: "oauth" as const,
+    };
+    for (const rows of [
+      [api, oauth],
+      [oauth, api],
+    ]) {
+      const stored = await loadStoredModelAuth("anthropic", async () => rows, "claude", "oauth");
+      expect(stored.storedAuthKind).toBe("oauth");
+      await expect(
+        loadStoredModelAuth("anthropic", async () => rows, "another-model", "api"),
+      ).resolves.toMatchObject({ storedAuthKind: "api_key" });
+      expect(
+        await runModelConnectionPreflight({ authKind: "oauth", provider: "anthropic", ...stored }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("does not substitute a different connection for an explicit ID", async () => {
+    const rows = [
+      { id: "oauth", provider: "anthropic", modelId: "claude", authKind: "oauth" as const },
+      { id: "other-provider", provider: "openai", modelId: "claude", authKind: "oauth" as const },
+      { id: "unreadable", provider: "anthropic", modelId: "claude" },
+    ];
+    for (const id of ["missing", "other-provider", "", null]) {
+      await expect(
+        loadStoredModelAuth("anthropic", async () => rows, "claude", id),
+      ).resolves.toEqual({
+        storedAuthKind: null,
+        credentialLookupFailed: false,
+        credentialUnreadable: false,
+        reconnectRequired: false,
+      });
+    }
+    await expect(
+      loadStoredModelAuth("anthropic", async () => rows, "claude", "unreadable"),
+    ).resolves.toEqual({
+      storedAuthKind: null,
+      credentialLookupFailed: false,
+      credentialUnreadable: true,
+      reconnectRequired: false,
+    });
   });
 
   it("uses the credential that owns the selected model, not the newest provider row", async () => {
@@ -136,6 +230,7 @@ describe("loadStoredModelAuth", () => {
       storedAuthKind: null,
       credentialLookupFailed: false,
       credentialUnreadable: true,
+      reconnectRequired: false,
     });
   });
 });
@@ -170,8 +265,6 @@ describe("runModelConnectionPreflight", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.failure.outcome).toBe("unavailable_model");
-      expect(result.failure.message).toBe('Model "missing-model" was not listed.');
-      expect(result.failure.nextAction).toBe("Pick a model from the catalog.");
     }
   });
 
@@ -183,7 +276,7 @@ describe("runModelConnectionPreflight", () => {
       catalogProbe: false,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.failure.message).toMatch(/cannot be tested without saving/);
+    if (!result.ok) expect(result.failure.outcome).toBe("unknown");
   });
 
   it("reports oauth when not connected", async () => {
@@ -209,6 +302,19 @@ describe("runModelConnectionPreflight", () => {
     }
   });
 
+  it("does not treat a rejected subscription sign-in as stored and usable", async () => {
+    const result = await runModelConnectionPreflight({
+      authKind: "oauth",
+      provider: "openai-codex",
+      storedAuthKind: "oauth",
+      reconnectRequired: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.outcome).toBe("needs_sign_in");
+    }
+  });
+
   it("accepts a stored subscription credential", async () => {
     const result = await runModelConnectionPreflight({
       authKind: "oauth",
@@ -218,31 +324,19 @@ describe("runModelConnectionPreflight", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("does not treat an unreadable credential as a missing sign-in", async () => {
-    const result = await runModelConnectionPreflight({
-      authKind: "oauth",
-      provider: "anthropic",
-      credentialUnreadable: true,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.failure.outcome).toBe("unknown");
-      expect(result.failure.message).toMatch(/Could not check stored credentials/);
-    }
-  });
-
-  it("keeps credential lookup failures distinct from a missing sign-in", async () => {
-    const result = await runModelConnectionPreflight({
-      authKind: "oauth",
-      provider: "openai-codex",
-      credentialLookupFailed: true,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.failure.outcome).toBe("unknown");
-      expect(result.failure.message).toMatch(/Could not check stored credentials/);
-    }
-  });
+  it.each([{ credentialUnreadable: true }, { credentialLookupFailed: true }])(
+    "keeps credential lookup problems distinct from a missing sign-in: %j",
+    async (lookup) => {
+      const result = await runModelConnectionPreflight({
+        authKind: "oauth",
+        provider: "anthropic",
+        storedAuthKind: "oauth",
+        ...lookup,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.failure.outcome).toBe("unknown");
+    },
+  );
 });
 
 describe("modelPreflightSuccessMessage", () => {

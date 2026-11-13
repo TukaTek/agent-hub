@@ -2,24 +2,11 @@ import { fetch as undiciFetch } from "undici";
 
 /** The fetch that must drive any `Agent` built from the `undici` package.
  *
- * Node's built-in fetch bundles its own undici, and the two diverge: undici 8
- * only accepts the current handler protocol (`onRequestStart`), so a request
- * from Node's fetch through a package `Agent` fails with "invalid
- * onRequestStart method" before a socket opens. Pairing the package's fetch
- * with its `Agent` keeps both on one version. Callers still inject a fetch
- * for tests and emulators.
- *
- * Global `FormData` fails this package's brand check and is sent as the string
- * "[object FormData]". Serialize it with the implementation that created it so
- * the multipart fields and Content-Type boundary stay paired. Other bodies are
- * passed through unchanged.
- *
- * The package `Response` fails `instanceof Response` against the global
- * constructor. Callers such as the MCP SDK then stringify the object
- * (`"[object Response]"`) instead of reading its status and body. Re-wrap the
- * payload in the global `Response` after the package fetch returns. The
- * request still uses this package's fetch and `Agent`, so host pinning is
- * unchanged. */
+ * Node's built-in fetch bundles its own undici, and undici 8 rejects a request from it through
+ * a package `Agent` ("invalid onRequestStart method"), so the package's fetch is paired with
+ * its `Agent`. Global `FormData` fails this package's brand check, so it is serialized first.
+ * The package `Response` fails `instanceof Response` (the MCP SDK then stringifies it), so the
+ * result is re-wrapped in the global `Response`. */
 export const dispatcherFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const response = await undiciFetch(
     input as Parameters<typeof undiciFetch>[0],
@@ -48,11 +35,9 @@ type PackageResponse = {
 
 /** Copy a package `Response` into the global realm.
  *
- * Header iteration is a method call, so it works across the two `Headers`
- * classes. Hop-by-hop headers describe the socket undici already finished and
- * would mislabel the re-streamed body. The parameter is not typed as the
- * global `Response`: a failed `instanceof` check would otherwise narrow it
- * to `never`, which is the mismatch this function exists to repair. */
+ * Hop-by-hop headers describe the socket undici already finished and would mislabel the
+ * re-streamed body. The parameter is not typed as the global `Response`: a failed `instanceof`
+ * check would narrow it to `never`. */
 function responseForGlobalRealm(input: object): Response {
   if (input instanceof globalThis.Response) return input;
   const response = input as PackageResponse;
@@ -75,7 +60,7 @@ function responseForGlobalRealm(input: object): Response {
         }
         controller.enqueue(next.value);
       } catch (error) {
-        controller.error(error);
+        controller.error(withDropReason(error));
       }
     },
     cancel(reason) {
@@ -83,6 +68,15 @@ function responseForGlobalRealm(input: object): Response {
     },
   });
   return new Response(body, init);
+}
+
+/** undici fails any dropped body with a bare "terminated" and keeps why in `cause` (the
+ * server closed the socket, a reset, a timeout). Keep that reason in the message, which is
+ * all a run's error details carry. */
+function withDropReason(error: unknown): unknown {
+  if (!(error instanceof Error) || error.message !== "terminated") return error;
+  const reason = error.cause instanceof Error ? error.cause.message.trim() : "";
+  return reason ? new TypeError(`terminated (${reason})`, { cause: error.cause }) : error;
 }
 
 /** Node's fetch as this module loaded it. A later replacement of

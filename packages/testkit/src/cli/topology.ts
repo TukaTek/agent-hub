@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import path from "node:path";
 import type { RunsListOutput, ThreadSnapshot } from "@cortexai-agent-hub/contracts";
 import { isTerminal } from "@cortexai-agent-hub/core";
-import { computerNetworkNameFor } from "../../../../infra/sandboxes/supervisor/src/computer-spec.js";
+import { computerNetworkNameFor } from "@cortexai-agent-hub/sandbox-supervisor/computer-spec";
 
 const composeFile = path.resolve("infra/compose/docker-compose.topology.yml");
 const keep = process.argv.includes("--keep");
@@ -225,10 +225,8 @@ async function waitForWorker(
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const logs = compose(["logs", "--no-color", "--tail", "100", "worker"], true);
-    // apps/worker logs readiness via the structured logger (packages/logging) as
-    // {"timestamp":...,"level":"info","message":"worker ready","service.name":"cortexai-agent-hub-worker"},
-    // not the old plain "cortexai-agent-hub worker ready" console.log line -- match the JSON field directly
-    // rather than a substring that depends on the sink's exact key order.
+    // The worker logs readiness as a structured JSON record; match its message field alone so
+    // the sink's key order does not matter.
     if (logs.includes('"message":"worker ready"')) return;
     await delay(500);
   }

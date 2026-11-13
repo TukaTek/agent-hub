@@ -9,12 +9,11 @@ import hubSample from "./fixtures/hub-agent-hub-service-config.v1.sample.json" w
   type: "json",
 };
 import { HubRequestError } from "./hub-client.js";
+import type { HubConfigFetch, HubPolicySignal } from "./hub-policy.js";
 import {
   applyHubPolicyAtStartup,
   createHubPolicy,
   disabledHubPolicy,
-  type HubConfigFetch,
-  type HubPolicySignal,
   hubPolicyDigest,
   notConfiguredHubPolicy,
 } from "./hub-policy.js";

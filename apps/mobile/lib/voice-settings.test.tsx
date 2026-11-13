@@ -5,18 +5,39 @@ import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import VoiceSettings from "../app/(settings)/voice";
+import { queryClient } from "./query";
 
-const state = vi.hoisted(() => ({ rpc: vi.fn(), load: vi.fn(), save: vi.fn() }));
-const t = (text: string) => text;
+const state = vi.hoisted(() => ({
+  rpc: vi.fn(),
+  load: vi.fn(),
+  save: vi.fn(),
+  params: {} as { spaceId?: string },
+  held: null as Promise<void> | null,
+}));
+vi.mock("./side-insets", () => ({ useSideInsets: () => ({}) }));
 vi.mock("expo-router", () => ({
   useFocusEffect: (callback: () => void) => useEffect(callback, [callback]),
+  useLocalSearchParams: () => state.params,
 }));
-vi.mock("./api", () => ({ rpc: state.rpc }));
+vi.mock("./api-server", () => ({}));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
+vi.mock("./api", () => ({
+  rpc: state.rpc,
+  currentApiBase: () => "https://app.example.test",
+  selectedSpaceId: () => "space-fixture",
+  captureApiRequestContext: async (spaceId?: string) => ({
+    apiBase: "https://app.example.test",
+    headers: spaceId ? { "x-cortexai-agent-hub-space-id": spaceId } : {},
+  }),
+}));
+vi.mock("./session", () => ({ currentSessionGeneration: () => 1 }));
 vi.mock("./device-voice", () => ({
   loadDeviceVoiceEnabled: state.load,
   saveDeviceVoiceEnabled: state.save,
 }));
 vi.mock("./call-sounds", () => ({
+  loadCallGreetingEnabled: async () => true,
   loadCallSoundsEnabled: async () => true,
   loadWaitSoundEnabled: async () => true,
   saveCallSoundsEnabled: vi.fn(),
@@ -26,9 +47,36 @@ vi.mock("./call-sounds", () => ({
 vi.mock("./voice", () => ({ speakText: vi.fn() }));
 vi.mock("./appearance", () => ({ mobileTokens: () => ({}) }));
 vi.mock("./native", () => ({ native: {}, useThemedStyles: (factory: () => unknown) => factory() }));
-vi.mock("./i18n", () => ({ t: (text: string) => text, useI18n: () => ({ t }) }));
 vi.mock("../components/row-accessories", () => ({
   Checkmark: () => <span data-testid="checkmark" />,
+}));
+vi.mock("../components/menu-picker", () => ({
+  MenuPicker: ({
+    choices,
+    value,
+    onChange,
+    disabled,
+  }: {
+    disabled?: boolean;
+    choices: { key: string; label: string }[];
+    value: string;
+    onChange: (key: string) => void;
+  }) => (
+    <div>
+      {choices.map((choice) => (
+        <button
+          key={choice.key}
+          type="button"
+          disabled={disabled}
+          aria-pressed={choice.key === value}
+          onClick={() => onChange(choice.key)}
+        >
+          {choice.label}
+          {choice.key === value ? <span data-testid="checkmark" /> : null}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 vi.mock("../components/native-switch", () => ({ NativeSwitch: () => null }));
 vi.mock("react-native-safe-area-context", () => ({
@@ -53,7 +101,7 @@ vi.mock("react-native", () => {
     View,
     ScrollView: View,
     Text: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-    ActivityIndicator: () => null,
+    ActivityIndicator: () => <span>Loading</span>,
     StyleSheet: { create: (styles: unknown) => styles },
     Pressable: ({ children, onPress, disabled, accessibilityState }: ButtonProps) => (
       <button
@@ -65,14 +113,32 @@ vi.mock("react-native", () => {
         {children}
       </button>
     ),
-    TextInput: ({ accessibilityLabel, value }: { accessibilityLabel: string; value: string }) => (
-      <input aria-label={accessibilityLabel} value={value} readOnly />
+    TextInput: ({
+      accessibilityLabel,
+      value,
+      onChangeText,
+      onBlur,
+      placeholder,
+    }: {
+      accessibilityLabel: string;
+      value: string;
+      onChangeText?: (value: string) => void;
+      onBlur?: () => void;
+      placeholder?: string;
+    }) => (
+      <input
+        aria-label={accessibilityLabel}
+        value={value}
+        onChange={(event) => onChangeText?.(event.currentTarget.value)}
+        onBlur={onBlur}
+        placeholder={placeholder}
+      />
     ),
   };
 });
 
 const catalog = [
-  { id: "fish-audio", name: "Fish Audio", transcribe: true },
+  { id: "fish-audio", name: "Fish Audio", transcribe: true, speechModel: true },
   { id: "other", name: "Other provider", transcribe: false },
   { id: "new", name: "New provider", transcribe: false },
 ];
@@ -106,10 +172,14 @@ async function click(label: string) {
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.params = {};
+  queryClient.clear();
   activeProvider = "fish-audio";
   state.load.mockReset().mockResolvedValue(true);
   state.save.mockReset().mockResolvedValue(undefined);
+  state.held = null;
   state.rpc.mockReset().mockImplementation(async (proc: string, args?: { provider: string }) => {
+    if (state.held) await state.held;
     if (proc === "voice/catalog") return catalog;
     if (proc === "voice/credentials") return credentials;
     if (proc === "voice/setVoice") activeProvider = args!.provider;
@@ -130,7 +200,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("selects only This device and hides all provider controls until it is turned off", async () => {
+it("selects only This device and hides provider controls until a provider is chosen", async () => {
   await render();
   selected("This device");
   for (const entry of catalog) unselected(entry.name);
@@ -139,7 +209,7 @@ it("selects only This device and hides all provider controls until it is turned 
   expect(container.textContent).not.toContain("Disconnect");
   expect(container.textContent).not.toContain("Speech model");
   expect(container.textContent).not.toContain("fish-audio voice");
-  await click("This device");
+  await click("Fish Audio");
   selected("Fish Audio");
   unselected("This device");
   expect(container.querySelector('input[aria-label="API key"]')).not.toBeNull();
@@ -149,6 +219,70 @@ it("selects only This device and hides all provider controls until it is turned 
   expect(container.textContent).toContain("Replace key");
   expect(container.textContent).toContain("Disconnect");
   expect(container.textContent).toContain("fish-audio voice");
+});
+
+it.each([true, false])("ignores reselecting the current provider (device: %s)", async (device) => {
+  state.load.mockResolvedValue(device);
+  await render();
+  const label = device ? "This device" : "Fish Audio";
+  selected(label);
+  state.rpc.mockClear();
+
+  await click(label);
+
+  expect(state.save).not.toHaveBeenCalled();
+  expect(state.rpc).not.toHaveBeenCalled();
+  selected(label);
+});
+
+it("falls back to an available provider when the saved provider is hidden", async () => {
+  state.load.mockResolvedValue(false);
+  activeProvider = "openai-compatible";
+  const original = state.rpc.getMockImplementation()!;
+  let connected = true;
+  state.rpc.mockImplementation((proc: string, args?: { provider: string }) => {
+    if (proc === "voice/credentials" && connected)
+      return [{ id: "self-hosted", provider: "openai-compatible", voiceId: "voice" }];
+    if (proc === "voice/disconnect") {
+      connected = false;
+      return undefined;
+    }
+    return original(proc, args);
+  });
+  await render();
+  selected("Fish Audio");
+  expect(container.querySelector('input[aria-label="Server URL"]')).toBeNull();
+  expect(state.rpc).not.toHaveBeenCalledWith("voice/voices", {
+    provider: "openai-compatible",
+  });
+  await click("Disconnect Self-hosted");
+  expect(state.rpc).toHaveBeenCalledWith("voice/disconnect", { provider: "openai-compatible" });
+  expect(container.textContent).not.toContain("Disconnect Self-hosted");
+});
+
+it("keeps selected voices when a hidden provider disconnects and the read fails", async () => {
+  state.load.mockResolvedValue(false);
+  const original = state.rpc.getMockImplementation()!;
+  let disconnected = false;
+  state.rpc.mockImplementation((proc: string, args?: { provider: string }) => {
+    if (proc === "voice/disconnect") {
+      disconnected = true;
+      return undefined;
+    }
+    if (proc === "voice/catalog" && disconnected) return Promise.reject({});
+    if (proc === "voice/credentials")
+      return [
+        { id: "selected", provider: "fish-audio", voiceId: "voice" },
+        { id: "hidden", provider: "openai-compatible", voiceId: "voice" },
+      ];
+    return original(proc, args);
+  });
+  await render();
+  expect(container.textContent).toContain("fish-audio voice");
+  await click("Disconnect Self-hosted");
+  expect(container.textContent).toContain("fish-audio voice");
+  expect(container.textContent).toContain("Could not load voice settings");
+  expect(container.textContent).not.toContain("Disconnect Self-hosted");
 });
 
 it("disables provider rows until the saved device preference has loaded", async () => {
@@ -184,6 +318,7 @@ it("saves device voice off before activating a connected provider's saved voice"
   expect(state.rpc).toHaveBeenCalledWith("voice/setVoice", {
     provider: "other",
     voiceId: "other-voice",
+    scope: "account",
   });
   selected("Other provider");
   unselected("This device");
@@ -200,7 +335,7 @@ it("keeps the device selected if saving its preference fails", async () => {
   expect(container.querySelector("input")).toBeNull();
   expect(state.rpc).not.toHaveBeenCalledWith("voice/setVoice", expect.anything());
   expect(container.textContent).toContain("Could not save that preference");
-  await click("This device");
+  await click("Fish Audio");
   selected("Fish Audio");
 });
 
@@ -221,9 +356,9 @@ it.each([true, false])(
     if (device) {
       selected("This device");
       expect(state.save.mock.calls).toEqual([[false], [true]]);
-      await click("This device");
+      await click("Fish Audio");
     } else {
-      expect(state.save).not.toHaveBeenCalled();
+      expect(state.save.mock.calls).toEqual([[false]]);
     }
     selected("Fish Audio");
   },
@@ -254,5 +389,212 @@ it("clears stale voices if the refresh fails after activating a provider", async
   selected("Other provider");
   expect(container.textContent).not.toContain("fish-audio voice");
   expect(container.textContent).toContain("Could not load voice settings");
-  expect(state.save).not.toHaveBeenCalled();
+  expect(state.save.mock.calls).toEqual([[false]]);
+});
+
+it("keeps a disconnect when the read after it fails", async () => {
+  state.load.mockResolvedValue(false);
+  await render();
+  const original = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation((proc: string, args?: { provider: string }) => {
+    if (proc === "voice/disconnect") return undefined;
+    // A body without a message, so the text shown is the caller's own fallback.
+    if (proc === "voice/catalog") return Promise.reject({});
+    return original(proc, args);
+  });
+  expect(container.textContent).toContain("fish-audio voice");
+  await click("Disconnect");
+  expect(state.rpc).toHaveBeenCalledWith("voice/disconnect", { provider: "fish-audio" });
+  // Its voices go with the key: picking one would only fail on the server.
+  expect(container.textContent).not.toContain("fish-audio voice");
+  expect(container.textContent).toContain("Could not load voice settings");
+  expect(container.textContent).not.toContain("Could not disconnect");
+  expect(container.textContent).not.toContain("Disconnect");
+  expect(container.textContent).toContain("Connect");
+});
+
+it("edits a Space's override in that Space, leaving this device's voice and sounds out", async () => {
+  state.params = { spaceId: "space-other" };
+  await render();
+  const spaceContext = {
+    requestContext: {
+      apiBase: "https://app.example.test",
+      headers: { "x-cortexai-agent-hub-space-id": "space-other" },
+    },
+  };
+  // Reads also carry an abort signal.
+  const spaceRead = expect.objectContaining(spaceContext);
+  expect(state.rpc).toHaveBeenCalledWith("voice/status", { scope: "space" }, spaceRead);
+  expect(state.rpc).toHaveBeenCalledWith("voice/credentials", { scope: "space" }, spaceRead);
+  expect(state.load).not.toHaveBeenCalled();
+  expect(container.textContent).not.toContain("This device");
+  expect(container.textContent).not.toContain("Call sounds");
+  selected("Fish Audio");
+  await click("Other provider");
+  expect(state.rpc).toHaveBeenCalledWith(
+    "voice/setVoice",
+    { provider: "other", voiceId: "other-voice", scope: "space" },
+    spaceContext,
+  );
+  selected("Other provider");
+});
+
+async function revisit() {
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  let release!: () => void;
+  state.held = new Promise((resolve) => {
+    release = resolve;
+  });
+  await render();
+  return async () => {
+    await act(async () => release());
+  };
+}
+
+it("paints a revisit from cache without a spinner and refreshes behind it", async () => {
+  state.load.mockResolvedValue(false);
+  await render();
+  expect(container.textContent).toContain("fish-audio voice");
+  const calls = state.rpc.mock.calls.length;
+  const original = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation((proc: string, args?: { provider: string }) =>
+    proc === "voice/voices"
+      ? Promise.resolve([{ id: "fish-new", label: "Refreshed voice" }])
+      : original(proc, args),
+  );
+
+  const release = await revisit();
+  expect(container.textContent).not.toContain("Loading");
+  expect(container.textContent).toContain("fish-audio voice");
+  expect(state.rpc.mock.calls.length).toBeGreaterThan(calls);
+
+  await release();
+  expect(container.textContent).toContain("Refreshed voice");
+});
+
+it("keeps a field typed into while the opening refresh is in flight", async () => {
+  state.load.mockResolvedValue(false);
+  await render();
+  const release = await revisit();
+  const input = container.querySelector<HTMLInputElement>('input[aria-label="Speech model"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "typed");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await release();
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="Speech model"]')!.value).toBe(
+    "typed",
+  );
+});
+
+it("keeps a saved speech model when an opening read started before the save lands after it", async () => {
+  state.load.mockResolvedValue(false);
+  await render();
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  let serverSpeechModel = "speech-model";
+  let releaseCatalog!: () => void;
+  const catalogHeld = new Promise<void>((resolve) => {
+    releaseCatalog = resolve;
+  });
+  const original = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation(async (proc: string, args?: { provider: string }) => {
+    if (proc === "voice/catalog") await catalogHeld;
+    if (proc === "voice/credentials") {
+      return credentials.map((entry) =>
+        entry.id === "fish" ? { ...entry, speechModel: serverSpeechModel } : entry,
+      );
+    }
+    if (proc === "voice/setSpeechModel") {
+      serverSpeechModel = "saved-model";
+      return { ...credentials[0], speechModel: serverSpeechModel };
+    }
+    return original(proc, args);
+  });
+  await render();
+  const input = () =>
+    container.querySelector<HTMLInputElement>('input[aria-label="Speech model"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      input(),
+      "saved-model",
+    );
+    input().dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    input().focus();
+    input().blur();
+  });
+  expect(state.rpc).toHaveBeenCalledWith("voice/setSpeechModel", {
+    provider: "fish-audio",
+    scope: "account",
+    speechModel: "saved-model",
+  });
+  await act(async () => releaseCatalog());
+  await vi.waitFor(() => expect(input().value).toBe("saved-model"));
+});
+
+async function typeInto(label: string, text: string) {
+  const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+function withLinkedProvider(credential: { hasKey: boolean } | null) {
+  const original = state.rpc.getMockImplementation()!;
+  let saved = credential && { id: "linked", provider: "linked", voiceId: "", ...credential };
+  state.rpc.mockImplementation((proc: string, args?: { provider: string }) => {
+    if (proc === "voice/catalog")
+      return [
+        ...catalog,
+        { id: "linked", name: "Linked", transcribe: true, modelConnection: true },
+      ];
+    if (proc === "voice/credentials") return saved ? [...credentials, saved] : credentials;
+    if (proc === "voice/connect") {
+      saved = { id: "linked", provider: "linked", voiceId: "", hasKey: false };
+      return saved;
+    }
+    return original(proc, args);
+  });
+}
+
+it("connects through the account's model connection with no key, then offers no key to replace", async () => {
+  state.load.mockResolvedValue(false);
+  withLinkedProvider(null);
+  await render();
+  await click("Linked");
+  const key = () => container.querySelector<HTMLInputElement>('input[aria-label="API key"]');
+  expect(key()?.placeholder).toBe("Optional");
+  expect(button("Connect").disabled).toBe(false);
+  // A key the user does type must still be a whole one.
+  await typeInto("API key", "short");
+  expect(button("Connect").disabled).toBe(true);
+  await typeInto("API key", "");
+  await click("Connect");
+  expect(state.rpc).toHaveBeenCalledWith("voice/connect", {
+    provider: "linked",
+    scope: "account",
+    apiKey: "",
+  });
+  expect(key()).toBeNull();
+  const labels = [...container.querySelectorAll("button")].map((item) => item.textContent);
+  expect(labels).not.toContain("Connect");
+  expect(labels).not.toContain("Replace key");
+  expect(button("Disconnect").disabled).toBe(false);
+  expect(container.textContent).toContain("linked voice");
+});
+
+it("still needs a whole key to replace a key saved for a model-connection provider", async () => {
+  state.load.mockResolvedValue(false);
+  withLinkedProvider({ hasKey: true });
+  await render();
+  await click("Linked");
+  expect(
+    container.querySelector<HTMLInputElement>('input[aria-label="API key"]')?.placeholder,
+  ).toBe("Paste a replacement key");
+  expect(button("Replace key").disabled).toBe(true);
+  await typeInto("API key", "a-whole-key");
+  expect(button("Replace key").disabled).toBe(false);
 });

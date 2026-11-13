@@ -11,16 +11,16 @@ import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-s
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOpenAiCompatibleFetch } from "./pi-openai-compatible-provider.js";
 import {
-  MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
-  modelStreamIdleWatchdog,
-  reliableModelStream,
-  streamStallReason,
-} from "./pi-runtime.js";
-import {
   MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS,
   MODEL_STREAM_IDLE_TIMEOUT_MS,
   MODEL_STREAM_TIMEOUT_MS,
 } from "./pi-runtime-limits.js";
+import {
+  MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
+  modelStreamIdleWatchdog,
+  reliableModelStream,
+  streamStallReason,
+} from "./pi-runtime-stream.js";
 
 function assistantMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
   return {
@@ -56,7 +56,58 @@ const codexModel = { provider: "openai-codex", api: "openai-codex-responses" } a
 const context = { messages: [] } as Context;
 
 describe("Model stream idle watchdog", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("allows prolonged inactivity when the idle timeout is disabled", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "0");
+
+    const watchdog = modelStreamIdleWatchdog(undefined);
+    watchdog.ping();
+
+    await vi.advanceTimersByTimeAsync(13_800_000);
+
+    expect(watchdog.signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+
+    watchdog.dispose();
+  });
+
+  it("preserves explicit cancellation with the idle timeout disabled", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "0");
+
+    const upstream = new AbortController();
+    const watchdog = modelStreamIdleWatchdog(upstream.signal);
+    watchdog.ping();
+
+    await vi.advanceTimersByTimeAsync(13_800_000);
+    expect(watchdog.signal.aborted).toBe(false);
+
+    const reason = new Error("User cancelled the agent");
+    upstream.abort(reason);
+
+    expect(watchdog.signal.aborted).toBe(true);
+    expect(watchdog.signal.reason).toBe(reason);
+    expect(vi.getTimerCount()).toBe(0);
+
+    watchdog.dispose();
+  });
+
+  it("waits out a configured idle bound longer than the default", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "240000");
+    const watchdog = modelStreamIdleWatchdog(undefined);
+    watchdog.ping();
+    await vi.advanceTimersByTimeAsync(240_000 - 1);
+    expect(watchdog.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((watchdog.signal.reason as Error).message).toBe(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE);
+    watchdog.dispose();
+  });
 
   it("allows an active stream to continue for an hour", async () => {
     vi.useFakeTimers();
@@ -88,9 +139,7 @@ describe("Model stream idle watchdog", () => {
     const stream = watchdog.wrap(inner);
     const iterator = stream[Symbol.asyncIterator]();
 
-    // No idle budget burns before response headers land: the pre-headers
-    // window is bounded per attempt by timeoutMs, so this wait must never
-    // abort.
+    // No idle budget burns before response headers land.
     const pending = iterator.next();
     await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS * 2);
     expect(watchdog.signal.aborted).toBe(false);
@@ -365,7 +414,10 @@ describe.each([
   { provider: "openai-compatible", api: "openai-completions" } as Model<Api>,
   { provider: "anthropic", api: "anthropic-messages" } as Model<Api>,
 ])("reliableModelStream idle gating for $provider", (model) => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
 
   it("bounds silence without aborting the caller", async () => {
     vi.useFakeTimers();
@@ -441,8 +493,9 @@ describe.each([
     expect(caller.signal.aborted).toBe(false);
   });
 
-  it("fails a stalled retryable error body without aborting the request", async () => {
+  it("fails a stalled retryable error body at the configured idle bound without aborting the request", async () => {
     vi.useFakeTimers();
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "240000");
     const caller = new AbortController();
     const inner = new AssistantMessageEventStream();
     const callerFetch = vi.fn(
@@ -481,7 +534,7 @@ describe.each([
         return { error };
       },
     );
-    await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(240_000 - 1);
     expect(settled).toBe(false);
     expect(guardedOptions?.signal?.aborted).toBe(false);
 

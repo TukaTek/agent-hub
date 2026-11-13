@@ -5,11 +5,11 @@ import {
   formatClientBuild,
   IOS_APP_STORE_URL,
 } from "@cortexai-agent-hub/contracts";
+import { t } from "@lingui/core/macro";
 import * as Updates from "expo-updates";
 import type { AppStateStatus } from "react-native";
 import { Alert, AppState, Linking, Platform } from "react-native";
 import { configureClientBuild } from "./api";
-import { t } from "./i18n";
 
 /** Foreground returns closer together than this reuse the last update check. */
 export const FOREGROUND_UPDATE_CHECK_MS = 15 * 60_000;
@@ -64,11 +64,11 @@ export function noteClientUpdateRequired(): void {
   if (prompting) return;
   prompting = true;
   Alert.alert(
-    t("Update required"),
+    t`Update required`,
     undefined,
     [
       {
-        text: t("Update"),
+        text: t`Update`,
         onPress: () => {
           void applyRequiredUpdate().finally(() => {
             prompting = false;
@@ -80,15 +80,15 @@ export function noteClientUpdateRequired(): void {
   );
 }
 
-/**
- * expo-updates checks only at launch. Check again when the app returns to the foreground, and
- * download what it finds so the next launch runs it; nothing reloads under the user.
- */
 /** Name this build on every API request, and prompt for an update when the server refuses it. */
 export function installClientUpdates(): void {
   configureClientBuild({ headers: clientBuildHeaders, onUpdateRequired: noteClientUpdateRequired });
 }
 
+/**
+ * expo-updates checks only at launch. Check again when the app returns to the foreground, and
+ * download what it finds so the next launch runs it; nothing reloads under the user.
+ */
 export function watchForegroundUpdates(now: () => number = Date.now): () => void {
   if (!Updates.isEnabled) return () => {};
   let lastCheck = now();

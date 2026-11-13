@@ -1,155 +1,148 @@
-import { randomUUID } from "node:crypto";
 import type {
   AdapterContext,
   AgentRunRequest,
   AgentRuntime,
   AgentRuntimeEvent,
   AgentSteeringMessage,
-  AgentToolCompletion,
-  AgentToolExecutionResult,
   AgentUsage,
-  ConnectorTool,
   ModelCallObserver,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
-  DEFAULT_CONTEXT_STRATEGY,
-  isRetryableProviderUnavailable,
-  isTransientModelError,
   ModelAccountError,
+  ModelOutputError,
   TransientModelError,
 } from "@cortexai-agent-hub/adapter-kit";
 import {
-  BOT_INSTRUCTIONS_MAX_LENGTH,
-  canonicalPiProviderId,
-  FLEET_TOOL_NAMES,
-  usableModelId,
-} from "@cortexai-agent-hub/contracts";
-import {
-  abortableDelay,
   MISSING_TOOL_FINAL_RESPONSE_ERROR,
-  normalizeRunError,
+  MODEL_IMAGE_INPUT_ERROR,
+  MODEL_OUTPUT_CUT_ERROR,
+  modelFallbackFailure,
 } from "@cortexai-agent-hub/core";
 import { getLogger } from "@cortexai-agent-hub/logging";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
   Api,
   AssistantMessage,
-  AssistantMessageEvent,
   Context,
   JsonValue,
   Message,
   Model,
-  Models,
-  ModelsSimpleStreamOptions,
-  ModelThinkingLevel,
-  ProviderHeaders,
-  TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { clampThinkingLevel, Type, validateToolArguments } from "@earendil-works/pi-ai";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import { isToolPauseResult, uncertainEffectResult } from "./approval-effect.js";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import {
+  isTerminatingReplyResult,
+  terminatingReplyText,
+  uncertainEffectResult,
+} from "./approval-effect.js";
 import { automated, withAutomatedLabels } from "./automated-messages.js";
-import { connectionIdArgument, credentialArgument } from "./bot-secrets.js";
-import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { withCloudflareAuth } from "./cloudflare-ai-gateway.js";
-import { pruneForRebuild } from "./context-pruning.js";
-import { shortenToolResultText } from "./context-selection.js";
-import { DEFAULT_OPENROUTER_MODEL_ID } from "./deployment-model.js";
-import { groqRequestContextWindow } from "./groq-request-budget.js";
-import { toolResultChars } from "./mcp-result-budget.js";
-import { estimateModelContextTokens } from "./model-context.js";
-import { IMAGE_RETURNING_COMPUTER_TOOLS } from "./model-vision.js";
-import {
-  normalizeOpenAiToolParameters,
-  openAiToolParametersNeedNormalization,
-} from "./openai-tool-parameters.js";
-import { affordableOpenRouterOutput } from "./openrouter-output-budget.js";
-import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";
+import { neutralizeSpeakerLabels } from "./history-speakers.js";
 import { estimatePiImageTokens } from "./pi-image-context.js";
-import { liveModelSibling } from "./pi-live-model.js";
-import { registerLocalProvider } from "./pi-local-provider.js";
-import { applyPiModelCompatibility } from "./pi-model-compat.js";
-import { codexComputeResidency } from "./pi-oauth.js";
 import {
-  OPENAI_COMPATIBLE_PROVIDER_ID,
-  registerOpenAiCompatibleCatalog,
-  registerOpenAiCompatibleRuntime,
-} from "./pi-openai-compatible-provider.js";
+  COMPUTER_MODE_TOOLS,
+  computerSelection,
+  computerTarget,
+  computerTransitionTool,
+  restoreComputerModels,
+} from "./pi-runtime-computer-mode.js";
 import {
-  clipToolResultContent,
-  clipToolResultText,
-  MODEL_PROVIDER_RETRY_DELAYS_MS,
-  MODEL_STREAM_STALL_RETRIES,
-  MODEL_STREAM_TIMEOUT_MS,
-  modelStreamFirstEventTimeoutMs,
-  modelStreamIdleTimeoutMs,
-  modelStreamMaxRetries,
-  REASONING_MODEL_MAX_TOKENS,
-  resolveCompletionMaxTokens,
-  TOOL_RESULT_TEXT_LIMIT,
-} from "./pi-runtime-limits.js";
+  assistantText,
+  messageHasToolCall,
+  modelFailure,
+  providerFailureText,
+  sanitizeError,
+  sanitizeProviderError,
+} from "./pi-runtime-errors.js";
+import type { FallbackStreamState } from "./pi-runtime-fallback.js";
+import {
+  continuationRepeat,
+  fallbackAwareModelStream,
+  MAX_CONTINUATION_MARKER,
+  MAX_CONTINUATION_OVERLAP,
+  MAX_SELF_RECOVERIES_PER_RUN,
+} from "./pi-runtime-fallback.js";
+import {
+  isHistoryReply,
+  speakerText,
+  toHistory,
+  toPiImages,
+  withLeadingUser,
+  withoutSteeringMessages,
+} from "./pi-runtime-history.js";
+import type { RuntimeModelTarget } from "./pi-runtime-models.js";
+import {
+  cardOutputCeiling,
+  modelForCompletion,
+  modelTargetKey,
+  resizeRuntimeTarget,
+  resolveRuntimeModel,
+  sameModelTarget,
+  thinkingLevelFor,
+} from "./pi-runtime-models.js";
+import { conversationSessionId, reliableModelStream } from "./pi-runtime-stream.js";
+import { MAX_PARALLEL_SUBAGENTS } from "./pi-runtime-subagent.js";
+import type { ToolCallBudget, ToolHost } from "./pi-runtime-tools.js";
+import {
+  agentToolDefinitions,
+  createGate,
+  createQueue,
+  describeToolActivity,
+  redactAskUserDetailInMessage,
+  releaseToolCallBudget,
+  toAgentTools,
+  toolCallBudgetExceededMessage,
+  toolCallBudgetFor,
+} from "./pi-runtime-tools.js";
 import type { PiSessionHandle, PiSessionRecorder } from "./pi-session.js";
 import { PiJsonlSessionRecorder } from "./pi-session.js";
-import { recordPiTelemetryContent, withPiTelemetry, withPiTelemetrySpan } from "./pi-telemetry.js";
+import { withPiTelemetry } from "./pi-telemetry.js";
+import { withPiThinkingActivity } from "./pi-thinking-activity.js";
 import { observedPiStream } from "./pi-usage.js";
+import type { RejectedProviderRequest } from "./provider-request-shape.js";
+import { attachRejectedRequests, rejectedRequestsOf } from "./provider-request-shape.js";
 import type { RuntimeContextDecision } from "./runtime-context.js";
-import { createRuntimeContextPolicy, VERBATIM_TOOL_RESULTS } from "./runtime-context.js";
-import { SCHEDULE_TOOL_NAMES } from "./schedule-tools.js";
-import type { FinishedShellCommand } from "./shell-command-stream.js";
+import { createRuntimeContextPolicy } from "./runtime-context.js";
 import { deliverFinishedShells } from "./shell-command-stream.js";
-import {
-  isThinkingSignatureMismatch,
-  withoutThinkingBlocks,
-  withoutThinkingFrom,
-} from "./thinking-signatures.js";
-import {
-  formatSpillReceipt,
-  formatStructuredSpill,
-  isErrorToolResult,
-  NO_SPILL_TOOLS,
-  type SpillFormat,
-  spillUnavailableNotice,
-} from "./tool-result-spill.js";
-import { textContentArg } from "./tool-text.js";
+import { withoutThinkingFrom } from "./thinking-signatures.js";
+import type { ComputerModeCheckpoint } from "./turn-checkpoint.js";
 import {
   restoreTurnCheckpoint,
   serializeTurnCheckpoint,
   unresolvedTurnCheckpointCalls,
 } from "./turn-checkpoint.js";
-import { fetchPairedWithDispatcher } from "./undici-fetch.js";
-import { argumentGiven } from "./update-bot-patch.js";
+import { midTaskMessageFromPrompt, midTaskMessagePrompt } from "./user-progress.js";
 
+const MAX_REJECTED_REQUESTS = 5;
 const running = new Map<string, { controller: AbortController; work: Promise<void> }>();
-interface ToolCallBudget {
-  count: number;
-  exceeded: boolean;
-  limit: number;
-  inFlight: number;
-}
-// Optional fuse is process-local. continueRun on another worker starts at zero.
-const toolCallBudgetsByRun = new Map<string, ToolCallBudget>();
-// Built on first use, not at module load: entry points call loadRootEnv() after
-// their imports, and ESM hoists those imports, so module-level env reads here
-// would run before .env is loaded and miss the local provider entirely.
-let catalogModelsCache: Models | undefined;
-function catalogModels(): Models {
-  catalogModelsCache ??= registerOpenAiCompatibleCatalog(
-    registerLocalProvider(applyPiModelCompatibility(builtinModels())),
-  );
-  return catalogModelsCache;
-}
-const MAX_PARALLEL_SUBAGENTS = 4;
 // Some OpenAI-compatible models return EOS immediately after a tool result
 // instead of taking another assistant turn. A bounded internal follow-up keeps
 // that provider quirk from making a long task look complete after one step.
 const MAX_SILENT_TOOL_CONTINUATIONS = 3;
-// Sent in the user's role, so marked as automated: models took the old wording for the
-// user telling them never to stop, and kept going instead of asking.
+// Sent in the user's role, so marked as automated: otherwise models read it as the user
+// telling them never to stop, and keep going instead of asking.
 export const SILENT_TOOL_CONTINUATION_PROMPT = automated(
   "Your last turn ended right after a tool result, without a reply. Continue the original task from the latest tool result. If you need information or a decision from the user, ask them instead of guessing; otherwise use any remaining tools needed, then give the user the final answer.",
 );
+// Sent after a reply was cut off by a dropped connection; the cut text is the previous turn.
+export const CUT_REPLY_CONTINUATION_PROMPT = automated(
+  "Your previous reply was cut off by a connection error. Continue exactly where it stopped, mid-word if needed, without repeating anything.",
+);
+/**
+ * Sent after a reply ran out of output room. Models don't reliably tell a finished last word
+ * from a cut one, or keep the space before the next word, so the continuation starts by
+ * repeating the reply's last words, quoted here, and the join drops that repeat.
+ */
+export function cutReplyAtLimitPrompt(cut: string): string {
+  const end = cut.trimEnd().slice(-200);
+  const words = /(?:\S+\s+){0,5}\S+$/.exec(end)?.[0] ?? end;
+  // Escaped so a quote mark in the reply can't end the quote early; line breaks stay as they
+  // are, for the model to repeat them.
+  const quoted = words.slice(-80).replace(/["\\]/g, "\\$&");
+  return automated(
+    `Your previous reply hit the output limit. It ended with: "${quoted}" Continue it: start by repeating those last words exactly, then carry on without repeating anything else.`,
+  );
+}
 export const SILENT_ALLOWED_TOOL_CONTINUATION_PROMPT = automated(
   "Your last turn ended right after a tool result, without a reply. Continue the original task from the latest tool result. If you need information or a decision from the user, ask them instead of guessing, even if you were told to stay silent. Otherwise, if you were instructed to stay silent when there is nothing to report, follow that instruction for the entire final assistant reply; if not, use any remaining tools needed, then give the user the final answer.",
 );
@@ -158,34 +151,6 @@ export const SILENT_ALLOWED_TOOL_CONTINUATION_PROMPT = automated(
 // continue stores that sentence as the reply, and the next "continue" runs
 // tools and misses a final answer again.
 export { MISSING_TOOL_FINAL_RESPONSE_ERROR } from "@cortexai-agent-hub/core";
-
-// Reasoning-capable models must not start at "off": for OpenRouter, pi-ai maps
-// that to reasoning.effort "none", which 400s on endpoints that mandate
-// reasoning (e.g. google/gemini-3.7-flash). Keep a real level when model.reasoning
-// is set; plain models stay off.
-const REASONING_MODEL_THINKING_LEVEL: ModelThinkingLevel = "medium";
-function thinkingLevelFor(
-  model: Model<Api>,
-  preferred?: ModelThinkingLevel | null,
-): ModelThinkingLevel {
-  if (!model.reasoning) return "off";
-  if (preferred) return clampThinkingLevel(model, preferred);
-  return clampThinkingLevel(model, REASONING_MODEL_THINKING_LEVEL);
-}
-// Pi forwards these names to OpenAI Responses, whose function-name contract is
-// ^[a-zA-Z0-9_-]+$ with a maximum length of 64 characters.
-const AGENT_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const MAX_AGENT_TOOL_NAME_LENGTH = 64;
-const FALLBACK_AGENT_TOOL_NAME = "connector_tool";
-
-/** Optional self-host fuse. Unset, empty, or 0 means unlimited (default). */
-export function maxToolCallsPerTurn(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.MAX_TOOL_CALLS_PER_TURN?.trim();
-  if (!raw) return 0;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.floor(parsed);
-}
 
 export interface PiAgentRuntimeOptions {
   /** Directory where Pi JSONL sessions are written. Omit to disable recording. */
@@ -271,11 +236,28 @@ export class PiAgentRuntime implements AgentRuntime {
       ? AbortSignal.any([controller.signal, context.signal])
       : controller.signal;
     const queue = createQueue();
+    let thinking = false;
+    const setThinking = (active: boolean) => {
+      const next = active && !signal.aborted;
+      if (thinking === next) return;
+      thinking = next;
+      queue.push({ type: "thinking", active: next });
+    };
+    const stopThinking = () => setThinking(false);
+    signal.addEventListener("abort", stopThinking, { once: true });
 
     const work = withPiTelemetry(request, async (span) => {
       let trackedBudget: ToolCallBudget | undefined;
       let resumeHost: ToolHost | undefined;
       try {
+        const savedMode = request.turnCheckpoint
+          ? restoreTurnCheckpoint(request.turnCheckpoint, request.model).computerMode
+          : undefined;
+        // An executor that resolved the pinned models already passes them in.
+        if (savedMode && !request.computerModel) {
+          const pinned = await restoreComputerModels(request, savedMode);
+          request = { ...request, model: pinned.main, computerModel: pinned.computer };
+        }
         const selectedModel = resolveRuntimeModel(request.model);
         if (!selectedModel.model) {
           queue.push({
@@ -294,9 +276,25 @@ export class PiAgentRuntime implements AgentRuntime {
           config: request.model,
           models,
           model: completionModel,
+          cardMaxTokens: cardOutputCeiling(model),
           apiKey,
           credentials: selectedModel.credentials,
         };
+        const computer = request.computerModel ? computerTarget(request.computerModel) : undefined;
+        let mode = savedMode?.mode ?? "main";
+        // Where the current computer-mode span began; a resumed span is not known, so it is all.
+        let computerFrom = 0;
+        // The last finished span, whose reasoning is not the main model's, even on the same model id.
+        let computerSpan: [number, number] | undefined;
+        let mainTarget = initialModelTarget;
+        let computerMode: ComputerModeCheckpoint | undefined = computer
+          ? {
+              version: 1,
+              mode,
+              main: computerSelection(request.model),
+              computer: computerSelection(computer.config),
+            }
+          : undefined;
         const host: ToolHost = {
           queue,
           context,
@@ -304,7 +302,8 @@ export class PiAgentRuntime implements AgentRuntime {
           onContextDecision: this.onContextDecision,
           modelCallObserver: this.modelCallObserver,
           request,
-          activeModel: initialModelTarget,
+          activeModel: mode === "computer" ? computer! : initialModelTarget,
+          computerModeAllowed: computer ? () => mode === "computer" : undefined,
           models,
           model: completionModel,
           apiKey,
@@ -317,17 +316,28 @@ export class PiAgentRuntime implements AgentRuntime {
           depth: 0,
           pausePending: false,
           pendingShells: [],
+          modelResponses: 0,
         };
         resumeHost = host;
-        const tools = toAgentTools(toolDefs, host);
+        const allTools = toAgentTools(toolDefs, host);
+        const toolsByAgentName = agentToolDefinitions(toolDefs);
+        // Replayed calls to tools the model no longer has say so in their results.
+        const offeredToolNames = new Set(allTools.map((tool) => tool.name));
+        let tools = allTools;
         const seenSteeringIds: string[] = [];
         const initialSteering = request.claimSteering ? await request.claimSteering([]) : [];
+        let hasCurrentImages = Boolean(
+          request.currentRunRequiresImageInput ||
+            (request.currentTurnImages?.length && !request.currentTurnImageFileFallback) ||
+            initialSteering.some((item) => item.images?.length && !item.imageFileFallback),
+        );
         seenSteeringIds.push(...initialSteering.map((item) => item.id));
+        // A computer-mode checkpoint was written by the computer model; keep its thinking.
         const restored = request.turnCheckpoint
-          ? restoreTurnCheckpoint(request.turnCheckpoint, {
-              provider: model.provider,
-              id: model.id,
-            })
+          ? restoreTurnCheckpoint(
+              request.turnCheckpoint,
+              mode === "computer" && computer ? computer.model : model,
+            )
           : undefined;
         const history =
           restored?.messages ??
@@ -335,6 +345,7 @@ export class PiAgentRuntime implements AgentRuntime {
             withoutSteeringMessages(request.history, initialSteering),
             request.prompt,
             request.sourceMessageId,
+            offeredToolNames,
           );
         const representedHistoryIds = new Set(
           restored
@@ -350,11 +361,22 @@ export class PiAgentRuntime implements AgentRuntime {
                 ...initialSteering.map((item) => item.messageId),
               ],
         );
-        const initialPrompt = initialSteering.length
-          ? `${request.prompt}\n\nAdditional user context:\n${initialSteering
-              .map((item) => item.text)
-              .join("\n")}`
-          : request.prompt;
+        // In a group the person's mid-run messages carry the same label as their history and
+        // prompt; the raw text stays what ids and content are matched on.
+        const steeringText = (item: AgentSteeringMessage) =>
+          !request.promptSpeaker
+            ? item.text
+            : item.origin === "user"
+              ? speakerText(request.promptSpeaker, item.text)
+              : neutralizeSpeakerLabels(item.text);
+        const promptWithSteering = (
+          text: (item: AgentSteeringMessage) => string,
+          prompt = request.prompt,
+        ) =>
+          initialSteering.length
+            ? `${prompt}\n\nAdditional user context:\n${initialSteering.map(text).join("\n")}`
+            : prompt;
+        const initialPrompt = promptWithSteering((item) => item.text);
         const systemPrompt =
           restored?.systemPrompt ??
           (request.instructions ||
@@ -373,9 +395,13 @@ export class PiAgentRuntime implements AgentRuntime {
               botId: request.botId,
               userId: context.userId,
               traceId: context?.traceId,
-              provider: model.provider,
-              model: model.id,
-              thinkingLevel,
+              // A resumed computer-mode turn starts on the computer model.
+              provider: host.activeModel.model.provider,
+              model: host.activeModel.model.id,
+              thinkingLevel: thinkingLevelFor(
+                host.activeModel.model,
+                host.activeModel.config.thinkingLevel,
+              ),
               systemPrompt,
               initialMessages: history,
             });
@@ -399,8 +425,9 @@ export class PiAgentRuntime implements AgentRuntime {
         let sentContext: { context: Context; sourceLength: number } | undefined;
         const prepareContext = (ctx: Context, m: Model<Api>) => {
           const prepared = contextPolicy.prepareContext(ctx, m);
+          // The checkpoint keeps what the policy chose; the opening turn is added to each call.
           sentContext = { context: prepared, sourceLength: ctx.messages.length };
-          return prepared;
+          return withLeadingUser(prepared);
         };
         const usageHooks = {
           prepareContext,
@@ -419,10 +446,13 @@ export class PiAgentRuntime implements AgentRuntime {
         };
         // The idle watchdog may clone a terminal message, preserving its content array.
         const providerFailures = new WeakSet<AssistantMessage["content"]>();
+        const rejectedRequests: RejectedProviderRequest[] = [];
         const hasBackups = Boolean(request.fallbackModels?.length);
         let agent: Agent;
         let activeStreamTarget = host.activeModel;
-        const fallbackState: FallbackStreamState = {
+        // A tool result that ended the turn carries the reply the user must still see.
+        let terminatedReply: string | undefined;
+        let fallbackState: FallbackStreamState = {
           request,
           agentId: "main",
           getActive: () => activeStreamTarget,
@@ -431,24 +461,58 @@ export class PiAgentRuntime implements AgentRuntime {
           attempted: new Set<string>(),
           nextIndex: 0,
           onBackup: false,
-          stream: (target, ctx, options) =>
-            targetModelStream(
-              target,
-              ctx,
-              options,
-              (event) => queue.push(event),
-              target.config.callObserver ?? this.modelCallObserver,
-              {
-                operationKind: request.usageOperationKind ?? "answer",
-                userId: context?.userId,
-                runId: request.runId,
-              },
-              {
-                ...usageHooks,
-                prepareContext,
-                onProviderError: (message) => providerFailures.add(message.content),
-              },
-            ),
+          backupOutcomes: new Map(),
+          selfRecoveries: 0,
+          cutReplies: new WeakMap(),
+          stream: (target, ctx, options) => {
+            if (hasCurrentImages && !target.model.input.includes("image")) {
+              throw new Error(MODEL_IMAGE_INPUT_ERROR);
+            }
+            return withPiThinkingActivity(
+              reliableModelStream(
+                target.models,
+                target.model,
+                ctx,
+                withCloudflareAuth(target.config, options),
+                target.config.maxTokens,
+                () => target.credentials?.accessToken ?? target.apiKey,
+                (preparedOptions) =>
+                  observedPiStream(
+                    target.models,
+                    target.model,
+                    ctx,
+                    preparedOptions,
+                    (event) => queue.push(event),
+                    target.config.callObserver ?? this.modelCallObserver,
+                    {
+                      operationKind: request.usageOperationKind ?? "answer",
+                      userId: context?.userId,
+                      runId: request.runId,
+                    },
+                    {
+                      ...usageHooks,
+                      prepareContext,
+                      onProviderError: (message) => providerFailures.add(message.content),
+                      onRejectedRequest: (rejection, model) => {
+                        if (rejection) {
+                          if (rejectedRequests.push(rejection) > MAX_REJECTED_REQUESTS)
+                            rejectedRequests.shift();
+                          return;
+                        }
+                        // That model recovered; another model's rejection still explains a failure.
+                        for (let index = rejectedRequests.length - 1; index >= 0; index -= 1) {
+                          const entry = rejectedRequests[index];
+                          if (entry?.provider === model.provider && entry.model === model.id)
+                            rejectedRequests.splice(index, 1);
+                        }
+                      },
+                    },
+                  ),
+                target.config.cacheCapabilities?.retentionMode,
+              ),
+              setThinking,
+            );
+          },
           onContextLimit: (contextWindow) => {
             const target = resizeRuntimeTarget(activeStreamTarget, contextWindow);
             activeStreamTarget = target;
@@ -457,23 +521,123 @@ export class PiAgentRuntime implements AgentRuntime {
             agent.state.model = target.model;
             contextPolicy = contextPolicyFor(target);
           },
+          // A throwaway policy, so judging a backup leaves the active policy's sent transcript
+          // alone. Cache use is recorded only on usage, which a throwaway never sees. The opening
+          // turn is added as on each call, so the backup is judged on what it would be sent.
+          prepareForTarget: (target, ctx) => ({
+            ...ctx,
+            ...withLeadingUser(contextPolicyFor(target).prepareContext(ctx, target.model)),
+          }),
           onSwitch: async (target) => {
             await request.onModelChange?.(target.config.provider, target.config.id);
             activeStreamTarget = target;
             contextPolicy = contextPolicyFor(target);
             host.activeModel = target;
+            // A backup keeps its own effort.
             const nextThinkingLevel = thinkingLevelFor(
               target.model,
-              target.config.thinkingLevel ?? request.model.thinkingLevel,
+              target.config.thinkingLevel ??
+                (sameModelTarget(target.config, request.model)
+                  ? request.model.thinkingLevel
+                  : undefined),
             );
             agent.state.model = target.model;
             agent.state.thinkingLevel = nextThinkingLevel;
             host.models = target.models;
             host.model = target.model;
             host.apiKey = target.credentials?.accessToken ?? target.apiKey;
-            queue.push({ type: "progress", text: backupSwitchText(target) });
           },
         };
+        const mainFallbackState = fallbackState;
+        const computerFallbackState: FallbackStreamState | undefined = computer
+          ? {
+              ...fallbackState,
+              request: { ...request, model: computer.config, fallbackModels: [] },
+              attempted: new Set(),
+              backupOutcomes: new Map(),
+            }
+          : undefined;
+        const setTarget = (target: RuntimeModelTarget) => {
+          // Keep message origin metadata: Pi's per-provider serializers translate foreign
+          // reasoning signatures and tool/result IDs together, including after resume.
+          activeStreamTarget = target;
+          host.activeModel = target;
+          host.models = target.models;
+          host.model = target.model;
+          host.apiKey = target.credentials?.accessToken ?? target.apiKey;
+          contextPolicy = contextPolicyFor(target);
+          if (agent) {
+            agent.state.model = target.model;
+            agent.state.thinkingLevel = thinkingLevelFor(target.model, target.config.thinkingLevel);
+          }
+        };
+        const modeTools = () => {
+          if (!computer) return allTools;
+          const transition = computerTransitionTool(
+            mode,
+            async () => {
+              const next = mode === "main" ? computer : mainTarget;
+              await request.onModelChange?.(
+                next.config.provider,
+                next.config.id,
+                next === computer,
+              );
+              signal.throwIfAborted();
+              if (mode === "main") {
+                mainTarget = {
+                  ...activeStreamTarget,
+                  config: {
+                    ...activeStreamTarget.config,
+                    thinkingLevel: agent.state.thinkingLevel,
+                  },
+                };
+                mode = "computer";
+                computerFrom = agent.state.messages.length;
+                fallbackState = computerFallbackState!;
+                setTarget(computer);
+              } else {
+                mode = "main";
+                computerSpan = [computerFrom, agent.state.messages.length];
+                fallbackState = mainFallbackState;
+                setTarget(mainTarget);
+              }
+              computerMode = {
+                version: 1,
+                mode,
+                main: computerSelection(mainTarget.config),
+                computer: computerSelection(computer.config),
+              };
+              if (mode === "computer")
+                fallbackState.messagesBeforeSwitch = agent.state.messages.length;
+              tools = modeTools();
+              agent.state.tools = tools;
+            },
+            signal,
+          );
+          if (
+            allTools.some((tool) =>
+              ["enter_computer_mode", "leave_computer_mode"].includes(tool.name),
+            )
+          )
+            throw new Error("Computer mode tool name collision");
+          return [
+            ...allTools.filter(
+              (tool) => mode === "computer" || !COMPUTER_MODE_TOOLS.has(tool.label),
+            ),
+            transition,
+          ];
+        };
+        tools = modeTools();
+        if (computer) {
+          fallbackState = mode === "computer" ? computerFallbackState! : mainFallbackState;
+          setTarget(activeStreamTarget);
+          if (savedMode)
+            await request.onModelChange?.(
+              activeStreamTarget.config.provider,
+              activeStreamTarget.config.id,
+              mode === "computer",
+            );
+        }
         agent = new Agent({
           sessionId: conversationSessionId(request.threadId, request.botId),
           steeringMode: "all",
@@ -483,13 +647,16 @@ export class PiAgentRuntime implements AgentRuntime {
               ctx,
               withAutomatedLabels({ ...options, fetch: this.modelFetch ?? options?.fetch }),
             ),
-          getApiKey: hasBackups
-            ? async () => activeStreamTarget.credentials?.accessToken ?? activeStreamTarget.apiKey
-            : async () => apiKey,
+          getApiKey:
+            hasBackups || computer
+              ? async () => activeStreamTarget.credentials?.accessToken ?? activeStreamTarget.apiKey
+              : async () => apiKey,
           finishTurn: async (turn, turnSignal) => {
             await deliverFinishedShells(
+              // Steered, so the output reaches the next model request like a tool result. A
+              // follow-up waits until the model stops and then costs one model turn each.
               (text) => {
-                agent.followUp({
+                agent.steer({
                   role: "user",
                   content: text,
                   timestamp: Date.now(),
@@ -500,26 +667,66 @@ export class PiAgentRuntime implements AgentRuntime {
               turnSignal,
             );
           },
-          prepareNextTurnWithContext: async () => {
-            if (!request.claimSteering) return undefined;
+          prepareNextTurnWithContext: async (turn) => {
+            const update = computer
+              ? {
+                  context: {
+                    ...turn.context,
+                    tools,
+                    messages:
+                      mode === "main" && computerSpan
+                        ? withoutThinkingFrom(turn.context.messages, ...computerSpan)
+                        : turn.context.messages,
+                  },
+                  model: activeStreamTarget.model,
+                  thinkingLevel: thinkingLevelFor(
+                    activeStreamTarget.model,
+                    activeStreamTarget.config.thinkingLevel,
+                  ),
+                }
+              : undefined;
+            if (!request.claimSteering) return update;
+            // The turn is ending at a terminating result that aborted the agent; no
+            // model request would answer a follow-up claimed now, and a completed run
+            // deletes its claimed steering. Leave the message queued for the next run.
+            if (terminatedReply && !host.pausePending) return update;
             const steering = await request.claimSteering([...seenSteeringIds]);
-            if (steering.length === 0) return undefined;
+            if (steering.length === 0) return update;
             seenSteeringIds.push(...steering.map((item) => item.id));
             for (const item of steering) representedHistoryIds.add(item.messageId);
-            for (const item of steering) {
+            if (steering.some((item) => item.images?.length && !item.imageFileFallback))
+              hasCurrentImages = true;
+            const messages = steering.map((item): Message => {
               const images = toPiImages(item.images);
-              agent.steer({
+              const text =
+                item.origin === "user"
+                  ? midTaskMessagePrompt(
+                      steeringText(item),
+                      toolDefs.some((tool) => tool.name === "message_user"),
+                    )
+                  : midTaskMessageFromPrompt(steeringText(item), item.origin);
+              return {
                 role: "user",
-                content: images.length ? [{ type: "text", text: item.text }, ...images] : item.text,
+                content: images.length ? [{ type: "text", text }, ...images] : text,
                 timestamp: Date.now(),
-              });
-            }
-            return undefined;
+              };
+            });
+            // Ordered with the turn's other events, so the run can treat it as a turn boundary.
+            queue.push({
+              type: "steered",
+              fromRunUser: steering.some((item) => item.origin === "user"),
+            });
+            // Returned rather than steered: Pi polls its steering queue once per turn before
+            // this hook runs, and skips the poll after it when that one found a message, such
+            // as a finished shell's output. Returned messages always go into the next request.
+            return { ...update, messages };
           },
           initialState: {
             systemPrompt,
-            model: completionModel,
-            thinkingLevel,
+            model: activeStreamTarget.model,
+            thinkingLevel: computer
+              ? thinkingLevelFor(activeStreamTarget.model, activeStreamTarget.config.thinkingLevel)
+              : thinkingLevel,
             tools,
             messages: history,
           },
@@ -548,6 +755,16 @@ export class PiAgentRuntime implements AgentRuntime {
               ));
           const checkpoint = {
             version: 1 as const,
+            ...(computerMode
+              ? {
+                  computerMode: {
+                    ...computerMode,
+                    main: computerSelection(
+                      mode === "main" ? activeStreamTarget.config : mainTarget.config,
+                    ),
+                  },
+                }
+              : {}),
             provider: activeStreamTarget.model.provider,
             model: activeStreamTarget.model.id,
             systemPrompt,
@@ -591,11 +808,32 @@ export class PiAgentRuntime implements AgentRuntime {
         let toolCalls = 0;
         let toolActivityShowing = false;
         let silentToolContinuations = 0;
+        // A reply cut off by a dropped connection continues in the same bubble: no turn break,
+        // and a continuation that starts by repeating the end of the cut text loses that repeat.
+        let joinCutReply: { tail: string; held: string; requested: boolean } | undefined;
+        let limitContinuation: { tail: string; start: number } | undefined;
+        let outputCutFailed = false;
+        // What the last join dropped from the start of a continuation, which the completed
+        // message still holds.
+        let joinDropped = "";
+        const releaseJoin = () => {
+          if (!joinCutReply) return;
+          const { tail, held, requested } = joinCutReply;
+          joinCutReply = undefined;
+          joinDropped = held.slice(0, continuationRepeat(tail, held, requested));
+          const text = held.slice(joinDropped.length);
+          if (!text) return;
+          streamed += text;
+          queue.push({ type: "text", text });
+        };
         let toolWorkPendingFinal = false;
         // Text streamed before this point is tool-turn narration. Only text after
         // it counts as the final reply, including when the completed message omits it.
         let streamedBeforePendingFinal = 0;
         agent.subscribe(async (event) => {
+          if (event.type === "tool_execution_end" && isTerminatingReplyResult(event.result)) {
+            terminatedReply = terminatingReplyText(event.result) ?? terminatedReply;
+          }
           if (event.type === "tool_execution_end" && !event.result.terminate) {
             finishedCalls.set(event.toolCallId, {
               role: "toolResult",
@@ -608,9 +846,14 @@ export class PiAgentRuntime implements AgentRuntime {
             });
           }
           if (event.type === "message_end") {
+            stopThinking();
+            // Before any copy is kept: the recording below, and the checkpoint and provider
+            // payloads that reuse this same message object.
+            redactAskUserDetailInMessage(event.message, request.secrets);
             await piSession?.appendMessage(event.message);
           }
           if (event.type === "tool_execution_start") {
+            stopThinking();
             finishedCalls.delete(event.toolCallId);
             if (host.toolCallBudget.exceeded) return;
             toolCalls += 1;
@@ -619,15 +862,22 @@ export class PiAgentRuntime implements AgentRuntime {
             toolActivityShowing = true;
             queue.push({
               type: "progress",
-              text: describeToolActivity(event.toolName, event.args),
+              text: describeToolActivity(event.toolName, event.args, (name) =>
+                toolsByAgentName.get(name),
+              ),
               activity: true,
             });
           }
           if (event.type === "message_start" && event.message.role === "assistant") {
+            host.modelResponses = (host.modelResponses ?? 0) + 1;
             currentMessageStreamed = "";
+            // A later assistant turn supersedes a terminating result's carried reply,
+            // except the empty aborted message of a turn the result itself ended.
+            if (event.message.stopReason !== "aborted") terminatedReply = undefined;
+            if (!joinCutReply) joinDropped = "";
             // A later message (after a finished shell or steering, not only a tool call)
             // must not run its text straight on from the previous one.
-            if (streamed) queue.push({ type: "turn" });
+            if (streamed && !joinCutReply) queue.push({ type: "turn" });
           }
           if (
             event.type === "message_update" &&
@@ -640,9 +890,17 @@ export class PiAgentRuntime implements AgentRuntime {
                 toolActivityShowing = false;
                 queue.push({ type: "progress", text: "", activity: true });
               }
-              streamed += delta;
               currentMessageStreamed += delta;
-              queue.push({ type: "text", text: delta });
+              if (joinCutReply) {
+                joinCutReply.held += delta;
+                const decidable =
+                  Math.min(joinCutReply.tail.length, MAX_CONTINUATION_OVERLAP) +
+                  MAX_CONTINUATION_MARKER;
+                if (joinCutReply.held.length > decidable) releaseJoin();
+              } else {
+                streamed += delta;
+                queue.push({ type: "text", text: delta });
+              }
             }
           }
           if (event.type === "turn_end") {
@@ -688,6 +946,17 @@ export class PiAgentRuntime implements AgentRuntime {
           }
           if (event.type === "message_end" && event.message.role === "assistant") {
             const text = assistantText(event.message);
+            // The completed text can hold more of a continuation than arrived as deltas, so its
+            // repeat of the cut reply is judged on all of it.
+            if (
+              joinCutReply &&
+              !messageHasToolCall(event.message) &&
+              text.startsWith(joinCutReply.held)
+            ) {
+              joinCutReply.held = text;
+              currentMessageStreamed = text;
+            }
+            releaseJoin();
             const streamedThisMessage = currentMessageStreamed;
             currentMessageStreamed = "";
             const continued =
@@ -704,6 +973,35 @@ export class PiAgentRuntime implements AgentRuntime {
               streamed = text;
               queue.push({ type: "text", text });
             }
+            let cutBy = fallbackState.cutReplies?.get(event.message.content);
+            let tail = text;
+            // A normal stop only finishes the cut reply if the join added new text.
+            if (
+              limitContinuation &&
+              !messageHasToolCall(event.message) &&
+              event.message.stopReason === "stop" &&
+              !streamed.slice(limitContinuation.start).trim() &&
+              !cutBy
+            ) {
+              if (fallbackState.selfRecoveries >= MAX_SELF_RECOVERIES_PER_RUN) {
+                outputCutFailed = true;
+              } else {
+                fallbackState.selfRecoveries += 1;
+                cutBy = "limit";
+                tail = limitContinuation.tail;
+              }
+            }
+            limitContinuation = undefined;
+            if (cutBy) {
+              limitContinuation = cutBy === "limit" ? { tail, start: streamed.length } : undefined;
+              joinCutReply = { tail, held: "", requested: cutBy === "limit" };
+              agent.followUp({
+                role: "user",
+                content:
+                  cutBy === "limit" ? cutReplyAtLimitPrompt(tail) : CUT_REPLY_CONTINUATION_PROMPT,
+                timestamp: Date.now(),
+              });
+            }
           }
         });
 
@@ -717,6 +1015,8 @@ export class PiAgentRuntime implements AgentRuntime {
           if (restored) {
             // Complete unresolved calls before another model choice. The executor
             // still enforces canonical approved arguments, routes and idempotency.
+            // A terminating result ends the resumed turn like the live one.
+            let replayTerminated = false;
             const unresolved = new Set(unresolvedTurnCheckpointCalls(history as Message[]));
             if (restored.executionMode !== "sequential") {
               for (const message of [...history]) {
@@ -797,16 +1097,26 @@ export class PiAgentRuntime implements AgentRuntime {
                 unresolved.delete(call);
                 toolCalls += 1;
                 await piSession?.appendMessage(agent.state.messages.at(-1)!);
-                if ("terminate" in result && result.terminate) break;
+                if (host.pausePending || isTerminatingReplyResult(result)) {
+                  if (!host.pausePending) {
+                    // Replay must not run more calls or another model turn after the
+                    // result that already ended this turn; its reply is the final one.
+                    terminatedReply = terminatingReplyText(result) ?? terminatedReply;
+                    replayTerminated = true;
+                  }
+                  break;
+                }
               }
-              if (host.pausePending) break;
+              if (host.pausePending || replayTerminated) break;
             }
             restoringCalls = false;
-            if (!host.pausePending) {
+            if (!host.pausePending && !replayTerminated) {
               const addedHistory = withoutSteeringMessages(request.history, initialSteering).filter(
                 (message) => message.id && !representedHistoryIds.has(message.id),
               );
-              agent.state.messages.push(...toHistory(addedHistory, ""));
+              agent.state.messages.push(
+                ...toHistory(addedHistory, "", undefined, offeredToolNames),
+              );
               for (const message of addedHistory)
                 if (message.id) representedHistoryIds.add(message.id);
               for (const item of initialSteering) {
@@ -815,16 +1125,35 @@ export class PiAgentRuntime implements AgentRuntime {
                 agent.state.messages.push({
                   role: "user",
                   content: images.length
-                    ? [{ type: "text", text: item.text }, ...images]
-                    : item.text,
+                    ? [{ type: "text", text: steeringText(item) }, ...images]
+                    : steeringText(item),
                   timestamp: Date.now(),
                 });
+              }
+              // A run cannot continue from an assistant message. What trails here is this
+              // bot's own earlier reply, which the restored transcript already carries; a
+              // continue from its tool results would extend that old reply.
+              for (let last = agent.state.messages.at(-1); isHistoryReply(last); ) {
+                agent.state.messages.pop();
+                last = agent.state.messages.at(-1);
               }
               toolWorkPendingFinal = true;
               await agent.continue();
             }
           } else {
-            await agent.prompt(initialPrompt, images?.length ? images : undefined);
+            // Only the person's messages go under their label; anyone else's is framed by origin.
+            await agent.prompt(
+              promptWithSteering(
+                (item) =>
+                  item.origin === "user"
+                    ? steeringText(item)
+                    : midTaskMessageFromPrompt(steeringText(item), item.origin),
+                request.promptSpeaker
+                  ? speakerText(request.promptSpeaker, request.prompt)
+                  : request.prompt,
+              ),
+              images?.length ? images : undefined,
+            );
           }
         } finally {
           try {
@@ -833,25 +1162,70 @@ export class PiAgentRuntime implements AgentRuntime {
             signal.removeEventListener("abort", onAbort);
           }
         }
+        // A continuation that failed or stopped early still hands over what it wrote.
+        releaseJoin();
 
         // Budget abort stops the agent underneath the model, which leaves
         // errorMessage set. Treat that as a soft stop so the turn still ends
         // with a durable assistant message instead of a failed run.
         const budgetExceeded = host.toolCallBudget.exceeded;
         const terminalMessage = agent.state.messages.at(-1);
-        // pi-agent-core records ordinary provider failures as an empty assistant
-        // message (stopReason "error" / "length") and still resolves the run.
-        // state.errorMessage covers the error stop; the message itself covers a
-        // length stop and any failure that never landed on state.
+        // pi-agent-core records provider failures as an empty assistant message and
+        // still resolves the run; state.errorMessage misses length stops and failures
+        // that never landed on state.
         const providerFailure =
           !budgetExceeded && terminalMessage ? providerFailureText(terminalMessage) : undefined;
-        const error = agent.state.errorMessage || providerFailure;
-        if (error && !budgetExceeded && (!host.pausePending || signal.aborted)) {
-          const message = sanitizeProviderError(activeStreamTarget.model.provider, error);
-          throw modelFailure(error, message);
+        const error = outputCutFailed
+          ? MODEL_OUTPUT_CUT_ERROR
+          : agent.state.errorMessage || providerFailure;
+        // A turn ended at a terminating tool result leaves the abort's message on the
+        // agent; the reply that result carries is the answer, not a failure.
+        const endedAtToolResult = Boolean(terminatedReply) && !host.pausePending && !signal.aborted;
+        if (
+          error &&
+          !budgetExceeded &&
+          !endedAtToolResult &&
+          (!host.pausePending || signal.aborted)
+        ) {
+          let message = sanitizeProviderError(activeStreamTarget.model.provider, error);
+          if (
+            !signal.aborted &&
+            terminalMessage?.role === "assistant" &&
+            terminalMessage.stopReason !== "aborted" &&
+            fallbackState.primaryFailure &&
+            fallbackState.nextIndex >= (request.fallbackModels?.length ?? 0) &&
+            fallbackState.backupOutcomes.size > 0 &&
+            (request.fallbackModels ?? []).every(
+              (choice) =>
+                sameModelTarget(choice, request.model) ||
+                fallbackState.backupOutcomes.has(modelTargetKey(choice)),
+            )
+          ) {
+            message = modelFallbackFailure(fallbackState.primaryFailure, [
+              ...fallbackState.backupOutcomes.values(),
+            ]);
+          }
+          const failure = modelFailure(error, message, {
+            provider: activeStreamTarget.config.provider,
+            primaryProvider: fallbackState.request.model.provider,
+          });
+          // Only a rejection nothing explains needs its request's shape to be reproduced.
+          throw failure.constructor === Error
+            ? attachRejectedRequests(failure, rejectedRequests)
+            : failure;
         }
-        if (!budgetExceeded && terminalMessage && !messageHasToolCall(terminalMessage)) {
-          const terminalText = assistantText(terminalMessage);
+        // Only an assistant message can hold the answer a provider left off the deltas;
+        // a trailing tool result is tool output, not the model's reply.
+        if (
+          !budgetExceeded &&
+          terminalMessage?.role === "assistant" &&
+          !messageHasToolCall(terminalMessage)
+        ) {
+          const completedText = assistantText(terminalMessage);
+          const terminalText =
+            joinDropped && completedText.startsWith(joinDropped)
+              ? completedText.slice(joinDropped.length)
+              : completedText;
           const sincePendingFinal = streamed.slice(streamedBeforePendingFinal);
           if (terminalText.trim() && !sincePendingFinal.includes(terminalText)) {
             const missing =
@@ -875,12 +1249,22 @@ export class PiAgentRuntime implements AgentRuntime {
             queue.push({ type: "text", text: budgetMessage });
             streamed = budgetMessage;
           }
+        } else if (terminatedReply && !host.pausePending) {
+          // The turn ended at a terminating tool result; its reply is the final answer.
+          if (streamed.trim()) {
+            const suffix = `\n\n${terminatedReply}`;
+            queue.push({ type: "text", text: suffix });
+            streamed += suffix;
+          } else {
+            queue.push({ type: "text", text: terminatedReply });
+            streamed = terminatedReply;
+          }
         } else if (!host.pausePending && toolWorkPendingFinal) {
           if (request.allowSilentEmpty) {
             // Scheduled/FYI runs may finish after tools with no user-visible text.
             streamed = "";
           } else {
-            throw new Error(MISSING_TOOL_FINAL_RESPONSE_ERROR);
+            throw new ModelOutputError(MISSING_TOOL_FINAL_RESPONSE_ERROR);
           }
         } else if (!streamed.trim() && !host.pausePending) {
           streamed = "";
@@ -890,7 +1274,7 @@ export class PiAgentRuntime implements AgentRuntime {
             queue.push({ type: "text", text: fallback });
             streamed = fallback;
           } else if (toolWorkPendingFinal && !request.allowSilentEmpty) {
-            throw new Error(MISSING_TOOL_FINAL_RESPONSE_ERROR);
+            throw new ModelOutputError(MISSING_TOOL_FINAL_RESPONSE_ERROR);
           } else if (toolCalls === 0 && !request.allowSilentEmpty) {
             streamed = request.emptyResponseText?.trim() || "No response. Try again.";
             queue.push({ type: "text", text: streamed });
@@ -905,9 +1289,13 @@ export class PiAgentRuntime implements AgentRuntime {
             ? new TransientModelError(message)
             : error instanceof ModelAccountError
               ? new ModelAccountError(message)
-              : new Error(message),
+              : error instanceof ModelOutputError
+                ? new ModelOutputError(message)
+                : attachRejectedRequests(new Error(message), rejectedRequestsOf(error) ?? []),
         );
       } finally {
+        stopThinking();
+        signal.removeEventListener("abort", stopThinking);
         queue.close();
         if (trackedBudget) {
           const keepForResume =
@@ -927,2828 +1315,4 @@ export class PiAgentRuntime implements AgentRuntime {
       if (running.get(request.runId) === active) running.delete(request.runId);
     }
   }
-}
-
-function toPiImages(images: AgentRunRequest["currentTurnImages"]) {
-  return (images ?? []).map((image) => ({
-    type: "image" as const,
-    data: Buffer.from(image.data).toString("base64"),
-    mimeType: image.mimeType,
-  }));
-}
-
-function configuredOpenRouterModel(
-  id: string,
-  contextWindow = 16_384,
-): Model<"openai-completions"> {
-  // A configured model can intentionally be newer than Pi's static catalog. Keep
-  // pricing conservative, but enable reasoning: unknown OpenRouter endpoints
-  // (e.g. gemini-3.7-flash before the snapshot catches up) often mandate it, and
-  // thinkingLevel "off" becomes effort "none" which those endpoints reject.
-  // Reserve half the conservative fallback window for input. A model card's
-  // configured limits override this placeholder below.
-  return {
-    id,
-    name: id,
-    api: "openai-completions",
-    provider: "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow,
-    maxTokens: Math.min(REASONING_MODEL_MAX_TOKENS, Math.max(1, Math.floor(contextWindow / 2))),
-  };
-}
-
-export function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
-  provider: string;
-  modelId: string;
-  models: Models;
-  model: Model<Api> | undefined;
-  apiKey: string | undefined;
-  /** Live credential store; OAuth refreshes swap the credential mid-run. */
-  credentials: PiRuntimeCredentialStore | undefined;
-} {
-  const provider = canonicalPiProviderId(
-    modelConfig.provider === "scripted" ? "openrouter" : modelConfig.provider,
-  );
-  const envDefaultModel = process.env.PI_DEFAULT_MODEL?.trim();
-  const envDefaultProvider = process.env.PI_DEFAULT_PROVIDER?.trim() || "openrouter";
-  const requestedId =
-    modelConfig.id === "scripted" ? envDefaultModel || DEFAULT_OPENROUTER_MODEL_ID : modelConfig.id;
-  const modelId = usableModelId(requestedId) ?? "";
-  const credentials = credentialStoreForRequest({ model: modelConfig }, provider);
-  const models = modelsForRequest({ model: modelConfig }, provider, credentials);
-  let model = models.getModel(provider, modelId);
-  if (
-    provider === "openrouter" &&
-    !model &&
-    modelId &&
-    ((envDefaultProvider === "openrouter" && modelId === envDefaultModel) ||
-      modelConfig.contextWindow !== undefined)
-  ) {
-    model = configuredOpenRouterModel(modelId, modelConfig.contextWindow);
-  }
-  // Saved generic limits and deployment defaults take precedence over inferred siblings.
-  model ??= liveModelSibling(models, provider, modelId);
-  if (model && (modelConfig.contextWindow !== undefined || modelConfig.maxTokens !== undefined)) {
-    model = {
-      ...model,
-      ...(modelConfig.contextWindow !== undefined
-        ? { contextWindow: modelConfig.contextWindow }
-        : {}),
-      ...(modelConfig.maxTokens !== undefined ? { maxTokens: modelConfig.maxTokens } : {}),
-    };
-  }
-  const apiKey = modelConfig.oauth
-    ? undefined
-    : modelConfig.provider === OPENAI_COMPATIBLE_PROVIDER_ID
-      ? modelConfig.apiKey || "local"
-      : // Only OpenRouter may fall back to the OpenRouter env key. Handing it to
-        // another provider would ship our key to a vendor it was not issued for.
-        (modelConfig.apiKey ??
-        (provider === "openrouter" ? process.env.OPENROUTER_API_KEY : undefined));
-  return { provider, modelId, models, model, apiKey, credentials };
-}
-
-function credentialStoreForRequest(
-  request: Pick<AgentRunRequest, "model">,
-  provider: string,
-): PiRuntimeCredentialStore | undefined {
-  const oauth = request.model.oauth;
-  if (!oauth) return undefined;
-  const persist = oauth.persist;
-  return new PiRuntimeCredentialStore(
-    provider,
-    toOAuthCredential(oauth.credential),
-    persist ? (next) => persist(next) : undefined,
-    oauth.retire,
-  );
-}
-
-export function modelsForRequest(
-  request: Pick<AgentRunRequest, "model">,
-  provider: string,
-  credentials?: PiRuntimeCredentialStore,
-): Models {
-  const store = credentials ?? credentialStoreForRequest(request, provider);
-  if (store) {
-    return registerOpenAiCompatibleCatalog(
-      registerLocalProvider(applyPiModelCompatibility(builtinModels({ credentials: store }))),
-    );
-  }
-  if (
-    provider === OPENAI_COMPATIBLE_PROVIDER_ID &&
-    request.model.baseUrl &&
-    request.model.id.trim()
-  ) {
-    const models = registerOpenAiCompatibleCatalog(
-      registerLocalProvider(applyPiModelCompatibility(builtinModels())),
-    );
-    return registerOpenAiCompatibleRuntime(models, {
-      modelId: request.model.id,
-      baseUrl: request.model.baseUrl,
-      headers: request.model.headers,
-      allowPrivate: request.model.allowPrivateEndpoint,
-      reasoning: request.model.reasoning,
-      acceptsImages: request.model.acceptsImages,
-      maxTokens: request.model.maxTokens,
-      contextWindow: request.model.contextWindow,
-    });
-  }
-  return catalogModels();
-}
-
-function toAgentTools(toolDefs: readonly ConnectorTool[], host: ToolHost): AgentTool[] {
-  const named = namedAgentTools(toolDefs);
-  const nameCounts = new Map<string, number>();
-  for (const { tool } of named) nameCounts.set(tool.name, (nameCounts.get(tool.name) ?? 0) + 1);
-  return named.map(({ tool, name }) =>
-    toAgentTool(tool, host, name, nameCounts.get(tool.name)! > 1),
-  );
-}
-
-/** Shared canonical mapping for checkpoint validation and runtime exposure. */
-export function namedAgentTools(toolDefs: readonly ConnectorTool[]) {
-  // Registration order is incidental. Canonicalize before allocating collision suffixes
-  // so both provider-visible names and JSON schema serialization stay stable.
-  const canonicalJson = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(canonicalJson);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value)
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-          .map(([key, item]) => [key, canonicalJson(item)]),
-      );
-    }
-    return value;
-  };
-  const ordered = toolDefs
-    .map((tool) => ({
-      tool: {
-        ...tool,
-        inputSchema: canonicalJson(tool.inputSchema) as Record<string, unknown>,
-      },
-      key: JSON.stringify(canonicalJson(tool)),
-    }))
-    .sort((a, b) =>
-      a.tool.name < b.tool.name
-        ? -1
-        : a.tool.name > b.tool.name
-          ? 1
-          : a.key < b.key
-            ? -1
-            : a.key > b.key
-              ? 1
-              : 0,
-    )
-    .map(({ tool }) => tool);
-  const names = normalizeAgentToolNames(ordered);
-  return ordered.map((tool, index) => ({ tool, name: names[index]! }));
-}
-
-/**
- * Normalize connector names only at the boundary where they are exposed to Pi.
- * Connector execution continues to use the original name captured by toAgentTool.
- */
-export function normalizeAgentToolName(name: string): string {
-  if (isProviderSafeAgentToolName(name)) return name;
-  const normalized = name
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return (normalized || FALLBACK_AGENT_TOOL_NAME).slice(0, MAX_AGENT_TOOL_NAME_LENGTH);
-}
-
-/**
- * Return one valid, unique model-facing name per connector tool.
- * Existing valid names are reserved first so sanitizing a connector cannot
- * rename or shadow a builtin tool with the same valid name.
- */
-const ACTIVITY_DETAIL_LIMIT = 90;
-
-/** One human-readable line describing a tool call, shown live in the thread. */
-export function describeToolActivity(toolName: string, args: unknown): string {
-  const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-  const detail = (value: unknown): string => {
-    const text = sanitizeSensitiveText(String(value ?? ""))
-      .replaceAll(/\s+/g, " ")
-      .trim();
-    return text.length > ACTIVITY_DETAIL_LIMIT ? `${text.slice(0, ACTIVITY_DETAIL_LIMIT)}…` : text;
-  };
-  if (toolName === "shell") return `Running: ${detail(record.command)}`;
-  if (toolName === "read_file") return `Reading ${detail(record.path)}`;
-  if (toolName === "write_file") return `Writing ${detail(record.path)}`;
-  if (toolName === "list_files") return `Listing ${detail(record.path ?? ".")}`;
-  if (toolName === "attach_file") return `Attaching ${detail(record.path)}`;
-  if (toolName === "open_path") return `Opening ${detail(record.path)}`;
-  if (toolName === "render_plot") return "Rendering a chart";
-  if (toolName === "add_mcp_server") return `Connecting MCP server: ${detail(record.name)}`;
-  if (toolName === "computer_observe") return "Looking at the screen";
-  if (toolName === "browser_navigate")
-    return `Opening page: ${detail(redactActivityUrl(record.url))}`;
-  if (toolName === "browser_snapshot") return "Reading the page";
-  if (toolName === "browser_act") return "Using the page";
-  if (toolName === "computer_act") return "Operating the computer";
-  if (toolName === "run_subagent") return `Delegating to helper: ${detail(record.name)}`;
-  if (toolName === "create_space") return `Creating space: ${detail(record.name)}`;
-  if (toolName === "list_fleet") return "Checking your bots";
-  if (toolName === "create_group") return `Creating group: ${detail(record.name)}`;
-  if (toolName === "update_group")
-    return `Updating group: ${detail(record.group_name ?? record.name)}`;
-  if (toolName === "organize_bot") return "Organizing the sidebar";
-  if (toolName === "set_child_instructions") return "Rewriting a bot's instructions";
-  if (toolName === "set_child_bot_model") return "Setting a bot's model";
-  if (toolName === "create_child_routine") return `Scheduling routine: ${detail(record.name)}`;
-  if (toolName === "remember") return "Saving a note to memory";
-  if (toolName === "save_shared_memory") return `Saving shared memory: ${detail(record.path)}`;
-  if (toolName === "web_search") return `Searching the web: ${detail(record.query)}`;
-  if (toolName === "web_fetch") return `Reading page: ${detail(redactActivityUrl(record.url))}`;
-  if (toolName === "skill_read") return `Reading skill: ${detail(record.name)}`;
-  if (toolName === "skill_create") return `Creating skill: ${detail(record.name ?? "skill")}`;
-  if (toolName === "skill_update")
-    return `Updating skill: ${detail(record.name ?? record.skillId)}`;
-  if (toolName === "skill_delete")
-    return `Deleting skill: ${detail(record.name ?? record.skillId)}`;
-  const mcp = toolName.match(/^mcp__(.+?)__(.+)$/);
-  if (mcp) return `Using ${mcp[1]}: ${mcp[2]}`;
-  return `Using ${toolName}`;
-}
-
-export function normalizeAgentToolNames(tools: readonly ConnectorTool[]): string[] {
-  const reservedValidNames = new Set(
-    tools.filter((tool) => isProviderSafeAgentToolName(tool.name)).map((tool) => tool.name),
-  );
-  const usedNames = new Set<string>();
-
-  return tools.map((tool) => {
-    const base = normalizeAgentToolName(tool.name);
-    const originalIsValid = isProviderSafeAgentToolName(tool.name);
-    let candidate = base;
-
-    if (usedNames.has(candidate) || (!originalIsValid && reservedValidNames.has(candidate))) {
-      candidate = withToolNameSuffix(base, stableToolNameHash(tool.name));
-    }
-
-    let suffix = 2;
-    while (usedNames.has(candidate) || (!originalIsValid && reservedValidNames.has(candidate))) {
-      candidate = withToolNameSuffix(base, `${stableToolNameHash(tool.name)}_${suffix}`);
-      suffix += 1;
-    }
-
-    usedNames.add(candidate);
-    return candidate;
-  });
-}
-
-function isProviderSafeAgentToolName(name: string): boolean {
-  return AGENT_TOOL_NAME_PATTERN.test(name) && name.length <= MAX_AGENT_TOOL_NAME_LENGTH;
-}
-
-function withToolNameSuffix(base: string, suffix: string): string {
-  const suffixWithSeparator = `_${suffix}`;
-  const prefixLength = Math.max(1, MAX_AGENT_TOOL_NAME_LENGTH - suffixWithSeparator.length);
-  return `${base.slice(0, prefixLength)}${suffixWithSeparator}`;
-}
-
-function stableToolNameHash(name: string): string {
-  let hash = 2166136261;
-  for (const character of name) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function toHistory(
-  history: AgentRunRequest["history"],
-  prompt: string,
-  sourceMessageId?: string | null,
-) {
-  let duplicatePromptIndex = -1;
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const message = history[index];
-    if (
-      message?.role === "user" &&
-      (sourceMessageId ? message.id === sourceMessageId : message.content === prompt)
-    ) {
-      duplicatePromptIndex = index;
-      break;
-    }
-  }
-  const prior =
-    duplicatePromptIndex < 0
-      ? history
-      : history.filter((_, index) => index !== duplicatePromptIndex);
-  return prior
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => {
-      const text = m.role === "assistant" ? `Assistant: ${m.content}` : m.content;
-      const images = m.role === "assistant" ? [] : toPiImages(m.images);
-      return {
-        role: "user" as const,
-        content: images.length ? [{ type: "text" as const, text }, ...images] : text,
-        timestamp: Date.now(),
-        cortexAiAgentHubHistory: true,
-        cortexAiAgentHubMessageId: m.id,
-        cortexAiAgentHubCreatedAt: m.createdAt,
-      };
-    });
-}
-
-function withoutSteeringMessages(
-  history: AgentRunRequest["history"],
-  steering: AgentSteeringMessage[],
-): AgentRunRequest["history"] {
-  if (steering.length === 0) return history;
-  const result = [...history];
-  let beforeIndex = result.length - 1;
-  for (let steeringIndex = steering.length - 1; steeringIndex >= 0; steeringIndex -= 1) {
-    const steeringMessage = steering[steeringIndex];
-    for (let index = beforeIndex; index >= 0; index -= 1) {
-      const message = result[index];
-      if (
-        message?.role !== "user" ||
-        (message.id
-          ? message.id !== steeringMessage?.messageId
-          : message.content !== (steeringMessage?.historyText ?? steeringMessage?.text))
-      ) {
-        continue;
-      }
-      result.splice(index, 1);
-      beforeIndex = index - 1;
-      break;
-    }
-  }
-  return result;
-}
-
-/**
- * Normalize `request_secret` arguments.
- *
- * Missing label/purpose must fail rather than filling Code/otp placeholders.
- * `credential` and `replace` must survive: the executor stores a submitted
- * value only when `credential` is present, and it validates the destination
- * shape itself. An earlier version of this function listed only
- * label/purpose/connectionId, so every credential the model supplied was
- * dropped here and the saved value had nowhere to go. Top-level destination
- * fields and a JSON string credential are folded into `credential` so they
- * are not dropped the same way.
- */
-export function prepareRequestSecretArguments(raw: Record<string, unknown>) {
-  const label = raw.label == null ? "" : String(raw.label);
-  const purpose = raw.purpose == null ? "" : String(raw.purpose);
-  if (!label.trim() || !purpose.trim()) {
-    throw new Error(
-      `request_secret requires a non-empty label and purpose (received: ${
-        Object.keys(raw).sort().join(", ") || "no arguments"
-      })`,
-    );
-  }
-  const credential = credentialArgument(raw);
-  const connectionId = connectionIdArgument(raw.connectionId);
-  return {
-    label,
-    purpose,
-    ...(connectionId ? { connectionId } : {}),
-    ...(credential !== undefined ? { credential } : {}),
-    ...(raw.replace === true ? { replace: true } : {}),
-  };
-}
-
-/**
- * The executor dispatches by original name, so a colliding name may execute a different
- * route than this definition; such calls keep the default result limit.
- */
-function toAgentTool(
-  tool: ConnectorTool,
-  host: ToolHost,
-  exposedName: string,
-  nameCollides: boolean,
-): AgentTool {
-  return {
-    name: exposedName,
-    label: tool.name,
-    description: tool.description,
-    // Pi runs a turn's tool calls concurrently by default, so a batch that
-    // creates a routine and lists routines can read the list before the row
-    // exists. Pi runs the whole batch in order when any call in it is
-    // sequential. Remember also needs this to avoid competing revision writes.
-    ...(SCHEDULE_TOOL_NAMES.has(tool.name) || tool.name === "remember"
-      ? { executionMode: "sequential" as const }
-      : {}),
-    parameters: parametersFor(tool),
-    prepareArguments: (args: unknown) => {
-      const raw = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-      if (tool.name === "remember") {
-        return {
-          content: String(raw.content ?? ""),
-          path: String(raw.path ?? "MEMORY.md"),
-        };
-      }
-      if (tool.name === "request_takeover") {
-        return { reason: String(raw.reason ?? "I need you on the screen.") };
-      }
-      if (tool.name === "ask_user") {
-        const options = Array.isArray(raw.options) ? raw.options.map(String) : raw.options;
-        return {
-          question: String(raw.question ?? "What should I use?"),
-          // Keep a missing/invalid options value as-is so schema minItems can reject it;
-          // do not coerce to [] (that used to look like a valid empty list upstream).
-          options,
-        };
-      }
-      if (tool.name === "request_secret") {
-        return prepareRequestSecretArguments(raw);
-      }
-      if (tool.name === "write_file") {
-        return {
-          path: String(raw.path ?? "notes/result.txt"),
-          content: textContentArg(raw.content, ""),
-        };
-      }
-      if (tool.name === "computer_act") {
-        return {
-          actions: Array.isArray(raw.actions) ? raw.actions : [],
-          observe: raw.observe === undefined ? true : Boolean(raw.observe),
-          settle_ms: Number(raw.settle_ms ?? 350),
-        };
-      }
-      if (tool.name === "list_files") return { path: String(raw.path ?? "") };
-      if (tool.name === "read_file") {
-        return {
-          path: String(raw.path ?? ""),
-          ...(raw.offset !== undefined ? { offset: Number(raw.offset) } : {}),
-          ...(raw.limit !== undefined ? { limit: Number(raw.limit) } : {}),
-        };
-      }
-      if (tool.name === "open_path") return { path: String(raw.path ?? "") };
-      if (tool.name === "launch_app") {
-        return {
-          application: String(raw.application ?? ""),
-          uri: raw.uri ? String(raw.uri) : "",
-        };
-      }
-      if (tool.name === "shell") {
-        return {
-          command: String(raw.command ?? ""),
-          // The executor chooses the bot-scoped default, including Team workspaces.
-          ...(raw.cwd ? { cwd: String(raw.cwd) } : {}),
-        };
-      }
-      if (tool.name === "run_subagent") {
-        return {
-          name: String(raw.name ?? "helper"),
-          task: String(raw.task ?? ""),
-          instructions: raw.instructions ? String(raw.instructions) : "",
-          model_provider: raw.model_provider ? String(raw.model_provider) : "",
-          model_id: raw.model_id ? String(raw.model_id) : "",
-        };
-      }
-      if (tool.name === "spawn_bot") {
-        return {
-          name: String(raw.name ?? ""),
-          title: raw.title ? String(raw.title) : "",
-          description: raw.description ? String(raw.description) : "",
-          instructions: raw.instructions ? String(raw.instructions) : "",
-          prompt: raw.prompt ? String(raw.prompt) : "",
-          computer_mode: raw.computer_mode ? String(raw.computer_mode) : "",
-        };
-      }
-      if (tool.name === "update_bot" || FLEET_TOOL_NAMES.some((name) => name === tool.name)) {
-        return prepareFleetArguments(tool.name, raw);
-      }
-      if (tool.name === "create_space") {
-        return { name: String(raw.name ?? "") };
-      }
-      if (tool.name === "archive_bot" || tool.name === "delete_bot") {
-        return {
-          confirm_name: String(raw.confirm_name ?? raw.confirmName ?? ""),
-          bot_id: raw.bot_id ? String(raw.bot_id) : raw.botId ? String(raw.botId) : "",
-        };
-      }
-      return raw as never;
-    },
-    execute: async (toolCallId, params): Promise<AgentToolResult<unknown>> =>
-      withPiTelemetrySpan(
-        "pi.agent.tool",
-        {
-          "pi.agent.tool.name": tool.name,
-        },
-        async (span) => {
-          host.signal.throwIfAborted();
-          const args = (params ?? {}) as Record<string, unknown>;
-          recordPiTelemetryContent(span, "pi.agent.tool.arguments", args);
-          const resultLimit = nameCollides ? undefined : toolResultChars(tool, args);
-          const rawCallId =
-            toolCallId || `${host.request.runId}:${tool.name}:${host.toolCallSeq.value++}`;
-          // Backend idempotency includes the agent namespace; Pi wire IDs remain untouched.
-          const executionId = JSON.stringify(["pi-tool", host.agentNamespace ?? "main", rawCallId]);
-          // A sequential tail cannot start after its preceding call pauses.
-          // This makes the saved sequential tail safe to resolve on resume.
-          if (host.pausePending)
-            return { content: [], details: { skipped: true }, terminate: true };
-          if (host.depth === 0) await host.captureCheckpoint?.(rawCallId, executionId);
-          if (host.pausePending)
-            return { content: [], details: { skipped: true }, terminate: true };
-          if (!beginToolCall(host)) {
-            return {
-              content: [{ type: "text", text: "Skipped: tool-call limit reached." }],
-              details: { skipped: true },
-            };
-          }
-          host.queue.push({ type: "tool", name: tool.name, args, executionId });
-          const startedAt = Date.now();
-          let result: unknown;
-          let failure: unknown;
-          // Executor results are bounded (or spilled) where they are delivered.
-          let delivered = false;
-          try {
-            result = await (async () => {
-              if (tool.name === "request_takeover") {
-                host.pausePending = true;
-                host.queue.push({
-                  type: "takeover",
-                  ...(host.request.onCheckpoint ? { executionId } : {}),
-                  reason: String(args.reason ?? "I need you on the screen."),
-                });
-                return {
-                  content: [{ type: "text", text: "Takeover requested." }],
-                  details: args,
-                  terminate: true,
-                };
-              }
-              if (tool.name === "ask_user") {
-                const options = Array.isArray(args.options)
-                  ? args.options.map((option) => String(option).trim())
-                  : [];
-                if (
-                  options.length < 2 ||
-                  options.length > 4 ||
-                  options.some((option) => option.length === 0 || option.length > 80) ||
-                  new Set(options).size !== options.length
-                ) {
-                  throw new Error("ask_user requires two to four unique, non-empty options");
-                }
-                host.pausePending = true;
-                host.queue.push({
-                  type: "ask",
-                  ...(host.request.onCheckpoint ? { executionId } : {}),
-                  text: String(args.question ?? "What should I use?"),
-                  actions: options.map((label, index) => ({
-                    id: `choice-${index + 1}`,
-                    label,
-                  })),
-                });
-                return {
-                  content: [{ type: "text", text: "Waiting for the user's choice." }],
-                  details: args,
-                  terminate: true,
-                };
-              }
-              if (tool.name === "request_secret") {
-                if (host.request.executeTool) {
-                  const result = await host.request.executeTool(tool.name, args, executionId);
-                  if (isAgentToolExecutionResult(result)) {
-                    if (isToolPauseResult(result)) host.pausePending = true;
-                    return result;
-                  }
-                  return {
-                    content: [
-                      {
-                        type: "text",
-                        text: serializeToolResult(
-                          result,
-                          host.request.contextStrategy,
-                          tool.name,
-                          args,
-                        ),
-                      },
-                    ],
-                    details: result,
-                  };
-                }
-                host.pausePending = true;
-                return {
-                  content: [{ type: "text", text: "Protected input requested." }],
-                  details: args,
-                  terminate: true,
-                };
-              }
-              if (tool.name === "run_subagent") {
-                const result = await executeSubagent(host, executionId, args);
-                return {
-                  content: [{ type: "text", text: result }],
-                  details: { result },
-                };
-              }
-              if (host.request.executeTool) {
-                const result = await host.request.executeTool(
-                  tool.name,
-                  args,
-                  executionId,
-                  tool.route,
-                  {
-                    onShellStillRunning: (completion) => {
-                      host.pendingShells.push(completion);
-                    },
-                  },
-                );
-                const spill = isErrorToolResult(result)
-                  ? undefined
-                  : spillTarget(host, tool, args, executionId);
-                delivered = true;
-                if (isAgentToolExecutionResult(result)) {
-                  if (isToolPauseResult(result)) host.pausePending = true;
-                  return deliverAgentToolResult(result, resultLimit, spill);
-                }
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text: await deliverSerializedToolResult(
-                        result,
-                        host.request.contextStrategy,
-                        tool.name,
-                        args,
-                        resultLimit,
-                        spill,
-                      ),
-                    },
-                  ],
-                  details: result,
-                };
-              }
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `${tool.name} is unavailable without an executor.`,
-                  },
-                ],
-                details: { error: "no executor" },
-              };
-            })();
-            if (delivered || VERBATIM_TOOL_RESULTS.has(tool.name)) {
-              return result as AgentToolResult<unknown>;
-            }
-            return boundAgentToolResult(result as AgentToolResult<unknown>, resultLimit);
-          } catch (error) {
-            failure = error;
-            throw error;
-          } finally {
-            // Pi only terminates a parallel batch when every result terminates.
-            // A single paused call must stop the turn before another model request.
-            if (host.pausePending) host.abortTurn?.();
-            const details = (
-              result as AgentToolResult<{ error?: unknown; isError?: unknown }> | undefined
-            )?.details;
-            const failed =
-              failure !== undefined || details?.error != null || details?.isError === true;
-            span?.setAttributes({ "pi.agent.tool.success": !failed });
-            recordPiTelemetryContent(span, "pi.agent.tool.result", result);
-            if (failed) span?.setStatus({ status: "error" });
-            endToolCall(host);
-            const completion: AgentToolCompletion = {
-              name: tool.name,
-              executionId,
-              durationMs: Math.max(0, Date.now() - startedAt),
-              ...(result === undefined ? {} : { result }),
-              ...(failure === undefined ? {} : { error: failure }),
-              ...(host.pausePending ? { paused: true } : {}),
-            };
-            try {
-              void Promise.resolve(host.request.onToolCompleted?.(completion)).catch(
-                () => undefined,
-              );
-            } catch {
-              // Audit hooks are best effort and must never change tool behavior.
-            }
-          }
-        },
-      ),
-  };
-}
-
-async function executeSubagent(host: ToolHost, executionId: string, args: Record<string, unknown>) {
-  if (host.depth > 0) return "Subagents cannot nest further.";
-  await host.subagentGate.acquire();
-  const agentId = executionId;
-  const name =
-    String(args.name ?? "helper")
-      .trim()
-      .slice(0, 80) || "helper";
-  const task = String(args.task ?? "").trim();
-  const extra = args.instructions ? String(args.instructions).trim() : "";
-  host.queue.push({
-    type: "subagent",
-    agentId,
-    name,
-    task,
-    status: "running",
-    progress: "starting…",
-  });
-
-  const requestedProvider = String(args.model_provider ?? "").trim();
-  const requestedModelId = String(args.model_id ?? "").trim();
-  const hasBackups = Boolean(host.request.fallbackModels?.length);
-  let requestModel = hasBackups ? host.activeModel.config : host.request.model;
-  try {
-    if (Boolean(requestedProvider) !== Boolean(requestedModelId)) {
-      throw new Error("model_provider and model_id must both be set");
-    }
-    if (requestedProvider && requestedModelId) {
-      if (!host.request.resolveModel) {
-        throw new Error("Per-call subagent model selection is unavailable");
-      }
-      requestModel = await host.request.resolveModel(requestedProvider, requestedModelId);
-    }
-  } catch (error) {
-    const message = sanitizeError(error instanceof Error ? error.message : String(error));
-    host.queue.push({
-      type: "subagent",
-      agentId,
-      name,
-      task,
-      status: "failed",
-      result: message,
-    });
-    host.subagentGate.release();
-    return `Subagent failed: ${message}`;
-  }
-
-  const selectedModel =
-    hasBackups && requestModel === host.activeModel.config
-      ? {
-          ...host.activeModel,
-          provider: host.activeModel.model.provider,
-          modelId: host.activeModel.model.id,
-        }
-      : resolveRuntimeModel(requestModel);
-  if (!selectedModel.model) {
-    const message = `Unknown model ${selectedModel.provider}/${selectedModel.modelId}`;
-    host.queue.push({
-      type: "subagent",
-      agentId,
-      name,
-      task,
-      status: "failed",
-      result: message,
-    });
-    host.subagentGate.release();
-    return `Subagent failed: ${message}`;
-  }
-  const subagentModel = modelForCompletion(selectedModel.model, requestModel.maxTokens);
-
-  const childDefs = host.request.tools.filter((tool) => !DELEGATION_TOOL_NAMES.has(tool.name));
-  const nestedHost: ToolHost = {
-    ...host,
-    activeModel: {
-      config: requestModel,
-      models: selectedModel.models,
-      model: subagentModel,
-      apiKey: selectedModel.apiKey,
-      credentials: selectedModel.credentials,
-    },
-    models: selectedModel.models,
-    model: subagentModel,
-    apiKey: hasBackups
-      ? (selectedModel.credentials?.accessToken ?? selectedModel.apiKey)
-      : selectedModel.apiKey,
-    depth: 1,
-    agentNamespace: agentId,
-    pendingShells: [],
-  };
-  const subagentPolicy = (model: AgentRunRequest["model"], credentialScope: string | undefined) =>
-    createRuntimeContextPolicy(
-      {
-        ...host.request,
-        model,
-        history: [],
-        prompt: task,
-        sourceMessageId: undefined,
-      },
-      host.context,
-      { credentialScope, imageTokens: estimatePiImageTokens },
-    );
-  let contextPolicy = subagentPolicy(requestModel, selectedModel.apiKey);
-  const providerFailures = new WeakSet<AssistantMessage["content"]>();
-  let nested!: Agent;
-  // Own fallback state over the parent's backups: a switch here sticks for this
-  // subagent only and never rewrites the parent run's model.
-  const fallbackState: FallbackStreamState = {
-    request: host.request,
-    agentId,
-    getActive: () => nestedHost.activeModel,
-    signal: host.signal,
-    onContextLimit: (contextWindow) => {
-      const target = resizeRuntimeTarget(nestedHost.activeModel, contextWindow);
-      nestedHost.activeModel = target;
-      nestedHost.model = target.model;
-      nested.state.model = target.model;
-      contextPolicy = subagentPolicy(target.config, target.apiKey);
-    },
-    isProviderFailure: (message) => providerFailures.has(message.content),
-    attempted: new Set<string>(),
-    nextIndex: 0,
-    onBackup: false,
-    stream: (target, ctx, options) =>
-      targetModelStream(
-        target,
-        ctx,
-        options,
-        (event) => host.queue.push(event),
-        target.config.callObserver ?? host.modelCallObserver,
-        {
-          operationKind: "subagent",
-          agentId,
-          userId: host.context?.userId,
-          runId: host.request.runId,
-        },
-        {
-          prepareContext: (ctx, m) => contextPolicy.prepareContext(ctx, m),
-          imageTokens: estimatePiImageTokens,
-          recordUsage: host.request.onUsage,
-          onUsage: (usage) => {
-            contextPolicy.onUsage(usage);
-            const decision = contextPolicy.getDecision();
-            if (decision)
-              host.onContextDecision?.({
-                ...decision,
-                runId: host.request.runId,
-                agentId,
-                usage,
-              });
-          },
-          onProviderError: (message) => providerFailures.add(message.content),
-        },
-      ),
-    onSwitch: async (target) => {
-      const targetKey = target.credentials?.accessToken ?? target.apiKey;
-      contextPolicy = subagentPolicy(target.config, targetKey);
-      nestedHost.activeModel = target;
-      nestedHost.models = target.models;
-      nestedHost.model = target.model;
-      nestedHost.apiKey = targetKey;
-      nested.state.model = target.model;
-      nested.state.thinkingLevel = thinkingLevelFor(
-        target.model,
-        target.config.thinkingLevel ?? requestModel.thinkingLevel,
-      );
-      host.queue.push({
-        type: "subagent",
-        agentId,
-        name,
-        task,
-        status: "running",
-        progress: backupSwitchText(target),
-      });
-    },
-  };
-  nested = new Agent({
-    finishTurn: async (turn, turnSignal) => {
-      await deliverFinishedShells(
-        (text) => {
-          nested.followUp({
-            role: "user",
-            content: text,
-            timestamp: Date.now(),
-          });
-        },
-        nestedHost.pendingShells,
-        turn,
-        turnSignal,
-      );
-    },
-    sessionId: conversationSessionId(host.request.threadId, host.request.botId, agentId),
-    streamFn: (_m, ctx, options) =>
-      fallbackAwareModelStream(
-        fallbackState,
-        ctx,
-        withAutomatedLabels({ ...options, fetch: host.modelFetch ?? options?.fetch }),
-      ),
-    getApiKey: async () =>
-      hasBackups
-        ? (nestedHost.activeModel.credentials?.accessToken ?? nestedHost.activeModel.apiKey)
-        : selectedModel.apiKey,
-    initialState: {
-      systemPrompt: [
-        `You are a CortexAI Agent Hub subagent named "${name}".`,
-        "You run inside the parent bot's turn — you are not a separate bot chat.",
-        "Complete the task and return a concise result. Do not spawn bots or further subagents.",
-        "Your task comes from the parent bot, not from the human user, and you cannot talk to the user: report your result back to the parent bot.",
-        "Messages marked as automated come from CortexAI Agent Hub, not from the user.",
-        extra,
-      ]
-        .filter(Boolean)
-        .join(" "),
-      model: subagentModel,
-      thinkingLevel: thinkingLevelFor(subagentModel, requestModel.thinkingLevel),
-      tools: toAgentTools(childDefs, nestedHost),
-      messages: [],
-    },
-  });
-  host.nestedAgents.add(nested);
-
-  let streamed = "";
-  let lastPush = 0;
-  nested.subscribe((event) => {
-    if (event.type === "tool_execution_start") {
-      if (host.toolCallBudget.exceeded) return;
-      const toolName = "toolName" in event && event.toolName ? String(event.toolName) : "a tool";
-      host.queue.push({
-        type: "subagent",
-        agentId,
-        name,
-        task,
-        status: "running",
-        progress: `using ${toolName}…`,
-      });
-    }
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      const delta = event.assistantMessageEvent.delta;
-      if (delta) {
-        streamed += delta;
-        const now = Date.now();
-        if (now - lastPush >= 80) {
-          lastPush = now;
-          host.queue.push({
-            type: "subagent",
-            agentId,
-            name,
-            task,
-            status: "running",
-            progress: streamed.slice(-800),
-          });
-        }
-      }
-    }
-    if (event.type === "message_end" && event.message.role === "assistant") {
-      const text = assistantText(event.message);
-      if (text && !streamed) streamed = text;
-    }
-  });
-
-  try {
-    if (host.signal.aborted) {
-      host.queue.push({
-        type: "subagent",
-        agentId,
-        name,
-        task,
-        status: "failed",
-        result: "stopped",
-      });
-      return "stopped";
-    }
-    const onAbort = () => nested.abort();
-    host.signal.addEventListener("abort", onAbort);
-    try {
-      await nested.prompt(
-        `Task from the parent bot (not from the user):\n${task || "Complete the delegated task."}`,
-      );
-    } finally {
-      try {
-        await nested.waitForIdle();
-      } finally {
-        host.signal.removeEventListener("abort", onAbort);
-        // nestedHost is a shallow copy; ask_user / request_takeover set pause
-        // only on the child. Copy it up before the parent releases the budget.
-        if (nestedHost.pausePending) host.pausePending = true;
-      }
-    }
-    // Shared-budget abort leaves errorMessage on the nested agent; surface it as a
-    // completed stop rather than a failed subagent chip.
-    const budgetExceeded = host.toolCallBudget.exceeded;
-    const error = nested.state.errorMessage || providerFailureText(nested.state.messages.at(-1));
-    if (error && !budgetExceeded) {
-      const message = sanitizeProviderError(nestedHost.activeModel.model.provider, error);
-      host.queue.push({
-        type: "subagent",
-        agentId,
-        name,
-        task,
-        status: "failed",
-        result: message,
-      });
-      return `Subagent failed: ${message}`;
-    }
-    const budgetMessage = budgetExceeded
-      ? toolCallBudgetExceededMessage(host.toolCallBudget.limit)
-      : undefined;
-    const result =
-      budgetMessage && streamed.trim()
-        ? `${streamed.trim()}\n\n${budgetMessage}`
-        : budgetMessage || streamed || assistantText(nested.state.messages.at(-1)) || "done.";
-    const clipped = clipToolResultText(result, TOOL_RESULT_TEXT_LIMIT);
-    host.queue.push({
-      type: "subagent",
-      agentId,
-      name,
-      task,
-      status: "completed",
-      result: clipped,
-    });
-    // The parent bot reads this as a tool result; say plainly that it is the helper talking.
-    return `Result from your helper "${name}" (not a message from the user):\n${clipped}`;
-  } catch (error) {
-    const message = sanitizeError(error instanceof Error ? error.message : String(error));
-    host.queue.push({
-      type: "subagent",
-      agentId,
-      name,
-      task,
-      status: "failed",
-      result: message,
-    });
-    return `Subagent failed: ${message}`;
-  } finally {
-    host.nestedAgents.delete(nested);
-    host.subagentGate.release();
-  }
-}
-
-/** Build AgentTool.parameters for a connector tool, including OpenAI wire fidelity. */
-export function parametersFor(tool: ConnectorTool) {
-  const builtin = builtinParameters(tool);
-  const schema = builtin
-    ? withDeclaredDescriptions(builtin, tool.inputSchema)
-    : safeJsonSchemaParameters(tool);
-  // Type.Union (top-level oneOf/anyOf) serializes without type/properties, and
-  // Anthropic rejects a root union, so it is flattened into one object schema.
-  // Re-wrap only when needed so Type.Object schemas keep TypeBox Kind metadata.
-  if (!openAiToolParametersNeedNormalization(schema)) return schema;
-  return Type.Unsafe(
-    normalizeOpenAiToolParameters(JSON.parse(JSON.stringify(schema))),
-  ) as unknown as ReturnType<typeof Type.Object>;
-}
-
-/** builtinParameters hand-builds stricter schemas for some tools, and those carried none of
- * the parameter descriptions the tool declares. Copy each declared description onto the
- * matching top-level field. The schema is built fresh per call, so this mutates no shared
- * node. */
-function withDeclaredDescriptions<T>(schema: T, declared: unknown): T {
-  const fields = (schema as { properties?: Record<string, Record<string, unknown>> }).properties;
-  const source = (
-    declared as { properties?: Record<string, { description?: unknown }> } | undefined
-  )?.properties;
-  if (!fields || !source) return schema;
-  for (const [key, spec] of Object.entries(source)) {
-    const field = fields[key];
-    if (
-      field &&
-      field.description === undefined &&
-      typeof spec?.description === "string" &&
-      spec.description
-    ) {
-      field.description = spec.description;
-    }
-  }
-  return schema;
-}
-
-/** A remote MCP server controls its own schemas, so a shape TypeBox cannot express must
- * degrade to a permissive object instead of failing every turn for the whole bot. */
-function safeJsonSchemaParameters(tool: ConnectorTool) {
-  try {
-    return jsonSchemaParameters(tool.inputSchema);
-  } catch (error) {
-    getLogger().error(`unsupported input schema for tool ${tool.name}`, error);
-    return Type.Object({});
-  }
-}
-
-function builtinParameters(tool: ConnectorTool) {
-  if (tool.name === "write_file") {
-    return Type.Object({ path: Type.String(), content: Type.String() });
-  }
-  if (tool.name === "request_takeover") {
-    return Type.Object({ reason: Type.String() });
-  }
-  if (tool.name === "ask_user") {
-    return Type.Object({
-      question: Type.String({ maxLength: 240 }),
-      options: Type.Array(Type.String({ minLength: 1, maxLength: 80 }), {
-        minItems: 2,
-        maxItems: 4,
-        uniqueItems: true,
-      }),
-    });
-  }
-  if (tool.name === "remember") {
-    return Type.Object({ content: Type.String(), path: Type.String() });
-  }
-  if (tool.name === "shell") {
-    return Type.Object({
-      command: Type.String(),
-      cwd: Type.Optional(Type.String()),
-    });
-  }
-  if (tool.name === "run_subagent") {
-    return Type.Object({
-      name: Type.String(),
-      task: Type.String(),
-      instructions: Type.Optional(Type.String()),
-      model_provider: Type.Optional(Type.String()),
-      model_id: Type.Optional(Type.String()),
-    });
-  }
-  if (tool.name === "spawn_bot") {
-    return Type.Object({
-      name: Type.String(),
-      title: Type.Optional(Type.String()),
-      description: Type.Optional(Type.String()),
-      instructions: Type.Optional(Type.String()),
-      prompt: Type.Optional(Type.String()),
-      computer_mode: Type.Optional(stringEnum(["team", "dedicated"], {})),
-    });
-  }
-  if (tool.name === "update_bot") {
-    return Type.Object({
-      name: Type.Optional(Type.String()),
-      title: Type.Optional(Type.String()),
-      description: Type.Optional(Type.String()),
-      color: Type.Optional(Type.String()),
-      artifact_id: Type.Optional(Type.String()),
-      use_attached_image: Type.Optional(Type.Boolean()),
-      notifyOnFinish: Type.Optional(Type.Boolean()),
-      bot_id: Type.Optional(Type.String()),
-    });
-  }
-  if (tool.name === "list_fleet") return Type.Object({ bot_id: Type.Optional(Type.String()) });
-  if (tool.name === "create_group") {
-    return Type.Object({
-      name: Type.String({ minLength: 1 }),
-      bot_ids: Type.Optional(Type.Array(Type.String())),
-      bot_names: Type.Optional(Type.Array(Type.String())),
-    });
-  }
-  if (tool.name === "update_group") {
-    return Type.Object({
-      group_id: Type.Optional(Type.String()),
-      group_name: Type.Optional(Type.String()),
-      name: Type.Optional(Type.String({ minLength: 1 })),
-      add_bot_ids: Type.Optional(Type.Array(Type.String())),
-      remove_bot_ids: Type.Optional(Type.Array(Type.String())),
-    });
-  }
-  if (tool.name === "organize_bot") {
-    return Type.Object({
-      bot_id: Type.Optional(Type.String()),
-      bot_name: Type.Optional(Type.String()),
-      group_id: Type.Optional(Type.String()),
-      group_name: Type.Optional(Type.String()),
-      section: Type.Optional(Type.String({ minLength: 1 })),
-      clear_section: Type.Optional(Type.Boolean()),
-      pinned: Type.Optional(Type.Boolean()),
-    });
-  }
-  if (tool.name === "set_child_instructions") {
-    return Type.Object({
-      bot_id: Type.Optional(Type.String()),
-      bot_name: Type.Optional(Type.String()),
-      instructions: Type.String({ minLength: 1, maxLength: BOT_INSTRUCTIONS_MAX_LENGTH }),
-      expected_version: Type.String(),
-    });
-  }
-  if (tool.name === "set_child_bot_model") {
-    return Type.Object({
-      bot_id: Type.Optional(Type.String()),
-      bot_name: Type.Optional(Type.String()),
-      provider: Type.Optional(Type.String()),
-      model: Type.Optional(Type.String()),
-      thinking_level: Type.Optional(Type.String()),
-      clear: Type.Optional(Type.Boolean()),
-    });
-  }
-  if (tool.name === "create_space") {
-    return Type.Object({ name: Type.String({ minLength: 1, maxLength: 60 }) });
-  }
-  if (tool.name === "archive_bot" || tool.name === "delete_bot") {
-    return Type.Object({
-      confirm_name: Type.String(),
-      bot_id: Type.Optional(Type.String()),
-    });
-  }
-  return undefined;
-}
-
-function isAgentToolExecutionResult(result: unknown): result is AgentToolExecutionResult {
-  if (
-    !result ||
-    typeof result !== "object" ||
-    (result as { kind?: unknown }).kind !== "agent_tool_result" ||
-    !("content" in result)
-  ) {
-    return false;
-  }
-  const content = (result as { content?: unknown }).content;
-  return (
-    Array.isArray(content) &&
-    content.every(
-      (item) =>
-        item &&
-        typeof item === "object" &&
-        ((item as { type?: unknown }).type === "text" ||
-          (item as { type?: unknown }).type === "image"),
-    )
-  );
-}
-
-export function jsonSchemaParameters(
-  schema: Record<string, unknown>,
-  options: FieldOptions = {},
-): ReturnType<typeof Type.Object> {
-  // Keep intersections intact until parametersFor flattens root combinators.
-  // Rebuilding only properties here drops allOf-only fields and their constraints.
-  if (Array.isArray(schema.allOf)) {
-    return Type.Unsafe({ ...schema, ...options }) as unknown as ReturnType<typeof Type.Object>;
-  }
-  // Top-level oneOf/anyOf (e.g. request_secret's credential XOR connectionId)
-  // must stay a union. Falling through to properties would drop the exclusivity
-  // and re-expose both destinations as optional siblings.
-  const alternatives = Array.isArray(schema.oneOf)
-    ? schema.oneOf
-    : Array.isArray(schema.anyOf)
-      ? schema.anyOf
-      : undefined;
-  if (alternatives && alternatives.length > 0 && schema.properties == null) {
-    return Type.Union(
-      alternatives.map((variant) => jsonSchemaParameters(variant as Record<string, unknown>)),
-      options,
-    ) as unknown as ReturnType<typeof Type.Object>;
-  }
-  const properties = (schema.properties ?? {}) as Record<string, unknown>;
-  const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
-  const fields: Record<string, ReturnType<typeof Type.Optional>> = {};
-  for (const [key, spec] of Object.entries(properties)) {
-    const field = jsonField(spec);
-    fields[key] = (required.has(key) ? field : Type.Optional(field)) as unknown as ReturnType<
-      typeof Type.Optional
-    >;
-  }
-  // Preserve closed objects (e.g. request_secret destination oneOf branches).
-  // Type.Object defaults to open, which would let connectionId+replace match both
-  // anyOf variants after conversion.
-  return schema.additionalProperties === false
-    ? Type.Object(fields, { ...options, additionalProperties: false })
-    : Type.Object(fields, options);
-}
-
-type FieldOptions = { description?: string };
-
-/** Carry the parameter description when rebuilding its TypeBox node. */
-function fieldOptions(definition: Record<string, unknown>): FieldOptions {
-  return typeof definition.description === "string" && definition.description
-    ? { description: definition.description }
-    : {};
-}
-
-const FLEET_STRING_ARGS = [
-  "bot_id",
-  "bot_name",
-  "group_id",
-  "group_name",
-  "name",
-  "title",
-  "description",
-  "color",
-  "artifact_id",
-  "provider",
-  "model",
-  "thinking_level",
-  "section",
-  "instructions",
-  "expected_version",
-] as const;
-const FLEET_LIST_ARGS = ["bot_ids", "bot_names", "add_bot_ids", "remove_bot_ids"] as const;
-const FLEET_FLAG_ARGS = ["pinned", "clear_section", "clear", "use_attached_image"] as const;
-
-/**
- * Keeps only the fleet and `update_bot` arguments a model sent, coerced to their declared types.
- * Providers send omitted optional fields as null or blank, so those stay absent: `String(null)`
- * would otherwise become the text "null".
- */
-export function prepareFleetArguments(
-  toolName: string,
-  raw: Record<string, unknown>,
-): Record<string, unknown> {
-  // A routine's timing fields are numbers and one-of branches; only the blanks are dropped.
-  if (toolName === "create_child_routine") {
-    return Object.fromEntries(Object.entries(raw).filter(([, value]) => argumentGiven(value)));
-  }
-  const out: Record<string, unknown> = {};
-  for (const key of FLEET_STRING_ARGS) {
-    // update_bot never carries instructions; set_child_instructions does, behind a card.
-    if (toolName === "update_bot" && (key === "instructions" || key === "expected_version"))
-      continue;
-    if (argumentGiven(raw[key])) out[key] = String(raw[key]);
-  }
-  for (const key of FLEET_LIST_ARGS) {
-    if (Array.isArray(raw[key])) out[key] = raw[key].map(String);
-  }
-  for (const key of FLEET_FLAG_ARGS) {
-    if (argumentGiven(raw[key])) out[key] = raw[key];
-  }
-  const notify = raw.notifyOnFinish ?? raw.notify_on_finish;
-  if (argumentGiven(notify)) out.notifyOnFinish = notify;
-  return out;
-}
-
-/** Use a plain string enum: some gateways discard the allowed values from anyOf/const unions. */
-function stringEnum(values: readonly string[], options: FieldOptions) {
-  return Type.Unsafe<string>({ type: "string", enum: [...values], ...options });
-}
-
-/** TypeBox only builds literals from primitives; anything else throws while the tool list is
- * being assembled, which would take down the whole turn. */
-function enumUnion(values: readonly unknown[], options: FieldOptions = {}) {
-  const members = values.map((value) =>
-    value === null
-      ? Type.Null()
-      : typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-        ? Type.Literal(value)
-        : undefined,
-  );
-  return members.every((member) => member !== undefined) ? Type.Union(members, options) : undefined;
-}
-
-export function jsonField(spec: unknown): ReturnType<typeof Type.String> {
-  const definition = spec && typeof spec === "object" ? (spec as Record<string, unknown>) : {};
-  const options = fieldOptions(definition);
-  if (Array.isArray(definition.enum) && definition.enum.length > 0) {
-    if (definition.enum.every((value) => typeof value === "string")) {
-      return stringEnum(definition.enum as string[], options) as never;
-    }
-    const union = enumUnion(definition.enum, options);
-    if (union) return union as never;
-  }
-  // A `const` names the only accepted value. Without this it degraded to a bare
-  // string, so a discriminator like {type: {const: "bearer"}} told the model
-  // nothing about which value to send -- and it guessed, twice.
-  if ("const" in definition) {
-    // Keep `const` (discriminators such as request_secret's auth.type depend on it) and
-    // add the equivalent one-value `enum`, which survives converters that drop `const`.
-    if (typeof definition.const === "string") {
-      return Type.Unsafe<string>({
-        type: "string",
-        const: definition.const,
-        enum: [definition.const],
-        ...options,
-      }) as never;
-    }
-    const literal = enumUnion([definition.const], options);
-    if (literal) return literal as never;
-  }
-  // A discriminated union arrives as oneOf/anyOf with no sibling `type`. Without
-  // this branch it fell through to the string default, so a model was told to
-  // send an object-valued field as a bare string -- which is exactly what it did.
-  const variants = Array.isArray(definition.oneOf)
-    ? definition.oneOf
-    : Array.isArray(definition.anyOf)
-      ? definition.anyOf
-      : undefined;
-  if (variants && variants.length > 0) {
-    return Type.Union(
-      variants.map((variant) => jsonField(variant)),
-      options,
-    ) as never;
-  }
-  if (Array.isArray(definition.type) && definition.type.length > 0) {
-    // The description belongs on the union, not repeated on every member.
-    const { description: _description, ...member } = definition;
-    return Type.Union(
-      definition.type.map((type) => jsonField({ ...member, type })),
-      options,
-    ) as never;
-  }
-  const type = "type" in definition ? String(definition.type) : "string";
-  if (type === "null") return Type.Null(options) as never;
-  if (type === "number" || type === "integer") return Type.Number(options) as never;
-  if (type === "boolean") return Type.Boolean(options) as never;
-  if (type === "array") {
-    const arrayOptions: FieldOptions & {
-      minItems?: number;
-      maxItems?: number;
-      uniqueItems?: boolean;
-    } = { ...options };
-    if (typeof definition.minItems === "number") arrayOptions.minItems = definition.minItems;
-    if (typeof definition.maxItems === "number") arrayOptions.maxItems = definition.maxItems;
-    if (definition.uniqueItems === true) arrayOptions.uniqueItems = true;
-    return Type.Array(jsonField(definition.items), arrayOptions) as never;
-  }
-  if (type === "object") return jsonSchemaParameters(definition, options) as never;
-  return Type.String(options);
-}
-
-export function serializeToolResult(
-  result: unknown,
-  strategy: AgentRunRequest["contextStrategy"],
-  name: string,
-  args: Record<string, unknown>,
-  limit = TOOL_RESULT_TEXT_LIMIT,
-) {
-  try {
-    const text = JSON.stringify(result);
-    if (!text) return "ok";
-    // skill-tools.ts already bounds skill content; the context budget selector may still shorten it.
-    if (text.length <= limit || VERBATIM_TOOL_RESULTS.has(name)) return text;
-    return (strategy ?? DEFAULT_CONTEXT_STRATEGY) === "current"
-      ? clipToolResultText(text, limit)
-      : shortenToolResultText(text, limit, { name, arguments: args });
-  } catch {
-    return "ok";
-  }
-}
-
-type SpillTarget = (text: string) => ReturnType<NonNullable<AgentRunRequest["spillToolResult"]>>;
-
-function spillTarget(
-  host: ToolHost,
-  tool: ConnectorTool,
-  args: Record<string, unknown>,
-  executionId: string,
-): SpillTarget | undefined {
-  const spill = host.request.spillToolResult;
-  if (!spill || NO_SPILL_TOOLS.has(tool.name) || VERBATIM_TOOL_RESULTS.has(tool.name)) {
-    return undefined;
-  }
-  // A catalog wrapper call is named after the tool it ran.
-  const toolName =
-    tool.resultCharsByToolId && typeof args.id === "string" && args.id ? args.id : tool.name;
-  return (text) => spill({ toolName, executionId, text });
-}
-
-/** A receipt when the full text was saved, else the reason a copy is missing. */
-async function spillOversized(
-  spill: SpillTarget,
-  text: string,
-  limit: number,
-  format: SpillFormat,
-  value?: unknown,
-): Promise<{ receipt: string } | { notice: string }> {
-  try {
-    const saved = await spill(text);
-    if ("unavailable" in saved) return { notice: spillUnavailableNotice(saved.unavailable) };
-    return {
-      receipt:
-        (format === "json" ? formatStructuredSpill(saved, value, limit) : undefined) ??
-        formatSpillReceipt(saved, text, limit, format),
-    };
-  } catch (error) {
-    getLogger().error("tool result spill", error);
-    return { notice: spillUnavailableNotice("no-computer") };
-  }
-}
-
-async function deliverSerializedToolResult(
-  result: unknown,
-  strategy: AgentRunRequest["contextStrategy"],
-  name: string,
-  args: Record<string, unknown>,
-  limit: number | undefined,
-  spill: SpillTarget | undefined,
-): Promise<string> {
-  const bounded = serializeToolResult(result, strategy, name, args, limit);
-  if (!spill) return bounded;
-  let text: string | undefined;
-  try {
-    text = JSON.stringify(result);
-  } catch {
-    return bounded;
-  }
-  const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
-  if (!text || text.length <= effective) return bounded;
-  // A plain string is saved as-is so grep and line reads see real lines, not JSON escapes.
-  const outcome =
-    typeof result === "string"
-      ? await spillOversized(spill, result, effective, "text")
-      : await spillOversized(spill, text, effective, "json", JSON.parse(text));
-  return "receipt" in outcome ? outcome.receipt : `${bounded}\n${outcome.notice}`;
-}
-
-async function deliverAgentToolResult<T>(
-  result: AgentToolResult<T>,
-  limit: number | undefined,
-  spill: SpillTarget | undefined,
-): Promise<AgentToolResult<T>> {
-  if (!spill || !Array.isArray(result.content)) return boundAgentToolResult(result, limit);
-  const texts = result.content.flatMap((part) => (part.type === "text" ? [part.text] : []));
-  const effective = limit ?? TOOL_RESULT_TEXT_LIMIT;
-  if (texts.reduce((sum, part) => sum + part.length, 0) <= effective) {
-    return boundAgentToolResult(result, limit);
-  }
-  const text = texts.join("\n");
-  const outcome = await spillOversized(spill, text, effective, "text");
-  if ("notice" in outcome) {
-    const bounded = boundAgentToolResult(result, limit);
-    return {
-      ...bounded,
-      content: [...bounded.content, { type: "text", text: outcome.notice }],
-    };
-  }
-  const firstText = result.content.findIndex((part) => part.type === "text");
-  return {
-    ...result,
-    content: result.content.flatMap<(typeof result.content)[number]>((part, index) => {
-      if (index === firstText) return [{ type: "text" as const, text: outcome.receipt }];
-      return part.type === "text" ? [] : [part];
-    }),
-  };
-}
-
-function boundAgentToolResult<T>(result: AgentToolResult<T>, limit?: number): AgentToolResult<T> {
-  if (!result || !Array.isArray(result.content)) return result;
-  return {
-    ...result,
-    content: clipToolResultContent(result.content, limit),
-  };
-}
-
-function assistantText(message: unknown): string {
-  if (!message || typeof message !== "object" || !("content" in message)) return "";
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) =>
-      part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
-        ? String(part.text)
-        : "",
-    )
-    .join("");
-}
-
-function messageHasToolCall(message: unknown): boolean {
-  if (!message || typeof message !== "object" || !("content" in message)) return false;
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return false;
-  return content.some(
-    (part) => !!part && typeof part === "object" && "type" in part && part.type === "toolCall",
-  );
-}
-
-/** Provider failure. Aborts stay on the existing cancel path. */
-export function providerFailureText(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") return undefined;
-  if (!("role" in message) || message.role !== "assistant") return undefined;
-  const stopReason =
-    "stopReason" in message && typeof message.stopReason === "string"
-      ? message.stopReason
-      : undefined;
-  if (stopReason === "aborted") return undefined;
-  const errorMessage =
-    "errorMessage" in message &&
-    typeof message.errorMessage === "string" &&
-    message.errorMessage.trim()
-      ? message.errorMessage.trim()
-      : undefined;
-  const text = assistantText(message).trim();
-  if (stopReason === "error") {
-    if (errorMessage) return errorMessage;
-    if (text) return "The model failed after writing a response.";
-    return "The model failed before writing a response.";
-  }
-  if (stopReason === "length" && !text) {
-    return errorMessage || "The model hit its output limit before writing a response.";
-  }
-  if (errorMessage && !text) return errorMessage;
-  return undefined;
-}
-
-function sanitizeSensitiveText(message: string) {
-  return message
-    .replace(/sk-or-v1-[a-zA-Z0-9]+/g, "[redacted]")
-    .replace(/sk-[a-zA-Z0-9-]+/g, "[redacted]")
-    .replace(/Bearer\s+[^\s"',;&]+/gi, "Bearer [redacted]")
-    .replace(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, "[redacted]")
-    .replace(/COMPOSIO_API_KEY[=:]?\s*\S+/gi, "COMPOSIO_API_KEY=[redacted]")
-    .replace(
-      /((?:api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*)[^\s"',;&]+/gi,
-      "$1[redacted]",
-    )
-    .replace(/((?:auth|authorization)\s*[=:]\s*)(?!Bearer\b)[^\s"',;&]+/gi, "$1[redacted]");
-}
-
-/** Origin + path only for activity chips; drop userinfo, query, and fragment. */
-function redactActivityUrl(value: unknown): string {
-  const raw = String(value ?? "").trim();
-  if (!raw) return raw;
-  try {
-    const url = new URL(raw);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    // Never echo unparsed input — it may still contain userinfo/secrets.
-    return "[invalid URL]";
-  }
-}
-
-function sanitizeError(message: string) {
-  return sanitizeSensitiveText(message);
-}
-
-/** Stable OpenCode affinity id for a bot conversation (and optional nested agent). */
-export function conversationSessionId(threadId: string, botId: string, agentId?: string): string {
-  return agentId ? `${threadId}:${botId}:${agentId}` : `${threadId}:${botId}`;
-}
-
-export function isOpenCodeProvider(provider: string): boolean {
-  return provider === "opencode" || provider === "opencode-go";
-}
-
-const OPENCODE_SESSION_ERROR = "OpenCode rejected this chat session. Send the message again.";
-
-function looksLikeOpenCodeSessionError(message: string): boolean {
-  return (
-    /x-opencode-session/i.test(message) ||
-    /session\s*(id|header|required|missing|invalid|expired|stale)/i.test(message) ||
-    /model is unavailable/i.test(message)
-  );
-}
-
-/**
- * One classification for retries, reporting and the run error view: a failure that view
- * explains with a connection or model fix is the user's account state, not a server fault.
- */
-function modelFailure(error: string, message: string): Error {
-  if (isTransientModelError(error)) return new TransientModelError(message);
-  if (normalizeRunError(message).recovery) return new ModelAccountError(message);
-  return new Error(message);
-}
-
-function sanitizeProviderError(provider: string, message: string): string {
-  const sanitized = sanitizeError(message);
-  if (isOpenCodeProvider(provider) && looksLikeOpenCodeSessionError(sanitized)) {
-    return OPENCODE_SESSION_ERROR;
-  }
-  return sanitized;
-}
-
-interface EventQueue {
-  push(event: AgentRuntimeEvent): void;
-  fail(error: Error): void;
-  close(): void;
-  iterate(): AsyncIterable<AgentRuntimeEvent>;
-}
-
-interface ToolHost {
-  context?: Partial<AdapterContext>;
-  modelFetch?: typeof globalThis.fetch;
-  onContextDecision?: PiAgentRuntimeOptions["onContextDecision"];
-  modelCallObserver?: ModelCallObserver;
-  queue: EventQueue;
-  request: AgentRunRequest;
-  activeModel: RuntimeModelTarget;
-  models: Models;
-  model: Model<Api>;
-  apiKey: string | undefined;
-  nestedAgents: Set<Agent>;
-  subagentGate: { acquire(): Promise<void>; release(): void };
-  toolCallBudget: ToolCallBudget;
-  /** Shared fallback uniqueness when the model omits toolCallId (nested hosts reuse this). */
-  toolCallSeq: { value: number };
-  abortTurn(): void;
-  signal: AbortSignal;
-  depth: number;
-  agentNamespace?: string;
-  pausePending: boolean;
-  captureCheckpoint?: (toolCallId: string, executionId: string) => Promise<void>;
-  /** Shell commands that returned output and are still running. */
-  pendingShells: Array<Promise<FinishedShellCommand>>;
-}
-
-function toolCallBudgetExceededMessage(limit: number) {
-  return `I stopped after reaching the limit of ${limit} tool calls in this turn. Send another message to continue.`;
-}
-
-function toolCallBudgetFor(runId: string): ToolCallBudget {
-  const existing = toolCallBudgetsByRun.get(runId);
-  if (existing) {
-    existing.inFlight = 0;
-    existing.limit = maxToolCallsPerTurn();
-    return existing;
-  }
-  const budget: ToolCallBudget = {
-    count: 0,
-    exceeded: false,
-    limit: maxToolCallsPerTurn(),
-    inFlight: 0,
-  };
-  if (budget.limit > 0) toolCallBudgetsByRun.set(runId, budget);
-  return budget;
-}
-
-function releaseToolCallBudget(runId: string, keepForResume: boolean) {
-  if (!keepForResume) toolCallBudgetsByRun.delete(runId);
-}
-
-function maybeAbortToolCallBudget(host: ToolHost) {
-  if (host.toolCallBudget.exceeded && host.toolCallBudget.inFlight === 0) {
-    host.abortTurn();
-  }
-}
-
-function beginToolCall(host: ToolHost): boolean {
-  const budget = host.toolCallBudget;
-  if (budget.limit <= 0) {
-    budget.count += 1;
-    return true;
-  }
-  if (budget.exceeded) {
-    maybeAbortToolCallBudget(host);
-    return false;
-  }
-  budget.count += 1;
-  if (budget.count <= budget.limit) {
-    budget.inFlight += 1;
-    return true;
-  }
-  if (!budget.exceeded) {
-    budget.exceeded = true;
-    host.queue.push({
-      type: "progress",
-      text: `Stopped: more than ${budget.limit} tool calls in one turn.`,
-    });
-  }
-  maybeAbortToolCallBudget(host);
-  return false;
-}
-
-function endToolCall(host: ToolHost) {
-  host.toolCallBudget.inFlight = Math.max(0, host.toolCallBudget.inFlight - 1);
-  maybeAbortToolCallBudget(host);
-}
-
-function modelForCompletion(model: Model<Api>, configuredMaxTokens?: number): Model<Api> {
-  const maxTokens = resolveCompletionMaxTokens(
-    model.maxTokens,
-    configuredMaxTokens,
-    undefined,
-    model.reasoning,
-  );
-  if (maxTokens === model.maxTokens) return model;
-  return { ...model, maxTokens };
-}
-
-interface RuntimeModelTarget {
-  config: AgentRunRequest["model"];
-  models: Models;
-  model: Model<Api>;
-  apiKey?: string;
-  credentials?: PiRuntimeCredentialStore;
-}
-
-/** A provider request ceiling applies only to this run, never to saved connection settings. */
-function resizeRuntimeTarget(
-  target: RuntimeModelTarget,
-  contextWindow: number,
-): RuntimeModelTarget {
-  return {
-    ...target,
-    config: { ...target.config, contextWindow },
-    model: { ...target.model, contextWindow },
-  };
-}
-
-interface FallbackStreamState {
-  request: AgentRunRequest;
-  /** `main`, or the subagent's ID, for per-call logs. */
-  agentId: string;
-  getActive(): RuntimeModelTarget;
-  signal: AbortSignal;
-  attempted: Set<string>;
-  nextIndex: number;
-  /** Set once a switch lands; later calls stay on the backup. */
-  onBackup: boolean;
-  onSwitch(target: RuntimeModelTarget): Promise<void>;
-  onContextLimit(contextWindow: number): void;
-  isProviderFailure(message: AssistantMessage): boolean;
-  /** Set once a provider rejected replayed thinking signatures; see thinking-signatures.ts. */
-  dropThinkingBlocks?: boolean;
-  /** Output reservations reduced by a rejected request, scoped to this run and model. */
-  outputCaps?: Map<string, number>;
-  /**
-   * Messages written before the last switch to a backup model. Their thinking is bound to the
-   * model and transcript it was written for, and the backup's policy starts with a rebuild that
-   * can rewrite earlier messages, so requests leave that thinking out from the switch on.
-   */
-  messagesBeforeSwitch?: number;
-  stream(
-    target: RuntimeModelTarget,
-    context: TranscriptContext,
-    options: ModelsSimpleStreamOptions | undefined,
-  ): AssistantMessageEventStream;
-}
-
-type ModelCallOutcome = "ok" | "idle-timeout-retried" | "provider-retried" | "switched" | "failed";
-
-/** One line per model attempt. `requestSizeEstimate` is in estimated tokens; key names avoid log redaction. */
-function logModelCall(call: {
-  runId: string;
-  agentId: string;
-  provider: string;
-  model: string;
-  attempt: number;
-  fallback: boolean;
-  requestSizeEstimate: number;
-  timeToFirstEventMs: number | null;
-  durationMs: number;
-  lastEventType: string | null;
-  outcome: ModelCallOutcome;
-  stall?: StreamStallReason;
-  retryDelayMs?: number;
-  error?: unknown;
-}): void {
-  const { error, ...fields } = call;
-  const bindings = {
-    ...fields,
-    ...(error === undefined
-      ? {}
-      : {
-          errorMessage: sanitizeError(error instanceof Error ? error.message : String(error)),
-        }),
-  };
-  if (call.outcome === "ok") getLogger().info("model call", bindings);
-  else getLogger().warn("model call", bindings);
-}
-
-function assistantHasPartialOutput(message: AssistantMessage): boolean {
-  return message.content.some((part) => {
-    if (part.type === "toolCall") return true;
-    if (part.type === "text") return part.text.length > 0;
-    return part.thinking.length > 0 || Boolean(part.redacted);
-  });
-}
-
-function eventHasPartialOutput(event: AssistantMessageEvent): boolean {
-  if (event.type === "toolcall_start" || event.type === "toolcall_end") return true;
-  if (
-    event.type === "text_delta" ||
-    event.type === "thinking_delta" ||
-    event.type === "toolcall_delta"
-  ) {
-    if (event.delta.length > 0) return true;
-  }
-  if (event.type === "text_end" || event.type === "thinking_end") {
-    if (event.content.length > 0) return true;
-  }
-  if (event.type === "done") return assistantHasPartialOutput(event.message);
-  if (event.type === "error") return assistantHasPartialOutput(event.error);
-  return assistantHasPartialOutput(event.partial);
-}
-
-function contextImageCount(context: Context): number {
-  return context.messages.reduce((total, message) => {
-    if (!("content" in message) || !Array.isArray(message.content)) return total;
-    return total + message.content.filter((part) => part.type === "image").length;
-  }, 0);
-}
-
-/**
- * Same rule as the primary model (modelAcceptsImageInput): the catalog's input
- * modalities decide for native providers, and the connection's acceptsImages flag
- * only applies to OpenAI-compatible models, whose runtime model is built from it.
- */
-function fallbackSeesImages(candidate: RuntimeModelTarget): boolean {
-  if (!candidate.model.input.includes("image")) return false;
-  return (
-    candidate.config.provider !== OPENAI_COMPATIBLE_PROVIDER_ID ||
-    candidate.config.acceptsImages !== false
-  );
-}
-
-function fallbackSupportsContext(
-  candidate: RuntimeModelTarget,
-  context: TranscriptContext,
-  options: ModelsSimpleStreamOptions | undefined,
-  requestedThinkingLevel: AgentRunRequest["model"]["thinkingLevel"],
-  tools: readonly ConnectorTool[],
-): boolean {
-  // The backup's own context policy prunes on its first call; judge what it would send. Too
-  // many user images for its limit throws, and the caller skips the backup.
-  context = {
-    ...context,
-    messages: pruneForRebuild(context.messages, candidate.config.maxImagesPerPrompt),
-  };
-  const inputTokens = estimateModelContextTokens(context, estimatePiImageTokens);
-  const outputTokens = resolveCompletionMaxTokens(
-    candidate.model.maxTokens,
-    candidate.config.maxTokens,
-    options?.maxTokens,
-    candidate.model.reasoning,
-    candidate.model.contextWindow,
-  );
-  // Token counts are estimates and can differ by provider/tokenizer. Reserve a
-  // small input-relative margin, not a fixed 4096 tokens that would exclude
-  // otherwise usable small-context models on short turns.
-  const contextSafetyMargin = Math.max(256, Math.ceil(inputTokens * 0.1));
-  if (candidate.model.contextWindow <= inputTokens + outputTokens + contextSafetyMargin)
-    return false;
-  const imageCount = contextImageCount(context);
-  if (
-    (imageCount > 0 || tools.some((tool) => IMAGE_RETURNING_COMPUTER_TOOLS.has(tool.name))) &&
-    !fallbackSeesImages(candidate)
-  ) {
-    return false;
-  }
-  if (
-    typeof candidate.config.maxImagesPerPrompt === "number" &&
-    imageCount > candidate.config.maxImagesPerPrompt
-  ) {
-    return false;
-  }
-  const reasoningLevel = options?.reasoning ?? requestedThinkingLevel;
-  const requiresReasoning =
-    (reasoningLevel !== undefined && reasoningLevel !== null && reasoningLevel !== "off") ||
-    (candidate.config.thinkingLevel !== undefined &&
-      candidate.config.thinkingLevel !== null &&
-      candidate.config.thinkingLevel !== "off");
-  return !requiresReasoning || candidate.model.reasoning;
-}
-
-function backupSwitchText(target: RuntimeModelTarget): string {
-  return `Provider unavailable. Switched to backup model ${target.config.id}.`;
-}
-
-function targetModelStream(
-  target: RuntimeModelTarget,
-  context: TranscriptContext,
-  options: ModelsSimpleStreamOptions | undefined,
-  push: (event: AgentRuntimeEvent) => void,
-  observer: ModelCallObserver | undefined,
-  attribution: Parameters<typeof observedPiStream>[6],
-  hooks: Parameters<typeof observedPiStream>[7],
-): AssistantMessageEventStream {
-  return reliableModelStream(
-    target.models,
-    target.model,
-    context,
-    withCloudflareAuth(target.config, options),
-    target.config.maxTokens,
-    () => target.credentials?.accessToken ?? target.apiKey,
-    (preparedOptions) =>
-      observedPiStream(
-        target.models,
-        target.model,
-        context,
-        preparedOptions,
-        push,
-        observer,
-        attribution,
-        hooks,
-      ),
-    target.config.cacheCapabilities?.retentionMode,
-  );
-}
-
-function fallbackAwareModelStream(
-  state: FallbackStreamState,
-  context: TranscriptContext,
-  options: ModelsSimpleStreamOptions | undefined,
-): AssistantMessageEventStream {
-  const output = new AssistantMessageEventStream();
-  let lastPartial: AssistantMessage | undefined;
-  // With no backups the call never changes model, so it keeps the caller's options
-  // and signal and streams pre-output events at once; a same-model retry then only
-  // repeats `start`. Run aborts reach the caller's signal through Agent.abort().
-  const canSwitch = Boolean(state.request.fallbackModels?.length);
-  const signalAborted = () =>
-    (canSwitch && state.signal.aborted) || Boolean(options?.signal?.aborted);
-  const callerSignals = [canSwitch ? state.signal : undefined, options?.signal].filter(
-    (signal): signal is AbortSignal => signal !== undefined,
-  );
-  const retrySignal = callerSignals.length > 1 ? AbortSignal.any(callerSignals) : callerSignals[0];
-  // Once a signature is rejected, requests omit those thinking blocks. Backup fit
-  // must use that same context, or a usable backup can be skipped on discarded text.
-  // A backup is judged on the context it would get after the switch, without earlier thinking.
-  const requestContext = (switching = false) => {
-    if (state.dropThinkingBlocks) return withoutThinkingBlocks(context);
-    const before = switching ? context.messages.length : state.messagesBeforeSwitch;
-    if (!before) return context;
-    const messages = withoutThinkingFrom(context.messages, 0, before);
-    return messages === context.messages ? context : { ...context, messages };
-  };
-  const finishWithThrownError = (target: RuntimeModelTarget, error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    const aborted = signalAborted() || /abort|cancel/i.test(message);
-    const stopReason: "aborted" | "error" = aborted ? "aborted" : "error";
-    const failure: AssistantMessage = {
-      role: "assistant",
-      content: lastPartial?.content ?? [],
-      api: target.model.api,
-      provider: target.model.provider,
-      model: target.model.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason,
-      errorMessage: message,
-      timestamp: Date.now(),
-    };
-    output.push({ type: "error", reason: stopReason, error: failure });
-    output.end(failure);
-  };
-  const failIfAborted = (target: RuntimeModelTarget) => {
-    if (!signalAborted()) return false;
-    finishWithThrownError(target, new Error("Model request was aborted"));
-    return true;
-  };
-  const resolveNext = async (
-    current: RuntimeModelTarget,
-  ): Promise<RuntimeModelTarget | undefined> => {
-    const choices = state.request.fallbackModels ?? [];
-    while (state.nextIndex < choices.length && !signalAborted()) {
-      const choice = choices[state.nextIndex++];
-      if (!choice) continue;
-      const key = JSON.stringify([choice.provider, choice.id]);
-      if (state.attempted.has(key)) continue;
-      state.attempted.add(key);
-      if (choice.provider === current.config.provider && choice.id === current.config.id) continue;
-      try {
-        const config = state.request.resolveFallbackModel
-          ? await state.request.resolveFallbackModel(choice.provider, choice.id)
-          : (choice as AgentRunRequest["model"]);
-        if (signalAborted()) return undefined;
-        if (config.provider !== choice.provider || config.id !== choice.id) continue;
-        // Never borrow the primary or process-wide key for a backup. Production resolves
-        // each candidate lazily from the authenticated user's Space-scoped credential store.
-        if (!config.apiKey && !config.oauth && config.provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
-          continue;
-        }
-        const resolved = resolveRuntimeModel(config);
-        if (
-          !resolved.model ||
-          resolved.model.provider !== config.provider ||
-          resolved.model.id !== config.id
-        ) {
-          continue;
-        }
-        const candidate: RuntimeModelTarget = {
-          config,
-          models: resolved.models,
-          model: modelForCompletion(resolved.model, config.maxTokens),
-          apiKey: resolved.apiKey,
-          credentials: resolved.credentials,
-        };
-        if (
-          !fallbackSupportsContext(
-            candidate,
-            requestContext(true),
-            options,
-            state.request.model.thinkingLevel,
-            state.request.tools,
-          )
-        ) {
-          continue;
-        }
-        return candidate;
-      } catch {
-        // Missing connections and changed credentials are skipped in configured order.
-      }
-    }
-    return undefined;
-  };
-  const switchTo = async (
-    current: RuntimeModelTarget,
-  ): Promise<"switched" | "none" | "aborted"> => {
-    const next = await resolveNext(current);
-    if (failIfAborted(current)) return "aborted";
-    if (!next) return "none";
-    state.messagesBeforeSwitch = context.messages.length;
-    await state.onSwitch(next);
-    state.onBackup = true;
-    return failIfAborted(current) ? "aborted" : "switched";
-  };
-  const run = async () => {
-    let buffered: AssistantMessageEvent[] = [];
-    let startForwarded = false;
-    let forwardedNonStart = false;
-    const forward = (event: AssistantMessageEvent) => {
-      if (event.type === "start") {
-        if (startForwarded) return;
-        startForwarded = true;
-      } else {
-        forwardedNonStart = true;
-      }
-      output.push(event);
-    };
-    const flush = () => {
-      for (const pending of buffered) forward(pending);
-      buffered = [];
-    };
-    let stallRetries = MODEL_STREAM_STALL_RETRIES;
-    let providerRetries = 0;
-    let recoveredIdle = false;
-    let sizingFailure: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
-    // Bound same-model retries. Explicit backups retain their per-model header
-    // timeout: a post-header idle watchdog can already exceed that timeout.
-    let windowStartedAt = Date.now();
-    const timeoutMs = options?.timeoutMs ?? MODEL_STREAM_TIMEOUT_MS;
-    let firstRetryableError: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
-    let attempt = 0;
-    const requestSizeEstimate = estimateModelContextTokens(context, estimatePiImageTokens);
-    while (!signalAborted()) {
-      const remainingMs = timeoutMs - (Date.now() - windowStartedAt);
-      const windowFailure = firstRetryableError ?? sizingFailure;
-      if ((providerRetries > 0 || sizingFailure) && remainingMs <= 0 && windowFailure) {
-        flush();
-        forward(windowFailure);
-        output.end(windowFailure.error);
-        return;
-      }
-      const target = state.getActive();
-      const targetKey = JSON.stringify([target.config.provider, target.config.id]);
-      const outputCap = state.outputCaps?.get(targetKey);
-      const attemptOptions = {
-        ...options,
-        ...(providerRetries > 0 || sizingFailure ? { timeoutMs: remainingMs } : {}),
-        ...(outputCap !== undefined
-          ? { maxTokens: Math.min(outputCap, options?.maxTokens ?? outputCap) }
-          : {}),
-      };
-      attempt += 1;
-      const startedAt = Date.now();
-      let firstEventAt: number | undefined;
-      let lastEventType: string | undefined;
-      const log = (
-        outcome: ModelCallOutcome,
-        detail: { stall?: StreamStallReason; retryDelayMs?: number; error?: unknown } = {},
-      ) =>
-        logModelCall({
-          runId: state.request.runId,
-          agentId: state.agentId,
-          provider: target.model.provider,
-          model: target.model.id,
-          attempt,
-          fallback: state.onBackup,
-          requestSizeEstimate,
-          timeToFirstEventMs: firstEventAt === undefined ? null : firstEventAt - startedAt,
-          durationMs: Date.now() - startedAt,
-          lastEventType: lastEventType ?? null,
-          outcome,
-          ...detail,
-        });
-      lastPartial = undefined;
-      let sawPartialOutput = false;
-      let retry = false;
-      let stream: AssistantMessageEventStream;
-      try {
-        if (canSwitch) {
-          const apiKey = target.credentials?.accessToken ?? target.apiKey;
-          const thinkingLevel = target.model.reasoning
-            ? thinkingLevelFor(
-                target.model,
-                target.config.thinkingLevel ??
-                  options?.reasoning ??
-                  state.request.model.thinkingLevel,
-              )
-            : "off";
-          const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
-          stream = state.stream(target, requestContext(), {
-            ...attemptOptions,
-            apiKey,
-            reasoning,
-          });
-        } else {
-          stream = state.stream(target, requestContext(), attemptOptions);
-        }
-      } catch (error) {
-        log("failed", { error });
-        finishWithThrownError(target, error);
-        return;
-      }
-      try {
-        for await (const event of stream) {
-          lastEventType = event.type;
-          if (event.type !== "start" && event.type !== "error") firstEventAt ??= Date.now();
-          if (event.type === "error") {
-            const beforeOutput =
-              !sawPartialOutput && !assistantHasPartialOutput(event.error) && !signalAborted();
-            const stall = streamStallReason(event.error);
-            if (stall && beforeOutput && stallRetries > 0) {
-              stallRetries -= 1;
-              log("idle-timeout-retried", { stall });
-              // Stall retries keep their own budget, so they do not spend the provider retry window.
-              windowStartedAt = Date.now();
-              if (stallRetries === 0 && (await switchTo(target)) === "aborted") return;
-              buffered = [];
-              retry = true;
-              break;
-            }
-            let terminalEvent = event;
-            if (
-              !stall &&
-              beforeOutput &&
-              event.reason === "error" &&
-              !forwardedNonStart &&
-              !sizingFailure &&
-              state.isProviderFailure(event.error)
-            ) {
-              const contextWindow = groqRequestContextWindow(
-                target.config.provider,
-                event.error.errorMessage,
-                target.model.contextWindow,
-              );
-              if (contextWindow !== undefined && Date.now() - windowStartedAt < timeoutMs) {
-                state.onContextLimit(contextWindow);
-                getLogger().info("model.context_limit.reduced", {
-                  runId: state.request.runId,
-                  provider: target.config.provider,
-                  model: target.config.id,
-                  contextWindow,
-                });
-                log("provider-retried", { error: event.error.errorMessage });
-                sizingFailure = event;
-                buffered = [];
-                retry = true;
-                break;
-              }
-              const currentLimit = resolveCompletionMaxTokens(
-                target.model.maxTokens,
-                target.config.maxTokens,
-                attemptOptions.maxTokens,
-                target.model.reasoning,
-                target.model.contextWindow,
-              );
-              const affordable = affordableOpenRouterOutput(
-                target.config.provider,
-                event.error.errorMessage,
-                currentLimit,
-              );
-              if (affordable !== undefined && Date.now() - windowStartedAt < timeoutMs) {
-                state.outputCaps ??= new Map();
-                state.outputCaps.set(targetKey, affordable);
-                getLogger().info("model.output_reservation.reduced", {
-                  runId: state.request.runId,
-                  provider: target.config.provider,
-                  model: target.config.id,
-                  requestedMaxTokens: currentLimit,
-                  effectiveMaxTokens: affordable,
-                });
-                log("provider-retried", { error: event.error.errorMessage });
-                sizingFailure = event;
-                buffered = [];
-                retry = true;
-                break;
-              }
-            }
-            if (
-              !stall &&
-              beforeOutput &&
-              event.reason === "error" &&
-              !forwardedNonStart &&
-              !state.dropThinkingBlocks &&
-              isThinkingSignatureMismatch(event.error.errorMessage)
-            ) {
-              // Later calls in this run skip the stale thinking up front instead of failing first.
-              state.dropThinkingBlocks = true;
-              log("provider-retried", { error: event.error.errorMessage });
-              buffered = [];
-              retry = true;
-              break;
-            }
-            if (
-              !stall &&
-              beforeOutput &&
-              event.reason === "error" &&
-              state.isProviderFailure(event.error) &&
-              isRetryableProviderUnavailable(event.error)
-            ) {
-              const switched = await switchTo(target);
-              if (switched === "aborted") return;
-              if (switched === "switched") {
-                log("switched", { error: event.error.errorMessage });
-                buffered = [];
-                retry = true;
-                break;
-              }
-              // An exhausted quota or usage window can move to a backup but will not clear
-              // within the retry budget, so only transient failures retry the same model.
-              if (isTransientModelError(event.error)) {
-                firstRetryableError ??= event;
-                const idle = event.error.errorMessage === MODEL_STREAM_IDLE_TIMEOUT_MESSAGE;
-                const delay = idle
-                  ? recoveredIdle
-                    ? undefined
-                    : MODEL_PROVIDER_RETRY_DELAYS_MS[0]
-                  : MODEL_PROVIDER_RETRY_DELAYS_MS[providerRetries];
-                if (idle && delay !== undefined) {
-                  // The post-header idle bound can outlast the header retry window.
-                  // Renew it once for this empty call, retaining completed tool results.
-                  recoveredIdle = true;
-                  windowStartedAt = Date.now();
-                }
-                // Ordinary failures and backoff share the remaining retry window.
-                // A passthrough retry may only repeat `start`, which forward() dedupes.
-                if (
-                  delay !== undefined &&
-                  !forwardedNonStart &&
-                  Date.now() - windowStartedAt + delay < timeoutMs
-                ) {
-                  providerRetries += 1;
-                  log("provider-retried", {
-                    retryDelayMs: delay,
-                    error: event.error.errorMessage,
-                  });
-                  await abortableDelay(delay, retrySignal);
-                  if (failIfAborted(target)) return;
-                  if (Date.now() - windowStartedAt < timeoutMs) {
-                    buffered = [];
-                    retry = true;
-                    break;
-                  }
-                }
-                terminalEvent = firstRetryableError;
-              }
-            }
-            flush();
-            const terminal =
-              sawPartialOutput && event.error.content.length === 0 && lastPartial
-                ? { ...event, error: { ...event.error, content: lastPartial.content } }
-                : terminalEvent;
-            log("failed", { stall, error: event.error.errorMessage });
-            forward(terminal);
-            output.end(terminal.error);
-            return;
-          }
-          if (event.type === "done") {
-            flush();
-            log("ok");
-            forward(event);
-            output.end(event.message);
-            return;
-          }
-          lastPartial = {
-            ...event.partial,
-            content: event.partial.content.map((part) => ({ ...part })),
-          };
-          if (eventHasPartialOutput(event)) {
-            sawPartialOutput = true;
-            flush();
-            forward(event);
-          } else if (sawPartialOutput || !canSwitch) {
-            forward(event);
-          } else {
-            buffered.push(event);
-          }
-        }
-      } catch (error) {
-        flush();
-        log("failed", { error });
-        finishWithThrownError(target, error);
-        return;
-      }
-      if (retry) continue;
-      flush();
-      log("failed", { error: "no terminal event" });
-      finishWithThrownError(target, new Error("Model stream ended without a terminal event"));
-      return;
-    }
-    const target = state.getActive();
-    finishWithThrownError(target, new Error("Model request was aborted"));
-  };
-  void run().catch((error: unknown) => finishWithThrownError(state.getActive(), error));
-  return output;
-}
-
-function createGate(max: number) {
-  let active = 0;
-  const waiters: Array<() => void> = [];
-  return {
-    async acquire() {
-      if (active >= max) {
-        await new Promise<void>((resolve) => {
-          waiters.push(resolve);
-        });
-      }
-      active += 1;
-    },
-    release() {
-      active = Math.max(0, active - 1);
-      waiters.shift()?.();
-    },
-  };
-}
-
-function createQueue(): EventQueue {
-  const items: AgentRuntimeEvent[] = [];
-  let wake: (() => void) | undefined;
-  let closed = false;
-  let failure: Error | undefined;
-  return {
-    push(event) {
-      items.push(event);
-      wake?.();
-    },
-    fail(error) {
-      failure = error;
-      closed = true;
-      wake?.();
-    },
-    close() {
-      closed = true;
-      wake?.();
-    },
-    async *iterate() {
-      while (true) {
-        if (items.length) {
-          yield items.shift()!;
-          continue;
-        }
-        if (failure) throw failure;
-        if (closed) return;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-      }
-    },
-  };
-}
-
-export function isCodexModel(model: Pick<Model<Api>, "api" | "provider">): boolean {
-  return model.provider === "openai-codex" || model.api === "openai-codex-responses";
-}
-
-/** Abort reason recorded when a model stream goes silent past the idle bound. */
-export const MODEL_STREAM_IDLE_TIMEOUT_MESSAGE = "Model stream idle timeout";
-
-export type StreamStallReason = "first-event" | "idle";
-const stallReasons = new WeakMap<AssistantMessage, StreamStallReason>();
-
-/** Which watchdog bound ended this terminal message, if one did. */
-export function streamStallReason(message: AssistantMessage): StreamStallReason | undefined {
-  return stallReasons.get(message);
-}
-
-export interface StreamIdleWatchdog {
-  /** Composed abort signal to hand to the provider request. */
-  signal: AbortSignal;
-  /** Re-arms the idle bound; invoke on each delivered event. */
-  ping(): void;
-  /** A 2xx response landed: arms the idle bound and the first-event bound. */
-  responded(): void;
-  /** The 2xx body delivered its first chunk: drops the first-event bound. */
-  firstByte(): void;
-  /** Wraps the provider stream so every delivered event re-arms the idle bound. */
-  wrap(stream: AssistantMessageEventStream): AssistantMessageEventStream;
-  /** Stops the timer and drops the caller-signal listener. */
-  dispose(): void;
-}
-
-/**
- * `timeoutMs` bounds each attempt's time-to-headers. After headers arrive, pi
- * reads the body until it ends or the request signal aborts, so silence can
- * stall a run. The watchdog composes an AbortController into `options.signal`
- * and re-arms on a 2xx `onResponse` — pi invokes it inside the retry loop when
- * an attempt's headers land — and on every stream event the agent consumes.
- * `idleTimeoutMs` of silence aborts the request.
- *
- * Arming only on a successful response — not at stream creation, and not on
- * retryable error headers — keeps each attempt's time-to-headers inside its
- * own `timeoutMs` budget and each retry backoff outside the idle bound. A
- * non-2xx body is bounded separately by `boundRetryableErrorBody`: pi reads it
- * with `response.text()` after the header timeout is gone, and failing that
- * read lets the attempt retry, whereas aborting this signal would also cancel
- * the backoff. pi reports any signal abort as a generic "Request was aborted",
- * so when the watchdog fired the wrapper relabels the terminal error as an
- * idle timeout rather than a caller abort.
- *
- * pi emits `start` as soon as headers land, before reading the body, so the
- * first-event bound clears on the body's first chunk instead (`firstByte`).
- */
-export function modelStreamIdleWatchdog(
-  upstream: AbortSignal | undefined,
-  idleTimeoutMs: number = modelStreamIdleTimeoutMs(),
-  firstEventTimeoutMs: number = modelStreamFirstEventTimeoutMs(undefined, idleTimeoutMs),
-): StreamIdleWatchdog {
-  const controller = new AbortController();
-  let stall: StreamStallReason | undefined;
-  let disposed = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let firstEventTimer: ReturnType<typeof setTimeout> | undefined;
-
-  const onUpstreamAbort = () => controller.abort(upstream?.reason);
-  if (upstream?.aborted) controller.abort(upstream.reason);
-  else upstream?.addEventListener("abort", onUpstreamAbort, { once: true });
-
-  const fire = (reason: StreamStallReason) => {
-    if (controller.signal.aborted) return;
-    stall = reason;
-    controller.abort(new Error(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE));
-  };
-
-  const arm = () => {
-    if (disposed || controller.signal.aborted) return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      fire("idle");
-    }, idleTimeoutMs);
-    timer.unref?.();
-  };
-
-  const firstByte = () => {
-    if (firstEventTimer !== undefined) clearTimeout(firstEventTimer);
-    firstEventTimer = undefined;
-  };
-
-  const dispose = () => {
-    disposed = true;
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-    firstByte();
-    upstream?.removeEventListener("abort", onUpstreamAbort);
-  };
-
-  // Nothing arms the timer before a successful response's headers land: the
-  // pre-headers window is bounded per attempt by timeoutMs and retry backoff
-  // by maxRetryDelayMs, so idle budget must not burn there and a retry always
-  // starts from a fresh full budget.
-  const ping = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-    arm();
-  };
-
-  const responded = () => {
-    firstByte();
-    if (!disposed && !controller.signal.aborted) {
-      firstEventTimer = setTimeout(() => {
-        firstEventTimer = undefined;
-        fire("first-event");
-      }, firstEventTimeoutMs);
-      firstEventTimer.unref?.();
-    }
-    ping();
-  };
-
-  const describeTimeout = (message: AssistantMessage): AssistantMessage => {
-    if (!stall || message.stopReason !== "aborted") return message;
-    const described: AssistantMessage = {
-      ...message,
-      stopReason: "error",
-      errorMessage: MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
-    };
-    stallReasons.set(described, stall);
-    return described;
-  };
-
-  const rewrite = (event: AssistantMessageEvent): AssistantMessageEvent => {
-    if (event.type !== "error") return event;
-    const error = describeTimeout(event.error);
-    return error === event.error ? event : { type: "error", reason: "error", error };
-  };
-
-  return {
-    signal: controller.signal,
-    ping,
-    responded,
-    firstByte,
-    dispose,
-    wrap(inner) {
-      class Watched extends AssistantMessageEventStream {
-        override async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
-          try {
-            for await (const event of inner) {
-              // Anything past `start` was parsed from body bytes.
-              if (event.type !== "start") firstByte();
-              ping();
-              yield rewrite(event);
-            }
-          } finally {
-            dispose();
-          }
-        }
-        override result(): Promise<AssistantMessage> {
-          return inner.result().then(describeTimeout).finally(dispose);
-        }
-      }
-      return new Watched();
-    },
-  };
-}
-
-/**
- * Fails a non-2xx body that stays open. The shared idle watchdog stays
- * unarmed: aborting it would skip pi's retry backoff, and a thrown read error
- * is retried like any other transport failure.
- */
-function boundRetryableErrorBody(response: Response, idleTimeoutMs: number): Response {
-  if (response.ok || response.body == null) return response;
-  const reader = response.body.getReader();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const clear = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-  };
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const read = reader.read().then(
-        (chunk) => ({ kind: "chunk" as const, chunk }),
-        (error: unknown) => ({ kind: "error" as const, error }),
-      );
-      const timeout = new Promise<{ kind: "timeout" }>((resolve) => {
-        timer = setTimeout(() => resolve({ kind: "timeout" }), idleTimeoutMs);
-        timer.unref?.();
-      });
-      const outcome = await Promise.race([read, timeout]);
-      clear();
-      if (outcome.kind === "timeout") {
-        const error = new Error(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE);
-        void reader.cancel(error).catch(() => undefined);
-        controller.error(error);
-        return;
-      }
-      if (outcome.kind === "error") {
-        controller.error(outcome.error);
-        return;
-      }
-      if (outcome.chunk.done) controller.close();
-      else controller.enqueue(outcome.chunk.value);
-    },
-    cancel(reason) {
-      clear();
-      return reader.cancel(reason);
-    },
-  });
-  return withBody(response, body);
-}
-
-function withBody(response: Response, body: ReadableStream<Uint8Array>): Response {
-  const headers = new Headers(response.headers);
-  headers.delete("content-encoding");
-  headers.delete("content-length");
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
-function tapFirstChunk(response: Response, onFirstChunk: () => void): Response {
-  if (!response.ok || response.body == null) return response;
-  let seen = false;
-  return withBody(
-    response,
-    response.body.pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          if (!seen) {
-            seen = true;
-            onFirstChunk();
-          }
-          controller.enqueue(chunk);
-        },
-      }),
-    ),
-  );
-}
-
-function modelRequestFetch(
-  fetchImpl: ModelsSimpleStreamOptions["fetch"],
-  idleTimeoutMs: number,
-  onFirstChunk: () => void,
-): NonNullable<ModelsSimpleStreamOptions["fetch"]> {
-  return async (input, init) => {
-    // Compatible providers attach a package undici Agent after this wrapper is
-    // installed. Pair that dispatcher without replacing other providers' fetch.
-    const transport =
-      init && "dispatcher" in init
-        ? fetchPairedWithDispatcher(fetchImpl)
-        : (fetchImpl ?? globalThis.fetch);
-    const response = await transport(input, init);
-    return tapFirstChunk(boundRetryableErrorBody(response, idleTimeoutMs), onFirstChunk);
-  };
-}
-
-// These Pi adapters reject fetch overrides other than globalThis.fetch.
-const APIS_WITHOUT_CUSTOM_FETCH = new Set<Api>(["google-generative-ai", "google-vertex"]);
-
-export function reliableModelStream(
-  models: Models,
-  model: Model<Api>,
-  context: Context,
-  options: ModelsSimpleStreamOptions | undefined,
-  configuredMaxTokens: number | undefined,
-  accessToken?: string | (() => string | undefined),
-  runStream?: (options: ModelsSimpleStreamOptions) => AssistantMessageEventStream,
-  cacheRetention?: ModelsSimpleStreamOptions["cacheRetention"],
-): AssistantMessageEventStream {
-  const idleTimeoutMs = modelStreamIdleTimeoutMs();
-  const watchdog = modelStreamIdleWatchdog(options?.signal, idleTimeoutMs);
-  try {
-    const preparedOptions = reliableStreamOptions(
-      model,
-      {
-        ...options,
-        signal: watchdog.signal,
-        // Without our fetch wrapper the first event, not the first body chunk, clears the
-        // first-event bound.
-        fetch: APIS_WITHOUT_CUSTOM_FETCH.has(model.api)
-          ? options?.fetch
-          : modelRequestFetch(options?.fetch, idleTimeoutMs, watchdog.firstByte),
-        // Only a 2xx arms the shared watchdog. Error bodies are bounded by
-        // the fetch wrapper where supported; caller hooks still see every status.
-        onResponse: (response, requestModel) => {
-          if (response.status >= 200 && response.status < 300) watchdog.responded();
-          return options?.onResponse?.(response, requestModel);
-        },
-      },
-      configuredMaxTokens,
-      accessToken,
-      cacheRetention,
-    );
-    const stream = runStream
-      ? runStream(preparedOptions)
-      : models.streamSimple(model, context, preparedOptions);
-    return watchdog.wrap(stream);
-  } catch (error) {
-    watchdog.dispose();
-    throw error;
-  }
-}
-
-const CODEX_RESIDENCY_HEADER = "x-openai-internal-codex-residency";
-
-/** Header names are case-insensitive: any caller-set casing counts as explicit. */
-function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
-  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === name);
-}
-
-export function reliableStreamOptions(
-  model: Pick<Model<Api>, "api" | "provider" | "maxTokens" | "reasoning"> &
-    Partial<Pick<Model<Api>, "contextWindow">>,
-  options?: ModelsSimpleStreamOptions,
-  configuredMaxTokens?: number,
-  accessToken?: string | (() => string | undefined),
-  cacheRetention?: ModelsSimpleStreamOptions["cacheRetention"],
-): ModelsSimpleStreamOptions {
-  let next: ModelsSimpleStreamOptions = {
-    ...options,
-    ...(cacheRetention ? { cacheRetention } : {}),
-    timeoutMs: options?.timeoutMs ?? MODEL_STREAM_TIMEOUT_MS,
-    maxRetries: options?.maxRetries ?? modelStreamMaxRetries(),
-    maxTokens: resolveCompletionMaxTokens(
-      model.maxTokens,
-      configuredMaxTokens,
-      options?.maxTokens,
-      model.reasoning,
-      model.contextWindow,
-    ),
-  };
-
-  if (isCodexModel(model)) {
-    // Pi cannot fall back after a WebSocket has emitted its start event. Long tool
-    // runs then surface abnormal close 1006 as a terminal model error. SSE has
-    // bounded network retries and no long-lived connection between tool turns.
-    next = { ...next, transport: "sse" };
-    // Forward the account's compute residency so the Codex backend routes to the
-    // right region. Models.applyAuth resolves auth — including an OAuth refresh
-    // that swaps the stored credential — after these options are built, so the
-    // claim is derived in transformHeaders at request time from the credential
-    // the store holds then. Injection acts like a default header: an explicit
-    // value under any casing wins, and a caller-supplied transformHeaders keeps
-    // the final say.
-    const callerTransform = next.transformHeaders;
-    next = {
-      ...next,
-      transformHeaders: (headers) => {
-        const residency = codexComputeResidency(
-          typeof accessToken === "function" ? accessToken() : accessToken,
-        );
-        const merged =
-          residency && !hasHeader(headers, CODEX_RESIDENCY_HEADER)
-            ? { ...headers, [CODEX_RESIDENCY_HEADER]: residency }
-            : headers;
-        return callerTransform ? callerTransform(merged) : merged;
-      },
-    };
-  }
-
-  // OpenCode Go/Zen require a sticky x-opencode-session header (affinity + some
-  // models 400 without it). Pi 0.85.1 does not attach that header on its own.
-  if (isOpenCodeProvider(model.provider)) {
-    const sessionId = next.sessionId?.trim() || randomUUID();
-    next = {
-      ...next,
-      sessionId,
-      headers: {
-        "x-opencode-session": sessionId,
-        "x-opencode-client": "cortexai-agent-hub",
-        ...next.headers,
-      },
-    };
-  }
-
-  return next;
 }

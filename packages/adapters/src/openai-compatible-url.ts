@@ -1,50 +1,60 @@
-import { isIP } from "node:net";
+import type { CompatibleEndpointPreset } from "@cortexai-agent-hub/contracts";
 import {
+  ipVersion,
+  isCloudMetadataHost,
+  isLinkLocalAddress,
+  isLoopbackHost,
+  isNonPublicAddress,
+  matchCompatibleEndpointPreset,
+  normalizeHost,
   normalizeOpenAiCompatibleBaseUrl,
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from "@cortexai-agent-hub/contracts";
-import { isCloudMetadataAddress, isLinkLocalAddress, isPrivateAddress } from "./network-address.js";
 
 export { normalizeOpenAiCompatibleBaseUrl, OPENAI_COMPATIBLE_PROVIDER_ID };
 
 const BUILT_IN_PUBLIC_MODEL_HOSTS = new Set(["ollama.com"]);
 
-const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata.goog"]);
+/** Hosted compatible services the catalog offers by name. Each one needs a key. */
+export const COMPATIBLE_ENDPOINT_PRESETS: CompatibleEndpointPreset[] = [
+  { name: "Ollama Cloud", baseUrl: "https://ollama.com/v1" },
+];
 
-export function openAiCompatAllowPublicHosts(): boolean {
-  return process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC === "1";
+export function compatibleEndpointPreset(baseUrl: string | undefined) {
+  return matchCompatibleEndpointPreset(COMPATIBLE_ENDPOINT_PRESETS, baseUrl);
 }
 
-function normalizeHostname(hostname: string): string {
-  return hostname
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
+export function openAiCompatAllowPublicHosts(): boolean {
+  return process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC !== "0";
 }
 
 export function isPrivateOpenAiCompatibleHostname(hostname: string): boolean {
-  const normalized = normalizeHostname(hostname);
-  if (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized === "host.docker.internal"
-  ) {
-    return true;
-  }
-  if (METADATA_HOSTS.has(normalized)) return false;
-  const ipKind = isIP(normalized);
-  if (ipKind === 4 || ipKind === 6) return isPrivateAddress(normalized);
+  const normalized = normalizeHost(hostname);
+  if (isLoopbackHost(normalized) || normalized === "host.docker.internal") return true;
+  if (isCloudMetadataHost(normalized)) return false;
+  if (ipVersion(normalized) !== 0) return isNonPublicAddress(normalized);
   return (process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_PRIVATE_HOSTS ?? "")
     .split(",")
-    .some((entry) => entry.trim() !== "" && normalizeHostname(entry.trim()) === normalized);
+    .some((entry) => entry.trim() !== "" && normalizeHost(entry.trim()) === normalized);
+}
+
+/**
+ * Inside a container, loopback is the container itself, so a server the person runs
+ * on their own computer is reached through the host address the deployment names.
+ */
+export function loopbackOnHost(url: URL): URL {
+  const host = process.env.CORTEXAI_AGENT_HUB_LOOPBACK_HOST?.trim();
+  if (!host || !isLoopbackHost(normalizeHost(url.hostname))) return url;
+  const target = new URL(url);
+  target.hostname = host;
+  return target;
 }
 
 function isBlockedHostname(hostname: string): boolean {
-  const normalized = normalizeHostname(hostname);
+  const normalized = normalizeHost(hostname);
   return (
-    METADATA_HOSTS.has(normalized) ||
-    (isIP(normalized) !== 0 &&
-      (isCloudMetadataAddress(normalized) || isLinkLocalAddress(normalized)))
+    isCloudMetadataHost(normalized) ||
+    (ipVersion(normalized) !== 0 && isLinkLocalAddress(normalized))
   );
 }
 
@@ -55,7 +65,7 @@ function isBlockedHostname(hostname: string): boolean {
 export type OpenAiCompatibleUrlPolicy = { allowPublic?: boolean; allowPrivate?: boolean };
 
 export const PRIVATE_MODEL_ENDPOINT_MESSAGE =
-  "Private model endpoints require operator authorization.";
+  "Private model endpoints need MCP_ALLOW_PRIVATE_ENDPOINT=true on the API and worker.";
 
 export function assertAllowedOpenAiCompatibleUrl(
   raw: string,
@@ -77,7 +87,7 @@ export function assertHttpsForKeyedOpenAiCompatibleUrl(
 ): void {
   if (!apiKey?.trim() && !hasHeaders) return;
   if (url.protocol === "https:") return;
-  const hostname = normalizeHostname(url.hostname);
+  const hostname = normalizeHost(url.hostname);
   if (isPrivateOpenAiCompatibleHostname(hostname)) return;
   throw new Error(
     hasHeaders
@@ -102,7 +112,7 @@ export function assertAllowedOpenAiCompatibleRequestUrl(
   if (url.username || url.password) {
     throw new Error("Model server URL must not contain credentials");
   }
-  const hostname = normalizeHostname(url.hostname);
+  const hostname = normalizeHost(url.hostname);
   if (isBlockedHostname(hostname)) {
     throw new Error("Base URL targets a blocked metadata or link-local host");
   }
@@ -114,9 +124,7 @@ export function assertAllowedOpenAiCompatibleRequestUrl(
   const builtInPublicHost =
     url.protocol === "https:" && url.port === "" && BUILT_IN_PUBLIC_MODEL_HOSTS.has(url.hostname);
   if (!allowPublic && !builtInPublicHost) {
-    throw new Error(
-      "Public model endpoints are blocked. Set CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC=1 to allow them. A private reverse proxy on localhost or an RFC1918 address does not need that gate.",
-    );
+    throw new Error("Public model endpoints are disabled on this server.");
   }
   return url;
 }

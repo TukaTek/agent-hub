@@ -1,36 +1,45 @@
-import type { Routine } from "@cortexai-agent-hub/contracts";
+import type { ComputerStatus } from "@cortexai-agent-hub/contracts";
 import { displayName } from "@cortexai-agent-hub/core";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { Alert, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { BotAvatar } from "../components/bot-avatar";
+import { useBotEmail, useBotEmailRows } from "../components/bot-email";
+import { botProfileMenuOptions, useBotProfileActions } from "../components/bot-profile-menu";
 import { glassHeaderOptions } from "../components/glass-title";
+import { NativeActionButton } from "../components/native-action-button";
+import { NativeSymbol } from "../components/native-symbol";
 import {
   SettingsGroup,
   SettingsRow,
   SettingsSwitch,
   useStackedSettings,
 } from "../components/settings-group";
-import type { MobileBot } from "../lib/api";
-import { currentApiBase, loadSessionToken, rpc, selectedSpaceId } from "../lib/api";
-import { useI18n } from "../lib/i18n";
+import { currentApiBase, rpc, selectedSpaceId } from "../lib/api";
 import { afterChatNotifyChange } from "../lib/live-notifications";
-import { native, useThemedStyles } from "../lib/native";
+import type { MobileBot } from "../lib/mobile-types";
+import { native, useMobileTokens, useThemedStyles } from "../lib/native";
 import { createQueuedSave } from "../lib/queued-save";
-import { deviceTimeZone, routineRowDetail, sortRoutinesByNextRun } from "../lib/routine";
+import { useBotRoutines } from "../lib/routine-store";
+import { loadSessionToken } from "../lib/session";
+import { useSideInsets } from "../lib/side-insets";
 import { errorText } from "../lib/user-error";
 
 export default function BotProfile() {
-  const { t } = useI18n();
+  const sideInsets = useSideInsets();
+  const { t } = useLingui();
   const router = useRouter();
   const styles = useThemedStyles(createStyles);
+  const tokens = useMobileTokens();
   const stacked = useStackedSettings();
   const { botId = "", name: nameParam } = useLocalSearchParams<{ botId?: string; name?: string }>();
   const [bot, setBot] = useState<MobileBot | null>(null);
-  const [routines, setRoutines] = useState<Routine[] | null>(null);
-  const [routinesError, setRoutinesError] = useState<string | null>(null);
-  const name = displayName(bot?.name ?? nameParam, t("Bot"));
-  const timeZone = deviceTimeZone();
+  const [computer, setComputer] = useState<ComputerStatus | null>(null);
+  const name = displayName(bot?.name ?? nameParam, t`Bot`);
+  const { routines } = useBotRoutines(botId);
+  const actions = useBotProfileActions(botId, name);
   // Counts switch saves as they start and end, so a reload can tell it overlapped one.
   const notifySaves = useRef(0);
   const notifyQueue = useRef<ReturnType<typeof createQueuedSave<boolean>> | null>(null);
@@ -41,7 +50,7 @@ export default function BotProfile() {
       if (!botId) return;
       let current = true;
       const saves = notifySaves.current;
-      void rpc<MobileBot>("bots/get", { botId })
+      void rpc("bots/get", { botId })
         .then((next) => {
           if (!current) return;
           // A read that overlapped a save may predate it; keep the switch as the user left it.
@@ -52,33 +61,19 @@ export default function BotProfile() {
           );
         })
         .catch(() => undefined);
+      void rpc("computer/status", { botId })
+        .then((next) => {
+          if (current) setComputer(next);
+        })
+        // A stale Running or Asleep is worse than no state.
+        .catch(() => {
+          if (current) setComputer(null);
+        });
       return () => {
         current = false;
       };
     }, [botId]),
   );
-
-  // Only the latest load (on focus or retry) may set state; leaving the screen drops them all.
-  const routinesRequest = useRef(0);
-  const loadRoutines = useCallback(() => {
-    if (!botId) return;
-    const request = ++routinesRequest.current;
-    void rpc<Routine[]>("routines/list", { botId })
-      .then((next) => {
-        if (request !== routinesRequest.current) return;
-        setRoutines(sortRoutinesByNextRun(next));
-        setRoutinesError(null);
-      })
-      .catch((error) => {
-        if (request === routinesRequest.current) {
-          setRoutinesError(errorText(error, t("Could not load routines")));
-        }
-      });
-    return () => {
-      routinesRequest.current += 1;
-    };
-  }, [botId, t]);
-  useFocusEffect(loadRoutines);
 
   // The chat list's Silence notifications saves the same setting. The switch moves
   // first and moves back if the save fails.
@@ -98,21 +93,21 @@ export default function BotProfile() {
             currentApiBase(),
             await loadSessionToken(),
             selectedSpaceId() ?? "",
-            { threadId: bot.threadId, notify },
+            { botId, threadId: bot.threadId, notify },
           );
         } catch {
           // The server save succeeded; device reconciliation can retry later.
         }
       },
       onError: (error) =>
-        Alert.alert(t("Could not update notifications"), errorText(error, t("Try again."))),
+        Alert.alert(t`Could not update notifications`, errorText(error, t`Try again.`)),
     });
     notifyQueue.current.update(notifyOnFinish);
   };
 
   return (
     <ScrollView
-      style={styles.screen}
+      style={[styles.screen, sideInsets]}
       contentContainerStyle={[styles.content, stacked && styles.compactContent]}
       contentInsetAdjustmentBehavior="automatic"
     >
@@ -121,75 +116,100 @@ export default function BotProfile() {
           ...glassHeaderOptions(name),
           // The avatar and name below name the page; the bar title stays for the back menu.
           ...(Platform.OS === "ios" ? { headerTitle: "" } : null),
+          ...(botId ? botProfileMenuOptions(actions, t`Bot actions`, tokens.foreground) : null),
         }}
       />
       <View style={styles.identity}>
         {bot ? (
-          <BotAvatar color={bot.color} identity={bot.id} size={96} status={bot.status} />
+          <BotAvatar
+            color={bot.color}
+            avatarSet={bot.avatarSet}
+            identity={bot.id}
+            size={96}
+            status={bot.status}
+          />
         ) : (
           <View style={styles.avatarSpace} />
         )}
         <Text accessibilityRole="header" style={styles.name}>
           {name}
         </Text>
-        {bot?.title ? <Text style={styles.title}>{bot.title}</Text> : null}
+        <NativeActionButton
+          label={t`Edit`}
+          prominence="secondary"
+          style={styles.edit}
+          onPress={() => router.push({ pathname: "/bot-settings", params: { botId } })}
+        />
       </View>
       <SettingsGroup>
         <SettingsRow
-          key="settings"
+          key="routines"
           accessibilityRole="button"
           chevron="right"
-          title={t("Chat settings")}
-          onPress={() => router.push({ pathname: "/bot-settings", params: { botId } })}
+          title={t`Routines`}
+          leading={
+            <NativeSymbol ios="clock" android="time-outline" color={tokens.mutedForeground} />
+          }
+          // Counts the routines that are switched on; nothing until the first read lands.
+          value={
+            routines
+              ? t`${ph({ count: routines.filter((routine) => routine.active).length })} on`
+              : undefined
+          }
+          onPress={() => router.push({ pathname: "/routines", params: { botId, name } })}
+        />
+        <SettingsRow
+          key="pages"
+          accessibilityRole="button"
+          chevron="right"
+          title={t`Pages`}
+          leading={
+            <NativeSymbol
+              ios="doc.richtext"
+              android="document-text-outline"
+              color={tokens.mutedForeground}
+            />
+          }
+          onPress={() => router.push({ pathname: "/pages", params: { botId } })}
         />
         <SettingsRow
           key="artifacts"
           accessibilityRole="button"
           chevron="right"
-          title={t("Artifacts")}
+          title={t`Artifacts`}
+          leading={
+            <NativeSymbol ios="folder" android="folder-outline" color={tokens.mutedForeground} />
+          }
           onPress={() => router.push({ pathname: "/artifacts", params: { botId } })}
         />
         <SettingsRow
           key="computer"
           accessibilityRole="button"
           chevron="right"
-          title={t("Computer")}
+          title={t`Computer`}
+          leading={
+            <NativeSymbol
+              ios="desktopcomputer"
+              android="desktop-outline"
+              color={tokens.mutedForeground}
+            />
+          }
+          value={
+            computer?.state === "running"
+              ? t`Running`
+              : computer?.state === "suspended"
+                ? t`Asleep`
+                : undefined
+          }
           onPress={() => router.push({ pathname: "/computer", params: { botId, name } })}
         />
       </SettingsGroup>
-      {/* Routines show only once there is something to list, or a load to retry. */}
-      <SettingsGroup label={t("Routines")}>
-        {routinesError ? (
-          <SettingsRow
-            key="error"
-            accessibilityRole="button"
-            title={routinesError}
-            detail={t("Try again.")}
-            onPress={() => void loadRoutines()}
-          />
-        ) : (
-          routines?.map((routine) => (
-            <SettingsRow
-              key={routine.id}
-              accessibilityRole="button"
-              chevron="right"
-              title={routine.name}
-              detail={routineRowDetail(routine, timeZone)}
-              onPress={() =>
-                router.push({
-                  pathname: "/routine",
-                  params: { botId, botName: name, routineId: routine.id, origin: "profile" },
-                })
-              }
-            />
-          ))
-        )}
-      </SettingsGroup>
+      <BotEmailGroup botId={botId} botName={name} />
       {bot ? (
-        <SettingsGroup footer={t("Get notified when this Bot finishes or needs input")}>
+        <SettingsGroup footer={t`Get notified when this Bot finishes or needs input`}>
           <SettingsSwitch
             key="notifications"
-            label={t("Notifications")}
+            label={t`Notifications`}
             value={bot.notifyOnFinish}
             onChange={setNotifyOnFinish}
           />
@@ -205,8 +225,39 @@ function createStyles() {
     content: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 32, gap: 28 },
     compactContent: { paddingHorizontal: 8 },
     identity: { alignItems: "center", gap: 8 },
+    edit: { alignSelf: "center", marginTop: 4 },
     avatarSpace: { width: 96, height: 96 },
     name: { color: native.label, fontSize: 22, fontWeight: "600", textAlign: "center" },
-    title: { color: native.secondaryLabel, fontSize: 15, textAlign: "center" },
   });
+}
+
+/** The bot's address; on a server that receives email, offered until claimed. */
+function BotEmailGroup({ botId, botName }: { botId: string; botName: string }) {
+  const { t } = useLingui();
+  const tokens = useMobileTokens();
+  const email = useBotEmail(botId);
+  const rows = useBotEmailRows({ botId, botName, email });
+  const [claiming, setClaiming] = useState(false);
+  if (!email.address) return null;
+  return (
+    <SettingsGroup label={t`Email`}>
+      {email.address.address || claiming
+        ? rows
+        : [
+            <SettingsRow
+              key="offer"
+              accessibilityRole="button"
+              title={t`Get an email address`}
+              leading={
+                <NativeSymbol
+                  ios="envelope"
+                  android="mail-outline"
+                  color={tokens.mutedForeground}
+                />
+              }
+              onPress={() => setClaiming(true)}
+            />,
+          ]}
+    </SettingsGroup>
+  );
 }

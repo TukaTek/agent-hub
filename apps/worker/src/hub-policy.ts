@@ -1,8 +1,6 @@
+import type { HubAuthConfig, HubPolicy, HubPolicyRestart } from "@cortexai-agent-hub/auth";
 import {
   disabledHubPolicy,
-  type HubAuthConfig,
-  type HubPolicy,
-  type HubPolicyRestart,
   hubAuthFromEnv,
   hubNotConfiguredLogEntry,
   hubPolicyAutoRestart,

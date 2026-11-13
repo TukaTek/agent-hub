@@ -1,10 +1,10 @@
 import type { HubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
-import {
-  HUB_MANAGED_SETTINGS,
-  type HubManagedSetting,
-  type HubPolicyDocument,
-  type HubSettingValue,
+import type {
+  HubManagedSetting,
+  HubPolicyDocument,
+  HubSettingValue,
 } from "./hub-policy-contract.js";
+import { HUB_MANAGED_SETTINGS } from "./hub-policy-contract.js";
 
 /**
  * Operator signal for a Hub value that replaced a local one. It names the setting,

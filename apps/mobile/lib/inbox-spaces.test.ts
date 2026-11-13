@@ -1,28 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  adoptDeletedSpaceFallback,
-  type MobileBot,
-  rpc,
-  selectedSpaceId,
-  selectSpace,
-} from "./api";
+import { rpc, selectedSpaceId } from "./api";
+import { adoptDeletedSpaceFallback, selectSpace } from "./api-server";
 import { activateUiLocale } from "./i18n";
+import type { InboxSpace } from "./inbox-spaces";
 import {
   canDeleteInboxSpace,
-  type InboxSpace,
+  deleteSpaceTitle,
   inboxHasNoChats,
   inboxNeedsCreateHint,
+  inboxSignal,
   removeInboxSpace,
   retryInboxSpaceFallback,
   selectInboxSpace,
+  snoozedHeadingKey,
   spaceInboxItems,
 } from "./inbox-spaces";
+import { mobileLogoAvatarActivity } from "./logo-avatar-activity";
+import type { MobileBot } from "./mobile-types";
+import { offscreenUnreads } from "./offscreen-unreads";
 
-vi.mock("./api", () => ({
+vi.mock("./api-server", () => ({
   adoptDeletedSpaceFallback: vi.fn(),
+  selectSpace: vi.fn(),
+}));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
+vi.mock("./api", () => ({
   rpc: vi.fn(),
   selectedSpaceId: vi.fn(),
-  selectSpace: vi.fn(),
 }));
 
 function space(overrides: Partial<InboxSpace> = {}): InboxSpace {
@@ -43,7 +48,6 @@ const bot: MobileBot = {
   id: "bot-1",
   name: "Helper",
   preview: "",
-  title: "",
   color: "gray",
   computerMode: "team",
   notifyOnFinish: true,
@@ -100,6 +104,44 @@ describe("spaceInboxItems", () => {
     } finally {
       activateUiLocale("en");
     }
+  });
+  it("moves snoozed chats under a folded Snoozed heading until they wake", () => {
+    const now = Date.parse("2026-11-07T12:00:00.000Z");
+    const input = space({
+      isDefault: true,
+      bots: [
+        { ...bot, id: "awake" },
+        { ...bot, id: "asleep", pinned: true, snoozedUntil: "2026-11-08T09:00:00.000Z" },
+        { ...bot, id: "woke", snoozedUntil: "2026-11-07T09:00:00.000Z" },
+        // A bot waiting on an answer stays snoozed.
+        {
+          ...bot,
+          id: "asking",
+          status: "waiting_input",
+          snoozedUntil: "2026-11-08T09:00:00.000Z",
+        },
+      ],
+    });
+    const key = snoozedHeadingKey(input.id);
+    const ids = (items: ReturnType<typeof spaceInboxItems>) =>
+      items.map((item) =>
+        item.type === "bot" ? item.bot.id : item.type === "heading" ? `#${item.title}` : "?",
+      );
+    expect(ids(spaceInboxItems([input], new Set(), undefined, now))).toEqual([
+      "awake",
+      "woke",
+      "#Snoozed",
+    ]);
+    expect(spaceInboxItems([input], new Set(), undefined, now).at(-1)).toMatchObject({
+      key,
+      collapsed: true,
+      count: 2,
+    });
+    expect(ids(spaceInboxItems([input], new Set([key]), undefined, now)).slice(-3)).toEqual([
+      "#Snoozed",
+      "asleep",
+      "asking",
+    ]);
   });
   it("keeps an empty space visible and selectable by its own id", () => {
     const empty = space();
@@ -303,12 +345,26 @@ describe("spaceInboxItems", () => {
     expect(canDeleteInboxSpace(space({ canDelete }))).toBe(false);
   });
 
-  it("offers deletion for an explicitly authorized empty non-default space", () => {
+  it("offers deletion for an explicitly authorized non-default space", () => {
     expect(canDeleteInboxSpace(space())).toBe(true);
   });
 
-  it("hides deletion while a space still has content", () => {
-    expect(canDeleteInboxSpace(space({ hasContent: true }))).toBe(false);
+  it("offers deletion for a space that still has bots, which go with it", () => {
+    expect(canDeleteInboxSpace(space({ hasContent: true, bots: [bot] }))).toBe(true);
+  });
+
+  it("names every bot deletion removes, not only the visible ones", () => {
+    expect(deleteSpaceTitle(space({ bots: [bot], botCount: 3 }))).toBe(
+      "Delete Work and its 3 bots?",
+    );
+    expect(deleteSpaceTitle(space({ bots: [], botCount: 1 }))).toBe("Delete Work and its bot?");
+    expect(deleteSpaceTitle(space({ bots: [bot], botCount: 0 }))).toBe("Delete Work?");
+    // Older servers send no count; fall back to the listed bots.
+    expect(deleteSpaceTitle(space({ bots: [bot] }))).toBe("Delete Work and its bot?");
+  });
+
+  it("never offers deletion for the default space", () => {
+    expect(canDeleteInboxSpace(space({ isDefault: true }))).toBe(false);
   });
 });
 
@@ -411,4 +467,133 @@ describe("removeInboxSpace", () => {
     expect(selectSpace).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
   });
+});
+
+describe("inbox attention pills", () => {
+  beforeEach(() => mobileLogoAvatarActivity.clear());
+
+  it("does not count a read legacy row with a routine wait and no waiting indicator", () => {
+    const waiting = { ...bot, status: "waiting_input", sectionId: "custom" };
+    const items = spaceInboxItems([
+      space({
+        isDefault: true,
+        bots: [
+          waiting,
+          ...Array.from({ length: 20 }, (_, index) => ({ ...bot, id: `loose-${index}` })),
+        ],
+        botSections: [
+          {
+            id: "custom",
+            name: "Research",
+            position: 0,
+            createdAt: bot.updatedAt,
+            updatedAt: bot.updatedAt,
+          },
+        ],
+      }),
+    ]);
+    const signals = items.map(inboxSignal);
+    expect(signals.every((signal) => signal.unread === 0 && signal.attention === 0)).toBe(true);
+    expect(offscreenUnreads(signals, { first: 0, last: 0 })).toEqual({
+      above: undefined,
+      below: undefined,
+    });
+    expect(offscreenUnreads(signals, { first: 10, last: 20 })).toEqual({
+      above: undefined,
+      below: undefined,
+    });
+  });
+
+  it("still jumps to a genuinely waiting avatar above or below the viewport", () => {
+    const waiting = { ...bot, avatarSet: "cortexai-agent-hub" as const, status: "waiting_input" };
+    const signals = [
+      inboxSignal({ type: "heading", key: "custom", title: "Research" }),
+      inboxSignal({ type: "bot", bot: waiting }),
+      { unread: 0, attention: 0 },
+    ];
+    expect(offscreenUnreads(signals, { first: 0, last: 0 }).below).toEqual({
+      kind: "attention",
+      count: 1,
+      index: 1,
+    });
+    expect(offscreenUnreads(signals, { first: 2, last: 2 }).above).toEqual({
+      kind: "attention",
+      count: 1,
+      index: 1,
+    });
+    expect(inboxSignal({ type: "pinned", chats: [{ kind: "bot", bot: waiting }] })).toEqual({
+      unread: 0,
+      attention: 1,
+    });
+  });
+
+  it("honors live activity instead of a stale waiting status, including pinned chats", () => {
+    mobileLogoAvatarActivity.hydrate("test", {
+      threadId: bot.threadId,
+      botId: bot.id,
+      cursor: 1,
+      run: { id: "run", botId: bot.id, status: "running", trigger: "user" },
+    });
+    const waiting = { ...bot, avatarSet: "cortexai-agent-hub" as const, status: "waiting_input" };
+    expect(inboxSignal({ type: "bot", bot: waiting }).attention).toBe(0);
+    expect(inboxSignal({ type: "pinned", chats: [{ kind: "bot", bot: waiting }] }).attention).toBe(
+      0,
+    );
+    mobileLogoAvatarActivity.clear();
+  });
+
+  it("follows background suppression and live waits without changing unread counts", () => {
+    const waiting = {
+      ...bot,
+      avatarSet: "cortexai-agent-hub" as const,
+      status: "waiting_input",
+      unread: true,
+    };
+    const snapshot = {
+      threadId: bot.threadId,
+      botId: bot.id,
+      cursor: 1,
+      run: {
+        id: "run",
+        botId: bot.id,
+        status: "waiting_input" as const,
+        trigger: "tickets" as const,
+      },
+    };
+    mobileLogoAvatarActivity.hydrate("test", snapshot);
+    expect(inboxSignal({ type: "bot", bot: waiting })).toEqual({ unread: 1, attention: 0 });
+    mobileLogoAvatarActivity.hydrate("test", {
+      ...snapshot,
+      cursor: 2,
+      run: { ...snapshot.run, trigger: "user" },
+    });
+    expect(inboxSignal({ type: "bot", bot: { ...waiting, status: "idle" } })).toEqual({
+      unread: 1,
+      attention: 1,
+    });
+    mobileLogoAvatarActivity.clear();
+  });
+
+  it("does not count rows removed by a collapsed section or an archived avatar", () => {
+    const waiting = {
+      ...bot,
+      avatarSet: "cortexai-agent-hub" as const,
+      pinned: true,
+      status: "waiting_input",
+    };
+    const items = spaceInboxItems([space({ bots: [waiting] })], new Set(["space-work:pinned"]));
+    expect(items.map(inboxSignal).every((signal) => signal.attention === 0)).toBe(true);
+    expect(
+      inboxSignal({ type: "bot", bot: { ...waiting, archivedAt: bot.updatedAt } }).attention,
+    ).toBe(0);
+  });
+});
+
+it("keeps a snoozed chat out of the off-screen unread pills", () => {
+  const later = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  expect(inboxSignal({ type: "bot", bot: { ...bot, unread: true, snoozedUntil: later } })).toEqual({
+    unread: 0,
+    attention: 0,
+  });
+  expect(inboxSignal({ type: "bot", bot: { ...bot, unread: true } }).unread).toBe(1);
 });

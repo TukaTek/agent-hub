@@ -1,16 +1,87 @@
 import { spawn } from "node:child_process";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import type { DesktopSetupLink } from "@cortexai-agent-hub/contracts";
 
-/** Pages the setup window may open when Docker is missing. Nothing is ever installed by the app. */
-export const DOCKER_INSTALL_LINKS: Record<DesktopSetupLink, string> = {
-  "docker-desktop": "https://www.docker.com/products/docker-desktop/",
-  orbstack: "https://orbstack.dev/",
-  "docker-engine": "https://docs.docker.com/engine/install/",
-};
-
 export function isDesktopSetupLink(value: unknown): value is DesktopSetupLink {
-  return typeof value === "string" && Object.hasOwn(DOCKER_INSTALL_LINKS, value);
+  return value === "docker-download";
+}
+
+/**
+ * Docker Desktop's official installer for this machine, so the browser downloads it directly
+ * and the person never has to pick a build. The app itself never installs anything; Linux has
+ * no single installer, so it gets the Docker Engine install guide.
+ */
+export function dockerDownloadUrl(platform: string, arch: string): string {
+  const cpu = arch === "arm64" ? "arm64" : "amd64";
+  if (platform === "darwin") return `https://desktop.docker.com/mac/main/${cpu}/Docker.dmg`;
+  if (platform === "win32") {
+    return `https://desktop.docker.com/win/main/${cpu}/Docker%20Desktop%20Installer.exe`;
+  }
+  return "https://docs.docker.com/engine/install/";
+}
+
+export interface DockerApp {
+  name: string;
+  command: string;
+  args: string[];
+}
+
+/** The desktop app that ships this docker CLI, so setup can start it instead of asking the person to. */
+export function dockerAppFor(platform: string, binaryRealPath: string): DockerApp | null {
+  if (platform === "darwin") {
+    if (binaryRealPath.includes("/OrbStack.app/") || binaryRealPath.includes("/.orbstack/")) {
+      return { name: "OrbStack", command: "/usr/bin/open", args: ["-b", "dev.kdrag0n.MacVirt"] };
+    }
+    if (binaryRealPath.includes("/Docker.app/")) {
+      return {
+        name: "Docker Desktop",
+        command: "/usr/bin/open",
+        args: ["-b", "com.docker.docker"],
+      };
+    }
+    return null;
+  }
+  const suffix = path.win32.join("Docker", "Docker", "resources", "bin", "docker.exe");
+  if (platform === "win32" && binaryRealPath.toLowerCase().endsWith(suffix.toLowerCase())) {
+    const installDir = path.win32.resolve(path.win32.dirname(binaryRealPath), "..", "..");
+    return {
+      name: "Docker Desktop",
+      command: path.win32.join(installDir, "Docker Desktop.exe"),
+      args: [],
+    };
+  }
+  return null;
+}
+
+const LAUNCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Starts the Docker app behind `binary`; resolves to its name, or null when there is none to
+ * start. Bounded, because a stop waits for the start attempt that is launching it.
+ */
+export async function launchDockerApp(platform: string, binary: string): Promise<string | null> {
+  const app = dockerAppFor(platform, await realpath(binary).catch(() => binary));
+  if (app === null) return null;
+  return new Promise((resolve) => {
+    const child = spawn(app.command, app.args, { detached: true, stdio: "ignore" });
+    const timer = setTimeout(() => {
+      child.unref();
+      resolve(null);
+    }, LAUNCH_TIMEOUT_MS);
+    const settle = (name: string | null) => {
+      clearTimeout(timer);
+      resolve(name);
+    };
+    child.once("error", () => settle(null));
+    // `open` reports a missing app through its exit code; Docker Desktop.exe keeps running.
+    if (platform === "darwin") child.once("exit", (code) => settle(code === 0 ? app.name : null));
+    else
+      child.once("spawn", () => {
+        child.unref();
+        settle(app.name);
+      });
+  });
 }
 
 /** Shared by CLI discovery and PATH lookup for Docker's credential helpers. */
@@ -79,7 +150,15 @@ const SPAWN_ENV_ALLOWLIST = [
   "DOCKER_CERT_PATH",
   "DOCKER_TLS_VERIFY",
 ];
-const WIN32_ENV_ALLOWLIST = ["SystemRoot", "SystemDrive", "APPDATA", "LOCALAPPDATA", "ProgramData"];
+const WIN32_ENV_ALLOWLIST = [
+  "SystemRoot",
+  "SystemDrive",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "ProgramData",
+  // Docker discovers Windows CLI plugins relative to ProgramFiles, not docker.exe or PATH.
+  "ProgramFiles",
+];
 
 /**
  * Compose interpolates the process environment into the stack, so only what docker
@@ -116,6 +195,8 @@ export interface RunDockerOptions {
   signal?: AbortSignal;
   /** Receives each complete stdout or stderr line as it arrives. */
   onLine?: (line: string) => void;
+  /** Written to stdin, which is otherwise closed. */
+  input?: string;
 }
 
 export interface RunDockerResult {
@@ -166,9 +247,11 @@ export function runDocker(
       env: options.env,
       shell: false,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(options.input);
     const captured = { stdout: "", stderr: "" };
     const pending = { stdout: "", stderr: "" };
     let settled = false;
@@ -196,10 +279,10 @@ export function runDocker(
       if (line !== "") options.onLine?.(line);
     };
     for (const stream of ["stdout", "stderr"] as const) {
-      child[stream]?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString("utf8");
+      child[stream]?.setEncoding("utf8");
+      child[stream]?.on("data", (text: string) => {
         captured[stream] += text;
-        const parts = (pending[stream] + text).split("\n");
+        const parts = (pending[stream] + text).split(/\r?\n/);
         pending[stream] = parts.pop() ?? "";
         for (const part of parts) emit(part);
       });
@@ -281,7 +364,14 @@ const ADDRESS_POOL_EXHAUSTED = [
   "all predefined address pools have been fully subnetted",
   "could not find an available, non-overlapping ipv4 address pool",
 ];
-const PORT_IN_USE = ["address already in use", "port is already allocated", "bind for 127.0.0.1"];
+const PORT_IN_USE = [
+  "address already in use",
+  "port is already allocated",
+  "bind for 127.0.0.1",
+  "bind: only one usage of each socket address",
+  "bind: an attempt was made to access a socket in a way forbidden by its access permissions",
+  "ports are not available",
+];
 
 /** Docker output can contain paths and hostnames, so callers map kinds to fixed messages. */
 export function classifyDockerFailure(output: string): DockerFailureKind {
@@ -291,7 +381,11 @@ export function classifyDockerFailure(output: string): DockerFailureKind {
   if (matches(DAEMON_DOWN)) return "daemon-down";
   if (matches(COMPOSE_MISSING)) return "compose-missing";
   if (matches(PORT_IN_USE)) return "port-in-use";
-  if (matches(IMAGE_NOT_FOUND)) return "image-not-found";
+  if (
+    matches(IMAGE_NOT_FOUND) ||
+    (text.includes("failed to resolve reference") && text.includes(": not found"))
+  )
+    return "image-not-found";
   if (matches(ADDRESS_POOL_EXHAUSTED)) return "address-pool-exhausted";
   if (matches(NETWORK)) return "network";
   return "other";

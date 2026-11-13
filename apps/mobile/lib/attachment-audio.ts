@@ -1,4 +1,6 @@
 import type { AudioPlayer } from "expo-audio";
+import { createAudioPlayer } from "expo-audio";
+import { activateVoiceAudio } from "./voice";
 
 export const INITIAL_ATTACHMENT_AUDIO_STATE = {
   loading: false,
@@ -44,7 +46,6 @@ export function createAttachmentAudioPlayer(
         }
         if (!player) {
           const uri = await loadUri();
-          const { createAudioPlayer } = await import("expo-audio");
           if (disposed) return;
           player = createAudioPlayer({ uri });
           ended = false;
@@ -66,6 +67,7 @@ export function createAttachmentAudioPlayer(
           await player.seekTo(0);
           ended = false;
         }
+        await activateVoiceAudio();
         if (disposed) return;
         player.play();
         update({ playing: true });

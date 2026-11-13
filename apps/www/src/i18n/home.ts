@@ -8,7 +8,6 @@ export type HomeCopy = {
   ogImageAlt: string;
   availableLanguage: string;
   skipToContent: string;
-  starFallback: string;
   nav: {
     home: string;
     primary: string;
@@ -259,6 +258,57 @@ const ZH_ROSTER: RosterBot[] = [
   },
 ];
 
+const JA_ROSTER: RosterBot[] = [
+  {
+    name: "Sales Outbound",
+    color: "#F5A03C",
+    slug: "cortexai-agent-hub/sales-outbound",
+    desc: "見込み客を調べて、フォローアップを下書きします。",
+  },
+  {
+    name: "Inbox Manager",
+    color: "#6A6BF5",
+    slug: "cortexai-agent-hub/inbox-manager",
+    desc: "メールを仕分けて、返信を下書きします。",
+  },
+  {
+    name: "Talent Scout",
+    color: "#3B82F6",
+    slug: "cortexai-agent-hub/talent-scout",
+    desc: "応募書類を確認して、候補者を絞り込みます。",
+  },
+  {
+    name: "Expense Manager",
+    color: "#F2622A",
+    slug: "cortexai-agent-hub/expense-manager",
+    desc: "領収書と支払いを照合します。",
+  },
+  {
+    name: "Bug Triage",
+    color: "#D9508A",
+    slug: "cortexai-agent-hub/bug-triage",
+    desc: "実際のブラウザでレポートを再現し、再現手順を Issue に添付します。",
+  },
+  {
+    name: "Account Manager",
+    color: "#9B5CF6",
+    slug: "cortexai-agent-hub/account-manager",
+    desc: "返信を準備して、契約更新を管理します。",
+  },
+  {
+    name: "Paid Media",
+    color: "#3EC5A8",
+    slug: "cortexai-agent-hub/paid-media",
+    desc: "広告費を確認して、変化を報告します。",
+  },
+  {
+    name: "Chief of Staff",
+    color: "#8B93A8",
+    slug: "cortexai-agent-hub/chief-of-staff",
+    desc: "ブリーフィングを準備して、ボットたちを取りまとめます。",
+  },
+];
+
 const HOME_COPY: Record<Locale, HomeCopy> = {
   en: {
     title: "CortexAI Agent Hub | Personal, always-on AI assistants",
@@ -267,7 +317,6 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       "CortexAI Agent Hub. AI teammates you actually own. Your keys, your model, your machine.",
     availableLanguage: "English",
     skipToContent: "Skip to content",
-    starFallback: "Star",
     nav: {
       home: "CortexAI Agent Hub home",
       primary: "Primary",
@@ -399,7 +448,6 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
       "CortexAI Agent Hub. KI-Teamkollegen, die dir wirklich gehören. Deine Keys, dein Modell, deine Maschine.",
     availableLanguage: "German",
     skipToContent: "Zum Inhalt springen",
-    starFallback: "Star",
     nav: {
       home: "CortexAI Agent Hub-Startseite",
       primary: "Hauptnavigation",
@@ -530,7 +578,6 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     ogImageAlt: "CortexAI Agent Hub. 진짜로 내 것인 AI 팀원. 키, 모델, 머신, 모두 당신 것.",
     availableLanguage: "Korean",
     skipToContent: "본문으로 건너뛰기",
-    starFallback: "Star",
     nav: {
       home: "CortexAI Agent Hub 홈",
       primary: "주 메뉴",
@@ -661,7 +708,6 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
     ogImageAlt: "CortexAI Agent Hub：真正属于你的 AI 队友。密钥、模型、机器，都归你所有。",
     availableLanguage: "Chinese",
     skipToContent: "跳到主要内容",
-    starFallback: "加星",
     nav: {
       home: "CortexAI Agent Hub 首页",
       primary: "主导航",
@@ -782,6 +828,137 @@ const HOME_COPY: Record<Locale, HomeCopy> = {
         about: "关于",
         support: "支持",
         privacy: "隐私",
+      },
+    },
+  },
+  ja: {
+    title: "CortexAI Agent Hub | 個人向け AI アシスタント",
+    description:
+      "CortexAI Agent Hub は、実際の仕事をこなす常駐型の個人向け AI アシスタントです。キーもモデルもマシンも、すべてあなたのものです。",
+    ogImageAlt:
+      "CortexAI Agent Hub。本当に自分のものにできる AI チームメイト。キーもモデルもマシンも、すべてあなたのもの。",
+    availableLanguage: "Japanese",
+    skipToContent: "本文へスキップ",
+    nav: {
+      home: "CortexAI Agent Hub ホーム",
+      primary: "メインナビゲーション",
+      menu: "メニュー",
+      product: "製品",
+      bots: "ボット",
+      selfHost: "セルフホスト",
+      openSource: "オープンソース",
+      docs: "ドキュメント",
+      viewOnGithub: "GitHub で見る",
+    },
+    hero: {
+      badge: "Apache-2.0",
+      pill: "セルフホスト",
+      heading: "本当に自分のものにできる AI チームメイト",
+      lead: "アシスタントに実際の仕事を任せましょう。あなたのツールにサインインし、あなたと同じように使い、必要なときに戻ってきます。",
+      getStarted: "はじめる",
+      viewOnGithub: "GitHub で見る",
+      setupWithAgent: "エージェントでセットアップ",
+      copiedForAgent: "エージェント用にコピーしました",
+      copyFailed: "コピーできませんでした。もう一度お試しください。",
+    },
+    selfHost: {
+      eyebrow: "セルフホスト",
+      heading: "コンピューターはあなたのもの",
+      copy: "CortexAI Agent Hub をあなたのマシンで実行します。キーもモデルもデータも、あなたのものです。",
+      features: [
+        {
+          title: "好きなモデル、自分のキー",
+          body: "ボットを Claude、GPT、Grok、またはローカルモデルにつなげます。ボットごとに切り替えられます。安いモデルで仕分け、賢いモデルで執筆。",
+        },
+        {
+          title: "読めるルーティン",
+          body: "ワークフローを一度見せると、ボットはそれを読んで編集・コミットできる Markdown のルーティンとして保存します。",
+        },
+        {
+          title: "確実な承認",
+          body: "ボットが単独でしてよいことと、確認が必要なことを決められます。すべての操作は、あなたが所有する監査ログに残ります。",
+        },
+      ],
+    },
+    roster: {
+      eyebrow: "ボットテンプレート",
+      heading: "ボットごとに仕事を任せましょう",
+      copy: "新しいボットを作ると、まずあなたにインタビューします。仕事の内容、文章のスタイル、作業場所についていくつか質問し、それから動き始めます。",
+      bots: JA_ROSTER,
+    },
+    openSource: {
+      eyebrow: "オープンソース",
+      heading: "料金ページはありません。リポジトリだけです。",
+      copy: "CortexAI Agent Hub は Apache-2.0 ライセンスで、あなたのマシンとあなたのモデルキーで動きます。機能制限も、外部への送信もありません。",
+      selfHostTitle: "セルフホスト",
+      selfHostMeta: "今すぐ利用可能",
+      selfHostItems: [
+        "Docker ランナーとサンドボックス化されたブラウザ",
+        "モデルキーは自分で用意",
+        "ルーティン、メモリ、監査ログ",
+        "ボット数無制限、シート課金・上限なし",
+        "GitHub でのコミュニティサポート",
+      ],
+      starOnGithub: "GitHub で Star する",
+      readTheDocs: "ドキュメントを読む",
+      cloudTitle: "クラウド",
+      cloudBadge: "近日公開",
+      cloudMeta: "キーはあなたのもの、コンピューターは私たちが運用",
+      cloudItems: [
+        "常時稼働のマネージドサンドボックス",
+        "キーもモデル費用もあなたのもの",
+        "同じボット、同じルーティン、移行不要",
+      ],
+      getStarted: "はじめる",
+    },
+    cta: {
+      heading: "最初のボットを迎えましょう",
+      copy: "後回しにしていた仕事を CortexAI Agent Hub に任せて、最後までやり遂げさせましょう。",
+      getStarted: "はじめる",
+      viewOnGithub: "GitHub で見る",
+      openSourceValue: "オープンソース",
+      selfHostValue: "セルフホスト",
+      stats: [
+        { value: "stars", label: "GitHub スター" },
+        { value: "license", label: "ライセンス" },
+        { value: "openSource", label: "シート課金なし、機能制限なし" },
+        { value: "selfHost", label: "あなたのマシン" },
+      ],
+    },
+    getStartedDialog: {
+      closeLabel: "はじめるダイアログを閉じる",
+      eyebrow: "はじめる",
+      title: "どのように始めますか？",
+      copy: "あなたのマシンでセルフホストするか、クラウドのウェイトリストに登録してください。",
+      selfHostNow: "今すぐセルフホスト",
+      selfHostHint: "インストール手順はドキュメントにあります。",
+      cloudWaitlist: "クラウドのウェイトリスト",
+      cloudHint: "ホスト型の CortexAI Agent Hub を準備中です。メールアドレスを残してください。",
+      back: "戻る",
+      successTitle: "登録しました。",
+      successCopy:
+        "ホスト型の CortexAI Agent Hub の準備ができたらメールでお知らせします。今日から始めるなら、このページのセルフホストへどうぞ。",
+      done: "完了",
+      viewOnGithub: "GitHub で見る",
+    },
+    waitlist: {
+      emailLabel: "メールアドレス",
+      placeholder: "you@company.com",
+      submit: "続ける",
+      joining: "登録中…",
+      success: "登録しました。",
+      added: "追加しました",
+      error: "登録できませんでした。もう一度お試しください。",
+    },
+    footer: {
+      navLabel: "フッター",
+      languagesLabel: "言語",
+      links: {
+        docs: "ドキュメント",
+        changelog: "変更履歴",
+        about: "概要",
+        support: "サポート",
+        privacy: "プライバシー",
       },
     },
   },

@@ -2,7 +2,8 @@
 // login. Everything here runs as the migration (owner) role; the API and worker
 // then connect with DATABASE_URL and only get the runtime grants.
 import { execFileSync } from "node:child_process";
-import { migrateJobQueue } from "@cortexai-agent-hub/adapters";
+import path from "node:path";
+import { migrateJobQueue, unwrapEnvFromKeyManager } from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import {
   databaseUrls,
@@ -13,12 +14,17 @@ import {
 } from "@cortexai-agent-hub/db";
 
 loadRootEnv();
+await unwrapEnvFromKeyManager();
 const urls = databaseUrls(process.env);
 await deployMigrations({
   migrationUrl: urls.migrationUrl,
-  dbPackageDir: execFileSync("pnpm", ["--filter", "@cortexai-agent-hub/db", "exec", "pwd"], {
-    encoding: "utf8",
-  }).trim(),
+  previousMigrations: process.env.CORTEXAI_AGENT_HUB_DEPLOYED_MIGRATIONS?.split(","),
+  // A packaged server has no pnpm, so it names the database package's folder itself.
+  dbPackageDir: process.env.CORTEXAI_AGENT_HUB_DB_PACKAGE_DIR
+    ? path.resolve(process.env.CORTEXAI_AGENT_HUB_DB_PACKAGE_DIR)
+    : execFileSync("pnpm", ["--filter", "@cortexai-agent-hub/db", "exec", "pwd"], {
+        encoding: "utf8",
+      }).trim(),
 });
 await migrateJobQueue(urls.migrationUrl);
 

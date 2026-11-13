@@ -1,7 +1,13 @@
 import { createHash, createHmac, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import type { TransactionalEmail } from "@cortexai-agent-hub/adapter-kit";
-import { bootstrapUserSpace, recordSecurityEvent } from "@cortexai-agent-hub/db";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as Db from "@cortexai-agent-hub/db";
+import {
+  bootstrapUserSpace,
+  recordSecurityEvent,
+  SpaceDeletionInProgressError,
+} from "@cortexai-agent-hub/db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthEnv } from "./index.js";
 import { CLIENT_IP_HEADER, createAuth } from "./index.js";
 
 // Exercise Better Auth's real routing, password hashing, verification and
@@ -9,12 +15,28 @@ import { CLIENT_IP_HEADER, createAuth } from "./index.js";
 vi.mock("better-auth/adapters/prisma", async () => {
   const { memoryAdapter } = await import("better-auth/adapters/memory");
   return {
-    prismaAdapter: (prisma: { authData: Record<string, unknown[]> }) =>
-      memoryAdapter(prisma.authData),
+    prismaAdapter: (prisma: { authData: Record<string, { id?: unknown }[]> }) => {
+      const factory = memoryAdapter(prisma.authData);
+      // Postgres rejects a duplicate primary key, which first-writer-wins reservations rely on.
+      return (options: Parameters<typeof factory>[0]) => {
+        const adapter = factory(options);
+        return {
+          ...adapter,
+          create: (async (input: { model: string; data: { id?: unknown } }) => {
+            const id = input.data.id;
+            if (id !== undefined && prisma.authData[input.model]?.some((row) => row.id === id))
+              throw new Error("duplicate key");
+            return adapter.create(input as never);
+          }) as typeof adapter.create,
+        };
+      };
+    },
   };
 });
-vi.mock("@cortexai-agent-hub/db", () => ({
+vi.mock("@cortexai-agent-hub/db", async (original) => ({
+  ...(await original<typeof Db>()),
   bootstrapUserSpace: vi.fn(async () => ({ spaceId: "space-1" })),
+  leaveInvitedSpaces: vi.fn(async () => ({ ownedOrganizationIds: [] })),
   recordSecurityEvent: vi.fn(async () => undefined),
 }));
 
@@ -25,6 +47,7 @@ function fixture({
   webOrigin = "http://web.example.test",
   requestOrigin,
   stalledDelivery = false,
+  ...hooks
 }: {
   allowlist?: string;
   delivery?: boolean;
@@ -33,7 +56,10 @@ function fixture({
   requestOrigin?: string;
   /** The provider accepts the message but never settles, like a hung SMTP connection. */
   stalledDelivery?: boolean;
-} = {}) {
+} & Pick<
+  AuthEnv,
+  "singleAccount" | "afterDeleteSession" | "afterReplaceSession" | "beforeDeleteUser" | "analytics"
+> = {}) {
   const data: Record<string, Record<string, unknown>[]> = {
     user: [],
     account: [],
@@ -70,9 +96,17 @@ function fixture({
       }),
     },
     user: {
-      findMany: vi.fn(async () =>
+      findUnique: vi.fn(async ({ where }: { where: { id?: string; email?: string } }) => {
+        const user = data.user!.find((row) => row.id === where.id || row.email === where.email);
+        return user ? { locale: user.locale ?? null } : null;
+      }),
+      findMany: vi.fn(async ({ where }: { where?: { id?: { not?: string } } } = {}) =>
         data
-          .user!.filter((user) => !String(user.email).toLowerCase().endsWith("@messaging.invalid"))
+          .user!.filter(
+            (user) =>
+              user.id !== where?.id?.not &&
+              !String(user.email).toLowerCase().endsWith("@messaging.invalid"),
+          )
           .slice(0, 2)
           .map((user) => ({ id: String(user.id) })),
       ),
@@ -102,6 +136,9 @@ function fixture({
     },
     member: { findMany: vi.fn(async () => []) },
     messagingIdentity: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+    messagingLinkCode: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+    account: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+    userDevice: { updateMany: vi.fn(async () => ({ count: 0 })) },
     passkey: {
       deleteMany: vi.fn(async ({ where }: { where: { userId: string } }) => {
         const rows = data.passkey!;
@@ -113,9 +150,11 @@ function fixture({
     },
     organization: { deleteMany: vi.fn(async () => ({ count: 0 })) },
     spaceMember: {
-      findFirst: vi.fn(async ({ where }: { where: { userId: string } }) =>
-        members.has(where.userId) ? { spaceId: "space-1" } : null,
-      ),
+      findFirst: vi.fn(async ({ where }: { where: { userId: string | { in: string[] } } }) => {
+        const ids = typeof where.userId === "string" ? [where.userId] : where.userId.in;
+        const userId = ids.find((id) => members.has(id));
+        return userId ? { spaceId: "space-1", userId } : null;
+      }),
     },
   };
   vi.mocked(bootstrapUserSpace).mockImplementation(async (_prisma, user) => {
@@ -124,6 +163,7 @@ function fixture({
   });
   const secret = "offline-auth-secret-at-least-32-characters";
   const auth = createAuth(prisma as never, {
+    ...hooks,
     secret,
     baseURL,
     webOrigin,
@@ -230,6 +270,7 @@ function fixture({
     codeSignIn,
     legacyAccount,
     sessionFor,
+    prisma,
     data,
     policy,
     messages,
@@ -238,6 +279,53 @@ function fixture({
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+it("stores validated signup attribution once, hides it from auth responses, and captures it", async () => {
+  const analytics = { capture: vi.fn(), flush: vi.fn(async () => undefined) };
+  const f = fixture({ analytics });
+  const attribution = { surface: "web", utmSource: "community", utmCampaign: "launch" };
+  const response = await f.auth.handler(
+    new Request("http://auth.example.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://web.example.test",
+        cookie: `cortexai-agent-hub_signup_attribution=${encodeURIComponent(JSON.stringify(attribution))}`,
+        "x-cortexai-agent-hub-signup-surface": "android",
+      },
+      body: JSON.stringify({
+        email: "new@example.test",
+        password: "offline-password12",
+        name: "New User",
+      }),
+    }),
+  );
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect(f.data.user![0]).toMatchObject({
+    signupSurface: "android",
+    signupUtmSource: "community",
+    signupUtmCampaign: "launch",
+  });
+  const body = await response.json();
+  expect(body).toHaveProperty("user.id");
+  expect(body).not.toHaveProperty("user.signupSurface");
+  expect(body).not.toHaveProperty("user.signupUtmSource");
+  expect(analytics.capture).toHaveBeenCalledWith(
+    expect.any(String),
+    {
+      name: "account_created",
+      ...attribution,
+      surface: "android",
+    },
+    { id: expect.any(String), at: expect.any(Date) },
+  );
+  await f.signin("new@example.test");
+  expect(f.data.user![0]).toMatchObject({
+    signupSurface: "android",
+    signupUtmSource: "community",
+    signupUtmCampaign: "launch",
+  });
+});
 
 describe("client address and security events", () => {
   const signInWith = (f: ReturnType<typeof fixture>, headers: Record<string, string>) =>
@@ -596,6 +684,178 @@ describe("session credentials", () => {
     expect(deleted.status).toBe(200);
     expect(f.data.user).toHaveLength(0);
   });
+
+  it("answers a deletion already under way with a conflict and keeps the account", async () => {
+    const f = fixture({
+      delivery: false,
+      beforeDeleteUser: async () => {
+        throw new SpaceDeletionInProgressError();
+      },
+    });
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    const response = await f.request("/delete-user", { password: "offline-password12" }, token);
+    expect(response.status).toBe(409);
+    expect(f.data.user).toHaveLength(1);
+  });
+});
+
+describe("identity confirmation", () => {
+  afterEach(() => vi.useRealTimers());
+  const confirmed = async (f: ReturnType<typeof fixture>, token: string) => {
+    const current = await f.sessionFor(token);
+    return f.auth.hasRecentIdentityConfirmation({
+      sessionId: current!.session.id,
+      userId: current!.user.id,
+    });
+  };
+  const codeAccount = async (f: ReturnType<typeof fixture>) => {
+    await f.sendCode();
+    return ((await (await f.codeSignIn(f.lastCode())).json()) as { token: string }).token;
+  };
+  const wrongCode = (code: string) => (code === "000000" ? "111111" : "000000");
+
+  it("confirms a password session for five minutes, and only that session", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = fixture({ delivery: false });
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    const other = ((await (await f.signin()).json()) as { token: string }).token;
+    expect(await confirmed(f, token)).toBe(false);
+    for (const body of [{}, { password: "" }, { password: "wrong-password12" }]) {
+      const response = await f.request("/confirm-identity", body, token);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "INVALID_PASSWORD" });
+    }
+    expect(await confirmed(f, token)).toBe(false);
+    expect(
+      (await f.request("/confirm-identity", { password: "offline-password12" }, token)).status,
+    ).toBe(200);
+    expect(await confirmed(f, token)).toBe(true);
+    expect(await confirmed(f, other)).toBe(false);
+    expect(recordSecurityEvent).toHaveBeenCalledWith({
+      type: "auth.identity.confirmed",
+      userId: f.data.user![0]!.id,
+      metadata: { method: "password" },
+    });
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    expect(await confirmed(f, token)).toBe(false);
+  });
+
+  it("refuses a session that is not signed in", async () => {
+    const f = fixture({ delivery: false });
+    expect((await f.request("/confirm-identity", { password: "offline-password12" })).status).toBe(
+      401,
+    );
+  });
+
+  it("locks password confirmation after five wrong passwords", async () => {
+    const f = fixture({ delivery: false });
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const wrong = { password: "wrong-password12" };
+      expect((await f.request("/confirm-identity", wrong, token)).status).toBe(400);
+    }
+    const locked = await f.request("/confirm-identity", { password: "offline-password12" }, token);
+    expect(locked.status).toBe(429);
+    expect(await confirmed(f, token)).toBe(false);
+  });
+
+  it("counts every parallel password guess toward the limit", async () => {
+    const f = fixture({ delivery: false });
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    const statuses = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        f
+          .request("/confirm-identity", { password: "wrong-password12" }, token)
+          .then((response) => response.status),
+      ),
+    );
+    expect(statuses.filter((status) => status === 400)).toHaveLength(5);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(7);
+    const locked = await f.request("/confirm-identity", { password: "offline-password12" }, token);
+    expect(locked.status).toBe(429);
+  });
+
+  it("frees password attempts once the lockout window passes, and clears them on success", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = fixture({ delivery: false });
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    const attempt = (password: string) =>
+      f.request("/confirm-identity", { password }, token).then((response) => response.status);
+    for (let index = 0; index < 5; index += 1) await attempt("wrong-password12");
+    expect(await attempt("offline-password12")).toBe(429);
+    vi.setSystemTime(Date.now() + 15 * 60_000 + 1);
+    for (let index = 0; index < 4; index += 1) await attempt("wrong-password12");
+    expect(await attempt("offline-password12")).toBe(200);
+    expect(await attempt("wrong-password12")).toBe(400);
+    expect(await attempt("offline-password12")).toBe(200);
+  });
+
+  it("confirms an account without a password by a single-use emailed code", async () => {
+    const f = fixture();
+    const token = await codeAccount(f);
+    expect((await f.request("/request-identity-code", {}, token)).status).toBe(200);
+    expect(f.messages.at(-1)).toMatchObject({
+      to: "approved@example.test",
+      subject: "Your CortexAI Agent Hub confirmation code",
+    });
+    const code = f.lastCode();
+    expect(JSON.stringify(f.data.verification)).not.toContain(code);
+    const wrong = await f.request("/confirm-identity", { code: wrongCode(code) }, token);
+    expect(await wrong.json()).toMatchObject({ code: "INVALID_OTP" });
+    expect(await confirmed(f, token)).toBe(false);
+    expect((await f.request("/confirm-identity", { code }, token)).status).toBe(200);
+    expect(await confirmed(f, token)).toBe(true);
+    expect(recordSecurityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "auth.identity.confirmed", metadata: { method: "email" } }),
+    );
+    const reused = await f.request("/confirm-identity", { code }, token);
+    expect(await reused.json()).toMatchObject({ code: "OTP_EXPIRED" });
+  });
+
+  it("writes a code email in the language the account last used the app in", async () => {
+    const f = fixture();
+    const token = await codeAccount(f);
+    const user = f.data.user!.find((row) => row.email === "approved@example.test")!;
+    user.locale = "es";
+    expect((await f.request("/request-identity-code", {}, token)).status).toBe(200);
+    expect(f.messages.at(-1)).toMatchObject({
+      subject: "Tu código de confirmación de CortexAI Agent Hub",
+    });
+  });
+
+  it("binds an emailed code to the session that requested it", async () => {
+    const f = fixture();
+    const token = await codeAccount(f);
+    await f.sendCode();
+    const other = ((await (await f.codeSignIn(f.lastCode())).json()) as { token: string }).token;
+    await f.request("/request-identity-code", {}, token);
+    const code = f.lastCode();
+    expect((await f.request("/confirm-identity", { code }, other)).status).toBe(400);
+    expect((await f.request("/confirm-identity", { code }, token)).status).toBe(200);
+    expect(await confirmed(f, other)).toBe(false);
+  });
+
+  it("locks an emailed code after three wrong attempts", async () => {
+    const f = fixture();
+    const token = await codeAccount(f);
+    await f.request("/request-identity-code", {}, token);
+    const code = f.lastCode();
+    for (const expected of ["INVALID_OTP", "INVALID_OTP", "TOO_MANY_ATTEMPTS"]) {
+      const response = await f.request("/confirm-identity", { code: wrongCode(code) }, token);
+      expect(await response.json()).toMatchObject({ code: expected });
+    }
+    expect((await f.request("/confirm-identity", { code }, token)).status).toBe(400);
+    expect(await confirmed(f, token)).toBe(false);
+  });
+
+  it("keeps password accounts on their password", async () => {
+    const f = fixture();
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    const requested = await f.request("/request-identity-code", {}, token);
+    expect(await requested.json()).toMatchObject({ code: "EMAIL_CODE_UNAVAILABLE" });
+    expect((await f.request("/confirm-identity", { code: "123456" }, token)).status).toBe(400);
+    expect(await confirmed(f, token)).toBe(false);
+  });
 });
 
 describe("verification email without blocking", () => {
@@ -884,10 +1144,65 @@ describe("passkeys", () => {
     expect((await f.signInWithPasskey()).status).toBe(401);
   });
 
+  it("drops credentials an unverified account added before its mailbox owner signed in", async () => {
+    const f = passkeyFixture();
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    expect((await f.register(token)).status).toBe(200);
+    const userId = f.data.user![0]!.id;
+    await f.sendCode();
+    expect((await f.codeSignIn(f.lastCode())).status).toBe(200);
+    expect(f.data.user![0]).toMatchObject({ id: userId, emailVerified: true });
+    expect(f.data.passkey).toHaveLength(0);
+    expect((await f.signInWithPasskey()).status).toBe(401);
+    expect(f.prisma.messagingIdentity.deleteMany).toHaveBeenCalledWith({ where: { userId } });
+    expect(f.prisma.messagingLinkCode.deleteMany).toHaveBeenCalledWith({ where: { userId } });
+    expect(f.prisma.userDevice.updateMany).toHaveBeenCalledWith({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(f.prisma.$transaction).not.toHaveBeenCalledWith(expect.any(Array));
+  });
+
+  it("keeps a verified account's passkeys on code sign-in", async () => {
+    const f = passkeyFixture();
+    const { token } = (await (await f.signup()).json()) as { token: string };
+    expect((await f.register(token)).status).toBe(200);
+    f.data.user![0]!.emailVerified = true;
+    await f.sendCode();
+    expect((await f.codeSignIn(f.lastCode())).status).toBe(200);
+    expect(f.data.passkey).toHaveLength(1);
+    expect(f.prisma.userDevice.updateMany).not.toHaveBeenCalled();
+    expect((await f.signInWithPasskey()).status).toBe(200);
+  });
+
   it("does not offer passkeys where a browser cannot create them", async () => {
     const f = fixture({ webOrigin: "http://web.example.test" });
     expect(f.auth.passkeyRpId).toBeNull();
     expect((await f.request("/passkey/generate-authenticate-options")).status).toBe(404);
+  });
+});
+
+describe("account export tokens", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("names the issuing user once, and stores only a hash", async () => {
+    const f = fixture({ delivery: false });
+    const token = await f.auth.issueAccountExportToken("user-a");
+    const other = await f.auth.issueAccountExportToken("user-b");
+    expect(JSON.stringify(f.data.verification)).not.toContain(token);
+    expect(await f.auth.consumeAccountExportToken(token)).toBe("user-a");
+    expect(await f.auth.consumeAccountExportToken(token)).toBeNull();
+    expect(await f.auth.consumeAccountExportToken(other)).toBe("user-b");
+    expect(await f.auth.consumeAccountExportToken("")).toBeNull();
+    expect(await f.auth.consumeAccountExportToken("made-up")).toBeNull();
+  });
+
+  it("expires after a minute", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = fixture({ delivery: false });
+    const token = await f.auth.issueAccountExportToken("user-a");
+    vi.setSystemTime(Date.now() + 60_000);
+    expect(await f.auth.consumeAccountExportToken(token)).toBeNull();
   });
 });
 
@@ -1003,3 +1318,147 @@ function cbor(value: unknown): Buffer {
   }
   throw new Error("unsupported CBOR value");
 }
+
+describe("single-person deployments", () => {
+  const password = "offline-password12";
+
+  it("admits the first account, then closes registration to anyone else", async () => {
+    const f = fixture({ delivery: false, singleAccount: true });
+    expect((await f.signup("owner@example.test")).status).toBe(200);
+
+    const second = await f.signup("someone@example.test");
+    expect(second.status).toBe(400);
+    expect(await second.json()).toMatchObject({ code: "REGISTRATION_CLOSED" });
+    expect(f.data.user!.map((user) => user.email)).toEqual(["owner@example.test"]);
+
+    expect((await f.signin("owner@example.test")).status).toBe(200);
+    expect(bootstrapUserSpace).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a session to an account that was never admitted", async () => {
+    const f = fixture({ delivery: false, singleAccount: true });
+    expect((await f.signup("owner@example.test")).status).toBe(200);
+    const now = new Date();
+    f.data.user!.push({
+      id: "late-user",
+      name: "Late",
+      email: "late@example.test",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    f.data.account!.push({
+      id: "account-late-user",
+      userId: "late-user",
+      providerId: "credential",
+      accountId: "late-user",
+      password: await (await f.auth.$context).password.hash(password),
+      createdAt: now,
+      updatedAt: now,
+    });
+    const response = await f.signin("late@example.test");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "REGISTRATION_CLOSED" });
+    expect(f.members.has("late-user")).toBe(false);
+  });
+
+  it("does not create an account from an emailed code once there is one", async () => {
+    const f = fixture({ singleAccount: true });
+    expect((await f.signup("owner@example.test")).status).toBe(200);
+    const sent = f.messages.length;
+    expect((await f.sendCode("someone@example.test")).status).toBe(200);
+    expect(f.messages).toHaveLength(sent);
+  });
+
+  it("ignores messaging-only users when admitting the first account", async () => {
+    const f = fixture({ delivery: false, singleAccount: true });
+    const now = new Date();
+    f.data.user!.push({
+      id: "msg-user",
+      name: "Chat",
+      email: "msg-abc@messaging.invalid",
+      emailVerified: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect((await f.signup("owner@example.test")).status).toBe(200);
+  });
+
+  it("is not closed by an earlier signup that never got in", async () => {
+    const f = fixture({ delivery: false, singleAccount: true });
+    const now = new Date();
+    f.data.user!.push({
+      id: "abandoned",
+      name: "Abandoned",
+      email: "abandoned@example.test",
+      emailVerified: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect((await f.signup("owner@example.test")).status).toBe(200);
+    expect((await f.signup("someone@example.test")).status).toBe(400);
+  });
+
+  it("keeps registration open on other deployments", async () => {
+    const f = fixture({ delivery: false });
+    expect((await f.signup("owner@example.test")).status).toBe(200);
+    expect((await f.signup("someone@example.test")).status).toBe(200);
+  });
+});
+
+describe("ending sessions", () => {
+  const sessionIds = (rows: Record<string, unknown>[]) => rows.map((row) => String(row.id));
+
+  async function signedInTwice() {
+    const afterDeleteSession = vi.fn(async (_session: { id: string; userId: string }) => {});
+    const afterReplaceSession = vi.fn(
+      async (
+        _previous: { id: string; userId: string },
+        _next: { id: string; userId: string },
+      ) => {},
+    );
+    const f = fixture({ afterDeleteSession, afterReplaceSession });
+    const { token: first } = (await (await f.signup()).json()) as { token: string };
+    const { token: second } = (await (await f.signin()).json()) as { token: string };
+    const ids = sessionIds(f.data.session!);
+    expect(ids).toHaveLength(2);
+    return { f, first, second, ids, afterDeleteSession, afterReplaceSession };
+  }
+  const ended = (hook: { mock: { calls: [{ id: string }, ...unknown[]][] } }) =>
+    hook.mock.calls.map(([session]) => session.id).sort();
+
+  it("reports every session a password reset ends", async () => {
+    const { f, ids, afterDeleteSession } = await signedInTwice();
+    await f.request("/request-password-reset", { email: "approved@example.test" });
+    const token = f.messages.at(-1)!.text.match(/reset-password\/([^?\s]+)/)![1]!;
+    const reset = await f.request("/reset-password", { token, newPassword: "offline-password34" });
+    expect(reset.status).toBe(200);
+    expect(f.data.session).toHaveLength(0);
+    expect(ended(afterDeleteSession)).toEqual([...ids].sort());
+  });
+
+  it("reports every session that signing out everywhere ends", async () => {
+    const { f, first, ids, afterDeleteSession } = await signedInTwice();
+    expect((await f.request("/revoke-sessions", {}, first)).status).toBe(200);
+    expect(ended(afterDeleteSession)).toEqual([...ids].sort());
+  });
+
+  it("reports the other sessions a password change ends and moves the caller's own", async () => {
+    const { f, second, ids, afterDeleteSession, afterReplaceSession } = await signedInTwice();
+    const changed = await f.request(
+      "/change-password",
+      {
+        currentPassword: "offline-password12",
+        newPassword: "offline-password34",
+        revokeOtherSessions: true,
+      },
+      second,
+    );
+    expect(changed.status).toBe(200);
+    expect(ended(afterDeleteSession)).toEqual([ids[0]]);
+    expect(afterReplaceSession).toHaveBeenCalledTimes(1);
+    const [previous, next] = afterReplaceSession.mock.calls[0]!;
+    expect(previous.id).toBe(ids[1]);
+    expect(sessionIds(f.data.session!)).toEqual([next.id]);
+  });
+});

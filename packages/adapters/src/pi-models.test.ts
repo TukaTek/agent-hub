@@ -1,9 +1,16 @@
+import { MODEL_KEY_FORMAT_ERROR } from "@cortexai-agent-hub/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SpaceCatalogAuth } from "./model-selection.js";
+import { defaultCatalogModelId, spaceCanRunCatalogModel } from "./model-selection.js";
 import { modelAcceptsImageInput } from "./model-vision.js";
+import { COMPATIBLE_ENDPOINT_PRESETS } from "./openai-compatible-url.js";
 import {
   catalogModelLabel,
+  catalogModelServesAgents,
   catalogProviderProbeBaseUrl,
+  hiddenCatalogModel,
   listPiCatalog,
+  offeredCatalog,
   probeCatalogProviderModels,
   scriptedCatalogEntry,
   verifyCatalogProviderApiKey,
@@ -12,6 +19,14 @@ import { probeOpenAiCompatibleModels } from "./pi-openai-compatible-provider.js"
 import { MODEL_CONNECT_TIMEOUT_MS } from "./pi-runtime-limits.js";
 
 describe("catalog provider authentication", () => {
+  it("refuses a key that cannot travel in a header without calling the provider", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(
+      verifyCatalogProviderApiKey({ provider: "openrouter", apiKey: "sk-fixture-ключ" }, fetchImpl),
+    ).rejects.toThrow(MODEL_KEY_FORMAT_ERROR);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("checks authentication before listing a public OpenRouter catalog", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () =>
       Response.json({ data: [{ id: "fixture-model" }] }),
@@ -44,14 +59,14 @@ describe("catalog provider authentication", () => {
   );
 
   it.each([302, 429, 503])(
-    "keeps upstream failures (%i) distinct from invalid keys",
+    "lets an upstream failure (%i) through as inconclusive",
     async (status) => {
       await expect(
         verifyCatalogProviderApiKey(
           { provider: "openrouter", apiKey: "fixture-key" },
           async () => new Response("private upstream details", { status }),
         ),
-      ).rejects.toThrow("Could not verify the API key. Try again.");
+      ).resolves.toBeUndefined();
     },
   );
 
@@ -104,7 +119,7 @@ describe("catalog provider authentication", () => {
         { provider: "google", apiKey: "fixture-key" },
         async () => new Response(body, { status: 400 }),
       ),
-    ).rejects.toThrow("Could not verify the API key. Try again.");
+    ).resolves.toBeUndefined();
   });
 
   it("finishes a Google check safely when cancellation interrupts a partial error body", async () => {
@@ -154,14 +169,16 @@ describe("catalog provider authentication", () => {
         { provider: "google", apiKey: "fixture-key" },
         async () => response,
       ),
-    ).rejects.toThrow("Could not verify the API key. Try again.");
+    ).resolves.toBeUndefined();
     expect(cancel).toHaveBeenCalledOnce();
     expect(response.body?.locked).toBe(false);
   });
 
-  it("bounds a stalled check and hides transport error details", async () => {
+  it("bounds a stalled check and lets it through as inconclusive", async () => {
     const deadline = new AbortController();
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    // The app gives up on saving a connection after 60 seconds, so key checks ignore the setting.
+    vi.stubEnv("MODEL_CONNECT_TIMEOUT_MS", "90000");
     try {
       const result = verifyCatalogProviderApiKey(
         { provider: "openrouter", apiKey: "fixture-key" },
@@ -170,12 +187,13 @@ describe("catalog provider authentication", () => {
             init?.signal?.addEventListener("abort", () => reject(new Error("fixture-key")));
           }),
       );
-      const assertion = expect(result).rejects.toThrow("Could not verify the API key. Try again.");
+      const assertion = expect(result).resolves.toBeUndefined();
       expect(timeout).toHaveBeenCalledWith(MODEL_CONNECT_TIMEOUT_MS);
       deadline.abort();
       await assertion;
     } finally {
       timeout.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -213,7 +231,7 @@ describe("Pi model catalog", () => {
       expect.arrayContaining([
         { provider: "openai-codex", id: "gpt-6-luna" },
         { provider: "openai", id: "gpt-6-luna" },
-        { provider: "openrouter", id: "openai/gpt-6-luna" },
+        { provider: "openrouter", id: "anthropic/claude-haiku-5.5" },
         { provider: "anthropic", id: "claude-haiku-5-5" },
       ]),
     );
@@ -232,7 +250,7 @@ describe("Pi model catalog", () => {
       expect(entry).toMatchObject({
         providerName: "OpenAI Codex",
         auth: "oauth",
-        oauthLabel: "Sign in with ChatGPT Plus/Pro",
+        oauthLabel: "Sign in with ChatGPT",
         subscription: true,
         signIn: "device-code",
       });
@@ -309,7 +327,7 @@ describe("Pi model catalog", () => {
     expect(claude).toMatchObject({
       signIn: "auth-url",
       authHint: "Claude Pro/Max / key",
-      oauthLabel: "Sign in with Claude Pro/Max",
+      oauthLabel: "Sign in with Claude",
       billing: "",
     });
     expect(scriptedCatalogEntry.provider).toBe("scripted");
@@ -343,7 +361,11 @@ describe("Pi model catalog", () => {
       thinkingLevels: ["low", "medium", "high", "xhigh"],
     });
     const openAiCompatible = catalog.find((entry) => entry.provider === "openai-compatible");
-    expect(openAiCompatible).toMatchObject({ id: "custom", placeholder: true });
+    expect(openAiCompatible).toMatchObject({
+      id: "custom",
+      placeholder: true,
+      endpointPresets: COMPATIBLE_ENDPOINT_PRESETS,
+    });
     expect(openAiCompatible?.catalogProbe).toBeUndefined();
   });
 
@@ -364,8 +386,14 @@ describe("Pi model catalog", () => {
       listPiCatalog().find((entry) => entry.provider === "cloudflare-workers-ai")?.catalogProbe,
     ).toBeUndefined();
 
+    const routing = (provider: string) =>
+      listPiCatalog().find((entry) => entry.provider === provider)?.routingFields;
+    expect(routing("cloudflare-workers-ai")).toEqual(["accountId"]);
+    expect(routing("cloudflare-ai-gateway")).toEqual(["accountId", "gatewayId"]);
+    expect(routing("anthropic")).toBeUndefined();
+
     const previous = process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
-    delete process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC;
+    process.env.CORTEXAI_AGENT_HUB_OPENAI_COMPAT_ALLOW_PUBLIC = "0";
     try {
       await expect(
         probeOpenAiCompatibleModels(
@@ -374,7 +402,7 @@ describe("Pi model catalog", () => {
             throw new Error("user-supplied probe should be rejected before fetch");
           },
         ),
-      ).rejects.toThrow(/Public model endpoints are blocked/);
+      ).rejects.toThrow(/Public model endpoints are disabled/);
 
       for (const [provider, baseUrl] of Object.entries(expected)) {
         let requestedUrl = "";
@@ -506,5 +534,110 @@ describe("catalogModelLabel", () => {
     ["latest", "latest", "latest"],
   ])("labels %s / %s as %s", (id, name, expected) => {
     expect(catalogModelLabel(id, name, providerModelIds)).toBe(expected);
+  });
+});
+
+describe("models agents can run", () => {
+  const free = { input: 0, output: 0 };
+  const paid = { input: 1, output: 2 };
+
+  it.each([
+    // OpenRouter batch variants only exist on its batch endpoint.
+    [{ provider: "openrouter", id: "fixture/model:batch", cost: paid }, false],
+    [{ provider: "openrouter", id: "fixture/model", cost: paid }, true],
+    // OpenRouter's own free models still answer API calls.
+    [{ provider: "openrouter", id: "fixture/model:free", cost: free }, true],
+    // OpenCode's free tier only answers inside the OpenCode app.
+    [{ provider: "opencode", id: "fixture-free", cost: free }, false],
+    [{ provider: "opencode", id: "fixture", cost: paid }, true],
+    [{ provider: "opencode-go", id: "fixture-free", cost: free }, true],
+    // Retired or integration-refused ids.
+    [{ provider: "google", id: "gemini-2.5-flash", cost: paid }, false],
+    [{ provider: "google", id: "gemini-3.8-flash", cost: paid }, true],
+    [{ provider: "groq", id: "llama-3.1-8b-instant", cost: paid }, false],
+    [{ provider: "github-copilot", id: "grok-4.5", cost: paid }, false],
+  ])("judges %o as %s", (model, expected) => {
+    expect(catalogModelServesAgents(model)).toBe(expected);
+  });
+
+  it("hides bundled models agents cannot run from the offered catalog", () => {
+    const offered = offeredCatalog(listPiCatalog());
+    const has = (provider: string, id: string) =>
+      offered.some((entry) => entry.provider === provider && entry.id === id);
+    expect(offered.some((entry) => entry.id.endsWith(":batch"))).toBe(false);
+    expect(has("openrouter", "anthropic/claude-haiku-5.5")).toBe(true);
+    expect(has("google", "gemini-2.5-flash")).toBe(false);
+    expect(has("groq", "llama-3.1-8b-instant")).toBe(false);
+    expect(has("opencode", "big-pickle")).toBe(false);
+    expect(has("opencode", "claude-haiku-5-5")).toBe(true);
+    // A hidden model stays a known catalog id, so saved choices keep running.
+    expect(listPiCatalog().some((entry) => entry.id === "gemini-2.5-flash")).toBe(true);
+  });
+
+  it("keeps a hidden model the account already saved", () => {
+    const entries = [
+      { provider: "google", id: "gemini-2.5-flash" },
+      { provider: "openrouter", id: "fixture/model:batch" },
+    ];
+    expect(offeredCatalog(entries, new Set(["google:gemini-2.5-flash"]))).toEqual([entries[0]]);
+  });
+
+  describe("models CortexAI Agent Hub credits cannot price", () => {
+    const credits: SpaceCatalogAuth = {
+      managedProvider: "openrouter",
+      byProvider: { openrouter: "api_key" },
+      byModel: {},
+      secretIdByProvider: {},
+      secretIdByModel: {},
+    };
+    const ownKey: SpaceCatalogAuth = {
+      byProvider: { openrouter: "api_key" },
+      byModel: {},
+      secretIdByProvider: { openrouter: "personal-secret" },
+      secretIdByModel: {},
+    };
+
+    it.each(["openrouter/free", "openrouter/pareto-code", "auto", "google/gemma-4-31b-it:free"])(
+      "keeps %s for an own key but not on credits",
+      (id) => {
+        const entry = { provider: "openrouter", id };
+        expect(spaceCanRunCatalogModel(credits, entry)).toBe(false);
+        expect(spaceCanRunCatalogModel(ownKey, entry)).toBe(true);
+        expect(
+          spaceCanRunCatalogModel(
+            { ...credits, secretIdByModel: { openrouter: { [id]: "model-secret" } } },
+            entry,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it("offers priced models on credits", () => {
+      const entry = { provider: "openrouter", id: "anthropic/claude-haiku-5.5" };
+      expect(spaceCanRunCatalogModel(credits, entry)).toBe(true);
+    });
+
+    it("treats a live id the registry does not price as unpriced on credits", () => {
+      expect(spaceCanRunCatalogModel(credits, { provider: "openrouter", id: "fixture/live" })).toBe(
+        false,
+      );
+    });
+  });
+
+  it("judges live ids the catalog does not bundle by their id", () => {
+    expect(hiddenCatalogModel({ provider: "openrouter", id: "fixture/live:batch" })).toBe(true);
+    expect(hiddenCatalogModel({ provider: "openrouter", id: "fixture/live" })).toBe(false);
+  });
+
+  it.each([
+    ["google", "gemini-3.8-flash"],
+    ["groq", "openai/gpt-oss-120b"],
+    ["minimax", "MiniMax-M3"],
+  ])("connects %s to %s when no model is chosen", (provider, model) => {
+    expect(defaultCatalogModelId(provider, "fixture-api-key")).toBe(model);
+    expect(
+      listPiCatalog().find((entry) => entry.provider === provider && entry.id === model)
+        ?.recommended,
+    ).toBe(true);
   });
 });

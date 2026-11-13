@@ -37,12 +37,12 @@ UPDATE hub_session SET "accessUntil" = now() - interval '1 minute' WHERE "sessio
 
 For each case, sign in as test user B fresh, wait past the cache TTL, apply the case, then make one request.
 
-| Case | How to produce it |
-| --- | --- |
+| Case                            | How to produce it                                                                                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `401 refresh_failed` on refresh | Expire the access token, then revoke the user's Hub session in Hub (or have the proxy answer `401 {"error":"refresh_failed"}` on `/api/tenant-auth/refresh`) |
-| `400 invalid_grant` on refresh | Expire the access token and have the proxy answer `400 {"error":"invalid_grant"}` on `/api/tenant-auth/refresh` |
-| `403 access_denied` on config | Remove the user's Agent Hub entitlement in Hub, or have the proxy answer `403 {"error":"access_denied"}` on `/api/tenant-auth/config` |
-| `valid: false` on session | Disable the user in Hub, or have the proxy answer `200 {"valid":false}` on `/api/tenant-auth/session` |
+| `400 invalid_grant` on refresh  | Expire the access token and have the proxy answer `400 {"error":"invalid_grant"}` on `/api/tenant-auth/refresh`                                              |
+| `403 access_denied` on config   | Remove the user's Agent Hub entitlement in Hub, or have the proxy answer `403 {"error":"access_denied"}` on `/api/tenant-auth/config`                        |
+| `valid: false` on session       | Disable the user in Hub, or have the proxy answer `200 {"valid":false}` on `/api/tenant-auth/session`                                                        |
 
 Expect for each: the request is unauthenticated (no user, not `503`), the user's `session` and `hub_session` rows are deleted, the app returns to sign-in, and signing in again works once the case is undone.
 

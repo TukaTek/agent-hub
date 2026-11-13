@@ -5,12 +5,13 @@ import type {
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, it, vi } from "vitest";
+import { serializeModelSecret } from "./model-secret.js";
 import { PiRuntimeCredentialStore } from "./pi-credentials.js";
 import {
   matchesFailedOAuthSecret,
   OAUTH_ACCOUNT_CHANGED_ERROR,
+  OAUTH_RECONNECT_REQUIRED_ERROR,
   RetiredModelCredentialError,
-  serializeModelSecret,
 } from "./pi-oauth.js";
 
 function credential(overrides: Partial<OAuthCredential> = {}): OAuthCredential {
@@ -174,6 +175,26 @@ describe("PiRuntimeCredentialStore", () => {
     );
   });
 
+  it("drops the rejected token after a confirmed terminal refresh", async () => {
+    const retire = vi.fn(async () => true);
+    const store = new PiRuntimeCredentialStore("openai-codex", credential(), undefined, retire);
+    const failure = new Error(
+      'refresh failed (400): {"error":"invalid_grant","access":"access-token"}',
+    );
+
+    await expect(
+      store.modify("openai-codex", async () => {
+        throw failure;
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof RetiredModelCredentialError &&
+        error.message === OAUTH_RECONNECT_REQUIRED_ERROR,
+    );
+    expect(await store.read("openai-codex")).toBeUndefined();
+    expect(store.accessToken).toBeUndefined();
+  });
+
   it("persists a mid-run refresh that returns the same account", async () => {
     const retire = vi.fn(async () => undefined);
     let persisted: OAuthCredential | undefined;
@@ -221,9 +242,9 @@ describe("PiRuntimeCredentialStore", () => {
       // The stored credential state whose refresh produced the foreign account.
       expect.objectContaining({ access: "access-token", refresh: "refresh-token" }),
     );
-    // The account-B token is never persisted or adopted in memory.
+    // Neither the other account's token nor the rejected one stays readable.
     expect(persist).not.toHaveBeenCalled();
-    expect(await store.read("openai-codex")).toMatchObject({ access: "access-token" });
+    expect(await store.read("openai-codex")).toBeUndefined();
   });
 
   it("settles account-change retirement before the error surfaces", async () => {
@@ -286,11 +307,8 @@ describe("PiRuntimeCredentialStore", () => {
   });
 
   it("passes the stored credential state so a stale account-change retire skips a rotated row", async () => {
-    // The caller wires the failed state into a matchesFailedSecret predicate
-    // over the secret row's current ciphertext. The row was rewritten by a
-    // concurrent successful refresh, so the stale account-change failure must
-    // not delete the newer credential — and without the failed state the
-    // fence is absent and the delete would proceed.
+    // The row was rewritten by a concurrent successful refresh, so the stale
+    // account-change failure must not delete the newer credential.
     const stored = credential({ refresh: "refresh-token", expires: 1, accountId: "acct-a" });
     const rotated = serializeModelSecret({
       kind: "oauth",
@@ -389,5 +407,35 @@ describe("PiRuntimeCredentialStore", () => {
 
     expect(persisted.map((entry) => entry.access)).toEqual(["new-access", "newer-access"]);
     expect(retire).not.toHaveBeenCalled();
+  });
+
+  it("ends a coordinated refresh when its time runs out and reports a cancelled one", async () => {
+    // The coordinated refresh hands over a signal that ends a provider call it is waiting on.
+    const storeFor = (signal: AbortSignal) =>
+      new PiRuntimeCredentialStore(
+        "openai-codex",
+        credential({ access: "old-access" }),
+        undefined,
+        undefined,
+        async (held, refresh) => (await refresh(held, signal)) ?? held,
+      );
+    const timeout = new AbortController();
+    const hanging = storeFor(timeout.signal).modify("openai-codex", () => new Promise(() => {}));
+    timeout.abort(new Error("refresh timed out"));
+    await expect(hanging).rejects.toThrow("refresh timed out");
+
+    // A run cancelled while the refresh ran does not report the refresh as done.
+    const cancel = new AbortController();
+    const store = storeFor(new AbortController().signal);
+    const cancelled = store.modify(
+      "openai-codex",
+      async () => {
+        cancel.abort(new Error("run cancelled"));
+        return credential({ access: "new-access" });
+      },
+      { signal: cancel.signal },
+    );
+    await expect(cancelled).rejects.toThrow("run cancelled");
+    expect(store.accessToken).toBe("old-access");
   });
 });

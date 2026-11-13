@@ -14,7 +14,7 @@ import {
   localeHomePath,
   type Locale,
 } from "../i18n/locales";
-import { fetchGithubStars, formatStarCount } from "../github";
+import { githubStarsLabel } from "../github";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import {
   CORTEXAI_CONTACT_URL,
@@ -36,8 +36,7 @@ const availableLanguages = LOCALES.map((supportedLocale) =>
   getHomeCopy(supportedLocale).availableLanguage
 );
 const homeHref = localeHomePath(locale);
-const stars = await fetchGithubStars();
-const starsLabel = stars === null ? copy.starFallback : formatStarCount(stars);
+const starsLabel = await githubStarsLabel();
 const setupAgentPrompt = `Set up CortexAI Agent Hub for me. Follow the setup prompt at ${SETUP_PROMPT_URL}`;
 const siteUrl = absoluteSiteUrl();
 const pageUrl = absoluteSiteUrl(homeHref);
@@ -290,6 +289,7 @@ const structuredData = {
 </BaseLayout>
 
 <script>
+  import "../support-chat";
   const setupCopy = document.querySelector<HTMLButtonElement>("[data-setup-copy]");
   const setupCopyLabel = setupCopy?.querySelector<HTMLElement>(".setup-copy__label");
 

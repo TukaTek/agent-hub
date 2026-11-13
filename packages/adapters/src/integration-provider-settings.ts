@@ -5,17 +5,22 @@ import type {
   ManagedConnectorProvider,
   SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  IntegrationProviderConfig,
+  IntegrationProviderId,
+} from "@cortexai-agent-hub/contracts";
 import {
-  type IntegrationProviderConfig,
   IntegrationProviderConfigSchema,
-  type IntegrationProviderId,
   IntegrationProviderIdSchema,
 } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import type { ComposioProvider } from "./composio-connector.js";
-import { ComposioConnector, createConnectorStack } from "./composio-connector.js";
+import { ComposioConnector } from "./composio-connector.js";
+import { createConnectorStack } from "./connector-registry.js";
 import { credentialDigest } from "./credential-digest.js";
 import { PipedreamConnector } from "./pipedream-connector.js";
+
+const PLUGIN_SLUG_PROVIDER: IntegrationProviderId = "composio";
 
 /** Resolve persisted credentials on every operation so API and workers observe changes.
  * Cache adapters by ciphertext to preserve sessions without retaining old credentials. */
@@ -114,6 +119,19 @@ export class IntegrationProviderSettings {
     this.cache.delete(config.provider);
   }
 
+  /** Connected app slugs from the provider whose app ids match plugin slugs. */
+  async listConnectedPluginSlugs(userId: string): Promise<string[]> {
+    const provider = await this.resolve(PLUGIN_SLUG_PROVIDER);
+    if (!provider) return [];
+    return provider.listConnectedExternalIds({
+      userId,
+      spaceId: "",
+      operationId: "connections.sync",
+      traceId: "connections.sync",
+      signal: AbortSignal.timeout(15_000),
+    });
+  }
+
   providers(): ManagedConnectorProvider[] {
     return IntegrationProviderIdSchema.options.map(
       (id) => new ConfiguredIntegrationProvider(id, this),
@@ -131,11 +149,20 @@ export class IntegrationProviderSettings {
 }
 
 class ConfiguredIntegrationProvider implements ManagedConnectorProvider {
+  readonly resolveConnectedAccountId?: ManagedConnectorProvider["resolveConnectedAccountId"];
+  readonly cancelAuthorizationRequest?: ManagedConnectorProvider["cancelAuthorizationRequest"];
+  readonly revokeUnreferencedAccounts?: ManagedConnectorProvider["revokeUnreferencedAccounts"];
+
   constructor(
     private readonly id: IntegrationProviderId,
     private readonly settings: IntegrationProviderSettings,
     private readonly prepared?: ManagedConnectorProvider,
-  ) {}
+  ) {
+    // Only a prepared provider is known up front; callers branch on which of these exist.
+    this.resolveConnectedAccountId = prepared?.resolveConnectedAccountId?.bind(prepared);
+    this.cancelAuthorizationRequest = prepared?.cancelAuthorizationRequest?.bind(prepared);
+    this.revokeUnreferencedAccounts = prepared?.revokeUnreferencedAccounts?.bind(prepared);
+  }
   async prepareForTransaction() {
     const prepared = await this.settings.prepare(this.id);
     return {
@@ -176,6 +203,9 @@ class ConfiguredIntegrationProvider implements ManagedConnectorProvider {
   async listConnectedExternalIds(context: AdapterContext) {
     return (await this.resolve())?.listConnectedExternalIds(context) ?? [];
   }
+  async needsReconnect(context: AdapterContext, externalId: string) {
+    return (await (await this.resolve())?.needsReconnect?.(context, externalId)) ?? false;
+  }
   async listReconnectRefs(context: AdapterContext) {
     return (await (await this.resolve())?.listReconnectRefs?.(context)) ?? [];
   }
@@ -195,7 +225,8 @@ class ConfiguredIntegrationProvider implements ManagedConnectorProvider {
     return (await this.required()).revoke(ref, context);
   }
   async resolveCall(call: ConnectorCall, context: AdapterContext) {
-    return (await this.required()).resolveCall?.(call, context);
+    const provider = await (call.route ? this.required() : this.resolve());
+    return provider?.resolveCall?.(call, context);
   }
   async *execute(call: ConnectorCall, context: AdapterContext) {
     yield* (await this.required()).execute(call, context);

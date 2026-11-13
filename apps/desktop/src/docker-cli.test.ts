@@ -5,21 +5,61 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   classifyDockerFailure,
   composeSupportsWaitTimeout,
-  DOCKER_INSTALL_LINKS,
+  dockerAppFor,
   dockerBinaryCandidates,
+  dockerDownloadUrl,
   dockerSpawnEnv,
   isDesktopSetupLink,
   resolveDockerBinary,
   runDocker,
 } from "./docker-cli.js";
 
-describe("docker install links", () => {
-  it("only opens the three known pages over https", () => {
-    for (const url of Object.values(DOCKER_INSTALL_LINKS)) expect(url).toMatch(/^https:\/\//);
-    expect(isDesktopSetupLink("orbstack")).toBe(true);
+describe("docker download", () => {
+  it("accepts only the one download link", () => {
+    expect(isDesktopSetupLink("docker-download")).toBe(true);
+    expect(isDesktopSetupLink("orbstack")).toBe(false);
     expect(isDesktopSetupLink("toString")).toBe(false);
     expect(isDesktopSetupLink("https://evil.example")).toBe(false);
     expect(isDesktopSetupLink(42)).toBe(false);
+  });
+
+  it("downloads the installer that matches the machine", () => {
+    expect(dockerDownloadUrl("darwin", "arm64")).toBe(
+      "https://desktop.docker.com/mac/main/arm64/Docker.dmg",
+    );
+    expect(dockerDownloadUrl("darwin", "x64")).toBe(
+      "https://desktop.docker.com/mac/main/amd64/Docker.dmg",
+    );
+    expect(dockerDownloadUrl("win32", "x64")).toBe(
+      "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe",
+    );
+    expect(dockerDownloadUrl("win32", "arm64")).toBe(
+      "https://desktop.docker.com/win/main/arm64/Docker%20Desktop%20Installer.exe",
+    );
+    expect(dockerDownloadUrl("linux", "x64")).toBe("https://docs.docker.com/engine/install/");
+  });
+});
+
+describe("dockerAppFor", () => {
+  it("starts the app that owns the docker CLI", () => {
+    expect(
+      dockerAppFor("darwin", "/Applications/Docker.app/Contents/Resources/bin/docker"),
+    ).toMatchObject({ name: "Docker Desktop", args: ["-b", "com.docker.docker"] });
+    expect(
+      dockerAppFor("darwin", "/Applications/OrbStack.app/Contents/MacOS/xbin/docker"),
+    ).toMatchObject({ name: "OrbStack", args: ["-b", "dev.kdrag0n.MacVirt"] });
+    expect(
+      dockerAppFor("win32", "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"),
+    ).toEqual({
+      name: "Docker Desktop",
+      command: "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe",
+      args: [],
+    });
+  });
+
+  it("leaves CLIs without a desktop app alone", () => {
+    expect(dockerAppFor("darwin", "/opt/homebrew/Cellar/docker/27.1.1/bin/docker")).toBeNull();
+    expect(dockerAppFor("linux", "/usr/bin/docker")).toBeNull();
   });
 });
 
@@ -154,12 +194,18 @@ describe("dockerSpawnEnv", () => {
   it("keeps the Windows system variables docker.exe depends on", () => {
     const env = dockerSpawnEnv(
       "win32",
-      { SystemRoot: "C:\\Windows", APPDATA: "C:\\Users\\me\\AppData\\Roaming", PATH: "" },
+      {
+        SystemRoot: "C:\\Windows",
+        APPDATA: "C:\\Users\\me\\AppData\\Roaming",
+        ProgramFiles: "D:\\Program Files",
+        PATH: "",
+      },
       "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
     );
     expect(env).toEqual({
       SystemRoot: "C:\\Windows",
       APPDATA: "C:\\Users\\me\\AppData\\Roaming",
+      ProgramFiles: "D:\\Program Files",
       PATH: "C:\\Program Files\\Docker\\Docker\\resources\\bin",
     });
   });
@@ -176,10 +222,45 @@ describe("classifyDockerFailure", () => {
     ["docker: 'compose' is not a docker command.", "compose-missing"],
     ["Error response from daemon: manifest unknown", "image-not-found"],
     ["pull access denied for ghcr.io/x/y, repository does not exist", "image-not-found"],
+    [
+      'Error response from daemon: failed to resolve reference "ghcr.io/tukatek/agent-hub/computer:v0.3.5": ghcr.io/tukatek/agent-hub/computer:v0.3.5: not found',
+      "image-not-found",
+    ],
     ["Get https://ghcr.io/v2/: dial tcp: lookup ghcr.io: no such host", "network"],
+    [
+      'failed to resolve reference "ghcr.io/example/image:latest": dial tcp: lookup ghcr.io: no such host',
+      "network",
+    ],
+    ['failed to resolve reference "ghcr.io/example/image:latest": i/o timeout', "network"],
+    [
+      'failed to resolve reference "ghcr.io/example/image:latest": TLS handshake timeout',
+      "network",
+    ],
+    ['failed to resolve reference "ghcr.io/example/image:latest": connection refused', "network"],
+    ['failed to resolve reference "ghcr.io/example/image:latest"', "other"],
     ["net/http: TLS handshake timeout", "network"],
     ["Bind for 127.0.0.1:5173 failed: port is already allocated", "port-in-use"],
     ["listen tcp 127.0.0.1:3100: bind: address already in use", "port-in-use"],
+    [
+      "listen tcp 0.0.0.0:3100: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted.",
+      "port-in-use",
+    ],
+    [
+      "listen tcp 0.0.0.0:3100: bind: An attempt was made to access a socket in a way forbidden by its access permissions.",
+      "port-in-use",
+    ],
+    [
+      "Ports are not available: exposing port TCP 0.0.0.0:3100 -> 127.0.0.1:0: listen tcp 0.0.0.0:3100: bind: An attempt was made to access a socket in a way forbidden by its access permissions.",
+      "port-in-use",
+    ],
+    [
+      "failed to resolve reference: dial tcp 192.0.2.1:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.",
+      "other",
+    ],
+    [
+      "dial tcp 192.0.2.1:443: connectex: Only one usage of each socket address (protocol/network address/port) is normally permitted.",
+      "other",
+    ],
     [
       "Error response from daemon: all predefined address pools have been fully subnetted",
       "address-pool-exhausted",
@@ -199,6 +280,8 @@ describe("composeSupportsWaitTimeout", () => {
     ["2.17.0", true],
     ["v2.29.7", true],
     ["3.0.0", true],
+    ["5.6.1\r\n", true],
+    ["Docker Compose version v5.6.1\r\n", true],
     ["2.16.9", false],
     ["1.29.2", false],
     ["", false],
@@ -214,6 +297,39 @@ describe("runDocker", () => {
   });
   const node = process.execPath;
   const options = { cwd: process.cwd(), env: { PATH: process.env.PATH ?? "" }, timeoutMs: 10_000 };
+
+  it("preserves the Windows plugin discovery directory when running Compose", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-compose-discovery-"));
+    roots.push(root);
+    const programFiles = path.join(root, "Program Files");
+    const plugins = path.join(programFiles, "Docker", "cli-plugins");
+    mkdirSync(plugins, { recursive: true });
+    writeFileSync(path.join(plugins, "docker-compose.exe"), "fake plugin");
+    // Mirror Docker's Windows plugin lookup in an offline child process. It must
+    // find the plugin through ProgramFiles even with an absolute docker.exe path.
+    const env = dockerSpawnEnv(
+      "win32",
+      { SystemRoot: process.env.SystemRoot, ProgramFiles: programFiles },
+      "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
+    );
+    const result = await runDocker(
+      node,
+      [
+        "-e",
+        `const fs = require('node:fs');
+         const path = require('node:path');
+         const plugin = path.join(process.env.ProgramFiles ?? '', 'Docker', 'cli-plugins', 'docker-compose.exe');
+         if (!fs.existsSync(plugin)) {
+           process.stderr.write("docker: 'compose' is not a docker command");
+           process.exit(1);
+         }
+         process.stdout.write('5.6.1\\r\\n');`,
+      ],
+      { ...options, env },
+    );
+    expect(result).toEqual({ code: 0, stdout: "5.6.1\r\n", stderr: "" });
+    expect(composeSupportsWaitTimeout(result.stdout)).toBe(true);
+  });
 
   it.skipIf(process.platform === "win32")(
     "lets a CLI outside Rancher find its credential helper after a GUI launch",
@@ -257,14 +373,30 @@ describe("runDocker", () => {
     expect(lines.sort()).toEqual(["a", "b", "err"]);
   });
 
-  it("keeps the last rendering of carriage-return progress lines", async () => {
+  it.each(["stdout", "stderr"] as const)("emits CRLF-delimited %s lines", async (stream) => {
     const lines: string[] = [];
-    await runDocker(node, ["-e", 'process.stdout.write("10%\\r50%\\r100%\\n")'], {
-      ...options,
-      onLine: (line) => lines.push(line),
-    });
-    expect(lines).toEqual(["100%"]);
+    const output = "a\r\nb\r\n";
+    const result = await runDocker(
+      node,
+      ["-e", `process.${stream}.write(${JSON.stringify(output)})`],
+      { ...options, onLine: (line) => lines.push(line) },
+    );
+    expect(result).toEqual({ code: 0, stdout: "", stderr: "", [stream]: output });
+    expect(lines).toEqual(["a", "b"]);
   });
+
+  it.each(["\n", "\r\n"])(
+    "keeps the last rendering of progress lines ending in %j",
+    async (eol) => {
+      const lines: string[] = [];
+      await runDocker(
+        node,
+        ["-e", `process.stdout.write(${JSON.stringify(`10%\r50%\r100%${eol}`)})`],
+        { ...options, onLine: (line) => lines.push(line) },
+      );
+      expect(lines).toEqual(["100%"]);
+    },
+  );
 
   it("kills a command that exceeds its timeout", async () => {
     const started = Date.now();

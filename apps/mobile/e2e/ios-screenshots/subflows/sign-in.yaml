@@ -11,9 +11,6 @@ appId: com.tukatek.cortexai.agenthub
     timeout: 15000
 - tapOn: "Email"
 - inputText: ${CORTEXAI_AGENT_HUB_ACTIVE_EMAIL}
-- tapOn:
-    text: "Use password"
-    optional: true
 - tapOn: "Password"
 - inputText: ${CORTEXAI_AGENT_HUB_SCREENSHOT_PASSWORD}
 - hideKeyboard
@@ -27,6 +24,7 @@ appId: com.tukatek.cortexai.agenthub
 - tapOn:
     text: "Don't allow"
     optional: true
+# A new account answers the signup survey before the inbox.
 - extendedWaitUntil:
-    visible: "Account"
+    visible: "Account|.*How did you hear about us.*"
     timeout: 40000

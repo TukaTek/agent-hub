@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { isBuildId } from "@cortexai-agent-hub/contracts/client-build";
-import { darkTokens } from "@cortexai-agent-hub/ui-tokens";
+import { webDarkTokens } from "@cortexai-agent-hub/ui-tokens";
 import type { Plugin, Rolldown } from "vite";
 import { CACHE_PREFIX } from "./service-worker.js";
 
@@ -23,8 +23,8 @@ export function webManifest() {
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: darkTokens.background,
-    theme_color: darkTokens.background,
+    background_color: webDarkTokens.background,
+    theme_color: webDarkTokens.background,
     // The icons are full-bleed, so the same art also works under a launcher mask.
     icons: [
       ...icons.map((icon) => ({ ...icon, purpose: "any" })),

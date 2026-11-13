@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { AdapterContext, ComputerAction, ComputerRef } from "@cortexai-agent-hub/adapter-kit";
 import { browserProfilePathForScreen } from "@cortexai-agent-hub/core/node/desktop-runtime";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -159,6 +160,54 @@ describe("provider focus command", () => {
     } catch {
       // The background launcher may already have exited.
     }
+  });
+
+  it("launches an app with no window without waiting for it to exit", async () => {
+    const sleeper = path.join(bin, "sleeper");
+    writeExecutable(
+      sleeper,
+      ["#!/bin/sh", 'echo $$ > "$FOCUS_RECORDED"', "exec sleep 30", ""].join("\n"),
+    );
+    writeFileSync(windows, "");
+    const started = Date.now();
+    const result = runFocus(await focusCommand({ kind: "focus", application: sleeper }));
+    expect(result.status, result.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    let pid = 0;
+    await vi.waitFor(
+      () => {
+        pid = Number(readFileSync(recorded, "utf8").trim());
+        expect(pid).toBeGreaterThan(0);
+      },
+      { timeout: 5_000, interval: 20 },
+    );
+    process.kill(pid, "SIGTERM");
+  });
+
+  it("opens a workspace file as a tab in the screen's browser without waiting on a viewer", async () => {
+    // The image's xdg-open hands a file to a viewer and lives as long as it does.
+    writeExecutable(
+      path.join(bin, "xdg-open"),
+      ["#!/bin/sh", 'printf "%s\\n" "$1" > "$FOCUS_RECORDED"', "exec sleep 8", ""].join("\n"),
+    );
+    writeFileSync(path.join(workspace, "shot.png"), "png");
+    const command = await focusCommand({ kind: "open", path: "shot.png" });
+    expect(command).toContain(
+      `nohup /tmp/cortexai-agent-hub/browser-launch-1 '${pathToFileURL(path.join(workspace, "shot.png")).href}'`,
+    );
+    const started = Date.now();
+    const result = runFocus(command);
+    expect(result.status, result.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(() => readFileSync(recorded, "utf8")).toThrow();
+  });
+
+  it("fails an open at once when the workspace file does not exist", async () => {
+    writeExecutable(path.join(bin, "xdg-open"), "#!/bin/sh\nexec sleep 8\n");
+    const command = await focusCommand({ kind: "open", path: "missing.png" });
+    const result = runFocus(command);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("does not exist");
   });
 
   it("resolves a workspace-relative program when no window matches", async () => {

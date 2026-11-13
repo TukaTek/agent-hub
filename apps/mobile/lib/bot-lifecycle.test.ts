@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { rpc, alert } = vi.hoisted(() => ({ rpc: vi.fn(), alert: vi.fn() }));
-vi.mock("./api", () => ({ rpc }));
-vi.mock("react-native", () => ({ Alert: { alert } }));
-vi.mock("./i18n", () => ({
-  t: (message: string, values?: { name: string }) =>
-    message.replace("{name}", values?.name ?? "{name}"),
+const { rpc, alert, removeFromSearchInbox } = vi.hoisted(() => ({
+  rpc: vi.fn(),
+  alert: vi.fn(),
+  removeFromSearchInbox: vi.fn(),
 }));
+vi.mock("./api-server", () => ({}));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
+vi.mock("./api", () => ({ rpc }));
+vi.mock("./search-inbox", () => ({ removeFromSearchInbox }));
+vi.mock("react-native", () => ({ Alert: { alert } }));
 vi.mock("./user-error", () => ({ errorText: () => "Try again." }));
 
 import { confirmDeleteBot, confirmDeleteGroup, restoreArchivedBot } from "./bot-lifecycle";
@@ -40,6 +44,7 @@ describe("archived bot lifecycle", () => {
       botId: "bot-fixture",
       deleteMemories: false,
     });
+    expect(removeFromSearchInbox).toHaveBeenCalledWith("bot-fixture");
     expect(deleted).toHaveBeenCalledOnce();
   });
 });
@@ -67,6 +72,7 @@ describe("group deletion", () => {
     alert.mock.calls[0]![2][1].onPress();
     await vi.waitFor(() => expect(deleted).toHaveBeenCalledOnce());
     expect(rpc).toHaveBeenCalledWith("groups/remove", { groupId: "group-fixture" });
+    expect(removeFromSearchInbox).toHaveBeenCalledWith("group-fixture");
 
     rpc.mockRejectedValueOnce(new Error("offline"));
     confirmDeleteGroup({ id: "group-fixture", name: "Team" }, deleted);
@@ -74,6 +80,7 @@ describe("group deletion", () => {
     await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(3));
     expect(alert.mock.calls[2]!.slice(0, 2)).toEqual(["Could not delete group", "Try again."]);
     expect(deleted).toHaveBeenCalledOnce();
+    expect(removeFromSearchInbox).toHaveBeenCalledOnce();
   });
 });
 

@@ -3,11 +3,15 @@ import type { ComputerStatus } from "./computer.js";
 import {
   controlLabel,
   embeddableScreenUrl,
+  fromScreenPage,
+  isProxiedScreenPage,
   nextLoadedScreenUrl,
   previewPlaceholder,
   readScreenUrl,
   retainScreenSource,
   SCREEN_URL_RENEW_MS,
+  screenPageState,
+  screenPageStatus,
   screenRenewReadAt,
   screenStreamKey,
 } from "./computer.js";
@@ -65,6 +69,28 @@ describe("embeddableScreenUrl", () => {
     expect(
       embeddableScreenUrl("http://localhost:16080/embed.html", "https://api.example"),
     ).toBeNull();
+  });
+
+  it("moves a proxied screen sealed for an unreachable address onto an HTTPS API origin", () => {
+    for (const sealed of [
+      "http://127.0.0.1:5173/novnc/session/view/1.t/embed.html?view_only=true",
+      "https://192.168.1.20/novnc/session/view/1.t/embed.html?view_only=true",
+    ]) {
+      expect(embeddableScreenUrl(sealed, "https://cortexai-agent-hub.example.test")).toBe(
+        "https://cortexai-agent-hub.example.test/novnc/session/view/1.t/embed.html?view_only=true",
+      );
+    }
+  });
+
+  it("keeps a proxied screen on its own public HTTPS host or for a local API", () => {
+    const remote = "https://screens.example.test/novnc/session/view/1.t/embed.html";
+    expect(embeddableScreenUrl(remote, "https://api.example.test")).toBe(remote);
+    expect(
+      embeddableScreenUrl(
+        "http://127.0.0.1:5173/novnc/session/view/1.t/embed.html",
+        "http://10.0.2.2:3100",
+      ),
+    ).toBe("http://10.0.2.2:5173/novnc/session/view/1.t/embed.html");
   });
 
   it("keeps loopback screens when the API is also loopback", () => {
@@ -173,7 +199,7 @@ describe("screen stream identity", () => {
 });
 
 describe("computer copy", () => {
-  it("matches the web pane while booting, asleep, or in control", () => {
+  it("matches the web pane while booting or asleep, and names the computer while in control", () => {
     expect(previewPlaceholder("stopped", false, "Chief")).toBe("Computer is stopped");
     expect(previewPlaceholder("suspended", false, "Chief")).toBe(
       "Computer is asleep. Take control to wake it.",
@@ -188,9 +214,8 @@ describe("computer copy", () => {
           takeoverRequested: true,
         }),
         "Chief",
-        "bot-1",
       ),
-    ).toBe("You have control");
+    ).toBe("Team Computer");
     expect(
       controlLabel(
         computer({
@@ -199,7 +224,6 @@ describe("computer copy", () => {
           controlBotId: "other-bot",
         }),
         "Chief",
-        "bot-1",
       ),
     ).toBe("Team Computer");
     expect(
@@ -272,5 +296,140 @@ describe("readScreenUrl", () => {
     const sleep = vi.fn().mockResolvedValue(undefined);
     await expect(readScreenUrl(request, { attempts: 2, sleep })).resolves.toBeNull();
     expect(request).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("screen page states", () => {
+  it("takes only the exact state message a screen page posts", () => {
+    expect(screenPageState('{"cortexAiAgentHubScreen":"connected"}')).toBe("connected");
+    expect(screenPageState('{"cortexAiAgentHubScreen":"disconnected"}')).toBe("disconnected");
+    expect(screenPageState('{"cortexAiAgentHubScreen":"connected","detail":"text"}')).toBeNull();
+    expect(screenPageState('{"cortexAiAgentHubScreen":"reconnect"}')).toBeNull();
+    expect(screenPageState('["connected"]')).toBeNull();
+    expect(screenPageState('"connected"')).toBeNull();
+    expect(screenPageState("null")).toBeNull();
+    expect(screenPageState("not json")).toBeNull();
+  });
+});
+
+describe("screen page status", () => {
+  it("reads only the status of the screen page", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const text = vi.fn(async () => "Invalid or expired screen capability");
+    const fetchImpl = vi.fn(
+      async () => ({ status: 503, body: { cancel }, text }) as unknown as Response,
+    );
+    await expect(screenPageStatus("https://app.example.test/novnc/x", fetchImpl)).resolves.toBe(
+      503,
+    );
+    expect(text).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledWith("https://app.example.test/novnc/x", {
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "manual",
+    });
+    await expect(
+      screenPageStatus("https://app.example.test/novnc/x", async () => {
+        throw new TypeError("Network request failed");
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("screen page redirects and origin", () => {
+  it("counts an answer from anywhere but the probe as no page, as React Native follows redirects", async () => {
+    // React Native ignores `redirect: "manual"`, follows the redirect and leaves `redirected`
+    // unset; only the final URL tells.
+    const followed = vi.fn(
+      async () =>
+        ({
+          status: 200,
+          url: "https://api.example.test/elsewhere",
+          type: "default",
+        }) as unknown as Response,
+    );
+    await expect(
+      screenPageStatus("https://app.example.test/novnc/x?cortexai-agent-hub_probe=1", followed),
+    ).resolves.toBe(0);
+    const same = vi.fn(
+      async () =>
+        ({
+          status: 204,
+          url: "https://app.example.test/novnc/x?cortexai-agent-hub_probe=1",
+          type: "default",
+        }) as unknown as Response,
+    );
+    await expect(
+      screenPageStatus("https://app.example.test/novnc/x?cortexai-agent-hub_probe=1", same),
+    ).resolves.toBe(204);
+    const redirected = vi.fn(
+      async () => ({ status: 200, redirected: true, type: "basic" }) as unknown as Response,
+    );
+    await expect(screenPageStatus("https://app.example.test/novnc/x", redirected)).resolves.toBe(0);
+    const manual = vi.fn(
+      async () => ({ status: 0, redirected: false, type: "opaqueredirect" }) as unknown as Response,
+    );
+    await expect(screenPageStatus("https://app.example.test/novnc/x", manual)).resolves.toBe(0);
+  });
+
+  it("hears only the screen's own origin", () => {
+    const screen = "https://app.example.test/novnc/session/control/1.t/vnc.html";
+    expect(
+      fromScreenPage("https://app.example.test/novnc/session/control/1.t/vnc.html", screen),
+    ).toBe(true);
+    expect(fromScreenPage("https://elsewhere.example.test/", screen)).toBe(false);
+    expect(fromScreenPage(undefined, screen)).toBe(false);
+    expect(fromScreenPage("not a url", screen)).toBe(false);
+  });
+
+  it("accepts an opaque Android origin only for the exact loaded proxy page", () => {
+    const screen = "https://app.example.test/novnc/session/view/1.t/vnc.html";
+    expect(fromScreenPage("null", screen, screen)).toBe(true);
+    expect(fromScreenPage("null", screen)).toBe(false);
+    expect(fromScreenPage("null", screen, "https://elsewhere.example.test/")).toBe(false);
+    expect(
+      fromScreenPage("null", screen, "https://app.example.test/novnc/session/view/2.t/vnc.html"),
+    ).toBe(true);
+    expect(
+      fromScreenPage("null", screen, "https://app.example.test/novnc/session/view/1.t/embed.html"),
+    ).toBe(true);
+    expect(
+      fromScreenPage(
+        "null",
+        "https://app.example.test/novnc/session/control/1.t",
+        "https://app.example.test/novnc/session/control/1.t/vnc.html",
+      ),
+    ).toBe(true);
+    expect(
+      fromScreenPage("null", screen, "https://app.example.test/novnc/session/control/1.t/vnc.html"),
+    ).toBe(false);
+    expect(
+      fromScreenPage(
+        "null",
+        "https://screen.example.test/embed",
+        "https://screen.example.test/embed",
+      ),
+    ).toBe(false);
+    expect(fromScreenPage(undefined, screen, screen)).toBe(false);
+    expect(fromScreenPage("not a url", screen, screen)).toBe(false);
+  });
+
+  it("keeps one stream key across a renewed link for the same screen", () => {
+    expect(screenStreamKey("https://app.example.test/novnc/session/control/1.aaa/websockify")).toBe(
+      screenStreamKey("https://app.example.test/novnc/session/control/2.bbb/websockify"),
+    );
+    expect(
+      screenStreamKey("https://app.example.test/novnc/session/control/1.aaa/websockify"),
+    ).not.toBe(screenStreamKey("https://app.example.test/novnc/session/view/1.aaa/websockify"));
+  });
+});
+
+describe("proxied screen pages", () => {
+  it("probes only screens served through the web server's screen proxy", () => {
+    expect(isProxiedScreenPage("https://app.example.test/novnc/session/view/1.t/vnc.html")).toBe(
+      true,
+    );
+    expect(isProxiedScreenPage("https://screen.example.test/embed")).toBe(false);
+    expect(isProxiedScreenPage("not a url")).toBe(false);
   });
 });

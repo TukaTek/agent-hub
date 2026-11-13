@@ -1,19 +1,23 @@
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-import { readBoundedResponseBytes } from "@cortexai-agent-hub/core";
-import { Agent } from "undici";
+import { MIMEType } from "node:util";
 import {
-  createAddressCheckedLookup,
-  egressRefused,
-  isPrivateAddress,
-  type ResolvedAddress,
-  type ResolveHostname,
-} from "./network-address.js";
+  ipVersion,
+  isCloudMetadataHost,
+  isInternalHostname,
+  isNonPublicAddress,
+  normalizeHost,
+} from "@cortexai-agent-hub/contracts";
+import { readBoundedResponseBytes } from "@cortexai-agent-hub/core";
+import type { Dispatcher } from "undici";
+import type { ResolvedAddress, ResolveHostname } from "./network-address.js";
+import { egressRefused } from "./network-address.js";
+import { createCheckedProxyDispatcher } from "./proxy-dispatcher.js";
 import { fetchPairedWithDispatcher } from "./undici-fetch.js";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
+const DEFAULT_USER_AGENT = "CortexAI Agent Hub/0.1 (+https://github.com/TukaTek/agent-hub)";
 
 export type { ResolveHostname } from "./network-address.js";
 
@@ -31,14 +35,14 @@ export interface SafeWebFetchOptions {
   /** Refuse any hop, redirects included, whose port is not listed. */
   allowedPorts?: readonly number[];
   /**
-   * Test seam for dispatcher teardown. Defaults to `Agent.close()`.
+   * Test seam for dispatcher teardown. Defaults to `dispatcher.close()`.
    * Always raced against the shared operation deadline.
    */
   cleanup?: () => Promise<void>;
   /**
-   * Test seam for force-teardown after cleanup. Defaults to `Agent.destroy()`.
+   * Test seam for force-teardown after cleanup. Defaults to `dispatcher.destroy()`.
    * Invoked without awaiting so a hanging destroy cannot extend the deadline.
-   * May return a Promise (`Agent.destroy()` does); rejections are swallowed.
+   * May return a Promise (`dispatcher.destroy()` does); rejections are swallowed.
    */
   destroy?: () => void | Promise<void>;
 }
@@ -68,7 +72,16 @@ export async function assertSafeWebUrl(
   if (allowedPorts && !allowedPorts.includes(port)) {
     throw new Error("URL port is not allowed");
   }
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  await resolvePublicHost(url.hostname, resolve, signal);
+  return url;
+}
+
+async function resolvePublicHost(
+  host: string,
+  resolve: ResolveHostname,
+  signal?: AbortSignal,
+): Promise<ResolvedAddress[]> {
+  const hostname = host.replace(/^\[|\]$/g, "");
   if (isBlockedHostname(hostname)) {
     throw egressRefused(hostname, new Error("URL targets a private or internal host"));
   }
@@ -78,23 +91,13 @@ export async function assertSafeWebUrl(
   } catch (error) {
     throw egressRefused(hostname, error);
   }
-  return url;
+  return addresses;
 }
 
 export function isBlockedHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/\.$/, "");
-  if (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local") ||
-    normalized.endsWith(".internal") ||
-    normalized === "metadata.google.internal" ||
-    normalized === "metadata.goog"
-  ) {
-    return true;
-  }
-  if (isIP(normalized) !== 0) return isPrivateAddress(normalized);
-  return false;
+  const host = normalizeHost(hostname);
+  if (isInternalHostname(host) || isCloudMetadataHost(host)) return true;
+  return ipVersion(host) !== 0 && isNonPublicAddress(host);
 }
 
 type SafeWebResponse<Body> = { url: string; body: Body; contentType: string | null };
@@ -104,19 +107,95 @@ export async function fetchSafeWebText(
   options: SafeWebFetchOptions = {},
 ): Promise<SafeWebResponse<string>> {
   const response = await fetchSafeWebBytes(url, options);
-  return { ...response, body: new TextDecoder().decode(response.body) };
+  let decoder = new TextDecoder();
+  try {
+    const charset =
+      response.contentType && new MIMEType(response.contentType).params.get("charset");
+    if (charset) decoder = new TextDecoder(charset);
+  } catch {
+    // Preserve UTF-8 decoding for malformed media types or unsupported charset labels.
+  }
+  return { ...response, body: decoder.decode(response.body) };
 }
 
 export async function fetchSafeWebBytes(
   url: string,
   options: SafeWebFetchOptions = {},
 ): Promise<SafeWebResponse<Uint8Array>> {
+  return withSafeEgress(options, ({ baseFetch, resolve, dispatcher, signal }) =>
+    followRedirects(url, {
+      baseFetch,
+      resolve,
+      dispatcher,
+      maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
+      userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
+      headers: options.headers,
+      signal,
+      redirectsRemaining: options.maxRedirects ?? MAX_REDIRECTS,
+      truncate: options.truncate ?? false,
+      allowedPorts: options.allowedPorts,
+    }),
+  );
+}
+
+export interface SafeHttpResponse {
+  url: string;
+  status: number;
+  headers: Headers;
+  /** At most `maxBytes`; `truncated` when the body went on. */
+  body: Uint8Array;
+  truncated: boolean;
+}
+
+/**
+ * One request with any method. A redirect is returned, never followed, so a body or payment
+ * is only ever sent to the URL it was meant for.
+ */
+export async function fetchSafeHttpRequest(
+  url: string,
+  request: { method: string; headers?: Record<string, string>; body?: string },
+  options: Omit<SafeWebFetchOptions, "headers" | "maxRedirects" | "truncate"> = {},
+): Promise<SafeHttpResponse> {
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  return withSafeEgress(options, async ({ baseFetch, resolve, dispatcher, signal }) => {
+    const validated = await assertSafeWebUrl(url, resolve, signal, options.allowedPorts);
+    const response = await withAbort(
+      baseFetch(validated.href, {
+        method: request.method,
+        redirect: "manual",
+        signal,
+        headers: { "user-agent": options.userAgent ?? DEFAULT_USER_AGENT, ...request.headers },
+        ...(request.body !== undefined ? { body: request.body } : {}),
+        dispatcher,
+      } as RequestInit & { dispatcher: Dispatcher }),
+      signal,
+    );
+    const body = await readBodyPrefix(response, maxBytes + 1, signal);
+    return {
+      url: validated.href,
+      status: response.status,
+      headers: response.headers,
+      body: body.slice(0, maxBytes),
+      truncated: body.byteLength > maxBytes,
+    };
+  });
+}
+
+async function withSafeEgress<T>(
+  options: SafeWebFetchOptions,
+  run: (egress: {
+    baseFetch: typeof globalThis.fetch;
+    resolve: ResolveHostname;
+    dispatcher: Dispatcher;
+    signal: AbortSignal;
+  }) => Promise<T>,
+): Promise<T> {
   const resolve = options.resolveHostname ?? defaultResolveHostname;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const baseFetch = fetchPairedWithDispatcher(options.fetch);
-  const dispatcher = new Agent({
-    connect: { lookup: createAddressCheckedLookup(resolve, assertPublicAddresses) },
+  const dispatcher = createCheckedProxyDispatcher(resolve, (addresses, hostname) => {
+    if (isBlockedHostname(hostname)) throw new Error("URL targets a private or internal host");
+    assertPublicAddresses(addresses);
   });
   // One deadline for the whole redirect chain + body read + cleanup, not per hop.
   const signal = combineSignals(options.signal, AbortSignal.timeout(timeoutMs));
@@ -130,19 +209,7 @@ export async function fetchSafeWebBytes(
   const destroy = options.destroy ?? (() => dispatcher.destroy());
 
   try {
-    return await followRedirects(url, {
-      baseFetch,
-      resolve,
-      dispatcher,
-      maxBytes,
-      userAgent:
-        options.userAgent ?? "CortexAI Agent Hub/0.1 (+https://github.com/TukaTek/agent-hub)",
-      headers: options.headers,
-      signal,
-      redirectsRemaining: options.maxRedirects ?? MAX_REDIRECTS,
-      truncate: options.truncate ?? false,
-      allowedPorts: options.allowedPorts,
-    });
+    return await run({ baseFetch, resolve, dispatcher, signal });
   } finally {
     // Race graceful close against the shared deadline. Do not wait unbounded on close().
     await withAbort(cleanup(), signal).catch(() => undefined);
@@ -164,7 +231,7 @@ async function followRedirects(
   state: {
     baseFetch: typeof globalThis.fetch;
     resolve: ResolveHostname;
-    dispatcher: Agent;
+    dispatcher: Dispatcher;
     maxBytes: number;
     userAgent: string;
     headers?: Record<string, string>;
@@ -190,7 +257,7 @@ async function followRedirects(
         ...state.headers,
       },
       dispatcher: state.dispatcher,
-    } as RequestInit & { dispatcher: Agent }),
+    } as RequestInit & { dispatcher: Dispatcher }),
     state.signal,
   );
 
@@ -286,7 +353,7 @@ async function readBodyPrefix(
 }
 
 function assertPublicAddresses(addresses: ResolvedAddress[]): void {
-  if (addresses.length === 0 || addresses.some((entry) => isPrivateAddress(entry.address))) {
+  if (addresses.length === 0 || addresses.some((entry) => isNonPublicAddress(entry.address))) {
     throw new Error("URL resolves to a private address");
   }
 }

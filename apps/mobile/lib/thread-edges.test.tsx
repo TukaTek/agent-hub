@@ -4,7 +4,7 @@ import { ScrollViewMarker } from "react-native-screens/experimental";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThreadScrollSurface } from "../components/thread-scroll-surface";
 import {
-  THREAD_HEADER_FADE_GRADIENT,
+  threadColumnPadding,
   threadEdgeOptions,
   threadHeaderClearance,
   threadHeaderFloats,
@@ -16,7 +16,7 @@ vi.mock("react-native-screens/experimental", () => ({ ScrollViewMarker: () => nu
 
 afterEach(() => {
   Platform.OS = "ios";
-  Platform.Version = 26;
+  (Platform as { Version: number | string }).Version = 26;
 });
 
 describe("thread scroll edges", () => {
@@ -38,7 +38,7 @@ describe("thread scroll edges", () => {
   });
 
   it.each(["18.5", 25, 26, "26.1"])("floats the header on iOS %s", (version) => {
-    Platform.Version = version;
+    (Platform as { Version: number | string }).Version = version;
     expect(threadHeaderFloats()).toBe(true);
     expect(threadEdgeOptions()).toEqual({
       headerTransparent: true,
@@ -65,25 +65,37 @@ describe("thread scroll edges", () => {
 });
 
 it.each([64, 96, 116, 120])(
-  "places the band and jump targets below the pills at header height %s",
+  "rests content and jump targets below the pills at header height %s",
   (height) => {
     const clearance = threadHeaderClearance(height);
     const pillBottom = height - 10;
-    expect(clearance.opaqueHeight - pillBottom).toBe(14);
-    expect(THREAD_HEADER_FADE_GRADIENT).toBe(12);
-    expect(clearance.padding).toBe(clearance.opaqueHeight);
-    expect(clearance.minHeight).toBeGreaterThanOrEqual(clearance.opaqueHeight);
-    expect(clearance.anchor).toBeGreaterThan(clearance.opaqueHeight + THREAD_HEADER_FADE_GRADIENT);
+    expect(clearance.padding - pillBottom).toBe(14);
+    expect(clearance.minHeight).toBe(clearance.padding);
+    expect(clearance.anchor).toBe(clearance.padding + 20);
     // The first date has a 12pt margin and about 4pt of font leading.
     expect(clearance.padding + 16 - pillBottom).toBe(30);
   },
 );
 
 it("preserves Android clearance without a floating header", () => {
-  expect(threadHeaderClearance(0)).toEqual({
-    opaqueHeight: 0,
-    padding: 8,
-    anchor: 24,
-    minHeight: 0,
+  expect(threadHeaderClearance(0)).toEqual({ padding: 8, anchor: 24, minHeight: 0 });
+});
+
+it("pads the chat column inside the screen, including a cutout and a wide gutter", () => {
+  expect(threadColumnPadding({ left: 0, right: 0 }, false)).toEqual({
+    paddingStart: 20,
+    paddingEnd: 20,
+  });
+  expect(threadColumnPadding({ left: 40, right: 8 }, false)).toEqual({
+    paddingStart: 60,
+    paddingEnd: 28,
+  });
+});
+
+it("keeps a physical cutout on its own side when the layout is right to left", () => {
+  // In RTL, start is the right edge and end (where the jump button sits) is the left edge.
+  expect(threadColumnPadding({ left: 40, right: 8 }, true)).toEqual({
+    paddingStart: 28,
+    paddingEnd: 60,
   });
 });

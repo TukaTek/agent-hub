@@ -1,22 +1,24 @@
 import type {
   BackgroundJob,
+  BackgroundJobAttempt,
   BackgroundJobExecution,
   BackgroundJobHandlers,
   BackgroundJobName,
   JobPublisher,
+  JobTransaction,
   JobWorkerHost,
 } from "@cortexai-agent-hub/adapter-kit";
-import { dispatchBackgroundJob } from "@cortexai-agent-hub/adapter-kit";
-import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { isTooManyDatabaseConnections, runAsSystem } from "@cortexai-agent-hub/db";
+import { dispatchBackgroundJob, RetryJobLaterError } from "@cortexai-agent-hub/adapter-kit";
+import type { DatabaseOutage, PrismaClient } from "@cortexai-agent-hub/db";
+import { databaseCapacityBackoffMs, databaseOutage, runAsSystem } from "@cortexai-agent-hub/db";
 import {
   getLogger,
   runCorrelatedJob,
   unwrapJobPayload,
   wrapJobPayload,
 } from "@cortexai-agent-hub/logging";
-import type { Runner, WorkerUtils } from "graphile-worker";
-import { makeWorkerUtils, run } from "graphile-worker";
+import type { JobHelpers, Runner, WorkerUtils } from "graphile-worker";
+import { consoleLogFactory, Logger, makeWorkerUtils, run } from "graphile-worker";
 import type { Pool } from "pg";
 import { recordHistoryCompactAttemptsExhausted } from "./history-compaction.js";
 import { RunExecutionHost } from "./run-execution.js";
@@ -74,6 +76,7 @@ export class GraphileJobPublisher implements JobPublisher {
       runAt: job.availableAt,
       jobKey: job.replaceKey,
       maxAttempts: job.maxAttempts,
+      ...(job.queueName ? { queueName: job.queueName } : {}),
       ...(jobKeyMode ? { jobKeyMode } : {}),
     });
     if (
@@ -98,6 +101,29 @@ export class GraphileJobPublisher implements JobPublisher {
         ),
       );
     }
+  }
+
+  /**
+   * Graphile lives in the same database, so the job commits or rolls back with the caller's
+   * writes. Run continuations start in the process that commits them, never from here.
+   */
+  async enqueueIn(tx: JobTransaction, job: BackgroundJob): Promise<void> {
+    if (job.name === "run.continue") throw new Error("Runs are not started inside a transaction");
+    if (job.keepExisting) throw new Error("keepExisting is not supported inside a transaction");
+    await tx.$executeRawUnsafe(
+      `select graphile_worker.add_job($1::text, $2::json, queue_name => $3::text,
+         run_at => $4::timestamptz, max_attempts => $5::int, job_key => $6::text)`,
+      job.name,
+      JSON.stringify(wrapJobPayload(job.payload)),
+      job.queueName ?? null,
+      job.availableAt ?? null,
+      job.maxAttempts ?? null,
+      job.replaceKey ?? null,
+    );
+  }
+
+  async cancelIn(tx: JobTransaction, key: string): Promise<void> {
+    await tx.$executeRawUnsafe("select graphile_worker.remove_job($1::text)", key);
   }
 
   async cancel(key: string): Promise<void> {
@@ -156,9 +182,10 @@ function dispatchJob(
   name: string,
   payload: unknown,
   execution?: BackgroundJobExecution,
+  attempt?: BackgroundJobAttempt,
 ) {
   return runAsSystem(`background job ${name}`, () =>
-    dispatchBackgroundJob(handlers, name, payload, execution),
+    dispatchBackgroundJob(handlers, name, payload, execution, attempt),
   );
 }
 
@@ -175,10 +202,46 @@ export async function migrateJobQueue(connectionString: string): Promise<void> {
   }
 }
 
-/** Same bounded backoff the worker uses around jobHost.start for 53300. */
-export function databaseCapacityBackoffMs(attempt: number): number {
-  return Math.min(30_000, 200 * 2 ** Math.min(attempt, 8));
+/**
+ * Graphile's console logging, except that the database being unavailable goes to the process's
+ * outage streak: its own polling would otherwise log every poll interval until it is back. A
+ * failed task's error came from the job, so only its database errors count, not its sockets.
+ */
+export function jobQueueLogger(outage: DatabaseOutage): Logger {
+  return new Logger((scope) => {
+    const log = consoleLogFactory(scope);
+    return (level, message, meta) => {
+      const error = (meta as { error?: unknown } | undefined)?.error ?? new Error(message);
+      const fromDatabaseConnection = !(meta as { failure?: unknown } | undefined)?.failure;
+      if (
+        (level === "error" || level === "warning") &&
+        outage.failed(error, "job queue", { fromDatabaseConnection })
+      )
+        return;
+      log(level, message, meta);
+    };
+  });
 }
+
+function abandonment() {
+  let abandon!: () => void;
+  const promise = new Promise<never>((_resolve, reject) => {
+    abandon = () => reject(new Error("The worker stopped before this job finished"));
+  });
+  promise.catch(() => undefined);
+  return { promise, abandon };
+}
+
+/**
+ * How long a stopping worker lets its running jobs finish. The slowest job is a computer sleep that
+ * saves the home; on Boat its own timeouts (a 9-minute archive, then a 30-minute download) fit
+ * inside. Other providers bound each request but not a whole save, so a longer one is cut off as
+ * if the worker had crashed: its suspend claim keeps the retried job from starting a second save,
+ * and the idle sweep sleeps the computer once the claim is ABANDONED_SUSPEND_CLAIM_MS old. Stays
+ * below the worker's stop_grace_period in Compose, and below that claim age so the sweep never
+ * replaces a sleep that is still draining.
+ */
+export const JOB_DRAIN_TIMEOUT_MS = 45 * 60_000;
 
 export class GraphileJobWorkerHost implements JobWorkerHost {
   private runner: Runner | undefined;
@@ -187,24 +250,37 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
   private superviseTask: Promise<void> | undefined;
   private wakeSleep: (() => void) | undefined;
   private readonly executions = new RunExecutionHost();
+  private readonly running = new Set<{ name: BackgroundJobName }>();
+  /** Rejects once the drain deadline passes, failing every job still running. */
+  private abandoned = abandonment();
 
   constructor(
     private readonly pgPool: Pool,
     private readonly options: {
       concurrency?: number;
       pollInterval?: number;
-      noHandleSignals?: boolean;
+      /** Fetch due jobs in batches so idle slots share one poll instead of each polling. */
+      localQueueSize?: number;
       /** Omit for a worker that handles every task (tests and embedded hosts). */
       workload?: Workload;
       /** Test seam: delay between 53300 restart attempts. */
       sleep?: (ms: number) => Promise<void>;
+      /** Test seam for JOB_DRAIN_TIMEOUT_MS. */
+      drainTimeoutMs?: number;
+      /** Test seam for the process's database outage streak. */
+      outage?: DatabaseOutage;
     } = {},
   ) {}
+
+  private get outage(): DatabaseOutage {
+    return this.options.outage ?? databaseOutage;
+  }
 
   async start(handlers: BackgroundJobHandlers): Promise<void> {
     if (this.runner || this.superviseTask) return;
     this.stopping = false;
     this.executions.start();
+    this.abandoned = abandonment();
     this.handlers = handlers;
     await this.launchRunner();
     // run() resolves once the runner is up; runner.promise can still reject later
@@ -213,21 +289,46 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
     this.superviseTask = this.supervise();
   }
 
+  /**
+   * Graphile stops claiming jobs and waits for the running ones to finish. Killing the process
+   * instead would leave each one locked for Graphile's four hours before anything retries it.
+   * Past the deadline a job is hung: it fails, which unlocks it with the usual backoff, so another
+   * worker retries it within seconds. A handed-off run that outlives it is left to the
+   * reconciler, as after a crash.
+   */
   async stop(): Promise<void> {
     this.stopping = true;
     this.wakeSleep?.();
     const draining = this.executions.stop();
+    const started = Date.now();
+    const busy = this.running.size > 0 || this.executions.activeCount > 0;
+    if (busy) getLogger().info("jobs.draining", this.runningBindings());
+    const deadline = setTimeout(() => {
+      getLogger().warn("jobs.drain_timed_out", this.runningBindings());
+      this.abandoned.abandon();
+    }, this.options.drainTimeoutMs ?? JOB_DRAIN_TIMEOUT_MS);
     try {
       await this.runner?.stop();
     } finally {
       // The queue has stopped accepting deliveries. Handed-off runs still own
       // leases and must finish before their database and providers are closed.
-      await draining;
+      await Promise.race([draining, this.abandoned.promise.catch(() => undefined)]);
+      clearTimeout(deadline);
       await this.superviseTask?.catch(() => undefined);
       this.runner = undefined;
       this.superviseTask = undefined;
       this.handlers = undefined;
     }
+    if (busy) getLogger().info("jobs.drained", { "jobs.drain_ms": Date.now() - started });
+  }
+
+  private runningBindings() {
+    const names = [...this.running].map((job) => job.name);
+    return {
+      "jobs.running": names.length,
+      "jobs.types": [...new Set(names)].sort().join(","),
+      "runs.active": this.executions.activeCount,
+    };
   }
 
   private async launchRunner(): Promise<void> {
@@ -242,17 +343,40 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
         })
         .map((name) => [
           this.options.workload === "interactive" ? INTERACTIVE_RUN_TASK : name,
-          async (payload: unknown) => {
+          async (payload: unknown, helpers: JobHelpers) => {
             const unpacked = unwrapJobPayload(payload);
+            const attempt = { number: helpers.job.attempts, max: helpers.job.max_attempts };
             const execute = (execution?: BackgroundJobExecution) =>
               runCorrelatedJob({
                 name,
                 payload: unpacked.payload,
                 correlation: unpacked.correlation,
-                run: () => dispatchJob(handlers, name, unpacked.payload, execution),
+                run: () => dispatchJob(handlers, name, unpacked.payload, execution, attempt),
               });
-            if (name === "run.continue") await this.executions.execute(execute);
-            else await execute();
+            const job = { name };
+            this.running.add(job);
+            try {
+              const work = name === "run.continue" ? this.executions.execute(execute) : execute();
+              // An abandoned job may still settle; the process exits soon after.
+              work.catch(() => undefined);
+              await Promise.race([work, this.abandoned.promise]);
+              this.outage.succeeded();
+            } catch (error) {
+              // Graphile's backoff is added to the job's run_at, so moving run_at first keeps the
+              // retry no sooner than the delay the job asked for.
+              if (error instanceof RetryJobLaterError)
+                await helpers.withPgClient((client) =>
+                  client.query(
+                    `update graphile_worker._private_jobs
+                     set run_at = greatest(run_at, now() + $2::int * interval '1 millisecond')
+                     where id = $1::bigint`,
+                    [helpers.job.id, Math.ceil(error.delayMs)],
+                  ),
+                );
+              throw error;
+            } finally {
+              this.running.delete(job);
+            }
           },
         ]),
     );
@@ -261,8 +385,22 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
       pgPool: this.pgPool,
       concurrency: this.options.concurrency ?? 4,
       pollInterval: this.options.pollInterval ?? 500,
-      noHandleSignals: this.options.noHandleSignals,
+      // Graphile kills the process by re-raising SIGTERM once its own jobs stop, before the
+      // host's shutdown has handed back the runs it executes outside Graphile.
+      noHandleSignals: true,
+      logger: jobQueueLogger(this.outage),
       taskList,
+      preset: {
+        worker: {
+          // Batched, Graphile's shutdown waits for these writes; unbatched, it fires them and
+          // returns, so a worker exiting right after could leave its jobs locked for hours.
+          completeJobBatchDelay: 0,
+          failJobBatchDelay: 0,
+          ...(this.options.localQueueSize
+            ? { localQueue: { size: this.options.localQueueSize } }
+            : {}),
+        },
+      },
     });
     runner.events.on("job:failed", ({ job, error }) => {
       recordHistoryCompactAttemptsExhausted(job, error);
@@ -302,7 +440,8 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
       } catch (error) {
         if (this.stopping) return;
         if (this.runner === runner) this.runner = undefined;
-        if (!isTooManyDatabaseConnections(error)) throw error;
+        // Read-only, unreachable or saturated: relaunch with backoff once it is back.
+        if (!this.outage.failed(error, "job queue", { fromDatabaseConnection: true })) throw error;
         // Back off after every lifecycle 53300 (runner death or failed relaunch),
         // not only when launchRunner rejects — otherwise a runner that starts then
         // dies again under saturation reconnects with no delay.
@@ -315,7 +454,8 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
             if (this.stopping || !this.runner) return;
             break;
           } catch (startError) {
-            if (!isTooManyDatabaseConnections(startError)) throw startError;
+            if (!this.outage.failed(startError, "job queue", { fromDatabaseConnection: true }))
+              throw startError;
           }
         }
       }
@@ -323,16 +463,29 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
   }
 }
 
+/**
+ * Scheduled and maintenance jobs mostly wait on the network, so each starts as soon as it
+ * is due. A slow job only occupies its own slot; per-entity safety comes from job keys
+ * and row claims, never from running jobs one at a time.
+ */
+const MAINTENANCE_JOB_CONCURRENCY = 100;
+const MAINTENANCE_LOCAL_QUEUE_SIZE = 10;
+
 /** Long agent turns cannot occupy the capacity reserved for other workloads. */
 export function createReservedGraphileJobWorkerHost(
   pool: Pool,
-  options: { concurrency?: number; pollInterval?: number; noHandleSignals?: boolean } = {},
+  options: { concurrency?: number; pollInterval?: number } = {},
 ): JobWorkerHost {
   const hosts = (["interactive", "background", "maintenance"] as const).map(
     (workload) =>
       new GraphileJobWorkerHost(pool, {
         ...options,
-        concurrency: workload === "interactive" ? options.concurrency : 1,
+        ...(workload === "maintenance"
+          ? {
+              concurrency: MAINTENANCE_JOB_CONCURRENCY,
+              localQueueSize: MAINTENANCE_LOCAL_QUEUE_SIZE,
+            }
+          : { concurrency: workload === "interactive" ? options.concurrency : 1 }),
         workload,
       }),
   );
@@ -415,6 +568,58 @@ export function createRoutineRetryNoticeReconciler(
   };
 }
 
+export const DEAD_JOB_RETENTION_DAYS = 7;
+const DEAD_JOB_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const DEAD_JOB_PRUNE_BATCH = 1_000;
+const DEAD_JOB_PRUNE_MAX_BATCHES = 50;
+
+/**
+ * Graphile keeps a job that exhausted its retries forever, and its own maintenance scans them.
+ * Delete them once they are old enough that nobody is still diagnosing the failure. Exhausted
+ * `routine.retry` rows are notice requests, which their reconciler deletes after delivery.
+ *
+ * Graphile's `cleanup` task deletes every exhausted job regardless of age or task, and
+ * `completeJobs` deletes by id without rechecking, so a keyed job replaced back to life between
+ * a select and the delete would go with it. This deletes in one statement that rechecks.
+ */
+export function createDeadJobPruner(
+  pool: Pick<Pool, "query">,
+  options: { retentionDays?: number; intervalMs?: number } = {},
+): () => Promise<void> {
+  const retentionDays = options.retentionDays ?? DEAD_JOB_RETENTION_DAYS;
+  const intervalMs = options.intervalMs ?? DEAD_JOB_PRUNE_INTERVAL_MS;
+  let lastRun: number | undefined;
+  return async () => {
+    const now = Date.now();
+    if (lastRun !== undefined && now - lastRun < intervalMs) return;
+    lastRun = now;
+    let removed = 0;
+    for (let batch = 0; batch < DEAD_JOB_PRUNE_MAX_BATCHES; batch += 1) {
+      const { rowCount } = await pool.query(
+        `delete from graphile_worker._private_jobs as jobs
+         where jobs.id in (
+           select dead.id
+           from graphile_worker._private_jobs as dead
+           join graphile_worker._private_tasks as tasks on tasks.id = dead.task_id
+           where dead.attempts >= dead.max_attempts and dead.locked_at is null
+             and dead.updated_at < now() - make_interval(days => $1::int)
+             and tasks.identifier <> 'routine.retry'
+           order by dead.id
+           limit $2
+           for update of dead skip locked
+         )
+         and jobs.attempts >= jobs.max_attempts and jobs.locked_at is null`,
+        [retentionDays, DEAD_JOB_PRUNE_BATCH],
+      );
+      removed += rowCount ?? 0;
+      if ((rowCount ?? 0) < DEAD_JOB_PRUNE_BATCH) break;
+    }
+    if (removed > 0) getLogger().info("jobs.dead_pruned", { "jobs.removed": removed });
+  };
+}
+
+const LAST_ATTEMPT = { number: 1, max: 1 } as const;
+
 /** Graphile's default when a job sets no cap. */
 const DEFAULT_JOB_MAX_ATTEMPTS = 25;
 
@@ -491,6 +696,17 @@ export class InMemoryJobQueue implements JobPublisher, JobWorkerHost {
     this.scheduled.set(timer, stored);
     if (stored.replaceKey) this.keyed.set(stored.replaceKey, timer);
   }
+
+  /** Not transactional: a job whose transaction rolls back still runs, and finds nothing to do. */
+  async enqueueIn(_tx: JobTransaction, job: BackgroundJob): Promise<void> {
+    await this.enqueue(job);
+  }
+
+  /**
+   * Not transactional either, so the job stays: it runs when due and finds nothing to do, and a
+   * transaction that rolls back never loses the backup it still needs.
+   */
+  async cancelIn(_tx: JobTransaction, _replaceKey: string): Promise<void> {}
 
   async cancel(replaceKey: string): Promise<void> {
     const closing = this.closingJobs.findIndex((job) => job.replaceKey === replaceKey);
@@ -571,7 +787,8 @@ export class InMemoryJobQueue implements JobPublisher, JobWorkerHost {
       name: job.name,
       payload: unpacked.payload,
       correlation: unpacked.correlation,
-      run: () => dispatchJob(handlers, job.name, unpacked.payload),
+      // Nothing here retries a failed job, so every try is the last one.
+      run: () => dispatchJob(handlers, job.name, unpacked.payload, undefined, LAST_ATTEMPT),
     }).catch(() => {
       this.failures.set(job.name, (this.failures.get(job.name) ?? 0) + 1);
     });

@@ -3,13 +3,9 @@ import * as SecureStore from "expo-secure-store";
 import { Alert } from "react-native";
 import { create, get, isSupported } from "react-native-passkeys";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  authHeaders,
-  clearSpace,
-  currentApiBase,
-  fetchMobileJson,
-  passwordResetCapabilities,
-} from "./api";
+import { authHeaders, currentApiBase, fetchMobileJson } from "./api";
+import { passwordResetCapabilities } from "./api-auth";
+import { clearSpace } from "./api-server";
 import {
   addPasskey,
   listPasskeys,
@@ -29,11 +25,16 @@ vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn
 const platform = vi.hoisted(() => ({ OS: "ios" }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() }, Platform: platform }));
 vi.mock("react-native-passkeys", () => ({ isSupported: vi.fn(), get: vi.fn(), create: vi.fn() }));
+vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({
   authHeaders: vi.fn(async () => ({ authorization: "Bearer current-session" })),
-  clearSpace: vi.fn(async () => true),
   currentApiBase: vi.fn(() => "https://cortexai-agent-hub.example.test"),
   fetchMobileJson: vi.fn(),
+}));
+vi.mock("./api-server", () => ({
+  clearSpace: vi.fn(async () => true),
+}));
+vi.mock("./api-auth", () => ({
   passwordResetCapabilities: vi.fn(),
 }));
 vi.mock("./session", () => ({
@@ -46,7 +47,9 @@ vi.mock("./session", () => ({
 const CHALLENGE = "__Secure-better-auth.better-auth-passkey=token.c2lnbmF0dXJl%3D";
 const credential = { id: "cred", rawId: "cred", type: "public-key", response: {} };
 
-function challengeResponse(body: unknown = { challenge: "challenge" }) {
+function challengeResponse(
+  body: unknown = { challenge: "challenge", rpId: "cortexai-agent-hub.example.test" },
+) {
   return {
     response: new Response(null, {
       headers: { "set-cookie": `${CHALLENGE}; Path=/; HttpOnly; Secure; SameSite=Lax` },
@@ -121,6 +124,21 @@ describe("passkey availability", () => {
     constants.expoConfig.extra.passkeyRpIds = [];
     await expect(passkeysAvailable(server("cortexai-agent-hub.example.test"))).resolves.toBe(false);
   });
+
+  it.each(["https://attacker.example.test", "http://cortexai-agent-hub.example.test"])(
+    "does not trust a server at %s advertising an associated RP",
+    async (apiBase) => {
+      vi.mocked(currentApiBase).mockReturnValue(apiBase);
+      await expect(passkeysAvailable(server("cortexai-agent-hub.example.test"))).resolves.toBe(
+        false,
+      );
+    },
+  );
+
+  it("allows an HTTPS subdomain of an associated RP", async () => {
+    vi.mocked(currentApiBase).mockReturnValue("https://api.cortexai-agent-hub.example.test");
+    await expect(passkeysAvailable(server("cortexai-agent-hub.example.test"))).resolves.toBe(true);
+  });
 });
 
 describe("passkey sign-in", () => {
@@ -138,7 +156,10 @@ describe("passkey sign-in", () => {
     await expect(signInWithPasskey()).resolves.toBe(true);
     const [options, verify] = requests();
     expect(options?.path).toBe("/api/auth/passkey/generate-authenticate-options");
-    expect(get).toHaveBeenCalledWith({ challenge: "challenge" });
+    expect(get).toHaveBeenCalledWith({
+      challenge: "challenge",
+      rpId: "cortexai-agent-hub.example.test",
+    });
     expect(verify?.path).toBe("/api/auth/passkey/verify-authentication");
     expect(verify?.headers).toMatchObject({ origin: "cortexai-agent-hub://", cookie: CHALLENGE });
     expect(verify?.headers).not.toHaveProperty("authorization");
@@ -189,7 +210,7 @@ describe("passkey sign-in", () => {
       .mockReset()
       .mockResolvedValueOnce({
         response: Response.json({}),
-        body: { challenge: "challenge" },
+        body: { challenge: "challenge", rpId: "cortexai-agent-hub.example.test" },
       });
     await expect(signInWithPasskey()).rejects.toThrow("Could not continue");
     expect(get).not.toHaveBeenCalled();
@@ -204,19 +225,49 @@ describe("passkey sign-in", () => {
       "Too many attempts. Try again in a few minutes.",
     );
   });
+
+  it("refuses a custom server relaying another server's challenge", async () => {
+    vi.mocked(currentApiBase).mockReturnValue("https://attacker.example.test");
+    await expect(signInWithPasskey()).rejects.toThrow("Could not continue");
+    expect(get).not.toHaveBeenCalled();
+    expect(fetchMobileJson).toHaveBeenCalledOnce();
+    expect(replaceSessionTokenIfCurrent).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "other.example.test"])("rejects challenge RP %s", async (rpId) => {
+    vi.mocked(fetchMobileJson)
+      .mockReset()
+      .mockResolvedValueOnce(
+        challengeResponse({
+          challenge: "challenge",
+          rpId,
+        }),
+      );
+    await expect(signInWithPasskey()).rejects.toThrow("Could not continue");
+    expect(get).not.toHaveBeenCalled();
+    expect(fetchMobileJson).toHaveBeenCalledOnce();
+  });
 });
 
 describe("passkey registration", () => {
   it("registers with the session and the challenge cookie", async () => {
     vi.mocked(fetchMobileJson)
-      .mockResolvedValueOnce(challengeResponse({ challenge: "register" }))
+      .mockResolvedValueOnce(
+        challengeResponse({
+          challenge: "register",
+          rp: { id: "cortexai-agent-hub.example.test", name: "CortexAI Agent Hub" },
+        }),
+      )
       .mockResolvedValueOnce({ response: Response.json({}), body: { id: "passkey-1" } });
     vi.mocked(create).mockResolvedValue(credential as never);
     await expect(addPasskey()).resolves.toBe(true);
     const [options, verify] = requests();
     expect(options?.path).toBe("/api/auth/passkey/generate-register-options");
     expect(options?.headers).toMatchObject({ authorization: "Bearer current-session" });
-    expect(create).toHaveBeenCalledWith({ challenge: "register" });
+    expect(create).toHaveBeenCalledWith({
+      challenge: "register",
+      rp: { id: "cortexai-agent-hub.example.test", name: "CortexAI Agent Hub" },
+    });
     expect(verify?.path).toBe("/api/auth/passkey/verify-registration");
     expect(verify?.headers).toMatchObject({
       authorization: "Bearer current-session",
@@ -238,7 +289,12 @@ describe("passkey registration", () => {
   });
 
   it("resolves false when the person cancels", async () => {
-    vi.mocked(fetchMobileJson).mockResolvedValueOnce(challengeResponse());
+    vi.mocked(fetchMobileJson).mockResolvedValueOnce(
+      challengeResponse({
+        challenge: "register",
+        rp: { id: "cortexai-agent-hub.example.test", name: "CortexAI Agent Hub" },
+      }),
+    );
     vi.mocked(create).mockRejectedValue({ code: "ERR_USER_CANCELLED" });
     await expect(addPasskey()).resolves.toBe(false);
     expect(fetchMobileJson).toHaveBeenCalledOnce();
@@ -251,6 +307,19 @@ describe("passkey registration", () => {
     });
     await expect(addPasskey()).rejects.toThrow();
     expect(fetchMobileJson).not.toHaveBeenCalled();
+  });
+
+  it("does not register a passkey for an unrelated RP", async () => {
+    constants.expoConfig.extra.passkeyRpIds.push("other.example.test");
+    vi.mocked(fetchMobileJson).mockResolvedValueOnce(
+      challengeResponse({
+        challenge: "register",
+        rp: { id: "other.example.test", name: "Other" },
+      }),
+    );
+    await expect(addPasskey()).rejects.toThrow("Could not continue");
+    expect(create).not.toHaveBeenCalled();
+    expect(fetchMobileJson).toHaveBeenCalledOnce();
   });
 });
 
@@ -327,7 +396,12 @@ describe("one-time passkey offer", () => {
     vi.mocked(fetchMobileJson)
       .mockResolvedValueOnce(session(60_000))
       .mockResolvedValueOnce({ response: Response.json([]), body: [] })
-      .mockResolvedValueOnce(challengeResponse())
+      .mockResolvedValueOnce(
+        challengeResponse({
+          challenge: "register",
+          rp: { id: "cortexai-agent-hub.example.test", name: "CortexAI Agent Hub" },
+        }),
+      )
       .mockResolvedValueOnce({ response: Response.json({}), body: {} });
     vi.mocked(create).mockResolvedValue(credential as never);
     await offerPasskeyOnce("user-1", () => true);

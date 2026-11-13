@@ -15,6 +15,7 @@ import {
 import { useLingui } from "@lingui/react/macro";
 import { ChevronDown, Phone, PhoneIncoming, PhoneMissed } from "lucide-react";
 import { useState } from "react";
+import { BuiCard } from "../ai/primitives";
 
 export function VoiceChatCard({
   group,
@@ -77,11 +78,11 @@ export function VoiceChatCard({
   const expandable = transcript.some((line) => line.text);
   const Icon = !request ? Phone : missed ? PhoneMissed : PhoneIncoming;
   return (
-    <div
+    <BuiCard
       data-testid="voice-chat-card"
       data-call-status={request?.status}
       className={cn(
-        "w-full max-w-[min(74%,calc(100%_-_6rem))] rounded-[20px] border border-border bg-card",
+        "w-full max-w-[min(74%,calc(100%_-_6rem))]",
         // The user's own call sits on their side; the bot's call on the bot's.
         request ? "me-auto" : "ms-auto",
       )}
@@ -101,9 +102,9 @@ export function VoiceChatCard({
             )}
             aria-hidden="true"
           />
-          <span className="text-sm font-medium text-foreground">{title}</span>
+          <span className="text-body font-medium text-foreground">{title}</span>
           {detail ? (
-            <span className="truncate text-xs tabular-nums text-muted-foreground">{detail}</span>
+            <span className="truncate text-label tabular-nums text-muted-foreground">{detail}</span>
           ) : null}
           {expandable ? (
             <span
@@ -123,19 +124,19 @@ export function VoiceChatCard({
           ) : null}
         </button>
         {missed && onCallBack ? (
-          <Button size="sm" className="shrink-0 rounded-full" onClick={onCallBack}>
+          <Button size="sm" className="shrink-0" onClick={onCallBack}>
             {t`Call back`}
           </Button>
         ) : null}
       </div>
       {!open && summary ? (
-        <p className="truncate px-3 pb-2 text-sm text-muted-foreground" dir="auto">
+        <p className="truncate px-3 pb-2 text-body text-muted-foreground" dir="auto">
           {summary}
         </p>
       ) : null}
       <Collapsible open={open} className="contents">
         <CollapsibleContent className="flex flex-col">
-          <div className="space-y-1.5 px-3 pb-3 text-sm">
+          <div className="space-y-1.5 px-3 pb-3 text-body">
             {transcript.map((line) => {
               if (!line.text) {
                 return <span key={line.id} data-message-id={line.id} className="sr-only" />;
@@ -158,6 +159,6 @@ export function VoiceChatCard({
           </div>
         </CollapsibleContent>
       </Collapsible>
-    </div>
+    </BuiCard>
   );
 }

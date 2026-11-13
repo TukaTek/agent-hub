@@ -1,8 +1,10 @@
+import { withConnectionName } from "@cortexai-agent-hub/contracts";
 import type { ChatModelChoice } from "@cortexai-agent-hub/core";
-import { groupModelChoices } from "@cortexai-agent-hub/core";
+import { groupModelChoices, modelChoiceSearchText } from "@cortexai-agent-hub/core";
+import { useLingui } from "@lingui/react/macro";
 import { useNavigation } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ViewToken } from "react-native";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import type { ListViewToken } from "react-native";
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -10,13 +12,14 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFloatingHeaderInset } from "../lib/floating-header";
-import { useI18n } from "../lib/i18n";
 import { native, useThemedStyles } from "../lib/native";
+import { useSideInsets } from "../lib/side-insets";
+import { useListSearch } from "../lib/use-list-search";
+import { ListSearchInput } from "./list-search-input";
 import { Checkmark } from "./row-accessories";
 import { SettingsLabel, SettingsRow } from "./settings-group";
 import { TextOnlyMark } from "./text-only-mark";
@@ -29,8 +32,11 @@ export function ModelPickerList({
   error,
   providerLabel,
   emptyMessage,
+  connectChoices,
 }: {
   choices: readonly ChatModelChoice[] | null;
+  /** Providers that need a connection first, listed after the models. */
+  connectChoices?: readonly ChatModelChoice[];
   selectedKey: string;
   onSelect: (choice: ChatModelChoice) => void;
   error?: string | null;
@@ -38,9 +44,10 @@ export function ModelPickerList({
   /** A single-provider picker only needs vendor headings. */
   providerLabel?: string;
 }) {
-  const { t } = useI18n();
+  const { t } = useLingui();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const sideInsets = useSideInsets();
   const styles = useThemedStyles(createStyles);
   const headerInset = useFloatingHeaderInset();
   const list = useRef<SectionList<ChatModelChoice>>(null);
@@ -62,7 +69,16 @@ export function ModelPickerList({
     },
     [],
   );
-  const [query, setQuery] = useState("");
+  const rows = [
+    ...(choices ?? []).map((choice) => ({ choice, connect: false })),
+    ...(connectChoices ?? []).map((choice) => ({
+      choice: { ...choice, providerLabel: undefined },
+      connect: true,
+    })),
+  ];
+  const { query, setQuery, showSearch, visible } = useListSearch(rows, {
+    text: (row) => modelChoiceSearchText(row.choice),
+  });
   const changeQuery = useCallback(
     (text: string) => {
       cancelInitialScroll();
@@ -73,34 +89,44 @@ export function ModelPickerList({
   useLayoutEffect(() => {
     if (Platform.OS === "android") return;
     navigation.setOptions({
-      headerSearchBarOptions: {
-        placeholder: t("Search"),
-        hideWhenScrolling: false,
-        hideNavigationBar: false,
-        autoCapitalize: "none",
-        onChangeText: (event: { nativeEvent: { text: string } }) =>
-          changeQuery(event.nativeEvent.text),
-        onCancelButtonPress: () => changeQuery(""),
-        onClose: () => changeQuery(""),
-      },
+      headerSearchBarOptions: showSearch
+        ? {
+            placeholder: t`Search`,
+            hideWhenScrolling: false,
+            hideNavigationBar: false,
+            autoCapitalize: "none",
+            onChangeText: (event: { nativeEvent: { text: string } }) =>
+              changeQuery(event.nativeEvent.text),
+            onCancelButtonPress: () => changeQuery(""),
+            onClose: () => changeQuery(""),
+          }
+        : undefined,
     });
-  }, [navigation, t, changeQuery]);
+  }, [navigation, t, changeQuery, showSearch]);
 
-  const sections = useMemo(
-    () =>
-      choices
-        ? groupModelChoices(choices, query).map((section) => ({
-            ...section,
-            heading:
-              providerLabel && section.heading === providerLabel
-                ? undefined
-                : providerLabel && section.heading?.startsWith(`${providerLabel} · `)
-                  ? section.heading.slice(providerLabel.length + 3)
-                  : section.heading,
-          }))
-        : [],
-    [choices, query, providerLabel],
-  );
+  const sections = useMemo(() => {
+    if (!choices) return [];
+    const models = groupModelChoices(
+      visible.flatMap((row) => (row.connect ? [] : [row.choice])),
+      "",
+    ).map((section) => ({
+      ...section,
+      connect: false,
+      heading:
+        providerLabel && section.heading === providerLabel
+          ? undefined
+          : providerLabel && section.heading?.endsWith(withConnectionName("", providerLabel))
+            ? section.heading.slice(0, -withConnectionName("", providerLabel).length)
+            : section.heading,
+    }));
+    const connect = groupModelChoices(
+      visible.flatMap((row) => (row.connect ? [row.choice] : [])),
+      "",
+    ).flatMap((section) => section.data);
+    return connect.length
+      ? [...models, { key: "connect", heading: undefined, connect: true, data: connect }]
+      : models;
+  }, [choices, visible, providerLabel]);
   useLayoutEffect(() => {
     const state = initialScroll.current;
     if (state.handled || state.cancelled || choices === null) return;
@@ -117,7 +143,7 @@ export function ModelPickerList({
 
   // Viewability is reported after layout, including when an async catalog arrives.
   const revealInitialSelection = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken<ChatModelChoice>[] }) => {
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
       const state = initialScroll.current;
       if (
         !state.ready ||
@@ -165,7 +191,7 @@ export function ModelPickerList({
     [],
   );
 
-  const noMatchesMessage = emptyMessage ?? t("No matching models");
+  const noMatchesMessage = emptyMessage ?? t`No matching models`;
   const noMatches = choices !== null && sections.length === 0;
 
   // The search field keeps focus, so tell screen readers once when the results run out.
@@ -180,7 +206,7 @@ export function ModelPickerList({
       onScrollToIndexFailed={retryInitialSelection}
       onScrollBeginDrag={cancelInitialScroll}
       key={Platform.OS === "android" ? "android" : query}
-      style={styles.screen}
+      style={[styles.screen, sideInsets]}
       contentContainerStyle={[
         styles.content,
         { paddingTop: headerInset + 16, paddingBottom: insets.bottom + 72 },
@@ -207,19 +233,9 @@ export function ModelPickerList({
         </View>
       )}
       ListHeaderComponent={
-        Platform.OS === "android" ? (
-          <TextInput
-            accessibilityLabel={t("Search")}
-            placeholder={t("Search")}
-            placeholderTextColor={native.secondaryLabel}
-            value={query}
-            onChangeText={changeQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-            style={styles.search}
-          />
-        ) : null
+        Platform.OS === "android" && showSearch ? (
+          <ListSearchInput query={query} setQuery={changeQuery} />
+        ) : undefined
       }
       ListEmptyComponent={
         error || noMatches ? (
@@ -241,11 +257,13 @@ export function ModelPickerList({
             <SettingsRow
               accessibilityRole="button"
               accessibilityLabel={item.label}
-              accessibilityHint={item.images === false ? t("Can't read images") : undefined}
+              accessibilityHint={item.images === false ? t`Can't read images` : undefined}
               accessibilityState={{ selected }}
               onPress={() => onSelect(item)}
               title={item.title ?? item.label}
               detail={item.detail}
+              value={section.connect ? t`Connect` : undefined}
+              chevron={section.connect ? "right" : undefined}
               trailing={
                 item.images === false || selected ? (
                   <View style={styles.trailing}>
@@ -276,14 +294,6 @@ function createStyles() {
       height: StyleSheet.hairlineWidth,
       marginStart: 16,
       backgroundColor: native.separator,
-    },
-    search: {
-      color: native.label,
-      backgroundColor: native.fill,
-      borderRadius: 10,
-      padding: 12,
-      marginBottom: 16,
-      fontSize: 17,
     },
     empty: {
       color: native.secondaryLabel,

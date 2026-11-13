@@ -3,15 +3,18 @@ import { Trans } from "@lingui/react/macro";
 import { useId, useState } from "react";
 import type { ConnectionMode } from "./ConnectionModeFields";
 import { ConnectionModeFields } from "./ConnectionModeFields";
+import { MemoryProviderAdvanced } from "./MemoryProviderAdvanced";
 import type { MemoryProviderConnectionDraft, MemoryProviderSettingsFormProps } from "./registry";
 
-const DEFAULT_LOCAL_BASE_URL = "http://localhost:6767";
-
-export function SupermemorySettingsForm({ busy, onConnect }: MemoryProviderSettingsFormProps) {
+export function SupermemorySettingsForm({
+  busy,
+  onConnect,
+  advancedSettings,
+}: MemoryProviderSettingsFormProps) {
   const apiKeyId = useId();
   const [mode, setMode] = useState<ConnectionMode>("cloud");
   const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_LOCAL_BASE_URL);
+  const [baseUrl, setBaseUrl] = useState("");
 
   async function connect() {
     if (!apiKey.trim()) return;
@@ -27,15 +30,6 @@ export function SupermemorySettingsForm({ busy, onConnect }: MemoryProviderSetti
 
   return (
     <>
-      <ConnectionModeFields
-        busy={busy}
-        mode={mode}
-        onModeChange={setMode}
-        baseUrl={baseUrl}
-        onBaseUrlChange={setBaseUrl}
-        baseUrlPlaceholder={DEFAULT_LOCAL_BASE_URL}
-      />
-
       <Field className="mt-4">
         <FieldLabel htmlFor={apiKeyId}>
           {mode === "cloud" ? <Trans>Organization API key</Trans> : <Trans>Instance API key</Trans>}
@@ -51,10 +45,21 @@ export function SupermemorySettingsForm({ busy, onConnect }: MemoryProviderSetti
         />
       </Field>
 
+      <MemoryProviderAdvanced>
+        {advancedSettings}
+        <ConnectionModeFields
+          busy={busy}
+          mode={mode}
+          onModeChange={setMode}
+          baseUrl={baseUrl}
+          onBaseUrlChange={setBaseUrl}
+        />
+      </MemoryProviderAdvanced>
+
       <Button
         type="button"
         variant="secondary"
-        className="mt-5 rounded-full"
+        className="mt-5"
         disabled={busy || apiKey.trim().length < 8 || (mode === "local" && !baseUrl.trim())}
         onClick={() => void connect()}
       >

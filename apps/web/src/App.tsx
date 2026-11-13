@@ -1,7 +1,7 @@
 import type { LinkFavicons } from "@cortexai-agent-hub/chat-ui/web";
 import { LinkFaviconsContext, RemoteImagesContext } from "@cortexai-agent-hub/chat-ui/web";
 import { analyticsScreen } from "@cortexai-agent-hub/core";
-import { Button, Skeleton } from "@cortexai-agent-hub/ui-web";
+import { Button } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import {
   Suspense,
@@ -13,15 +13,22 @@ import {
 } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 import { LoadingState } from "./components/ai/primitives";
+import { CallLayout } from "./components/call/CallLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { MarkdownLinkPrompt } from "./components/markdown-link-prompt";
+import { PageLoading } from "./components/PageLoading";
 import { SubscriptionGate } from "./components/SubscriptionGate";
 import { authClient } from "./lib/auth";
 import { getTicketBoardEnabled, subscribeTicketBoardEnabled } from "./lib/bootstrap";
+import { syncCallIdentity } from "./lib/call-session";
 import { desktopBridge } from "./lib/desktop";
+import { syncWebLogoAvatarIdentity } from "./lib/logo-avatar-activity";
 import { identifyMonitoringUser } from "./lib/monitoring";
 import { markAfterPaint, markOnce } from "./lib/performance";
 import { lazyComponent } from "./lib/preload-recovery";
-import { getRemoteImagesEnabled, subscribeRemoteImages } from "./lib/remote-images-preference";
+import { QueryUserProvider, setQueryUser } from "./lib/query";
+import { remoteImagesPreference } from "./lib/remote-images-preference";
+import { rememberSignedIn } from "./lib/returning-user";
 import { rpc } from "./lib/rpc";
 import {
   holdAnonymousGate,
@@ -30,11 +37,20 @@ import {
   sessionRetryDelayMs,
   showSessionUnavailable,
 } from "./lib/session-gate";
+import {
+  MCP_OAUTH_CALLBACK_PATH,
+  newAccountDestination,
+  SLACK_INSTALL_CALLBACK_PATH,
+  signInNext,
+} from "./lib/sign-in-next";
+import { syncLogOutFailure } from "./lib/sign-out";
 import { completeSsoCallback, SSO_CALLBACK_PATH } from "./lib/sso-flow";
 import { IntegrationCallbackPage } from "./pages/IntegrationCallback";
 import { IntegrationSetupPage } from "./pages/IntegrationSetup";
 import { McpOAuthCallbackPage } from "./pages/McpOAuthCallback";
+import { SharedPagePage } from "./pages/SharedPage";
 import { ShellPage } from "./pages/Shell";
+import { SlackInstallCallbackPage } from "./pages/SlackInstallCallback";
 
 const AuthPage = lazyComponent(() => import("./pages/Auth").then((module) => module.AuthPage));
 const PasswordResetPage = lazyComponent(() =>
@@ -43,10 +59,25 @@ const PasswordResetPage = lazyComponent(() =>
 const OnboardingPage = lazyComponent(() =>
   import("./pages/Onboarding").then((module) => module.OnboardingPage),
 );
+const NotFoundPage = lazyComponent(() =>
+  import("./pages/NotFound").then((module) => module.NotFoundPage),
+);
 const ArtifactsPage = lazyComponent(() =>
   import("./pages/Artifacts").then((module) => module.ArtifactsPage),
 );
 const BoardPage = lazyComponent(() => import("./pages/Board").then((module) => module.BoardPage));
+const AdminPluginsPage = lazyComponent(() =>
+  import("./pages/AdminPluginsPage").then((module) => module.AdminPluginsPage),
+);
+const AdminAccessPage = lazyComponent(() =>
+  import("./pages/AdminAccessPage").then((module) => module.AdminAccessPage),
+);
+const NavLinkPage = lazyComponent(() =>
+  import("./pages/NavLinkPage").then((module) => module.NavLinkPage),
+);
+const InvitePage = lazyComponent(() =>
+  import("./pages/Invite").then((module) => module.InvitePage),
+);
 
 function SsoCallbackPage() {
   useEffect(() => {
@@ -61,11 +92,7 @@ const linkFavicons: LinkFavicons = {
 };
 
 export function App() {
-  const loadRemoteImages = useSyncExternalStore(
-    subscribeRemoteImages,
-    getRemoteImagesEnabled,
-    () => false,
-  );
+  const loadRemoteImages = remoteImagesPreference.use();
   return (
     <RemoteImagesContext.Provider value={loadRemoteImages}>
       <LinkFaviconsContext.Provider value={linkFavicons}>
@@ -85,15 +112,14 @@ export function App() {
 
 function SessionApp() {
   const [searchParams] = useSearchParams();
-  const signInDestination =
-    searchParams.get("next") === "/integrations/setup" ? "/integrations/setup" : "/app";
+  const next = signInNext(searchParams.get("next"));
   const ticketBoardEnabled = useSyncExternalStore(
     subscribeTicketBoardEnabled,
     getTicketBoardEnabled,
     () => false,
   );
   const session = authClient.useSession();
-  const pathname = useLocation().pathname;
+  const { pathname, search } = useLocation();
   const screen = analyticsScreen(pathname);
   const analyticsUserId = session.data?.user.id;
   const lastScreen = useRef<string | undefined>(undefined);
@@ -116,6 +142,16 @@ function SessionApp() {
       .catch(() => undefined);
   }, [analyticsUserId, screen]);
   const gate = sessionGate(session);
+  useLayoutEffect(() => {
+    if (gate !== "authenticated" && gate !== "anonymous") return;
+    syncWebLogoAvatarIdentity(analyticsUserId ?? null);
+    syncCallIdentity(analyticsUserId ?? null);
+    syncLogOutFailure(gate === "authenticated");
+    if (gate === "authenticated") rememberSignedIn();
+  }, [gate, analyticsUserId]);
+  useEffect(() => {
+    if (gate === "authenticated" || gate === "anonymous") setQueryUser(analyticsUserId ?? null);
+  }, [gate, analyticsUserId]);
   const [holdingUnreachable, setHoldingUnreachable] = useState(false);
   const nextHolding = holdUnreachableGate(gate, holdingUnreachable);
   if (nextHolding !== holdingUnreachable) setHoldingUnreachable(nextHolding);
@@ -133,75 +169,136 @@ function SessionApp() {
     return <SessionUnavailable refetch={session.refetch} />;
   }
   if (gate === "loading" && !nextHoldingAnonymous) {
-    return window.location.pathname.startsWith("/app") ? (
-      <ShellSkeleton />
-    ) : (
-      <div className="h-full bg-background" data-cortexai-agent-hub-app-state="session-pending" />
-    );
+    return <PageLoading data-cortexai-agent-hub-app-state="session-pending" />;
   }
 
   const user = session.data?.user;
   return (
-    <div className="h-full" data-cortexai-agent-hub-app-state="ready">
-      <Suspense fallback={<div className="h-full bg-background" />}>
-        <Routes>
-          <Route
-            path="/"
-            element={user ? <Navigate to="/app" replace /> : <AuthPage key="entry" mode="entry" />}
-          />
-          <Route
-            path="/sign-in"
-            element={
-              user ? <Navigate to={signInDestination} replace /> : <AuthPage key="in" mode="in" />
-            }
-          />
-          <Route
-            path="/sign-up"
-            element={user ? <Navigate to="/onboarding" replace /> : <AuthPage key="up" mode="up" />}
-          />
-          <Route
-            path="/forgot-password"
-            element={
-              user ? <Navigate to="/app" replace /> : <AuthPage key="forgot" mode="forgot" />
-            }
-          />
-          <Route path="/reset-password" element={<PasswordResetPage />} />
-          <Route
-            path="/mcp/oauth/callback"
-            element={user ? <McpOAuthCallbackPage /> : <Navigate to="/sign-in" replace />}
-          />
-          <Route
-            path="/integrations/setup"
-            element={
-              user ? (
-                <IntegrationSetupPage />
-              ) : (
-                <Navigate to="/sign-in?next=/integrations/setup" replace />
-              )
-            }
-          />
-          <Route
-            element={
-              user ? (
-                <SubscriptionGate fallback={<GateFallback />}>
-                  <Outlet />
-                </SubscriptionGate>
-              ) : (
-                <Navigate to="/sign-in" replace />
-              )
-            }
-          >
-            <Route path="/onboarding/:step?" element={<OnboardingPage />} />
-            <Route path="/app" element={<ShellPage />} />
-            <Route path="/app/g/:groupId" element={<ShellPage />} />
-            <Route path="/app/artifacts" element={<ArtifactsPage />} />
-            <Route path="/app/artifacts/:artifactId" element={<ArtifactsPage />} />
-            {ticketBoardEnabled ? <Route path="/app/board" element={<BoardPage />} /> : null}
-            <Route path="/app/:botId" element={<ShellPage />} />
-          </Route>
-        </Routes>
-      </Suspense>
-    </div>
+    <QueryUserProvider value={user?.id ?? null}>
+      <MarkdownLinkPrompt>
+        <div className="h-full" data-cortexai-agent-hub-app-state="ready">
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  user ? <Navigate to="/app" replace /> : <AuthPage key="entry" mode="entry" />
+                }
+              />
+              <Route
+                path="/sign-in"
+                element={
+                  user ? <Navigate to={next ?? "/app"} replace /> : <AuthPage key="in" mode="in" />
+                }
+              />
+              <Route
+                path="/sign-up"
+                element={
+                  user ? (
+                    <Navigate to={newAccountDestination(next)} replace />
+                  ) : (
+                    <AuthPage key="up" mode="up" />
+                  )
+                }
+              />
+              <Route
+                path="/forgot-password"
+                element={
+                  user ? <Navigate to="/app" replace /> : <AuthPage key="forgot" mode="forgot" />
+                }
+              />
+              <Route path="/reset-password" element={<PasswordResetPage />} />
+              <Route path="/p/:slugToken" element={<SharedPagePage />} />
+              <Route
+                path={MCP_OAUTH_CALLBACK_PATH}
+                element={
+                  user ? (
+                    <McpOAuthCallbackPage />
+                  ) : (
+                    <Navigate
+                      to={`/sign-in?next=${encodeURIComponent(pathname + search)}`}
+                      replace
+                    />
+                  )
+                }
+              />
+              <Route
+                path={SLACK_INSTALL_CALLBACK_PATH}
+                element={
+                  user ? (
+                    <SlackInstallCallbackPage />
+                  ) : (
+                    <Navigate
+                      to={`/sign-in?next=${encodeURIComponent(pathname + search)}`}
+                      replace
+                    />
+                  )
+                }
+              />
+              <Route
+                path="/integrations/setup"
+                element={
+                  user ? (
+                    <IntegrationSetupPage />
+                  ) : (
+                    <Navigate to="/sign-in?next=/integrations/setup" replace />
+                  )
+                }
+              />
+              <Route
+                path="/admin/plugins"
+                element={
+                  user ? (
+                    <AdminPluginsPage />
+                  ) : (
+                    <Navigate to="/sign-in?next=/admin/plugins" replace />
+                  )
+                }
+              />
+              <Route
+                path="/invite/:token"
+                element={
+                  user ? (
+                    <InvitePage />
+                  ) : (
+                    <Navigate to={`/sign-in?next=${encodeURIComponent(pathname)}`} replace />
+                  )
+                }
+              />
+              <Route
+                path="/admin/access"
+                element={
+                  user ? <AdminAccessPage /> : <Navigate to="/sign-in?next=/admin/access" replace />
+                }
+              />
+              <Route
+                element={
+                  user ? (
+                    <SubscriptionGate fallback={<PageLoading />}>
+                      <Outlet />
+                    </SubscriptionGate>
+                  ) : (
+                    <Navigate to="/sign-in" replace />
+                  )
+                }
+              >
+                <Route path="/app" element={<ShellPage />} />
+                <Route path="/app/g/:groupId" element={<ShellPage />} />
+                <Route path="/app/:botId" element={<ShellPage />} />
+                <Route element={<CallLayout />}>
+                  <Route path="/onboarding/:step?" element={<OnboardingPage />} />
+                  <Route path="/app/artifacts" element={<ArtifactsPage />} />
+                  <Route path="/app/artifacts/:artifactId" element={<ArtifactsPage />} />
+                  {ticketBoardEnabled ? <Route path="/app/board" element={<BoardPage />} /> : null}
+                  <Route path="/app/x/:linkId" element={<NavLinkPage />} />
+                </Route>
+              </Route>
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </Suspense>
+        </div>
+      </MarkdownLinkPrompt>
+    </QueryUserProvider>
   );
 }
 
@@ -237,13 +334,12 @@ function SessionUnavailable({ refetch }: { refetch: () => Promise<void> }) {
     <div className="grid h-full place-items-center bg-background px-6 text-center">
       <div className="flex flex-col items-center">
         <LoadingState label={t`Reconnecting`} />
-        <p className="mt-3 text-[13.5px] text-muted-foreground/80">
+        <p className="mt-3 text-body text-muted-foreground/80">
           <Trans>Can&apos;t reach the server.</Trans>
         </p>
         <div className="mt-4">
           <Button
             variant="secondary"
-            className="rounded-full"
             onClick={() => {
               retryImmediately.current = true;
               setAttempt(0);
@@ -266,58 +362,15 @@ function AppFailed() {
       data-cortexai-agent-hub-app-state="failed"
     >
       <div className="flex flex-col items-center">
-        <p className="text-[13.5px] text-muted-foreground/80">
+        <p className="text-body text-muted-foreground/80">
           <Trans>Something went wrong. Try again.</Trans>
         </p>
         <div className="mt-4">
-          <Button
-            variant="secondary"
-            className="rounded-full"
-            onClick={() => window.location.reload()}
-          >
+          <Button variant="secondary" onClick={() => window.location.reload()}>
             <Trans>Refresh</Trans>
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function GateFallback() {
-  return window.location.pathname.startsWith("/app") ? (
-    <ShellSkeleton />
-  ) : (
-    <div className="h-full bg-background" />
-  );
-}
-
-function ShellSkeleton() {
-  return (
-    <div
-      className="flex h-full overflow-hidden bg-background"
-      data-cortexai-agent-hub-app-state="session-pending"
-    >
-      <aside className="hidden w-[316px] shrink-0 border-e border-sidebar-border bg-sidebar px-3.5 pt-16 md:block">
-        <Skeleton className="h-10 rounded-xl" />
-        <div className="mt-5 space-y-2 px-1">
-          {[0, 1, 2, 3].map((row) => (
-            <div key={row} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
-              <Skeleton className="size-9 rounded-full" />
-              <div className="flex-1 space-y-2">
-                <Skeleton className="h-3 w-2/5" />
-                <Skeleton className="h-2.5 w-4/5" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </aside>
-      <main className="flex flex-1 flex-col">
-        <div className="h-[74px] border-b border-sidebar-border" />
-        <div className="flex flex-1 items-center justify-center text-[14px] text-muted-foreground">
-          <Trans>Opening your Space…</Trans>
-        </div>
-        <div className="mx-6 mb-6 h-[54px] rounded-full border border-border bg-background" />
-      </main>
     </div>
   );
 }

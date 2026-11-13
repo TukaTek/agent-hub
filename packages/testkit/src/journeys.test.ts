@@ -4,6 +4,7 @@ import path from "node:path";
 import { runJobKey } from "@cortexai-agent-hub/adapter-kit";
 import {
   ComposioConnector,
+  createJobReconciler,
   createScheduleFromTool,
   DesktopSandboxProvider,
   DestinationEmulator,
@@ -12,10 +13,20 @@ import {
   handoffToGroupBot,
   listPiCatalog,
   organizeBot,
+  returnHelperOutcome,
+  startBackgroundHelper,
   toComputerRef,
 } from "@cortexai-agent-hub/adapters";
+import type { createApp } from "@cortexai-agent-hub/api/app";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { ACTIVE_RUN_STATUSES, ONCE_ROUTINE_CRON } from "@cortexai-agent-hub/core";
+import {
+  ACTIVE_RUN_STATUSES,
+  ONCE_ROUTINE_CRON,
+  resolveScreenProxySecret,
+  settleRunSubagents,
+  stuckWorkStatusMessages,
+} from "@cortexai-agent-hub/core";
+import { openScreenCapability } from "@cortexai-agent-hub/core/node/screen-capability";
 import {
   appendEvent,
   createThreadEvents,
@@ -24,14 +35,13 @@ import {
   runAsSystem,
 } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { createApp } from "../../../apps/api/src/app.ts";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "./discard-bot-intro.js";
 import { sessionCookieHeader } from "./index.js";
 import { createModelConnectionFixtureFetch } from "./model-connection-fixture.js";
 import { asSystem } from "./system-db.js";
 
-type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
+type App = { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 process.env.WAKEUP_DRIVER = "memory";
 process.env.SANDBOX_PROVIDER = "fake";
 process.env.AGENT_RUNTIME = "scripted";
@@ -52,9 +62,14 @@ describeJourneys("required product journeys", () => {
   const stamp = Date.now();
   const dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-journey-"));
 
+  /** Runs every action without a card, for journeys about something other than approvals. */
+  async function runWithoutAsking(cookie: string) {
+    await rpc(app, cookie, "autoReview/set", { mode: "never" });
+  }
+
   async function sendAndWait(app: App, cookie: string, botId: string, text: string) {
     const { runId } = await rpc<{ runId: string }>(app, cookie, "threads/send", { botId, text });
-    let terminal: { status: string; error: string | null } | null = null;
+    let terminal = null as { status: string; error: string | null } | null;
     await waitForDatabase(async () => {
       terminal = await prisma.run.findUnique({
         where: { id: runId },
@@ -102,7 +117,7 @@ describeJourneys("required product journeys", () => {
       }
     }
     for (const runId of targets) {
-      let terminal: { status: string; error: string | null } | null = null;
+      let terminal = null as { status: string; error: string | null } | null;
       await waitForDatabase(async () => {
         terminal = await prisma.run.findUnique({
           where: { id: runId },
@@ -121,7 +136,7 @@ describeJourneys("required product journeys", () => {
   }
 
   beforeAll(async () => {
-    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     const handles = await createApp({
       modelConnectionFetch: createModelConnectionFixtureFetch(listPiCatalog()),
       databaseUrl: process.env.DATABASE_URL!,
@@ -372,7 +387,7 @@ describeJourneys("required product journeys", () => {
       const computer = await prisma.computer.findFirstOrThrow({
         where: { bots: { some: { id: bot.id } } },
       });
-      return computer.controlHolder === "user" && computer.controlRunId === runId;
+      return computer.controlHolder === "user" && computer.controlBotId === bot.id;
     });
 
     for (const proc of ["computer/update", "computer/recover", "computer/reset"] as const) {
@@ -387,7 +402,6 @@ describeJourneys("required product journeys", () => {
     });
     expect(computer.controlHolder).toBe("user");
     expect(computer.controlLeaseId).not.toBeNull();
-    expect(computer.controlRunId).toBe(runId);
     expect(
       await prisma.computerUpdate.count({
         where: { botId: bot.id, status: { in: ["queued", "running", "completed"] } },
@@ -431,8 +445,8 @@ describeJourneys("required product journeys", () => {
     );
     expect(chief.computerMode).toBe("team");
     expect(coder.computerMode).toBe("team");
-    expect(chiefRecord.computerId).toBe(coderRecord.computerId);
-    expect(chiefRecord.computerId).not.toBe(bobRecord.computerId);
+    expect(chiefRecord!.computerId).toBe(coderRecord!.computerId);
+    expect(chiefRecord!.computerId).not.toBe(bobRecord!.computerId);
 
     const bobList = await rpc<Bot[]>(app, bob, "bots/list");
     expect(bobList.map((b) => b.id)).not.toContain(chief.id);
@@ -566,10 +580,10 @@ describeJourneys("required product journeys", () => {
       where: { id: coder.id },
       include: { computer: true },
     });
-    expect(dedicatedRecord.computerId).not.toBe(chiefRecord.computerId);
+    expect(dedicatedRecord.computerId).not.toBe(chiefRecord!.computerId);
     await rpc<Bot>(app, ada, "bots/setComputer", { botId: coder.id, mode: "team" });
     const backOnTeam = await prisma.bot.findUniqueOrThrow({ where: { id: coder.id } });
-    expect(backOnTeam.computerId).toBe(chiefRecord.computerId);
+    expect(backOnTeam.computerId).toBe(chiefRecord!.computerId);
     await rpc<Bot>(app, ada, "bots/setComputer", { botId: coder.id, mode: "dedicated" });
     const reusedDedicated = await prisma.bot.findUniqueOrThrow({ where: { id: coder.id } });
     expect(reusedDedicated.computerId).toBe(dedicatedRecord.computerId);
@@ -801,9 +815,16 @@ describeJourneys("required product journeys", () => {
     const researcherScreen = await rpc<{ url: string | null }>(app, cookie, "computer/screenUrl", {
       botId: researcher.id,
     });
-    expect(writerScreen.url).toContain(writer.id);
-    expect(researcherScreen.url).toContain(researcher.id);
-    expect(writerScreen.url).not.toBe(researcherScreen.url);
+    const screenOf = (url: string | null) => {
+      const sealed = new URL(url ?? "");
+      const target = openScreenCapability(
+        `${sealed.pathname}${sealed.search}`,
+        resolveScreenProxySecret(),
+      )?.target;
+      return new URL(target?.path ?? "/", "http://screen.invalid").searchParams.get("screen");
+    };
+    expect(screenOf(writerScreen.url)).toBe(writer.id);
+    expect(screenOf(researcherScreen.url)).toBe(researcher.id);
   });
 
   it("3: disconnect and reconnect from a cursor reconstructs the thread", async () => {
@@ -852,7 +873,7 @@ describeJourneys("required product journeys", () => {
     expect(JSON.stringify(waiting.messages)).not.toMatch(/password|secret|token/i);
     await rpc(app, cookie, "computer/boot", { botId: bot.id });
     await rpc(app, cookie, "computer/takeover", { botId: bot.id });
-    await rpc(app, cookie, "computer/release", { botId: bot.id });
+    await rpc(app, cookie, "computer/release", { botId: bot.id, reason: "done" });
     const done = await waitFor(
       app,
       cookie,
@@ -918,95 +939,141 @@ describeJourneys("required product journeys", () => {
     });
   });
 
-  it("4b: an expired takeover denies input and reconciles API and database state", async () => {
-    const previousTakeoverTtl = process.env.COMPUTER_TAKEOVER_TTL_MS;
-    process.env.COMPUTER_TAKEOVER_TTL_MS = "1000";
-    try {
-      const cookie = await signup(
-        app,
-        `takeover-expiry-j-${stamp}@cortexai-agent-hub.test`,
-        "Expiry",
-      );
-      const bot = await rpc<Bot>(app, cookie, "bots/create", {
-        name: "Chief",
+  it("4e: deleting a group with a run waiting on takeover frees its bot's computer", async () => {
+    const cookie = await signup(
+      app,
+      `takeover-group-delete-${stamp}@cortexai-agent-hub.test`,
+      "Group Delete",
+    );
+    const createBot = (name: string) =>
+      rpc<Bot>(app, cookie, "bots/create", {
+        name,
         title: "",
         description: "",
         instructions: "",
         notifyOnFinish: true,
       });
-      await rpc(app, cookie, "threads/send", {
-        botId: bot.id,
-        text: "install the gsc cli and sign in",
+    const chief = await createBot("Chief");
+    const mate = await createBot("Mate");
+    const group = await rpc<{ id: string; threadId: string }>(app, cookie, "groups/create", {
+      name: "Launch room",
+      botIds: [chief.id, mate.id],
+    });
+    await rpc(app, cookie, "threads/send", {
+      groupId: group.id,
+      text: "@Chief install the gsc cli and sign in",
+    });
+    let waitingRunId: string | undefined;
+    await waitForDatabase(async () => {
+      const run = await prisma.run.findFirst({
+        where: { threadId: group.threadId, botId: chief.id, status: "waiting_takeover" },
+        select: { id: true },
       });
-      const waiting = await waitFor(
-        app,
-        cookie,
-        bot.id,
-        (snap) => snap.run?.status === "waiting_takeover",
-      );
-      await rpc(app, cookie, "computer/boot", { botId: bot.id });
-      const lease = await rpc<{ leaseId: string; expiresAt: string }>(
-        app,
-        cookie,
-        "computer/takeover",
-        { botId: bot.id },
-      );
-      expect(new Date(lease.expiresAt).getTime() - Date.now()).toBeLessThanOrEqual(1000);
-      expect(
-        (await rpc<{ url: string | null }>(app, cookie, "computer/screenUrl", { botId: bot.id }))
-          .url,
-      ).toContain("view_only=false");
-      await rpc(app, cookie, "computer/input", {
-        botId: bot.id,
-        kind: "key",
-        payload: { key: "a" },
-      });
+      waitingRunId = run?.id;
+      return Boolean(run);
+    });
+    // The takeover holds Chief's computer for a day.
+    const held = await prisma.computerExecutionLease.findFirstOrThrow({
+      where: { botId: chief.id, runId: waitingRunId },
+    });
+    expect(held.expiresAt.getTime()).toBeGreaterThan(Date.now() + 60 * 60_000);
 
-      await waitForDatabase(async () => {
-        const storedBot = await prisma.bot.findUniqueOrThrow({
-          where: { id: bot.id },
-          include: { computer: true },
-        });
-        const computer = storedBot.computer!;
-        return computer.controlLeaseId === null && computer.controlHolder === "none";
-      });
+    await rpc(app, cookie, "groups/remove", { groupId: group.id });
 
-      expect(
-        (await rpc<{ controlHolder: string }>(app, cookie, "computer/status", { botId: bot.id }))
-          .controlHolder,
-      ).toBe("none");
-      expect(
-        (await rpc<{ url: string | null }>(app, cookie, "computer/screenUrl", { botId: bot.id }))
-          .url,
-      ).toContain("view_only=true");
-      expect(
-        (
-          await raw(app, cookie, "computer/input", {
-            botId: bot.id,
-            kind: "key",
-            payload: { key: "b" },
-          })
-        ).status,
-      ).toBeGreaterThanOrEqual(400);
-      const done = await waitFor(
-        app,
-        cookie,
-        bot.id,
-        (snap) => !snap.run || ["completed", "failed", "cancelled"].includes(snap.run.status),
-      );
-      expect(JSON.stringify(done.messages).toLowerCase()).toMatch(/skipped/);
-      expect(JSON.stringify(done.messages).toLowerCase()).not.toMatch(/signed in/);
-      expect(done.run?.status ?? "completed").not.toBe("waiting_takeover");
-      expect(
-        await prisma.event.findFirst({
-          where: { runId: waiting.run?.id, type: "computer.takeover.released" },
-          orderBy: { createdAt: "desc" },
-        }),
-      ).toMatchObject({ payload: { reason: "expired" } });
-    } finally {
-      if (previousTakeoverTtl === undefined) delete process.env.COMPUTER_TAKEOVER_TTL_MS;
-      else process.env.COMPUTER_TAKEOVER_TTL_MS = previousTakeoverTtl;
-    }
+    expect(await prisma.run.findUnique({ where: { id: waitingRunId } })).toBeNull();
+    // Chief's next run, in its own chat, takes the computer instead of waiting a day for it.
+    const direct = await sendAndWait(app, cookie, chief.id, "hello again");
+    expect(direct.run.status).toBe("completed");
+    expect(
+      await prisma.computerExecutionLease.findUniqueOrThrow({ where: { id: held.id } }),
+    ).toMatchObject({ runId: direct.run.id, fence: held.fence + 1 });
+  });
+
+  it("4b: control lapses when the page stops checking in, and the bot keeps waiting", async () => {
+    const cookie = await signup(
+      app,
+      `takeover-expiry-j-${stamp}@cortexai-agent-hub.test`,
+      "Expiry",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Chief",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    await rpc(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "install the gsc cli and sign in",
+    });
+    const waiting = await waitFor(
+      app,
+      cookie,
+      bot.id,
+      (snap) => snap.run?.status === "waiting_takeover",
+    );
+    await rpc(app, cookie, "computer/boot", { botId: bot.id });
+    const lease = await rpc<{ leaseId: string; expiresAt: string }>(
+      app,
+      cookie,
+      "computer/takeover",
+      { botId: bot.id },
+    );
+    expect(new Date(lease.expiresAt).getTime() - Date.now()).toBeLessThanOrEqual(90_000);
+    expect(
+      (await rpc<{ url: string | null }>(app, cookie, "computer/screenUrl", { botId: bot.id })).url,
+    ).toContain("view_only=false");
+    await rpc(app, cookie, "computer/input", {
+      botId: bot.id,
+      kind: "key",
+      payload: { key: "a" },
+    });
+
+    // The page went quiet for a minute.
+    await prisma.computer.updateMany({
+      where: { controlLeaseId: lease.leaseId },
+      data: { controlLeaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    expect(
+      (await rpc<{ controlHolder: string }>(app, cookie, "computer/status", { botId: bot.id }))
+        .controlHolder,
+    ).toBe("none");
+    await waitForDatabase(async () => {
+      const storedBot = await prisma.bot.findUniqueOrThrow({
+        where: { id: bot.id },
+        include: { computer: true },
+      });
+      return storedBot.computer?.controlLeaseId === null;
+    });
+    expect(
+      (await rpc<{ url: string | null }>(app, cookie, "computer/screenUrl", { botId: bot.id })).url,
+    ).toContain("view_only=true");
+    expect(
+      (
+        await raw(app, cookie, "computer/input", {
+          botId: bot.id,
+          kind: "key",
+          payload: { key: "b" },
+        })
+      ).status,
+    ).toBeGreaterThanOrEqual(400);
+    expect(
+      await prisma.event.findFirst({
+        where: { botId: bot.id, type: "computer.takeover.released" },
+        orderBy: { createdAt: "desc" },
+      }),
+    ).toMatchObject({ payload: { reason: "expired" } });
+    // Only Done or Skip answers the bot.
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: waiting.run!.id } })).status).toBe(
+      "waiting_takeover",
+    );
+    await rpc(app, cookie, "computer/release", { botId: bot.id, reason: "skipped" });
+    await waitFor(
+      app,
+      cookie,
+      bot.id,
+      (snap) => !snap.run || ["completed", "failed", "cancelled"].includes(snap.run.status),
+    );
   });
 
   it("4c: a takeover authorizes input only on the controlled bot screen", async () => {
@@ -1161,11 +1228,31 @@ describeJourneys("required product journeys", () => {
       where: { id: computerId },
     });
     expect(afterOwnerRelease).toMatchObject({
-      controlHolder: "bot",
+      controlHolder: "none",
       controlBotId: null,
       controlLeaseId: null,
       controlLeaseExpiresAt: null,
     });
+    const releaseEvent = await prisma.event.findFirstOrThrow({
+      where: { botId: researcher.id, type: "computer.takeover.released" },
+      orderBy: { seq: "desc" },
+    });
+    expect(releaseEvent.payload).toMatchObject({
+      holder: "none",
+      leaseId: researcherLease.leaseId,
+      reason: "released",
+    });
+    // Handing back ends control only; the bot waits until its request is answered.
+    expect(
+      (
+        await prisma.run.findFirstOrThrow({
+          where: { botId: researcher.id },
+          orderBy: { createdAt: "desc" },
+        })
+      ).status,
+    ).toBe("waiting_takeover");
+
+    await rpc(app, cookie, "computer/release", { botId: researcher.id, reason: "done" });
     await waitFor(
       app,
       cookie,
@@ -1176,23 +1263,7 @@ describeJourneys("required product journeys", () => {
       await prisma.event.count({
         where: { botId: researcher.id, type: "computer.takeover.released" },
       }),
-    ).toBe(releaseEventsBefore + 1);
-    const releaseEvent = await prisma.event.findFirstOrThrow({
-      where: { botId: researcher.id, type: "computer.takeover.released" },
-      orderBy: { seq: "desc" },
-    });
-    expect(releaseEvent.payload).toMatchObject({
-      holder: "bot",
-      leaseId: researcherLease.leaseId,
-      reason: "released",
-    });
-
-    await rpc(app, cookie, "computer/release", { botId: researcher.id });
-    expect(
-      await prisma.event.count({
-        where: { botId: researcher.id, type: "computer.takeover.released" },
-      }),
-    ).toBe(releaseEventsBefore + 1);
+    ).toBe(releaseEventsBefore + 2);
   });
 
   it("4e: concurrent Team takeovers never return another bot's lease", async () => {
@@ -1571,6 +1642,7 @@ describeJourneys("required product journeys", () => {
       label: "test",
       modelId: "scripted",
     });
+    await runWithoutAsking(cookie);
     await sendAndWait(app, cookie, bot.id, "write this to the destination crm as a note");
     expect(connector.records.length).toBeGreaterThan(before);
     const snap = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
@@ -1579,6 +1651,7 @@ describeJourneys("required product journeys", () => {
 
   it("8: retrying a completed effect does not duplicate the destination write", async () => {
     const cookie = await signup(app, `crash-j-${stamp}@cortexai-agent-hub.test`, "Crash");
+    await runWithoutAsking(cookie);
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1799,6 +1872,7 @@ describeJourneys("required product journeys", () => {
 
   it("12: a bot can spawn a regular bot and must confirm the name to delete it", async () => {
     const cookie = await signup(app, `spawn-j-${stamp}@cortexai-agent-hub.test`, "Spawn");
+    await runWithoutAsking(cookie);
     const parent = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
       title: "",
@@ -1973,6 +2047,546 @@ describeJourneys("required product journeys", () => {
     expect(await rpc<Bot[]>(app, cookie, "bots/list")).toHaveLength(before);
   });
 
+  async function newChief(label: string) {
+    const slug = label.toLowerCase().replaceAll(" ", "-");
+    const cookie = await signup(app, `${slug}-j-${stamp}@cortexai-agent-hub.test`, label);
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Chief",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: false,
+    });
+    const chat = await prisma.thread.findUniqueOrThrow({
+      where: { botId: bot.id },
+      select: { id: true },
+    });
+    return { cookie, bot, chat };
+  }
+
+  async function helperCards(cookie: string, botId: string) {
+    const snap = await rpc<Snap>(app, cookie, "threads/get", { botId });
+    return snap.messages.flatMap((message) =>
+      message.blocks
+        .filter((block) => block.kind === "subagent")
+        .map((block) => ({
+          messageId: message.id,
+          ...(block as { status?: string; result?: string; task?: string }),
+        })),
+    );
+  }
+
+  let helperStarts = 0;
+  /** Starts a background helper from the bot's chat the way run_subagent does. */
+  async function startHelper(cookie: string, botId: string, task: string, effectKey?: string) {
+    const chat = await prisma.thread.findUniqueOrThrow({ where: { botId } });
+    let parent = await prisma.run.findFirst({
+      where: { threadId: chat.id, trigger: "user", status: "completed" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!parent) {
+      await sendAndWait(app, cookie, botId, "hello");
+      parent = await prisma.run.findFirstOrThrow({
+        where: { threadId: chat.id, trigger: "user", status: "completed" },
+        orderBy: { createdAt: "desc" },
+      });
+    }
+    const bot = await prisma.bot.findUniqueOrThrow({ where: { id: botId } });
+    helperStarts += 1;
+    return runAsSystem("background job run.continue", () =>
+      startBackgroundHelper(
+        {
+          deps: { prisma: appPrisma, events: createThreadEvents(appPrisma), jobs },
+          run: parent,
+          runId: parent.id,
+          bot,
+          thread: chat,
+        } as never,
+        {
+          name: "scout",
+          task,
+          instructions: "",
+          modelProvider: "",
+          modelId: "",
+          executionId: `helper-call-${helperStarts}`,
+          effectKey: effectKey ?? `helper-${stamp}-${helperStarts}`,
+        },
+      ),
+    );
+  }
+
+  function reconcile() {
+    return runAsSystem("background job reconcile", () =>
+      createJobReconciler({
+        prisma: appPrisma,
+        jobs,
+        events: createThreadEvents(appPrisma),
+      }).reconcileOnce(),
+    );
+  }
+
+  async function waitForHelper(botId: string, status: string) {
+    let helper = null as { id: string; threadId: string } | null;
+    await waitForDatabase(async () => {
+      helper = await prisma.run.findFirst({
+        where: { botId, trigger: "helper", status },
+        select: { id: true, threadId: true },
+      });
+      return Boolean(helper);
+    });
+    return helper!;
+  }
+
+  it("13b: a background helper leaves the chat free and its result comes back as a new turn", async () => {
+    const { cookie, bot, chat } = await newChief("Background");
+    await startHelper(cookie, bot.id, "summarize the venue notes");
+    const helper = await waitForHelper(bot.id, "completed");
+    // The helper works in a thread of its own, never the chat's.
+    expect(helper.threadId).not.toBe(chat.id);
+    let wake = null as { id: string; status: string } | null;
+    await waitForDatabase(async () => {
+      wake = await prisma.run.findFirst({
+        where: { botId: bot.id, threadId: chat.id, trigger: "helper_result" },
+        select: { id: true, status: true },
+      });
+      return wake?.status === "completed";
+    });
+    const [card] = await helperCards(cookie, bot.id);
+    expect(card).toMatchObject({ status: "completed", task: "summarize the venue notes" });
+    expect(card?.result).toContain("helper result");
+    const snap = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
+    const relayed = snap.messages.filter((message) => message.runId === wake?.id);
+    expect(JSON.stringify(relayed)).toContain("helper result");
+    // Activity lists the owner's own turn but no helper or result turn with its internal brief.
+    const recent = await rpc<{ runs: Array<{ trigger: string }> }>(app, cookie, "runs/list", {
+      filter: "recent",
+    });
+    expect(recent.runs.map((row) => row.trigger)).toContain("user");
+    expect(recent.runs.map((row) => row.trigger)).not.toContain("helper");
+    expect(recent.runs.map((row) => row.trigger)).not.toContain("helper_result");
+
+    // A result the executor never handed back (a crash) comes back from the reconciler.
+    const resend = async () => {
+      await prisma.run.deleteMany({ where: { botId: bot.id, trigger: "helper_result" } });
+      await prisma.run.update({ where: { id: helper.id }, data: { botOutcomeReturnedAt: null } });
+      await reconcile();
+      return prisma.run.findFirst({
+        where: { botId: bot.id, trigger: "helper_result" },
+        select: { task: { select: { prompt: true } } },
+      });
+    };
+    expect((await resend())?.task.prompt).toContain("helper result");
+    // The executor and the reconciler returning at once still answer exactly once.
+    await prisma.run.deleteMany({ where: { botId: bot.id, trigger: "helper_result" } });
+    await prisma.run.update({ where: { id: helper.id }, data: { botOutcomeReturnedAt: null } });
+    const finished = await prisma.run.findUniqueOrThrow({ where: { id: helper.id } });
+    const returnDeps = { prisma: appPrisma, events: createThreadEvents(appPrisma), jobs };
+    await runAsSystem("background job run.continue", () =>
+      Promise.all(
+        [1, 2].map(() =>
+          returnHelperOutcome(returnDeps, finished, { status: "completed", text: "done." }),
+        ),
+      ),
+    );
+    expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper_result" } })).toBe(1);
+    // ...but never to an archived bot.
+    await rpc(app, cookie, "bots/archive", { botId: bot.id });
+    expect(await resend()).toBeNull();
+    await rpc(app, cookie, "bots/restore", { botId: bot.id });
+    expect(await resend()).not.toBeNull();
+
+    // The helper's own thread goes with the bot.
+    await rpc(app, cookie, "bots/remove", { botId: bot.id, deleteMemories: true });
+    expect(await prisma.thread.findUnique({ where: { id: helper.threadId } })).toBeNull();
+  });
+
+  it("13c: the chat and its computer stay free while a helper works, and a card's Stop ends only that helper", async () => {
+    const { cookie, bot, chat } = await newChief("Background Stop");
+    await startHelper(cookie, bot.id, "keep working on the venue list");
+    const helper = await waitForHelper(bot.id, "running");
+    // A new message gets its own turn at once instead of waiting behind the helper.
+    const answered = await sendAndWait(app, cookie, bot.id, "what is on my calendar today?");
+    expect(answered.run.status).toBe("completed");
+    // ...and the bot list shows the bot idle, not working.
+    const listed = await rpc<Array<{ id: string; status: string }>>(app, cookie, "bots/list");
+    expect(listed.find((row) => row.id === bot.id)?.status).toBe("idle");
+
+    // The helper never uses the computer, so it holds neither the shared one, an update nor a switch.
+    const peer = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Peer",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: false,
+    });
+    await rpc(app, cookie, "computer/stop", { botId: peer.id });
+    const update = await rpc<{ id: string }>(app, cookie, "computer/update", { botId: bot.id });
+    await waitForDatabase(
+      async () =>
+        (await prisma.computerUpdate.findUniqueOrThrow({ where: { id: update.id } })).status ===
+        "completed",
+    );
+    await rpc(app, cookie, "bots/setComputer", { botId: bot.id, mode: "dedicated" });
+
+    // On its own computer too, a helper started now does not hold the bot's next turn.
+    await startHelper(cookie, bot.id, "keep working on the agenda");
+    const second = await waitForDatabase(async () =>
+      Boolean(
+        await prisma.run.findFirst({
+          where: { botId: bot.id, trigger: "helper", status: "running", id: { not: helper.id } },
+          select: { id: true },
+        }),
+      ),
+    ).then(() =>
+      prisma.run.findFirstOrThrow({
+        where: { botId: bot.id, trigger: "helper", status: "running", id: { not: helper.id } },
+      }),
+    );
+    await rpc(app, cookie, "threads/send", { botId: bot.id, text: "work until i stop you" });
+    await waitForDatabase(async () =>
+      Boolean(
+        await prisma.run.findFirst({
+          where: { threadId: chat.id, trigger: "user", status: "running" },
+          select: { id: true },
+        }),
+      ),
+    );
+
+    // A card's Stop leaves the other helper, the chat's own turn and its waiting message alone.
+    await rpc(app, cookie, "threads/send", { botId: bot.id, text: "also check the weather" });
+    const waiting = () =>
+      prisma.steeringMessage.count({ where: { message: { threadId: chat.id } } });
+    expect(await waiting()).toBe(1);
+    const firstCard = (await helperCards(cookie, bot.id)).find(
+      (card) => card.task === "keep working on the venue list",
+    );
+    await rpc(app, cookie, "threads/stopHelper", {
+      botId: bot.id,
+      messageId: firstCard!.messageId,
+    });
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: helper.id } })).status).toBe(
+      "cancelled",
+    );
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: second.id } })).status).toBe(
+      "running",
+    );
+    expect(await waiting()).toBe(1);
+    expect(
+      await prisma.run.count({ where: { threadId: chat.id, trigger: "user", status: "running" } }),
+    ).toBe(1);
+    // The stopped card settles right away.
+    expect(
+      (await helperCards(cookie, bot.id)).find((card) => card.messageId === firstCard!.messageId),
+    ).toMatchObject({ status: "failed", result: "stopped" });
+    // Its card tells the chat; a run.cancelled there would read as the bot stopping.
+    const cancelledIn = (runId: string) =>
+      prisma.event
+        .findMany({ where: { runId, type: "run.cancelled" }, select: { threadId: true } })
+        .then((events) => events.map((event) => event.threadId));
+    expect(await cancelledIn(helper.id)).not.toContain(chat.id);
+
+    // Another chat cannot stop this chat's helper by naming its card.
+    const secondCard = (await helperCards(cookie, bot.id)).find((c) => c.status === "running");
+    await rpc(app, cookie, "threads/stopHelper", {
+      botId: peer.id,
+      messageId: secondCard!.messageId,
+    });
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: second.id } })).status).toBe(
+      "running",
+    );
+    // Stop in the chat ends its turn and every helper, and nothing answers for them.
+    await rpc(app, cookie, "threads/stop", { botId: bot.id });
+    expect(
+      await prisma.run.count({
+        where: { botId: bot.id, status: { in: [...ACTIVE_RUN_STATUSES] } },
+      }),
+    ).toBe(0);
+    expect(await cancelledIn(second.id)).not.toContain(chat.id);
+    const turn = await prisma.run.findFirstOrThrow({
+      where: { threadId: chat.id, trigger: "user", status: "cancelled" },
+      select: { id: true },
+    });
+    expect(await cancelledIn(turn.id)).toEqual([chat.id]);
+    await reconcile();
+    expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper_result" } })).toBe(0);
+  });
+
+  it("13d: clearing the chat stops its helpers and removes what they wrote", async () => {
+    const { cookie, bot } = await newChief("Background Clear");
+    await startHelper(cookie, bot.id, "summarize the venue notes");
+    const done = await waitForHelper(bot.id, "completed");
+    const written = () =>
+      Promise.all([
+        prisma.message.count({ where: { threadId: done.threadId } }),
+        prisma.event.count({ where: { threadId: done.threadId } }),
+      ]);
+    expect((await written())[1]).toBeGreaterThan(0);
+    // An imported helper thread arrives without the runs that started it.
+    const owner = await prisma.thread.findUniqueOrThrow({
+      where: { id: done.threadId },
+      select: { spaceId: true, userId: true },
+    });
+    const imported = await prisma.thread.create({
+      data: { ...owner, helperBotId: bot.id, historyCompactionSummary: "venue shortlist" },
+    });
+    await createThreadMessage(prisma, {
+      threadId: imported.id,
+      role: "bot",
+      blocks: [{ kind: "text", text: "venues" }],
+    });
+    await startHelper(cookie, bot.id, "keep working on the venue list");
+    const helper = await waitForHelper(bot.id, "running");
+    await rpc(app, cookie, "threads/clear", { botId: bot.id });
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: helper.id } })).status).toBe(
+      "cancelled",
+    );
+    expect(await written()).toEqual([0, 0]);
+    expect(await prisma.message.count({ where: { threadId: imported.id } })).toBe(0);
+    expect(
+      (await prisma.thread.findUniqueOrThrow({ where: { id: imported.id } }))
+        .historyCompactionSummary,
+    ).toBeNull();
+    await reconcile();
+    // The finished helper came back before the clear; the stopped one never does.
+    expect(await prisma.run.count({ where: { clientNonce: `helper-result:${helper.id}` } })).toBe(
+      0,
+    );
+  });
+
+  it("13e: helpers only read: approval-gated and connector writes are refused in any mode", async () => {
+    const { cookie, bot } = await newChief("Background Ask");
+    await startHelper(
+      cookie,
+      bot.id,
+      "fetch https://helper-approval.cortexai-agent-hub.test/venues",
+    );
+    const asked = await waitForHelper(bot.id, "completed");
+    expect(
+      (
+        await prisma.event.findFirst({
+          where: { runId: asked.id, type: "agent.tool.completed" },
+          select: { payload: true },
+        })
+      )?.payload,
+    ).toMatchObject({
+      name: "web_fetch",
+      outcome: "error",
+      error: expect.stringContaining("a background helper cannot ask"),
+    });
+    // The refused fetch leaves no approval waiting behind.
+    expect(
+      await prisma.externalEffect.count({ where: { runId: asked.id, status: "intended" } }),
+    ).toBe(0);
+
+    // Let the turn passing on that result finish, so the next message starts its own turn.
+    await waitForDatabase(async () =>
+      Boolean(
+        await prisma.run.findFirst({
+          where: { botId: bot.id, trigger: "helper_result", status: "completed" },
+          select: { id: true },
+        }),
+      ),
+    );
+
+    // Never ask lets the owner's own turn write; a helper still may not.
+    await runWithoutAsking(cookie);
+    const before = connector.records.length;
+    await startHelper(cookie, bot.id, "write this to the destination crm");
+    let writer = null as { id: string } | null;
+    await waitForDatabase(async () => {
+      writer = await prisma.run.findFirst({
+        where: { botId: bot.id, trigger: "helper", status: "completed", id: { not: asked.id } },
+        select: { id: true },
+      });
+      return Boolean(writer);
+    });
+    expect(
+      (
+        await prisma.event.findFirst({
+          where: { runId: writer!.id, type: "agent.tool.completed" },
+          select: { payload: true },
+        })
+      )?.payload,
+    ).toMatchObject({
+      name: "destination.write",
+      outcome: "error",
+      error: expect.stringContaining("a background helper may only read"),
+    });
+    expect(connector.records.length).toBe(before);
+    // Its result turn too, so the next message starts a turn of its own.
+    await waitForDatabase(
+      async () =>
+        (await prisma.run.count({
+          where: { botId: bot.id, trigger: "helper_result", status: "completed" },
+        })) === 2,
+    );
+    await sendAndWait(app, cookie, bot.id, "write this to the destination crm as a note");
+    expect(connector.records.length).toBeGreaterThan(before);
+  });
+
+  it("13f: a helper that fails comes back as a failure, and so does one that expired", async () => {
+    const { cookie, bot, chat } = await newChief("Background Fail");
+    await startHelper(cookie, bot.id, "fail this run");
+    const failed = await waitForHelper(bot.id, "failed");
+    await waitForDatabase(async () =>
+      Boolean(
+        await prisma.run.findFirst({
+          where: { botId: bot.id, threadId: chat.id, trigger: "helper_result" },
+          select: { id: true },
+        }),
+      ),
+    );
+    expect((await helperCards(cookie, bot.id))[0]).toMatchObject({ status: "failed" });
+    expect(
+      (
+        await prisma.run.findFirstOrThrow({
+          where: { botId: bot.id, trigger: "helper_result" },
+          select: { task: { select: { prompt: true } } },
+        })
+      ).task.prompt,
+    ).toContain("could not finish");
+    await prisma.run.deleteMany({ where: { botId: bot.id, trigger: "helper_result" } });
+
+    // Stuck-work expiry cancels a helper; unlike a Stop, the chat hears that it did not finish.
+    await startHelper(cookie, bot.id, "keep working on the venue list");
+    const stuck = await waitForHelper(bot.id, "running");
+    await prisma.run.update({
+      where: { id: stuck.id },
+      data: { status: "cancelled", error: stuckWorkStatusMessages()[0] },
+    });
+    await reconcile();
+    const wake = await prisma.run.findFirst({
+      where: { botId: bot.id, trigger: "helper_result" },
+      select: { task: { select: { prompt: true } } },
+    });
+    expect(wake?.task.prompt).toContain("could not finish");
+    expect(failed.id).not.toBe(stuck.id);
+
+    // Nor to someone who has left the space.
+    await prisma.run.deleteMany({ where: { botId: bot.id, trigger: "helper_result" } });
+    await prisma.run.update({ where: { id: stuck.id }, data: { botOutcomeReturnedAt: null } });
+    const owner = await prisma.run.findUniqueOrThrow({
+      where: { id: stuck.id },
+      select: { spaceId: true, userId: true },
+    });
+    await prisma.spaceMember.deleteMany({ where: owner });
+    await reconcile();
+    expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper_result" } })).toBe(0);
+  });
+
+  it("13g: a replayed start starts nothing new, and one bot runs at most four helpers", async () => {
+    const { cookie, bot } = await newChief("Background Cap");
+    const key = `cap-replay-${stamp}`;
+    expect(await startHelper(cookie, bot.id, "keep working on the venue list", key)).toMatchObject({
+      ok: true,
+    });
+    expect(await startHelper(cookie, bot.id, "keep working on the venue list", key)).toMatchObject({
+      ok: true,
+    });
+    expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper" } })).toBe(1);
+    expect(await prisma.thread.count({ where: { helperBotId: bot.id } })).toBe(1);
+
+    const results = await Promise.all(
+      [1, 2, 3, 4].map(() => startHelper(cookie, bot.id, "keep working on the venue list")),
+    );
+    expect(results.filter((result) => "ok" in result)).toHaveLength(3);
+    expect(results.filter((result) => "error" in result)).toHaveLength(1);
+    expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper" } })).toBe(4);
+    await rpc(app, cookie, "threads/stop", { botId: bot.id });
+    expect(
+      await prisma.run.count({
+        where: { botId: bot.id, trigger: "helper", status: { in: [...ACTIVE_RUN_STATUSES] } },
+      }),
+    ).toBe(0);
+  });
+
+  it("13h: a bot starts a helper in the background, answers meanwhile, and passes its result on", async () => {
+    const { cookie, bot, chat } = await newChief("Background Chat");
+    await sendAndWait(app, cookie, bot.id, "keep working on the venue list in the background");
+    const helper = await waitForHelper(bot.id, "running");
+    expect(helper.threadId).not.toBe(chat.id);
+    // The turn that started it has ended, and live clients settle that turn's cards when it
+    // ends; the helper's card is not one of them.
+    const started = await prisma.run.findFirstOrThrow({
+      where: { threadId: chat.id, trigger: "user", status: "completed" },
+      select: { id: true, completedAt: true },
+    });
+    const { sourceMessageId } = await prisma.run.findUniqueOrThrow({ where: { id: helper.id } });
+    const card = await prisma.message.findUniqueOrThrow({ where: { id: sourceMessageId! } });
+    expect(card.createdAt.getTime()).toBeLessThanOrEqual(started.completedAt!.getTime());
+    const snap = await rpc<{ messages: Array<{ runId?: string; blocks: unknown[] }> }>(
+      app,
+      cookie,
+      "threads/get",
+      { botId: bot.id },
+    );
+    expect(settleRunSubagents(snap.messages, started.id)).toBe(snap.messages);
+    expect((await helperCards(cookie, bot.id))[0]).toMatchObject({
+      status: "running",
+      task: "keep working on the venue list",
+    });
+    const answered = await sendAndWait(app, cookie, bot.id, "what is on my calendar today?");
+    expect(answered.run.status).toBe("completed");
+    // The card's Stop ends the helper alone.
+    await rpc(app, cookie, "threads/stopHelper", { botId: bot.id, messageId: card.id });
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: helper.id } })).status).toBe(
+      "cancelled",
+    );
+    expect((await helperCards(cookie, bot.id))[0]).toMatchObject({ result: "stopped" });
+
+    await sendAndWait(app, cookie, bot.id, "summarize the venue notes in the background");
+    let wake = null as { id: string; status: string } | null;
+    await waitForDatabase(async () => {
+      wake = await prisma.run.findFirst({
+        where: { threadId: chat.id, trigger: "helper_result" },
+        select: { id: true, status: true },
+      });
+      return wake?.status === "completed";
+    });
+    const relayed = (
+      await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id })
+    ).messages.filter((message) => message.runId === wake?.id);
+    expect(JSON.stringify(relayed)).toContain("helper result");
+  });
+
+  it("13i: a group chat cannot start a background helper", async () => {
+    const cookie = await signup(
+      app,
+      `background-group-j-${stamp}@cortexai-agent-hub.test`,
+      "Background Group",
+    );
+    const [bot, peer] = await Promise.all(
+      ["Chief", "Peer"].map((name) =>
+        rpc<Bot>(app, cookie, "bots/create", {
+          name,
+          title: "",
+          description: "",
+          instructions: "",
+          notifyOnFinish: false,
+        }),
+      ),
+    );
+    const group = await rpc<{ id: string }>(app, cookie, "groups/create", {
+      name: "Venue room",
+      botIds: [bot!.id, peer!.id],
+    });
+    await sendGroupAndWait(
+      app,
+      cookie,
+      group.id,
+      "@Chief summarize the venue notes in the background",
+      bot!.id,
+    );
+    expect(
+      await prisma.run.count({ where: { botId: { in: [bot!.id, peer!.id] }, trigger: "helper" } }),
+    ).toBe(0);
+    const refused = await prisma.event.findFirst({
+      where: { botId: bot!.id, type: "agent.tool.completed" },
+      select: { payload: true },
+    });
+    expect(refused?.payload).toMatchObject({ name: "run_subagent", outcome: "error" });
+  });
+
   it("14: this-mac is refused unless the sandbox is docker", async () => {
     const cookie = await signup(app, `host-j-${stamp}@cortexai-agent-hub.test`, "Host");
     const me = await rpc<Me>(app, cookie, "me");
@@ -1997,8 +2611,8 @@ describeJourneys("required product journeys", () => {
       instructions: "",
       notifyOnFinish: true,
     });
-    await rpc(app, cookie, "bots/update", { botId: bot.id, title: "Updated chief" });
-    expect((await rpc<Bot>(app, cookie, "bots/get", { botId: bot.id })).title).toBe(
+    await rpc(app, cookie, "bots/update", { botId: bot.id, description: "Updated chief" });
+    expect((await rpc<Bot>(app, cookie, "bots/get", { botId: bot.id })).description).toBe(
       "Updated chief",
     );
 
@@ -2144,6 +2758,93 @@ describeJourneys("required product journeys", () => {
     );
   });
 
+  it("15c: a bare stop message ends the work like Stop, and is an ordinary message when idle", async () => {
+    const cookie = await signup(app, `stop-msg-j-${stamp}@cortexai-agent-hub.test`, "Stop Ada");
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Chief",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    const notes = (snap: Snap) =>
+      snap.messages.flatMap((message) =>
+        message.blocks.filter((block) => block.kind === "meta").map((block) => block.text),
+      );
+
+    const working = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "keep working until I stop you",
+    });
+    await waitFor(app, cookie, bot.id, (snap) => snap.run?.status === "running");
+    // With a file attached it is not just "stop": it steers like any message.
+    const file = await rpc<{ id: string }>(app, cookie, "artifacts/create", {
+      botId: bot.id,
+      name: "stop.txt",
+      mimeType: "text/plain",
+      contentBase64: Buffer.from("stop").toString("base64"),
+    });
+    await rpc(app, cookie, "threads/send", { botId: bot.id, text: "stop", artifactIds: [file.id] });
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: working.runId } })).status).toBe(
+      "running",
+    );
+    const stop = { botId: bot.id, text: " Stop now! ", clientNonce: `stop-msg-${stamp}` };
+    const stopped = await rpc<{ runId: string }>(app, cookie, "threads/send", stop);
+    expect(stopped.runId).toBe(working.runId);
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: working.runId } })).status).toBe(
+      "cancelled",
+    );
+    const afterStop = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
+    expect(afterStop.run).toBeNull();
+    expect(notes(afterStop)).toEqual(["Stopped. Anything already done stays done."]);
+    expect(await prisma.steeringMessage.count({ where: { botId: bot.id } })).toBe(0);
+
+    // A retried stop is the same send: it leaves newer work alone.
+    const newer = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "keep working until I stop you",
+    });
+    await waitFor(app, cookie, bot.id, (snap) => snap.run?.status === "running");
+    expect((await rpc<{ runId: string }>(app, cookie, "threads/send", stop)).runId).toBe(
+      working.runId,
+    );
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: newer.runId } })).status).toBe(
+      "running",
+    );
+    await rpc(app, cookie, "threads/stop", { botId: bot.id });
+    expect(notes(await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id }))).toHaveLength(1);
+
+    // A waiting card is work too: stop cancels it instead of answering it.
+    const asked = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "ask me which city to use",
+    });
+    await waitFor(
+      app,
+      cookie,
+      bot.id,
+      (snap) => snap.run?.id === asked.runId && snap.run.status === "waiting_input",
+    );
+    const stoppedCard = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "stop",
+    });
+    expect(stoppedCard.runId).toBe(asked.runId);
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: asked.runId } })).status).toBe(
+      "cancelled",
+    );
+    const afterCard = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
+    expect(afterCard.messages.flatMap((message) => message.blocks)).not.toContainEqual(
+      expect.objectContaining({ kind: "ask", answer: "stop" }),
+    );
+    expect(notes(afterCard)).toHaveLength(2);
+
+    // Nothing running: "stop" starts an ordinary turn and adds no note.
+    const idle = await sendAndWait(app, cookie, bot.id, "stop");
+    expect([working.runId, asked.runId]).not.toContain(idle.run.id);
+    expect(notes(idle)).toHaveLength(2);
+  });
+
   it("16: routine test-run and plugin connect/revoke", async () => {
     const ada = await signup(app, `plug-j-${stamp}@cortexai-agent-hub.test`, "Plug Ada");
     const bob = await signup(app, `plug-bob-j-${stamp}@cortexai-agent-hub.test`, "Plug Bob");
@@ -2264,17 +2965,26 @@ describeJourneys("required product journeys", () => {
       prisma.run.count({
         where: { threadId: group.threadId, trigger: "user", botId },
       });
-    const botABefore = await countUserRuns(botA.id);
-    const botBBefore = await countUserRuns(botB.id);
-    const botCBefore = await countUserRuns(botC.id);
-    const botDBefore = await countUserRuns(botD.id);
+    const memberIds = [botA.id, botB.id, botC.id, botD.id];
+    const userRunsBefore = await Promise.all(memberIds.map(countUserRuns));
+    const otherRunsBefore = await prisma.run.count({
+      where: { threadId: group.threadId, trigger: { not: "user" } },
+    });
     await sendGroupAndWait(app, ada, group.id, "hello team");
+    // A message that names nobody reaches every member once; their replies wake no one.
+    expect(await Promise.all(memberIds.map(countUserRuns))).toEqual(
+      userRunsBefore.map((count) => count + 1),
+    );
     expect(
-      (await countUserRuns(botA.id)) +
-        (await countUserRuns(botB.id)) +
-        (await countUserRuns(botC.id)) +
-        (await countUserRuns(botD.id)),
-    ).toBe(botABefore + botBBefore + botCBefore + botDBefore + 1);
+      await prisma.run.count({ where: { threadId: group.threadId, trigger: { not: "user" } } }),
+    ).toBe(otherRunsBefore);
+    const hello = await prisma.run.findMany({
+      where: { threadId: group.threadId, botId: { in: memberIds } },
+      orderBy: { createdAt: "desc" },
+      take: memberIds.length,
+      select: { groupReplyOptional: true },
+    });
+    expect(hello.map((run) => run.groupReplyOptional)).toEqual([true, true, true, true]);
 
     await sendGroupAndWait(app, ada, group.id, "@BotA hand this to Writer for the draft", botA.id);
     const handoffSnap = await rpc<Snap>(app, ada, "threads/get", { groupId: group.id });
@@ -2686,7 +3396,7 @@ describeJourneys("required product journeys", () => {
       "computer/status",
       { botId: bot.id },
     );
-    expect(computerAfterStop.controlHolder).toBe("bot");
+    expect(computerAfterStop.controlHolder).toBe("none");
     expect(computerAfterStop.controlBotId).toBeNull();
     await rpc(app, cookie, "skills/updateDraft", {
       skillId: skill.id,
@@ -2751,7 +3461,124 @@ describeJourneys("required product journeys", () => {
     }
   });
 
-  it("19: destination writes pause for approval before side effects", async () => {
+  it("18b: closing the screen mid-teaching hands back control and saves the recording", async () => {
+    const cookie = await signup(
+      app,
+      `teach-close-j-${stamp}@cortexai-agent-hub.test`,
+      "Teach Close",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Closer",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    await rpc(app, cookie, "computer/boot", { botId: bot.id });
+    const lease = await rpc<{ leaseId: string }>(app, cookie, "computer/takeover", {
+      botId: bot.id,
+    });
+    const skill = await rpc<{ id: string }>(app, cookie, "skills/start", {
+      botId: bot.id,
+      goal: "Close demo",
+    });
+    // Teaching records under the person's own control.
+    const stored = await prisma.taughtSkill.findUniqueOrThrow({ where: { id: skill.id } });
+    expect((stored.recording as { controlLeaseId?: string }).controlLeaseId).toBe(lease.leaseId);
+
+    // Closing the screen hands control back, which ends the recording as a saved draft.
+    await rpc(app, cookie, "computer/release", { botId: bot.id });
+    expect(
+      await prisma.computer.findFirstOrThrow({ where: { bots: { some: { id: bot.id } } } }),
+    ).toMatchObject({ controlHolder: "none", controlLeaseId: null });
+    const ended = await rpc<{ status: string }>(app, cookie, "skills/get", { skillId: skill.id });
+    expect(ended.status).toBe("draft");
+  });
+
+  it("18d: stopping the computer mid-teaching ends control and saves the recording", async () => {
+    const cookie = await signup(app, `teach-stop-j-${stamp}@cortexai-agent-hub.test`, "Teach Stop");
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Stopper",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    await rpc(app, cookie, "computer/boot", { botId: bot.id });
+    await rpc(app, cookie, "computer/takeover", { botId: bot.id });
+    const skill = await rpc<{ id: string }>(app, cookie, "skills/start", {
+      botId: bot.id,
+      goal: "Stop demo",
+    });
+    await rpc(app, cookie, "computer/stop", { botId: bot.id });
+    expect(
+      await prisma.computer.findFirstOrThrow({ where: { bots: { some: { id: bot.id } } } }),
+    ).toMatchObject({ controlHolder: "none", controlLeaseId: null });
+    expect((await prisma.taughtSkill.findUniqueOrThrow({ where: { id: skill.id } })).status).toBe(
+      "draft",
+    );
+  });
+
+  it("18c: a stale lease's expiry leaves a recording bound to another lease alone", async () => {
+    const cookie = await signup(
+      app,
+      `teach-stale-j-${stamp}@cortexai-agent-hub.test`,
+      "Teach Stale",
+    );
+    const writer = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Writer",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    const researcher = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Researcher",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    await rpc(app, cookie, "computer/boot", { botId: writer.id });
+    await rpc(app, cookie, "computer/takeover", { botId: writer.id });
+    const mine = await rpc<{ id: string }>(app, cookie, "skills/start", {
+      botId: writer.id,
+      goal: "Mine",
+    });
+    // Another member's recording, made under a lease of its own.
+    const theirs = await prisma.taughtSkill.create({
+      data: {
+        spaceId: (await prisma.bot.findUniqueOrThrow({ where: { id: researcher.id } })).spaceId,
+        botId: researcher.id,
+        userId: (await prisma.bot.findUniqueOrThrow({ where: { id: researcher.id } })).userId,
+        goal: "Theirs",
+        status: "recording",
+        recording: { events: [], snapshots: [], controlLeaseId: "another-members-lease" },
+        startedAt: new Date(),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    // The writer's lease lapses and its expiry runs.
+    const computer = await prisma.computer.findFirstOrThrow({
+      where: { bots: { some: { id: writer.id } } },
+    });
+    await prisma.computer.update({
+      where: { id: computer.id },
+      data: { controlLeaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    expect(
+      (await rpc<{ controlHolder: string }>(app, cookie, "computer/status", { botId: writer.id }))
+        .controlHolder,
+    ).toBe("none");
+    expect((await prisma.taughtSkill.findUniqueOrThrow({ where: { id: mine.id } })).status).toBe(
+      "draft",
+    );
+    expect((await prisma.taughtSkill.findUniqueOrThrow({ where: { id: theirs.id } })).status).toBe(
+      "recording",
+    );
+  });
+
+  it("19: in Ask mode, destination writes pause for approval before side effects", async () => {
     const cookie = await signup(app, `approval-j-${stamp}@cortexai-agent-hub.test`, "Approval");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
@@ -2761,11 +3588,6 @@ describeJourneys("required product journeys", () => {
       notifyOnFinish: true,
     });
     const recordsBefore = connector.records.length;
-    await rpc(app, cookie, "approvalRules/set", {
-      effect: "require_approval",
-      matchKind: "tool",
-      matchValue: "destination.write",
-    });
 
     const sent = await rpc<{ runId: string }>(app, cookie, "threads/send", {
       botId: bot.id,
@@ -2819,7 +3641,41 @@ describeJourneys("required product journeys", () => {
     expect(deniedEffect?.status).toBe("denied");
   });
 
-  it("20: actions run by default and specific exceptions override broad review rules", async () => {
+  it("19b: stopping a run with an open approval card settles its effect", async () => {
+    const cookie = await signup(
+      app,
+      `approval-stop-j-${stamp}@cortexai-agent-hub.test`,
+      "ApprovalStop",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Chief",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    const sent = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "write this to the destination crm as a note",
+    });
+    await waitFor(app, cookie, bot.id, (snap) => snap.run?.status === "waiting_input");
+    expect(
+      (
+        await prisma.externalEffect.findFirstOrThrow({
+          where: { runId: sent.runId, kind: "destination.write" },
+        })
+      ).status,
+    ).toBe("intended");
+
+    await rpc(app, cookie, "threads/stop", { botId: bot.id });
+
+    const effect = await prisma.externalEffect.findFirstOrThrow({
+      where: { runId: sent.runId, kind: "destination.write" },
+    });
+    expect(effect.status).toBe("denied");
+  });
+
+  it("20: always allow runs a tool without a card, and a block refuses it in every mode", async () => {
     const cookie = await signup(app, `always-j-${stamp}@cortexai-agent-hub.test`, "Always");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {
       name: "Chief",
@@ -2828,21 +3684,11 @@ describeJourneys("required product journeys", () => {
       instructions: "",
       notifyOnFinish: true,
     });
-    const prompt = "write this to the destination crm as a note";
     const recordsBefore = connector.records.length;
 
-    await sendAndWait(app, cookie, bot.id, prompt);
-    expect(connector.records.length).toBeGreaterThan(recordsBefore);
-    const recordsAfterDefault = connector.records.length;
-
-    await rpc(app, cookie, "approvalRules/set", {
-      effect: "require_approval",
-      matchKind: "connector",
-      matchValue: "destination.write",
-    });
-    const second = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+    const first = await rpc<{ runId: string }>(app, cookie, "threads/send", {
       botId: bot.id,
-      text: "write this to the destination crm as a note again",
+      text: "write this to the destination crm as a note",
     });
     const waiting = await waitFor(
       app,
@@ -2850,45 +3696,163 @@ describeJourneys("required product journeys", () => {
       bot.id,
       (snap) => snap.run?.status === "waiting_input",
     );
-    await answerPendingApproval(app, cookie, bot.id, second.runId, "always", waiting);
+    await answerPendingApproval(app, cookie, bot.id, first.runId, "always", waiting);
     await waitFor(
       app,
       cookie,
       bot.id,
       (snap) => !snap.run || ["completed", "failed", "cancelled"].includes(snap.run.status),
     );
-    expect(connector.records.length).toBe(recordsAfterDefault + 1);
+    expect(connector.records.length).toBe(recordsBefore + 1);
 
     await sendAndWait(app, cookie, bot.id, "write this to the destination crm once more");
-    expect(connector.records.length).toBe(recordsAfterDefault + 2);
+    expect(connector.records.length).toBe(recordsBefore + 2);
 
     await rpc(app, cookie, "approvalRules/set", {
-      effect: "require_approval",
+      effect: "deny",
       matchKind: "tool",
       matchValue: "destination.write",
     });
-    const fourth = await rpc<{ runId: string }>(app, cookie, "threads/send", {
-      botId: bot.id,
-      text: "write this to the destination crm one final time",
+    for (const mode of ["ask", "never"]) {
+      await rpc(app, cookie, "autoReview/set", { mode });
+      const blocked = await sendAndWait(
+        app,
+        cookie,
+        bot.id,
+        `write this to the destination crm while it is blocked in ${mode}`,
+      );
+      expect(blocked.run.status).toBe("completed");
+      expect(connector.records.length).toBe(recordsBefore + 2);
+    }
+  });
+
+  it("20b: allowing a tool replaces its block, and the other way around", async () => {
+    const cookie = await signup(
+      app,
+      `always-replaces-j-${stamp}@cortexai-agent-hub.test`,
+      "Always Replaces",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Chief",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
     });
-    const waitingAgain = await waitFor(
+    const rule = { matchKind: "tool", matchValue: "destination.write" };
+    const effects = async () =>
+      (await rpc<Array<{ effect: string; matchValue: string }>>(app, cookie, "approvalRules/list"))
+        .filter((row) => row.matchValue.toLowerCase() === rule.matchValue)
+        .map((row) => row.effect);
+    // Rules match tool names whatever their case, so the replacement must too.
+    await rpc(app, cookie, "approvalRules/set", {
+      effect: "deny",
+      matchKind: "tool",
+      matchValue: "Destination.Write",
+    });
+    await rpc(app, cookie, "approvalRules/set", { effect: "always_allow", ...rule });
+    expect(await effects()).toEqual(["always_allow"]);
+
+    const recordsBefore = connector.records.length;
+    await sendAndWait(app, cookie, bot.id, "write this to the destination crm once more");
+    expect(connector.records.length).toBe(recordsBefore + 1);
+
+    await rpc(app, cookie, "approvalRules/set", { effect: "deny", ...rule });
+    expect(await effects()).toEqual(["deny"]);
+  });
+
+  it("20c: allow and block saved at once leave one rule per match", async () => {
+    const cookie = await signup(app, `rule-race-j-${stamp}@cortexai-agent-hub.test`, "Rule Race");
+    const values = Array.from({ length: 8 }, (_, index) => `race.tool.${index}`);
+    await Promise.all(
+      values.flatMap((matchValue) =>
+        ["always_allow", "deny"].map((effect) =>
+          rpc(app, cookie, "approvalRules/set", { effect, matchKind: "tool", matchValue }),
+        ),
+      ),
+    );
+    const rows = await rpc<Array<{ matchValue: string }>>(app, cookie, "approvalRules/list");
+    expect(rows.map((row) => row.matchValue).sort()).toEqual(values);
+  });
+
+  it("20d: replacing a rule leaves tools with similar names alone", async () => {
+    const cookie = await signup(
+      app,
+      `rule-literal-j-${stamp}@cortexai-agent-hub.test`,
+      "Rule Literal",
+    );
+    await rpc(app, cookie, "approvalRules/set", {
+      effect: "always_allow",
+      matchKind: "tool",
+      matchValue: "toolXa",
+    });
+    await rpc(app, cookie, "approvalRules/set", {
+      effect: "deny",
+      matchKind: "tool",
+      matchValue: "tool_a",
+    });
+    const rows = await rpc<Array<{ effect: string; matchValue: string }>>(
+      app,
+      cookie,
+      "approvalRules/list",
+    );
+    expect(rows.map((row) => `${row.effect}:${row.matchValue}`).sort()).toEqual([
+      "always_allow:toolXa",
+      "deny:tool_a",
+    ]);
+  });
+
+  it("20e: always allowing a paid request's site stops asking for that site, and only that site", async () => {
+    const cookie = await signup(
+      app,
+      `always-site-j-${stamp}@cortexai-agent-hub.test`,
+      "Always Site",
+    );
+    const bot = await rpc<Bot>(app, cookie, "bots/create", {
+      name: "Chief",
+      title: "",
+      description: "",
+      instructions: "",
+      notifyOnFinish: true,
+    });
+    const first = await rpc<{ runId: string }>(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "show a paid request card",
+    });
+    const waiting = await waitFor(
       app,
       cookie,
       bot.id,
       (snap) => snap.run?.status === "waiting_input",
     );
-    expect(connector.records.length).toBe(recordsAfterDefault + 2);
-    await answerPendingApproval(app, cookie, bot.id, fourth.runId, "allow", waitingAgain);
+    expect(JSON.stringify(waiting.messages)).toContain("Always allow example.test");
+    await answerPendingApproval(app, cookie, bot.id, first.runId, "always", waiting);
     await waitFor(
       app,
       cookie,
       bot.id,
       (snap) => !snap.run || ["completed", "failed", "cancelled"].includes(snap.run.status),
     );
-    expect(connector.records.length).toBe(recordsAfterDefault + 3);
+    // A new run, so nothing approved in the first one carries over.
+    await sendAndWait(app, cookie, bot.id, "show a paid request card again");
+    expect(
+      (
+        await rpc<Array<{ effect: string; matchKind: string; matchValue: string }>>(
+          app,
+          cookie,
+          "approvalRules/list",
+        )
+      ).map(({ effect, matchKind, matchValue }) => ({ effect, matchKind, matchValue })),
+    ).toEqual([{ effect: "always_allow", matchKind: "site", matchValue: "example.test" }]);
+
+    await rpc(app, cookie, "threads/send", {
+      botId: bot.id,
+      text: "show a paid request card on other",
+    });
+    await waitFor(app, cookie, bot.id, (snap) => snap.run?.status === "waiting_input");
   });
 
-  it("21: routine destination writes pause on the same approval card", async () => {
+  it("21: in Ask mode, routine destination writes pause on the same approval card", async () => {
     const cookie = await signup(
       app,
       `routine-approval-j-${stamp}@cortexai-agent-hub.test`,
@@ -2900,11 +3864,6 @@ describeJourneys("required product journeys", () => {
       description: "",
       instructions: "",
       notifyOnFinish: true,
-    });
-    await rpc(app, cookie, "approvalRules/set", {
-      effect: "require_approval",
-      matchKind: "tool",
-      matchValue: "destination.write",
     });
     const routine = await rpc<{ id: string }>(app, cookie, "routines/create", {
       botId: bot.id,
@@ -3302,7 +4261,7 @@ describeJourneys("required product journeys", () => {
       const card = JSON.stringify(pending.waiting.messages);
       expect(card).toContain("Create group “Crew”?");
       expect(card).toContain("Members: Alpha, Beta");
-      expect(card).not.toContain("Always allow this tool");
+      expect(card).toContain("Always allow this tool");
       expect(await activeGroups(me.userId, "Crew")).toEqual([]);
 
       await answerAndSettle(cookie, chief.id, pending, "allow");
@@ -3481,7 +4440,7 @@ describeJourneys("required product journeys", () => {
       );
     });
 
-    it("organize_bot sets, clears and pins sections for bots and groups of the user only", async () => {
+    it("organize_bot sets, clears and pins sections for bots and groups in its own space only", async () => {
       const { cookie, me, chief } = await fleetOwner("organize");
       const outsider = await signup(
         app,
@@ -3489,8 +4448,14 @@ describeJourneys("required product journeys", () => {
         "Other",
       );
       const outsiderMe = await rpc<Me>(app, outsider, "me");
+      // Sections are shared within a space, so another user's lives in their own space.
       const foreignSection = await prisma.botSection.create({
-        data: { spaceId: me.spaceId, userId: outsiderMe.userId, name: "Research", position: 0 },
+        data: {
+          spaceId: outsiderMe.spaceId,
+          userId: outsiderMe.userId,
+          name: "Research",
+          position: 0,
+        },
       });
       const alpha = await createBot(cookie, "Alpha");
       const beta = await createBot(cookie, "Beta");
@@ -3976,6 +4941,7 @@ type Bot = {
   sectionId: string | null;
   unread: boolean;
   computerMode: "team" | "dedicated";
+  fleetManagement: boolean;
   parentBotId?: string | null;
 };
 type Snap = {
@@ -3983,7 +4949,13 @@ type Snap = {
     id: string;
     seq: number;
     runId?: string | null;
-    blocks: Array<{ kind?: string; status?: string; answer?: string; actions?: unknown[] }>;
+    blocks: Array<{
+      kind?: string;
+      status?: string;
+      answer?: string;
+      text?: string;
+      actions?: unknown[];
+    }>;
   }>;
   run: { id: string; status: string } | null;
   activeRuns?: Array<{ id: string; status: string }>;

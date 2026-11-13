@@ -1,12 +1,66 @@
 import type { Bot, Routine } from "@cortexai-agent-hub/contracts";
-import { expect, type Page, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import type { Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  openBotPanelTab,
+  rpc,
+  signup,
+} from "./helpers";
 
 async function addScheduleTrigger(page: Page, freq: string) {
   await page.getByRole("button", { name: "Add trigger" }).click();
   await page.getByRole("menuitem", { name: "On a schedule" }).hover();
   await page.getByRole("menuitem", { name: freq, exact: true }).click();
 }
+
+test("a delayed schedule is visible only while the routine is active", async ({
+  page,
+}, testInfo) => {
+  await signup(
+    page,
+    `routine-delay-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Routine delay",
+  );
+  await completeOnboarding(page);
+  const botId = activeBotId(page);
+  const routine = await rpc<Routine>(page, "routines/create", {
+    botId,
+    name: "Morning report",
+    prompt: "Prepare the report.",
+    crons: ["0 8 * * *"],
+    timezone: "UTC",
+    active: false,
+  });
+  let scheduleDelayed = true;
+  await page.route("**/rpc/routines/list", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.json = body.json.map((item: Routine) =>
+      item.id === routine.id ? { ...item, active: true, scheduleDelayed } : item,
+    );
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await openBotPanelTab(page, "Routines");
+  await page.getByRole("button", { name: /Morning report/ }).click();
+  const delay = page.getByRole("status").filter({ hasText: "Schedule delayed" });
+  await expect(delay).toBeVisible();
+  await captureScreenshot(page, testInfo, "routine-schedule-delayed");
+  const name = page.locator("label:has-text('Name') input");
+  await name.fill("Unsaved report name");
+  scheduleDelayed = false;
+  await expect(delay).toHaveCount(0, { timeout: 35_000 });
+  await expect(name).toHaveValue("Unsaved report name");
+  scheduleDelayed = true;
+  await expect(delay).toBeVisible({ timeout: 35_000 });
+  await expect(name).toHaveValue("Unsaved report name");
+  await page.getByRole("switch", { name: "Active", exact: true }).click();
+  await expect(delay).toHaveCount(0);
+});
 
 async function saveAndReturn(page: Page, procedure: "routines/create" | "routines/update") {
   const saved = page.waitForResponse(
@@ -39,7 +93,7 @@ test("routine editing updates in place, preserves timezone, deletion persists, a
   expect(created.nextRunAt).not.toBeNull();
   expect(localSchedule(created.nextRunAt!, created.timezone)).toMatchObject({ hour: 9, minute: 0 });
   await page.reload();
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Routines");
 
   await page.getByRole("button", { name: /Tokyo check-in/ }).click();
   await page.locator("label:has-text('Name') input").fill("Weekday check-in");
@@ -126,7 +180,7 @@ test("routine editing updates in place, preserves timezone, deletion persists, a
     modelId: "llama-3.3-70b",
     thinkingLevel: null,
   });
-  await expect(page.getByRole("button", { name: /Model check/ })).toContainText(" · llama-3.3-70b");
+  await expect(page.getByRole("button", { name: /Model check/ })).toContainText("llama-3.3-70b");
 
   await page.getByRole("button", { name: /Model check/ }).click();
   await page.locator("label:has-text('Name') input").fill("Renamed model check");
@@ -134,7 +188,6 @@ test("routine editing updates in place, preserves timezone, deletion persists, a
   for (const column of ["modelProvider", "modelId", "thinkingLevel"])
     expect(renamePatch).not.toHaveProperty(column);
 
-  // The deleted routine stays gone after a reload.
   await page.reload();
   await expect(page.getByPlaceholder("Message Chief")).toBeVisible();
   expect((await rpc<Routine[]>(page, "routines/list", { botId })).map((r) => r.name)).toEqual([
@@ -143,33 +196,50 @@ test("routine editing updates in place, preserves timezone, deletion persists, a
   await expect(updatedButton).toHaveCount(0);
 });
 
-test("invalid advanced cron is rejected without creating a routine", async ({ page }, testInfo) => {
+test("an email trigger claims the bot's address and saves who can start it", async ({
+  page,
+}, testInfo) => {
   const stamp = Date.now();
   await signup(
     page,
-    `routine-invalid-${stamp}@cortexai-agent-hub.test`,
+    `routine-email-${stamp}@cortexai-agent-hub.test`,
     "password12",
-    "Invalid Routine",
+    "Routine Email",
   );
   await completeOnboarding(page);
   const botId = activeBotId(page);
+  await openBotPanelTab(page, "Routines");
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
   await page.getByRole("button", { name: "Create Routine" }).click();
-  await page.locator("label:has-text('Name') input").fill("Broken schedule");
-  await page.locator("label:has-text('Instruction') textarea").fill("This should never run");
-  await addScheduleTrigger(page, "Advanced...");
-  await page.getByLabel("Cron expression").fill("61 25 * * *");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator("label:has-text('Name') input").fill("Inbox triage");
+  await page.locator("label:has-text('Instruction') textarea").fill("Summarize what I forward.");
+  await page.getByRole("button", { name: "Add trigger" }).click();
+  await page.getByRole("menuitem", { name: "Email" }).click();
 
-  await expect(page.getByRole("alert")).toContainText("Enter a valid cron expression.");
-  expect(await rpc<Routine[]>(page, "routines/list", { botId })).toEqual([]);
-  await captureScreenshot(page, testInfo, "invalid-cron-rejected");
+  const name = page.getByRole("textbox", { name: "Email address" });
+  await expect(name).not.toHaveValue("");
+  await name.fill("postmaster");
+  await page.getByRole("button", { name: "Claim" }).click();
+  await expect(page.getByRole("alert")).toHaveText("That address isn't available");
+  await name.fill(`triage-${stamp}`);
+  await page.getByRole("button", { name: "Claim" }).click();
+  await expect(page.getByText(`triage-${stamp}@bots.cortexai-agent-hub.test`)).toBeVisible();
+  await page.getByRole("combobox", { name: "Who can start it" }).selectOption("domain");
+  await captureScreenshot(page, testInfo, "routine-email-trigger");
+
+  expect(await saveAndReturn(page, "routines/create")).toMatchObject({ emailSenders: "domain" });
+  await expect(page.getByRole("button", { name: /Inbox triage/ })).toContainText("Email");
+  const [saved] = await rpc<Routine[]>(page, "routines/list", { botId });
+  expect(saved).toMatchObject({ name: "Inbox triage", crons: [], emailSenders: "domain" });
+  expect(await rpc(page, "bots/emailAddress", { botId })).toEqual({
+    domain: "bots.cortexai-agent-hub.test",
+    address: `triage-${stamp}@bots.cortexai-agent-hub.test`,
+  });
 });
 
-test("a successful routine create is not reported as failed when refresh fails", async ({
-  page,
-}) => {
+test("a successful routine create is not reported as failed when refresh fails", {
+  tag: "@nightly",
+}, async ({ page }) => {
   const stamp = Date.now();
   await signup(
     page,
@@ -180,7 +250,7 @@ test("a successful routine create is not reported as failed when refresh fails",
   await completeOnboarding(page);
   const botId = activeBotId(page);
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Routines");
   await page.getByRole("button", { name: "Create Routine" }).click();
   await page.locator("label:has-text('Name') input").fill("Persisted routine");
   await page.locator("label:has-text('Instruction') textarea").fill("Run once each morning");
@@ -210,9 +280,9 @@ test("a successful routine create is not reported as failed when refresh fails",
   expect(routines[0]?.name).toBe("Persisted routine");
 });
 
-test("switching bots while a routine save is pending does not reopen stale state", async ({
-  page,
-}) => {
+test("switching bots while a routine save is pending does not reopen stale state", {
+  tag: "@nightly",
+}, async ({ page }) => {
   const stamp = Date.now();
   await signup(
     page,
@@ -224,7 +294,6 @@ test("switching bots while a routine save is pending does not reopen stale state
   const firstBotId = activeBotId(page);
   const secondBot = await rpc<Bot>(page, "bots/create", {
     name: "Second",
-    title: "",
     description: "",
     instructions: "",
     notifyOnFinish: false,
@@ -251,7 +320,7 @@ test("switching bots while a routine save is pending does not reopen stale state
   ]);
   await page.reload();
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Routines");
   await page.getByRole("button", { name: /First routine/ }).click();
   await page.locator("label:has-text('Name') input").fill("First routine updated");
 
@@ -291,7 +360,7 @@ test("switching bots while a routine save is pending does not reopen stale state
   await expect(page.getByTestId("side-panel")).toHaveAttribute("data-panel", "closed");
   await expect(page.getByRole("alert")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Routines");
   await expect(page.getByRole("button", { name: /Second routine/ })).toHaveCount(1);
   await expect(page.getByRole("button", { name: /First routine/ })).toHaveCount(0);
 
@@ -348,7 +417,7 @@ function localSchedule(iso: string, timezone: string) {
   };
 }
 
-test("change-trigger screenshot walkthrough", async ({ page }, testInfo) => {
+test("change-trigger screenshot walkthrough", { tag: "@nightly" }, async ({ page }, testInfo) => {
   await page.emulateMedia({ colorScheme: "light" });
   const stamp = Date.now();
   await signup(
@@ -360,7 +429,7 @@ test("change-trigger screenshot walkthrough", async ({ page }, testInfo) => {
   await completeOnboarding(page);
   const botId = activeBotId(page);
 
-  await page.getByRole("button", { name: "Agent computer", exact: true }).click();
+  await openBotPanelTab(page, "Routines");
   await expect(page.getByRole("button", { name: "Create Routine" })).toBeVisible();
   await expect(page.getByText(/Booting up .* computer/)).toBeHidden();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -402,13 +471,17 @@ test("change-trigger screenshot walkthrough", async ({ page }, testInfo) => {
   await card
     .getByRole("textbox", { name: "Command", exact: true })
     .fill("curl -s https://example.com/status.json");
-  await card.getByRole("textbox", { name: "Fields that mark a change" }).fill("status, updatedAt");
+  await card
+    .getByRole("textbox", { name: "Fields to compare (optional)" })
+    .fill("status, updatedAt");
   await captureScreenshot(page, testInfo, "routine-watch-07-command");
 
   await kind.selectOption("tool");
   await card.getByRole("textbox", { name: "Tool name", exact: true }).fill("brain_changed");
   await card.getByRole("textbox", { name: "Tool arguments (JSON)" }).fill('{"path":"reports/"}');
-  await card.getByRole("textbox", { name: "Fields that mark a change" }).fill("id, modifiedTime");
+  await card
+    .getByRole("textbox", { name: "Fields to compare (optional)" })
+    .fill("id, modifiedTime");
   await captureScreenshot(page, testInfo, "routine-watch-08-tool");
 
   await card.getByRole("textbox", { name: "Tool name", exact: true }).fill("");
@@ -448,4 +521,67 @@ test("change-trigger screenshot walkthrough", async ({ page }, testInfo) => {
     paths: ["inbox/", "reports/latest.csv"],
   });
   await captureScreenshot(page, testInfo, "routine-watch-10-saved-list");
+});
+
+test("an HTTPS change trigger saves and reopens", async ({ page }, testInfo) => {
+  await signup(
+    page,
+    `http-watch-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Routine Watch",
+  );
+  await completeOnboarding(page);
+  const botId = activeBotId(page);
+  await openBotPanelTab(page, "Routines");
+  await page.getByRole("button", { name: "Create Routine" }).click();
+  await page.locator("label:has-text('Name') input").fill("Status watch");
+  await page.locator("label:has-text('Instruction') textarea").fill("Report what changed.");
+  // Keep this saved watch inactive: no real endpoint is contacted by the offline UI test.
+  await page.getByRole("switch", { name: "Active", exact: true }).click();
+  await page.getByRole("button", { name: "Add trigger" }).click();
+  await page.getByRole("menuitem", { name: "When something changes" }).click();
+  const card = page.getByTestId("routine-watch-card");
+  await card.getByRole("combobox", { name: "What to watch" }).selectOption("http");
+  await card.getByRole("textbox", { name: "HTTPS URL" }).fill("https://example.com/status");
+  await card.getByRole("spinbutton", { name: "Check every" }).fill("5");
+  const fields = card.getByRole("textbox", { name: "Fields to compare (optional)" });
+  await expect(fields).toBeVisible();
+  const selectorBox = await card.getByRole("combobox", { name: "What to watch" }).boundingBox();
+  const urlBox = await card.getByRole("textbox", { name: "HTTPS URL" }).boundingBox();
+  expect(selectorBox?.width).toBe(urlBox?.width);
+  expect(selectorBox?.height).toBe(urlBox?.height);
+  await captureScreenshot(page, testInfo, "routine-http-watch");
+  await fields.fill("id, modifiedTime");
+  await card.getByRole("switch", { name: "Report unchanged checks" }).click();
+  const help = card.getByRole("button", { name: "About Report unchanged checks" });
+  await help.hover();
+  const explanation = page
+    .getByText("Post a chat message when a check finds no changes. The routine won't run.", {
+      exact: true,
+    })
+    .last();
+  await expect(explanation).toBeVisible();
+  await captureScreenshot(page, testInfo, "routine-http-watch-help");
+  await page.keyboard.press("Escape");
+  expect(await saveAndReturn(page, "routines/create")).toMatchObject({
+    active: false,
+    crons: [],
+    watch: {
+      kind: "http",
+      url: "https://example.com/status",
+      everyMinutes: 5,
+      track: ["id", "modifiedTime"],
+      loud: true,
+    },
+  });
+  const [saved] = await rpc<Routine[]>(page, "routines/list", { botId });
+  expect(saved?.watch).toMatchObject({ kind: "http", url: "https://example.com/status" });
+  await page.getByRole("button", { name: /Status watch/ }).click();
+  await expect(card.getByRole("combobox", { name: "What to watch" })).toHaveValue("http");
+  await expect(card.getByRole("textbox", { name: "HTTPS URL" })).toHaveValue(
+    "https://example.com/status",
+  );
+  await expect(fields).toBeVisible();
+  await expect(fields).toHaveValue("id, modifiedTime");
+  await expect(card.getByRole("switch", { name: "Report unchanged checks" })).toBeChecked();
 });

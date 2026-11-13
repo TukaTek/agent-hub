@@ -26,19 +26,19 @@
 
 ## File Structure
 
-| File | Responsibility | Change |
-|---|---|---|
-| `packages/auth/src/hub-client.ts` | Hub transport and response validation | Add `HubRejectedError`, `isHubRejection`; throw `HubRejectedError` for semantic denials |
-| `packages/auth/src/hub-client.test.ts` | Client contract tests | Add classification tests over a fake `fetch` |
-| `packages/auth/src/hub-sessions.ts` | Session and work authorization against Hub | Rewrite `authorize`: no tx, classification, CAS end, lease refresh; add `HubSessionUnavailableError` |
-| `packages/auth/src/index.ts` | Better Auth composition | `findSession` maps unavailable → 503 `APIError`; export `isHubSessionUnavailable`, `HubSessionUnavailableError` |
-| `packages/auth/src/hub.test.ts` | In-memory end-to-end auth tests | Extend Prisma fake (`updateMany`, CAS `deleteMany`, open-tx counter); new behaviour tests; migrate generic-`Error` tests to real error types |
-| `packages/auth/src/hub.postgres.test.ts`, `packages/auth/src/hub-sessions.test.ts` | Postgres-gated tests (CI `test:integration`) | Real-DB lease, CAS and retention tests; migrate generic errors |
-| `packages/db/prisma/schema.prisma` + `packages/db/prisma/migrations/20261105120000_hub_session_refresh_lease/migration.sql` | Schema | Add nullable `refreshLeaseUntil` |
-| `apps/api/src/router.ts`, `apps/api/src/router.test.ts` | RPC auth middleware | `sessionUnavailable` context → `SERVICE_UNAVAILABLE` |
-| `apps/api/src/app.ts` | HTTP composition | Map `getSession` unavailability to context flag / HTTP 503 |
-| `apps/web/src/lib/session-gate.test.ts` | Web gate contract | Pin: established session + 503 stays authenticated and recovers |
-| `docs/hub-auth.md` | Ops docs | Replace "outage deletes the session" and "row lock" text |
+| File                                                                                                                        | Responsibility                               | Change                                                                                                                                       |
+| --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/auth/src/hub-client.ts`                                                                                           | Hub transport and response validation        | Add `HubRejectedError`, `isHubRejection`; throw `HubRejectedError` for semantic denials                                                      |
+| `packages/auth/src/hub-client.test.ts`                                                                                      | Client contract tests                        | Add classification tests over a fake `fetch`                                                                                                 |
+| `packages/auth/src/hub-sessions.ts`                                                                                         | Session and work authorization against Hub   | Rewrite `authorize`: no tx, classification, CAS end, lease refresh; add `HubSessionUnavailableError`                                         |
+| `packages/auth/src/index.ts`                                                                                                | Better Auth composition                      | `findSession` maps unavailable → 503 `APIError`; export `isHubSessionUnavailable`, `HubSessionUnavailableError`                              |
+| `packages/auth/src/hub.test.ts`                                                                                             | In-memory end-to-end auth tests              | Extend Prisma fake (`updateMany`, CAS `deleteMany`, open-tx counter); new behaviour tests; migrate generic-`Error` tests to real error types |
+| `packages/auth/src/hub.postgres.test.ts`, `packages/auth/src/hub-sessions.test.ts`                                          | Postgres-gated tests (CI `test:integration`) | Real-DB lease, CAS and retention tests; migrate generic errors                                                                               |
+| `packages/db/prisma/schema.prisma` + `packages/db/prisma/migrations/20261105120000_hub_session_refresh_lease/migration.sql` | Schema                                       | Add nullable `refreshLeaseUntil`                                                                                                             |
+| `apps/api/src/router.ts`, `apps/api/src/router.test.ts`                                                                     | RPC auth middleware                          | `sessionUnavailable` context → `SERVICE_UNAVAILABLE`                                                                                         |
+| `apps/api/src/app.ts`                                                                                                       | HTTP composition                             | Map `getSession` unavailability to context flag / HTTP 503                                                                                   |
+| `apps/web/src/lib/session-gate.test.ts`                                                                                     | Web gate contract                            | Pin: established session + 503 stays authenticated and recovers                                                                              |
+| `docs/hub-auth.md`                                                                                                          | Ops docs                                     | Replace "outage deletes the session" and "row lock" text                                                                                     |
 
 ---
 
@@ -71,10 +71,12 @@ Expected: all pass. The Postgres-gated tests are reported as skipped. Record the
 ### Task 1: Classify definitive Hub rejections in the client
 
 **Files:**
+
 - Modify: `packages/auth/src/hub-client.ts:170-316` (new class next to `HubUnsupportedIdpError`; throw sites in `identity`, `expiry`, `verify`, `grant`)
 - Test: `packages/auth/src/hub-client.test.ts`
 
 **Interfaces:**
+
 - Produces: `export class HubRejectedError extends Error` (constructor `(message: "Hub access denied" | "Hub identity changed" | "Hub session expired")`), and `export function isHubRejection(error: unknown): boolean`.
 
 - [x] **Step 1: Write the failing test** (append to `hub-client.test.ts`; reuse the file's existing imports and `config` style)
@@ -86,10 +88,12 @@ describe("Hub rejection classification (CAAH-108)", () => {
   const clientWith = (fetcher: typeof fetch) =>
     createHubClient({ origin, tenantId: expected.tenant }, fetcher);
   const verifyError = async (fetcher: typeof fetch) =>
-    clientWith(fetcher).verify("test-fake-access", expected).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
+    clientWith(fetcher)
+      .verify("test-fake-access", expected)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
 
   it.each([
     ["timeout", () => Promise.reject(new DOMException("timed out", "TimeoutError"))],
@@ -115,11 +119,13 @@ describe("Hub rejection classification (CAAH-108)", () => {
     ["valid:false", async () => Response.json({ valid: false })],
     [
       "other tenant",
-      async () => Response.json({ valid: true, userId: expected.subject, tenantId: "test-fake-other" }),
+      async () =>
+        Response.json({ valid: true, userId: expected.subject, tenantId: "test-fake-other" }),
     ],
     [
       "other subject",
-      async () => Response.json({ valid: true, userId: "test-fake-other", tenantId: expected.tenant }),
+      async () =>
+        Response.json({ valid: true, userId: "test-fake-other", tenantId: expected.tenant }),
     ],
   ])("treats %s as a definitive rejection", async (_name, reply) => {
     const error = await verifyError(vi.fn(reply) as never);
@@ -180,6 +186,7 @@ export function isHubRejection(error: unknown): boolean {
 `HubRequestError` is declared below this point. Move the `HubRequestError` class above `HubRejectedError` so both are declared before `isHubRejection`.
 
 Replace these throws, and only these, with `HubRejectedError` (same message). Leave `"Invalid Hub response"` as `Error`:
+
 - `expiry()`: `throw new HubRejectedError("Hub session expired");`
 - `identity()`: `throw new HubRejectedError("Hub access denied");`
 - `verify()`: the four `throw new Error("Hub access denied")` and the `throw new Error("Hub identity changed")`.
@@ -208,11 +215,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Verify path keeps the session on outages and answers 503
 
 **Files:**
+
 - Modify: `packages/auth/src/hub-sessions.ts` (whole `createHubSessionAuthorizer` body; the refresh branch keeps today's logic until Task 4 but moves out of the transaction)
 - Modify: `packages/auth/src/index.ts:489-496` (`findSession` override) and its exports near line 84
 - Test: `packages/auth/src/hub.test.ts`
 
 **Interfaces:**
+
 - Consumes: `isHubRejection`, `HubRejectedError` (Task 1).
 - Produces:
   - `export class HubSessionUnavailableError extends Error` from `hub-sessions.ts`.
@@ -314,18 +323,21 @@ describe("Hub outages keep the session (CAAH-108)", () => {
   }
   afterEach(() => vi.useRealTimers());
 
-  it.each(outages)("answers 503 and keeps the session when verify fails with %s", async (_n, error) => {
-    const { f, headers } = await afterWindow();
-    f.client.verify.mockRejectedValueOnce(error());
-    const response = await getSessionStatus(f, headers);
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
-    expect(response.headers.get("set-cookie") ?? "").not.toMatch(/session_token=;/);
-    expect(f.data.session).toHaveLength(1);
-    expect(f.grants.size).toBe(1);
-    // Hub returns: the same credentials work again without signing in.
-    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-  });
+  it.each(outages)(
+    "answers 503 and keeps the session when verify fails with %s",
+    async (_n, error) => {
+      const { f, headers } = await afterWindow();
+      f.client.verify.mockRejectedValueOnce(error());
+      const response = await getSessionStatus(f, headers);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "HUB_UNAVAILABLE" });
+      expect(response.headers.get("set-cookie") ?? "").not.toMatch(/session_token=;/);
+      expect(f.data.session).toHaveLength(1);
+      expect(f.grants.size).toBe(1);
+      // Hub returns: the same credentials work again without signing in.
+      expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+    },
+  );
 
   it("throws the unavailable error from auth.api.getSession for the API to map", async () => {
     const { f, headers } = await afterWindow();
@@ -370,8 +382,14 @@ describe("Hub outages keep the session (CAAH-108)", () => {
     const grant = [...f.grants.values()][0];
     f.client.verify.mockImplementationOnce(async () => {
       // Another process rotated the grant while this verify was in flight.
-      grant.refreshToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-refresh-2" });
-      grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-2" });
+      grant.refreshToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-refresh-2",
+      });
+      grant.accessToken = await symmetricEncrypt({
+        key: encryptionKey,
+        data: "test-fake-access-2",
+      });
       throw new HubRequestError(401, "invalid_token");
     });
     expect(await f.auth.api.getSession({ headers })).not.toBeNull();
@@ -391,6 +409,7 @@ Expected: FAIL. Outage cases get `200` with `null` and the session deleted; the 
 - [x] **Step 4: Spike — confirm Better Auth propagates a thrown `APIError` from `findSession`**
 
 Make the `index.ts` change first (Step 5b), then rerun the 503 test with a temporary stub authorizer (`throw new HubSessionUnavailableError()`):
+
 - If `/get-session` answers 503 and the cookie is not cleared, continue.
 - **If Better Auth swallows it** (status 200, `null`, or cookie cleared): stop and record the observed behaviour in the PR. Implement the fallback instead: in `hooks.before` (`index.ts:383`), for `ctx.path === "/get-session"`, resolve the session token, call `hub.authorizeSession` once per request, and throw the 503 `APIError` there. Memoize the result per request with a `WeakMap<Request, Promise<boolean>>` so `findSession` reuses it. Keep everything else in this plan unchanged.
 
@@ -554,6 +573,7 @@ export function createHubSessionAuthorizer(/* signature unchanged */) {
 ```
 
 Notes for the implementer:
+
 - `client.revoke` exists on the real client and on every test client. The Postgres test client at `hub.postgres.test.ts:519` already has `revoke`.
 - `createUserWorkAuthorizer` is changed in Task 5. Until then a thrown unavailability propagates from it. That is acceptable between commits.
 
@@ -598,6 +618,7 @@ Check `APIError`'s field names in `node_modules/better-call` (`status` string vs
 - [x] **Step 6: Migrate the existing tests that relied on "any error deletes"**
 
 In `hub.test.ts`, swap generic errors for real Hub errors. Expectations are unchanged.
+
 - `:523` "removes access before token expiry…": `new Error("assignment removed")` → `new HubRejectedError("Hub access denied")`.
 - `:576` refresh "denied": `new Error("invalid_grant")` → `new HubRequestError(400, "invalid_grant")`.
 - `:984` "drops an SSO session…": `new Error("user disabled")` → `new HubRequestError(403, "access_denied")`.
@@ -631,10 +652,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: Additive refresh lease column
 
 **Files:**
+
 - Modify: `packages/db/prisma/schema.prisma:122-133`
 - Create: `packages/db/prisma/migrations/20261105120000_hub_session_refresh_lease/migration.sql`
 
 **Interfaces:**
+
 - Produces: `HubSession.refreshLeaseUntil: Date | null` (Prisma field, column `"refreshLeaseUntil"`).
 
 - [x] **Step 1: Schema**
@@ -689,21 +712,25 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: Single-flight, lease-guarded refresh with CAS
 
 **Files:**
+
 - Modify: `packages/auth/src/hub-sessions.ts` (`refresh`, new `awaitRefresh`, `release`, in-process map)
 - Test: `packages/auth/src/hub.test.ts`
 
 **Interfaces:**
+
 - Consumes: `HubSession.refreshLeaseUntil` (Task 3), the fixture `updateMany` lease semantics (Task 2 Step 1).
 - Produces: constants `REFRESH_LEASE_MS = 30_000`, `REFRESH_WAIT_MS = 10_000`, `REFRESH_POLL_MS = 100` (module-private).
 
 - [x] **Step 1: Write the failing tests** (add to the CAAH-108 `describe` in `hub.test.ts`)
 
 ```ts
-  const expire = (f: ReturnType<typeof fixture>) => {
-    [...f.grants.values()][0].accessUntil = new Date(0);
-  };
+const expire = (f: ReturnType<typeof fixture>) => {
+  [...f.grants.values()][0].accessUntil = new Date(0);
+};
 
-  it.each(outages)("answers 503, keeps the session and frees the lease when refresh fails with %s", async (_n, error) => {
+it.each(outages)(
+  "answers 503, keeps the session and frees the lease when refresh fails with %s",
+  async (_n, error) => {
     const f = fixture();
     const { headers } = await f.login();
     expire(f);
@@ -714,114 +741,127 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     // Hub returns: the next request refreshes with the same stored token.
     expect(await f.auth.api.getSession({ headers })).not.toBeNull();
     expect(f.client.refresh).toHaveBeenLastCalledWith("refresh-secret-1");
-  });
+  },
+);
 
-  it("ends the session once Hub confirms a rotation lost to a timeout", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    expire(f);
-    f.client.refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
-    expect((await getSessionStatus(f, headers)).status).toBe(503);
-    expect(f.data.session).toHaveLength(1);
-    f.client.refresh.mockRejectedValueOnce(new HubRequestError(400, "invalid_grant"));
-    expect(await f.auth.api.getSession({ headers })).toBeNull();
-    expect(f.data.session).toHaveLength(0);
-  });
+it("ends the session once Hub confirms a rotation lost to a timeout", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  expire(f);
+  f.client.refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+  expect((await getSessionStatus(f, headers)).status).toBe(503);
+  expect(f.data.session).toHaveLength(1);
+  f.client.refresh.mockRejectedValueOnce(new HubRequestError(400, "invalid_grant"));
+  expect(await f.auth.api.getSession({ headers })).toBeNull();
+  expect(f.data.session).toHaveLength(0);
+});
 
-  it("refreshes once for concurrent requests and never refreshes outside the lease", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    expire(f);
-    let finish!: () => void;
-    f.client.refresh.mockImplementationOnce(async () => {
-      expect(f.openTransactions()).toBe(0);
-      expect([...f.grants.values()][0].refreshLeaseUntil).toBeInstanceOf(Date);
-      await new Promise<void>((resolve) => (finish = resolve));
-      return {
-        subject: "subject-1",
-        tenant: config.tenantId,
-        accessToken: "test-fake-access-2",
-        refreshToken: "test-fake-refresh-2",
-        accessUntil: new Date(Date.now() + 900_000),
-      };
+it("refreshes once for concurrent requests and never refreshes outside the lease", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  expire(f);
+  let finish!: () => void;
+  f.client.refresh.mockImplementationOnce(async () => {
+    expect(f.openTransactions()).toBe(0);
+    expect([...f.grants.values()][0].refreshLeaseUntil).toBeInstanceOf(Date);
+    await new Promise<void>((resolve) => (finish = resolve));
+    return {
+      subject: "subject-1",
+      tenant: config.tenantId,
+      accessToken: "test-fake-access-2",
+      refreshToken: "test-fake-refresh-2",
+      accessUntil: new Date(Date.now() + 900_000),
+    };
+  });
+  const both = Promise.all([
+    f.auth.api.getSession({ headers }),
+    f.auth.api.getSession({ headers }),
+  ]);
+  await vi.waitFor(() => expect(f.client.refresh).toHaveBeenCalledOnce());
+  finish();
+  expect((await both).every(Boolean)).toBe(true);
+  expect(f.client.refresh).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
+  expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
+});
+
+it("waits for another process's refresh instead of spending the same token", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  const grant = [...f.grants.values()][0];
+  grant.accessUntil = new Date(0);
+  grant.refreshLeaseUntil = new Date(Date.now() + 30_000); // held elsewhere
+  setTimeout(async () => {
+    grant.refreshToken = await symmetricEncrypt({
+      key: encryptionKey,
+      data: "test-fake-refresh-2",
     });
-    const both = Promise.all([f.auth.api.getSession({ headers }), f.auth.api.getSession({ headers })]);
-    await vi.waitFor(() => expect(f.client.refresh).toHaveBeenCalledOnce());
-    finish();
-    expect((await both).every(Boolean)).toBe(true);
-    expect(f.client.refresh).toHaveBeenCalledExactlyOnceWith("refresh-secret-1");
-    expect([...f.grants.values()][0].refreshLeaseUntil).toBeNull();
-  });
+    grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-2" });
+    grant.accessUntil = new Date(Date.now() + 900_000);
+    grant.refreshLeaseUntil = null;
+  }, 150);
+  expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  expect(f.client.refresh).not.toHaveBeenCalled();
+});
 
-  it("waits for another process's refresh instead of spending the same token", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    const grant = [...f.grants.values()][0];
-    grant.accessUntil = new Date(0);
-    grant.refreshLeaseUntil = new Date(Date.now() + 30_000); // held elsewhere
-    setTimeout(async () => {
-      grant.refreshToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-refresh-2" });
-      grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-2" });
-      grant.accessUntil = new Date(Date.now() + 900_000);
-      grant.refreshLeaseUntil = null;
-    }, 150);
-    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-    expect(f.client.refresh).not.toHaveBeenCalled();
-  });
+it("answers 503 when another process holds the lease too long, keeping the session", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  const grant = [...f.grants.values()][0];
+  grant.accessUntil = new Date(0);
+  grant.refreshLeaseUntil = new Date(Date.now() + 30_000);
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+  const pending = getSessionStatus(f, headers);
+  await vi.advanceTimersByTimeAsync(10_200);
+  expect((await pending).status).toBe(503);
+  expect(f.client.refresh).not.toHaveBeenCalled();
+  expect(f.data.session).toHaveLength(1);
+});
 
-  it("answers 503 when another process holds the lease too long, keeping the session", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    const grant = [...f.grants.values()][0];
-    grant.accessUntil = new Date(0);
-    grant.refreshLeaseUntil = new Date(Date.now() + 30_000);
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
-    const pending = getSessionStatus(f, headers);
-    await vi.advanceTimersByTimeAsync(10_200);
-    expect((await pending).status).toBe(503);
-    expect(f.client.refresh).not.toHaveBeenCalled();
-    expect(f.data.session).toHaveLength(1);
-  });
-
-  it("does not let a refusal for a spent token delete a grant another process stored", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    expire(f);
-    const grant = [...f.grants.values()][0];
-    f.client.refresh.mockImplementationOnce(async () => {
-      // Another process won a lease that expired under us and rotated first.
-      grant.refreshToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-refresh-2" });
-      grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-2" });
-      grant.accessUntil = new Date(Date.now() + 900_000);
-      throw new HubRequestError(400, "invalid_grant");
+it("does not let a refusal for a spent token delete a grant another process stored", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  expire(f);
+  const grant = [...f.grants.values()][0];
+  f.client.refresh.mockImplementationOnce(async () => {
+    // Another process won a lease that expired under us and rotated first.
+    grant.refreshToken = await symmetricEncrypt({
+      key: encryptionKey,
+      data: "test-fake-refresh-2",
     });
-    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-    expect(f.data.session).toHaveLength(1);
+    grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-2" });
+    grant.accessUntil = new Date(Date.now() + 900_000);
+    throw new HubRequestError(400, "invalid_grant");
   });
+  expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  expect(f.data.session).toHaveLength(1);
+});
 
-  it("revokes a grant it could not store because the session changed meanwhile", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    expire(f);
-    const grant = [...f.grants.values()][0];
-    f.client.refresh.mockImplementationOnce(async () => {
-      // Another process finished its own refresh first (its write also clears the lease).
-      grant.refreshToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-refresh-3" });
-      grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-3" });
-      grant.accessUntil = new Date(Date.now() + 900_000);
-      grant.refreshLeaseUntil = null;
-      return {
-        subject: "subject-1",
-        tenant: config.tenantId,
-        accessToken: "test-fake-access-orphan",
-        refreshToken: "test-fake-refresh-orphan",
-        accessUntil: new Date(Date.now() + 900_000),
-      };
+it("revokes a grant it could not store because the session changed meanwhile", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  expire(f);
+  const grant = [...f.grants.values()][0];
+  f.client.refresh.mockImplementationOnce(async () => {
+    // Another process finished its own refresh first (its write also clears the lease).
+    grant.refreshToken = await symmetricEncrypt({
+      key: encryptionKey,
+      data: "test-fake-refresh-3",
     });
-    expect(await f.auth.api.getSession({ headers })).not.toBeNull();
-    expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-orphan");
-    expect(f.data.session).toHaveLength(1);
+    grant.accessToken = await symmetricEncrypt({ key: encryptionKey, data: "test-fake-access-3" });
+    grant.accessUntil = new Date(Date.now() + 900_000);
+    grant.refreshLeaseUntil = null;
+    return {
+      subject: "subject-1",
+      tenant: config.tenantId,
+      accessToken: "test-fake-access-orphan",
+      refreshToken: "test-fake-refresh-orphan",
+      accessUntil: new Date(Date.now() + 900_000),
+    };
   });
+  expect(await f.auth.api.getSession({ headers })).not.toBeNull();
+  expect(f.client.revoke).toHaveBeenCalledWith("test-fake-refresh-orphan");
+  expect(f.data.session).toHaveLength(1);
+});
 ```
 
 - [x] **Step 2: Run them to verify they fail**
@@ -844,88 +884,88 @@ const REFRESH_POLL_MS = 100;
 Inside `createHubSessionAuthorizer`:
 
 ```ts
-  /** Requests in this process share one refresh per session. */
-  const refreshing = new Map<string, Promise<Outcome>>();
+/** Requests in this process share one refresh per session. */
+const refreshing = new Map<string, Promise<Outcome>>();
 
-  /** Lets the next request refresh at once after a failed attempt. */
-  const release = (sessionId: string, used: string) =>
-    prisma.hubSession
-      .updateMany({ where: { sessionId, refreshToken: used }, data: { refreshLeaseUntil: null } })
-      .catch(() => undefined);
+/** Lets the next request refresh at once after a failed attempt. */
+const release = (sessionId: string, used: string) =>
+  prisma.hubSession
+    .updateMany({ where: { sessionId, refreshToken: used }, data: { refreshLeaseUntil: null } })
+    .catch(() => undefined);
 
-  /** Another process holds the lease: wait for its grant instead of spending the same token. */
-  async function awaitRefresh(sessionId: string, used: string): Promise<Outcome> {
-    const deadline = Date.now() + REFRESH_WAIT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, REFRESH_POLL_MS));
-      const row = await prisma.hubSession.findUnique({ where: { sessionId } });
-      if (
-        !row ||
-        row.refreshToken !== used ||
-        !row.refreshLeaseUntil ||
-        row.refreshLeaseUntil.getTime() <= Date.now()
-      )
-        return "stale";
-    }
-    throw new HubSessionUnavailableError();
+/** Another process holds the lease: wait for its grant instead of spending the same token. */
+async function awaitRefresh(sessionId: string, used: string): Promise<Outcome> {
+  const deadline = Date.now() + REFRESH_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, REFRESH_POLL_MS));
+    const row = await prisma.hubSession.findUnique({ where: { sessionId } });
+    if (
+      !row ||
+      row.refreshToken !== used ||
+      !row.refreshLeaseUntil ||
+      row.refreshLeaseUntil.getTime() <= Date.now()
+    )
+      return "stale";
   }
+  throw new HubSessionUnavailableError();
+}
 ```
 
 Replace the interim `refresh` from Task 2 with:
 
 ```ts
-  async function refresh(
-    sessionId: string,
-    grantSession: { refreshToken: string; accessToken: string | null },
-    identity: { subject: string; tenant: string },
-  ): Promise<Outcome> {
-    const used = grantSession.refreshToken;
-    const now = new Date();
-    const claimed = await prisma.hubSession.updateMany({
-      where: {
-        sessionId,
-        refreshToken: used,
-        OR: [{ refreshLeaseUntil: null }, { refreshLeaseUntil: { lt: now } }],
-      },
-      data: { refreshLeaseUntil: new Date(now.getTime() + REFRESH_LEASE_MS) },
-    });
-    if (!claimed.count) return awaitRefresh(sessionId, used);
-    let refreshToken: string;
-    try {
-      refreshToken = await decrypt(used);
-    } catch {
-      return end(sessionId, used);
-    }
-    let grant: Awaited<ReturnType<typeof client.refresh>>;
-    try {
-      grant = await client.refresh(refreshToken);
-      if (grant.subject !== identity.subject || grant.tenant !== identity.tenant)
-        throw new HubRejectedError("Hub identity changed");
-    } catch (error) {
-      if (isHubRejection(error)) return end(sessionId, used);
-      await release(sessionId, used);
-      throw new HubSessionUnavailableError({ cause: error });
-    }
-    const stored = await prisma.hubSession.updateMany({
-      where: { sessionId, refreshToken: used },
-      data: {
-        refreshToken: await encrypt(grant.refreshToken),
-        accessToken: await encrypt(grant.accessToken),
-        accessUntil: grant.accessUntil,
-        refreshLeaseUntil: null,
-      },
-    });
-    if (!stored.count) {
-      // The session ended or changed meanwhile; nothing local holds this grant.
-      await client.revoke(grant.refreshToken).catch(() => undefined);
-      return "stale";
-    }
-    if (grantSession.accessToken) {
-      const old = await decrypt(grantSession.accessToken).catch(() => undefined);
-      if (old) verifyCache.invalidate(verifyCache.hashToken(old));
-    }
-    return policy.sessionAllowed(identity);
+async function refresh(
+  sessionId: string,
+  grantSession: { refreshToken: string; accessToken: string | null },
+  identity: { subject: string; tenant: string },
+): Promise<Outcome> {
+  const used = grantSession.refreshToken;
+  const now = new Date();
+  const claimed = await prisma.hubSession.updateMany({
+    where: {
+      sessionId,
+      refreshToken: used,
+      OR: [{ refreshLeaseUntil: null }, { refreshLeaseUntil: { lt: now } }],
+    },
+    data: { refreshLeaseUntil: new Date(now.getTime() + REFRESH_LEASE_MS) },
+  });
+  if (!claimed.count) return awaitRefresh(sessionId, used);
+  let refreshToken: string;
+  try {
+    refreshToken = await decrypt(used);
+  } catch {
+    return end(sessionId, used);
   }
+  let grant: Awaited<ReturnType<typeof client.refresh>>;
+  try {
+    grant = await client.refresh(refreshToken);
+    if (grant.subject !== identity.subject || grant.tenant !== identity.tenant)
+      throw new HubRejectedError("Hub identity changed");
+  } catch (error) {
+    if (isHubRejection(error)) return end(sessionId, used);
+    await release(sessionId, used);
+    throw new HubSessionUnavailableError({ cause: error });
+  }
+  const stored = await prisma.hubSession.updateMany({
+    where: { sessionId, refreshToken: used },
+    data: {
+      refreshToken: await encrypt(grant.refreshToken),
+      accessToken: await encrypt(grant.accessToken),
+      accessUntil: grant.accessUntil,
+      refreshLeaseUntil: null,
+    },
+  });
+  if (!stored.count) {
+    // The session ended or changed meanwhile; nothing local holds this grant.
+    await client.revoke(grant.refreshToken).catch(() => undefined);
+    return "stale";
+  }
+  if (grantSession.accessToken) {
+    const old = await decrypt(grantSession.accessToken).catch(() => undefined);
+    if (old) verifyCache.invalidate(verifyCache.hashToken(old));
+  }
+  return policy.sessionAllowed(identity);
+}
 ```
 
 In `authorizeOnce`, replace `return refresh(sessionId, grantSession, identity);` with:
@@ -962,19 +1002,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 5: Background work keeps the session through outages
 
 **Files:**
+
 - Modify: `packages/auth/src/hub-sessions.ts` (`createUserWorkAuthorizer` loop, currently line 162)
 - Test: `packages/auth/src/hub.test.ts`
 
 - [x] **Step 1: Write the failing test** (CAAH-108 `describe`)
 
 ```ts
-  it("refuses new work but keeps the session while Hub is down, then resumes", async () => {
-    const { f } = await afterWindow();
-    f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
-    expect(await f.work(userId)).toBe(false);
-    expect(f.data.session).toHaveLength(1);
-    expect(await f.work(userId)).toBe(true);
-  });
+it("refuses new work but keeps the session while Hub is down, then resumes", async () => {
+  const { f } = await afterWindow();
+  f.client.verify.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+  expect(await f.work(userId)).toBe(false);
+  expect(f.data.session).toHaveLength(1);
+  expect(await f.work(userId)).toBe(true);
+});
 ```
 
 - [x] **Step 2: Run it to verify it fails**
@@ -1015,29 +1056,31 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 6: API answers 503, not 401, while Hub cannot confirm a session
 
 **Files:**
+
 - Modify: `apps/api/src/router.ts:922-930` (context type) and `:1059-1063`, `:1082-1085` (the two `if (!actor) throw new ORPCError("UNAUTHORIZED")` middlewares)
 - Modify: `apps/api/src/app.ts:85-90` (import), `:760` (monitoring), `:793-845` (`requestSession`, `sessionActor`, `/rpc` context)
 - Test: `apps/api/src/router.test.ts`
 
 **Interfaces:**
+
 - Consumes: `isHubSessionUnavailable` (Task 2).
 - Produces: router context field `sessionUnavailable?: boolean`.
 
 - [x] **Step 1: Write the failing test** (`router.test.ts`, next to the anonymous `analytics.screen` case near line 99, reusing that test's `deps`)
 
 ```ts
-  it("answers service unavailable, not unauthorized, while Hub cannot confirm the session", async () => {
-    const unavailable = createRouterClient(createRouter(deps), {
-      context: { actor: null, sessionUnavailable: true } as never,
-    });
-    await expect(
-      unavailable.analytics.screen({ screen: "chat", surface: "web" }),
-    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
-    const anonymous = createRouterClient(createRouter(deps), { context: { actor: null } as never });
-    await expect(
-      anonymous.analytics.screen({ screen: "chat", surface: "web" }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+it("answers service unavailable, not unauthorized, while Hub cannot confirm the session", async () => {
+  const unavailable = createRouterClient(createRouter(deps), {
+    context: { actor: null, sessionUnavailable: true } as never,
   });
+  await expect(
+    unavailable.analytics.screen({ screen: "chat", surface: "web" }),
+  ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+  const anonymous = createRouterClient(createRouter(deps), { context: { actor: null } as never });
+  await expect(
+    anonymous.analytics.screen({ screen: "chat", surface: "web" }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});
 ```
 
 If the `deps` there are local to that `it`, copy that test's `deps` setup into this one verbatim.
@@ -1052,16 +1095,16 @@ Expected: FAIL with code `UNAUTHORIZED`.
 Context type:
 
 ```ts
-  const os = implement(appContract).$context<{
-    actor: Actor | null;
-    /** Hub could not confirm the session; it is kept, so answer 503 rather than 401. */
-    sessionUnavailable?: boolean;
-    /** The signed-in session, so a push token ends with the session that registered it. */
-    sessionId?: string;
-    signal?: AbortSignal;
-    /** Re-runs the request's auth so a long-lived stream notices sign-out and revocation. */
-    stillAuthorized?: () => Promise<boolean>;
-  }>();
+const os = implement(appContract).$context<{
+  actor: Actor | null;
+  /** Hub could not confirm the session; it is kept, so answer 503 rather than 401. */
+  sessionUnavailable?: boolean;
+  /** The signed-in session, so a push token ends with the session that registered it. */
+  sessionId?: string;
+  signal?: AbortSignal;
+  /** Re-runs the request's auth so a long-lived stream notices sign-out and revocation. */
+  stillAuthorized?: () => Promise<boolean>;
+}>();
 ```
 
 Module-level helper (near other helpers in `router.ts`):
@@ -1077,14 +1120,14 @@ function requireActor(context: { actor: Actor | null; sessionUnavailable?: boole
 In both middlewares, replace
 
 ```ts
-      const actor = context.actor;
-      if (!actor) throw new ORPCError("UNAUTHORIZED");
+const actor = context.actor;
+if (!actor) throw new ORPCError("UNAUTHORIZED");
 ```
 
 with
 
 ```ts
-      const actor = requireActor(context);
+const actor = requireActor(context);
 ```
 
 - [x] **Step 4: Implement `app.ts`**
@@ -1092,36 +1135,40 @@ with
 Add `isHubSessionUnavailable` to the `@cortexai-agent-hub/auth` import, and `import { HTTPException } from "hono/http-exception";`.
 
 ```ts
-  const requestSession = async (request: Request) => {
-    // The bearer plugin turns a signed `Authorization: Bearer` into the session cookie.
-    let session: Awaited<ReturnType<typeof auth.api.getSession>>;
-    try {
-      session = await auth.api.getSession({ headers: request.headers });
-    } catch (error) {
-      if (isHubSessionUnavailable(error)) return "unavailable" as const;
-      throw error;
-    }
-    if (!session?.user) return null;
-    const actor = await actorFromMembership(
-      requireMembership(prisma, session.user.id, request.headers.get("x-cortexai-agent-hub-space-id")),
-    );
-    return actor && { actor, sessionId: session.session.id };
-  };
-  const sessionActor = async (request: Request) => {
-    const session = await requestSession(request);
-    // Hub could not confirm the session: not a sign-out.
-    if (session === "unavailable") throw new HTTPException(503);
-    return session?.actor ?? null;
-  };
+const requestSession = async (request: Request) => {
+  // The bearer plugin turns a signed `Authorization: Bearer` into the session cookie.
+  let session: Awaited<ReturnType<typeof auth.api.getSession>>;
+  try {
+    session = await auth.api.getSession({ headers: request.headers });
+  } catch (error) {
+    if (isHubSessionUnavailable(error)) return "unavailable" as const;
+    throw error;
+  }
+  if (!session?.user) return null;
+  const actor = await actorFromMembership(
+    requireMembership(
+      prisma,
+      session.user.id,
+      request.headers.get("x-cortexai-agent-hub-space-id"),
+    ),
+  );
+  return actor && { actor, sessionId: session.session.id };
+};
+const sessionActor = async (request: Request) => {
+  const session = await requestSession(request);
+  // Hub could not confirm the session: not a sign-out.
+  if (session === "unavailable") throw new HTTPException(503);
+  return session?.actor ?? null;
+};
 ```
 
 In the `/rpc/*` middleware:
 
 ```ts
-    const requested = await requestSession(c.req.raw);
-    const sessionUnavailable = requested === "unavailable";
-    const session = sessionUnavailable ? null : requested;
-    const actor = session?.actor ?? null;
+const requested = await requestSession(c.req.raw);
+const sessionUnavailable = requested === "unavailable";
+const session = sessionUnavailable ? null : requested;
+const actor = session?.actor ?? null;
 ```
 
 Then add `sessionUnavailable` to the `rpc.handle` context object. `stillAuthorized` keeps calling `sessionActor`, which now rejects with a 503 during an outage. The stream errors out and the client reconnects with backoff (`thread-subscription.ts` retries 5xx). The stream never answers `UNAUTHORIZED` for an outage.
@@ -1159,23 +1206,22 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Clients already behave correctly (diagnosis §6). These are characterization tests that pin the contract this fix relies on. They are expected to pass on first run. If one fails, stop: the diagnosis was wrong and needs revisiting before any client change.
 
 **Files:**
+
 - Test: `apps/web/src/lib/session-gate.test.ts`
 - Read only: `apps/mobile/lib/api.test.ts:2046-2053` (already asserts that 503 keeps the mobile token)
 
 - [x] **Step 1: Add the web test**
 
 ```ts
-  it("keeps a signed-in user through a Hub outage and recovers without signing in", () => {
-    // get-session answers 503 HUB_UNAVAILABLE while Hub is down (CAAH-108).
-    expect(sessionGate({ data: user, isPending: false, error: { status: 503 } })).toBe(
-      "authenticated",
-    );
-    expect(sessionGate({ data: null, isPending: false, error: { status: 503 } })).toBe(
-      "unreachable",
-    );
-    // Hub returns: the same cookie resolves the session again.
-    expect(sessionGate({ data: user, isPending: false, error: null })).toBe("authenticated");
-  });
+it("keeps a signed-in user through a Hub outage and recovers without signing in", () => {
+  // get-session answers 503 HUB_UNAVAILABLE while Hub is down (CAAH-108).
+  expect(sessionGate({ data: user, isPending: false, error: { status: 503 } })).toBe(
+    "authenticated",
+  );
+  expect(sessionGate({ data: null, isPending: false, error: { status: 503 } })).toBe("unreachable");
+  // Hub returns: the same cookie resolves the session again.
+  expect(sessionGate({ data: user, isPending: false, error: null })).toBe("authenticated");
+});
 ```
 
 - [x] **Step 2: Run web and mobile retention tests**
@@ -1197,45 +1243,46 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 8: Sign-out, tenant isolation, and Postgres-gated tests
 
 **Files:**
+
 - Test: `packages/auth/src/hub.test.ts`, `packages/auth/src/hub.postgres.test.ts`, `packages/auth/src/hub-sessions.test.ts`
 
 - [x] **Step 1: Add unit regressions** (CAAH-108 `describe` in `hub.test.ts`)
 
 ```ts
-  it("still signs out and revokes at Hub while Hub verification is down", async () => {
-    const { f, headers } = await afterWindow();
-    f.client.verify.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
-    await f.auth.api.signOut({ headers }).catch(() => undefined);
-    expect(f.data.session).toHaveLength(0);
-    expect(f.client.revoke).toHaveBeenCalledWith("refresh-secret-1");
-  });
+it("still signs out and revokes at Hub while Hub verification is down", async () => {
+  const { f, headers } = await afterWindow();
+  f.client.verify.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
+  await f.auth.api.signOut({ headers }).catch(() => undefined);
+  expect(f.data.session).toHaveLength(0);
+  expect(f.client.revoke).toHaveBeenCalledWith("refresh-secret-1");
+});
 
-  it("refuses a session whose stored identity is another tenant without calling Hub or deleting", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    f.identities.get(userId).tenant = "test-fake-other-tenant";
-    f.client.verify.mockClear();
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Date.now() + 30_001);
-    expect(await f.auth.api.getSession({ headers })).toBeNull();
-    expect(f.client.verify).not.toHaveBeenCalled();
-    expect(f.data.session).toHaveLength(1);
-  });
+it("refuses a session whose stored identity is another tenant without calling Hub or deleting", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  f.identities.get(userId).tenant = "test-fake-other-tenant";
+  f.client.verify.mockClear();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 30_001);
+  expect(await f.auth.api.getSession({ headers })).toBeNull();
+  expect(f.client.verify).not.toHaveBeenCalled();
+  expect(f.data.session).toHaveLength(1);
+});
 
-  it("ends the session when refresh returns another tenant's grant", async () => {
-    const f = fixture();
-    const { headers } = await f.login();
-    expire(f);
-    f.client.refresh.mockResolvedValueOnce({
-      subject: "subject-1",
-      tenant: "test-fake-other-tenant",
-      accessToken: "test-fake-access-x",
-      refreshToken: "test-fake-refresh-x",
-      accessUntil: new Date(Date.now() + 900_000),
-    });
-    expect(await f.auth.api.getSession({ headers })).toBeNull();
-    expect(f.data.session).toHaveLength(0);
+it("ends the session when refresh returns another tenant's grant", async () => {
+  const f = fixture();
+  const { headers } = await f.login();
+  expire(f);
+  f.client.refresh.mockResolvedValueOnce({
+    subject: "subject-1",
+    tenant: "test-fake-other-tenant",
+    accessToken: "test-fake-access-x",
+    refreshToken: "test-fake-refresh-x",
+    accessUntil: new Date(Date.now() + 900_000),
   });
+  expect(await f.auth.api.getSession({ headers })).toBeNull();
+  expect(f.data.session).toHaveLength(0);
+});
 ```
 
 If the sign-out test shows Better Auth's `/sign-out` calls `findSession` and rejects with 503 during an outage, that is a regression against "explicit sign-out unchanged". Fix it by letting `findSession` return the session unauthorized-but-present **only** for `ctx.path === "/sign-out"` (the before-hook `ctx` is in scope where the override is built), and add that branch with this test as its guard.
@@ -1251,77 +1298,78 @@ Expected: PASS.
 - After that test, add one in the same style:
 
 ```ts
-  it(
-    "keeps the session and frees the lease when Hub times out during refresh",
-    asAuth(async () => {
-      const db = createDb(process.env.DATABASE_URL!);
-      const id = `hub-test-${randomUUID()}`;
-      const key = "offline-encryption-key-not-a-real-secret";
-      const config = { origin: "https://hub.example.test", tenantId: "fixture-tenant" };
-      const refresh = vi.fn(async () => ({
-        subject: id,
-        tenant: config.tenantId,
-        accessToken: "test-fake-access-2",
-        refreshToken: "test-fake-refresh-2",
-        accessUntil: new Date(Date.now() + 900_000),
-      }));
-      const client = {
-        refresh,
-        login: refresh,
-        lookup: vi.fn(async () => ({ tenant: config.tenantId, idpType: "native" as const })),
-        verify: vi.fn(async () => undefined),
-        revoke: vi.fn(async () => undefined),
-        ssoStart: vi.fn(async () => "https://login.example.test/authorize"),
-        ssoExchange: refresh,
-        serviceConfig: vi.fn(async () => ({ status: 304 as const })),
-      };
-      try {
-        await db.prisma.user.create({
-          data: {
-            id,
-            name: "Hub test",
-            email: `${id}@hub.invalid`,
-            hubIdentity: {
-              create: { origin: config.origin, tenant: config.tenantId, subject: id },
-            },
-            sessions: {
-              create: {
-                id,
-                token: randomUUID(),
-                expiresAt: new Date(Date.now() + 86_400_000),
-                hubSession: {
-                  create: {
-                    refreshToken: await symmetricEncrypt({ key, data: "test-fake-refresh-1" }),
-                    accessUntil: new Date(0),
-                    accessToken: await symmetricEncrypt({ key, data: "test-fake-access-1" }),
-                  },
+it(
+  "keeps the session and frees the lease when Hub times out during refresh",
+  asAuth(async () => {
+    const db = createDb(process.env.DATABASE_URL!);
+    const id = `hub-test-${randomUUID()}`;
+    const key = "offline-encryption-key-not-a-real-secret";
+    const config = { origin: "https://hub.example.test", tenantId: "fixture-tenant" };
+    const refresh = vi.fn(async () => ({
+      subject: id,
+      tenant: config.tenantId,
+      accessToken: "test-fake-access-2",
+      refreshToken: "test-fake-refresh-2",
+      accessUntil: new Date(Date.now() + 900_000),
+    }));
+    const client = {
+      refresh,
+      login: refresh,
+      lookup: vi.fn(async () => ({ tenant: config.tenantId, idpType: "native" as const })),
+      verify: vi.fn(async () => undefined),
+      revoke: vi.fn(async () => undefined),
+      ssoStart: vi.fn(async () => "https://login.example.test/authorize"),
+      ssoExchange: refresh,
+      serviceConfig: vi.fn(async () => ({ status: 304 as const })),
+    };
+    try {
+      await db.prisma.user.create({
+        data: {
+          id,
+          name: "Hub test",
+          email: `${id}@hub.invalid`,
+          hubIdentity: {
+            create: { origin: config.origin, tenant: config.tenantId, subject: id },
+          },
+          sessions: {
+            create: {
+              id,
+              token: randomUUID(),
+              expiresAt: new Date(Date.now() + 86_400_000),
+              hubSession: {
+                create: {
+                  refreshToken: await symmetricEncrypt({ key, data: "test-fake-refresh-1" }),
+                  accessUntil: new Date(0),
+                  accessToken: await symmetricEncrypt({ key, data: "test-fake-access-1" }),
                 },
               },
             },
           },
-        });
-        const api = createHubSessionAuthorizer(db.prisma, config, key, client, {
-          policy: admitAll,
-        });
-        refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
-        await expect(api(id, id)).rejects.toBeInstanceOf(HubSessionUnavailableError);
-        expect(await db.prisma.session.findUnique({ where: { id } })).not.toBeNull();
-        const kept = await db.prisma.hubSession.findUniqueOrThrow({ where: { sessionId: id } });
-        expect(kept.refreshLeaseUntil).toBeNull();
-        expect(await symmetricDecrypt({ key, data: kept.refreshToken })).toBe("test-fake-refresh-1");
-        // Hub returns: the same stored token refreshes.
-        expect(await api(id, id)).toBe(true);
-        expect(refresh).toHaveBeenLastCalledWith("test-fake-refresh-1");
-      } finally {
-        await db.prisma.user.deleteMany({ where: { id } });
-        await db.prisma.$disconnect();
-        await db.pool.end();
-      }
-    }),
-  );
+        },
+      });
+      const api = createHubSessionAuthorizer(db.prisma, config, key, client, {
+        policy: admitAll,
+      });
+      refresh.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+      await expect(api(id, id)).rejects.toBeInstanceOf(HubSessionUnavailableError);
+      expect(await db.prisma.session.findUnique({ where: { id } })).not.toBeNull();
+      const kept = await db.prisma.hubSession.findUniqueOrThrow({ where: { sessionId: id } });
+      expect(kept.refreshLeaseUntil).toBeNull();
+      expect(await symmetricDecrypt({ key, data: kept.refreshToken })).toBe("test-fake-refresh-1");
+      // Hub returns: the same stored token refreshes.
+      expect(await api(id, id)).toBe(true);
+      expect(refresh).toHaveBeenLastCalledWith("test-fake-refresh-1");
+    } finally {
+      await db.prisma.user.deleteMany({ where: { id } });
+      await db.prisma.$disconnect();
+      await db.pool.end();
+    }
+  }),
+);
 ```
 
-  Import `HubSessionUnavailableError` from `./hub-sessions.js` (extend the existing import) and `HubRequestError` from `./hub-client.js`.
+Import `HubSessionUnavailableError` from `./hub-sessions.js` (extend the existing import) and `HubRequestError` from `./hub-client.js`.
+
 - `hub-sessions.test.ts:167`: `throw new Error("Hub access denied")` → `throw new HubRejectedError("Hub access denied")`.
 - `hub-sessions.test.ts:299-362` "expired tokens never serve cached allow": the fetcher `vi.fn()` returns `undefined`, so refresh now throws a `TypeError`, which is unavailable. Change the expectation to `await expect(authorizer(sessionId, userId)).rejects.toBeInstanceOf(HubSessionUnavailableError)`, and assert the session row still exists.
 
@@ -1362,6 +1410,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 9: Docs and final verification
 
 **Files:**
+
 - Modify: `docs/hub-auth.md:13`, `:203`
 
 - [x] **Step 1: Update the docs**
@@ -1375,6 +1424,7 @@ Line 203: replace the sentences from "If the user's own Hub verification or toke
 - [x] **Step 2: Scoped verification (serial)**
 
 Run:
+
 ```bash
 pnpm exec vitest run --maxWorkers=2 \
   packages/auth/src/hub.test.ts packages/auth/src/hub-client.test.ts \
@@ -1407,6 +1457,7 @@ git log --oneline origin/main..HEAD
 Expected: clean tree, branch ahead of `origin/main`. **Do not push, merge or deploy.** The coordinator opens the draft PR.
 
 PR notes for the coordinator:
+
 - No new user-facing copy (reuses `HUB_SIGN_IN_UNAVAILABLE_MESSAGE`).
 - No visible UI change, so no screenshot.
 - Remaining manual QA gap: a staging smoke that slows or blocks Hub, checks that a signed-in user stays signed in with 503s, then recovers without signing in.

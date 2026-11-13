@@ -1,3 +1,4 @@
+import { parse } from "dotenv";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -549,6 +550,89 @@ describe("managed env assignments", () => {
     );
     expect(result.match(/CORTEXAI_AGENT_HUB_IMAGE_TAG=sha-/g)).toHaveLength(2);
     expect(result).not.toContain("stale");
+  });
+
+  it.each([
+    " CORTEXAI_AGENT_HUB_IMAGE_TAG=v1.2.0",
+    "\tCORTEXAI_AGENT_HUB_IMAGE_TAG=v1.2.0",
+    "CORTEXAI_AGENT_HUB_IMAGE_TAG = v1.2.0",
+    "CORTEXAI_AGENT_HUB_IMAGE_TAG\t=\tv1.2.0",
+    "\u00a0CORTEXAI_AGENT_HUB_IMAGE_TAG\u00a0=\u00a0v1.2.0",
+    " export CORTEXAI_AGENT_HUB_IMAGE_TAG = 'v1.2.0' # pinned",
+    'CORTEXAI_AGENT_HUB_IMAGE_TAG: "v1.2.0"',
+  ])("rewrites a later Compose assignment: %s", (duplicate) => {
+    const contents = `CORTEXAI_AGENT_HUB_IMAGE_TAG=v1.1.0\n${duplicate}\n`;
+    expect(parse(contents).CORTEXAI_AGENT_HUB_IMAGE_TAG).toBe("v1.2.0");
+    const result = upsertEnvAssignments(contents, {
+      CORTEXAI_AGENT_HUB_IMAGE_TAG: "v2.0.0",
+    });
+
+    expect(result).toBe(
+      "CORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0\nCORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0\n",
+    );
+    expect(parse(result).CORTEXAI_AGENT_HUB_IMAGE_TAG).toBe("v2.0.0");
+  });
+
+  it("rewrites mixed current and rollback duplicates while preserving unrelated CRLF content", () => {
+    const unrelated = [
+      "# CORTEXAI_AGENT_HUB_IMAGE_TAG = commented",
+      "  # CORTEXAI_AGENT_HUB_IMAGE_TAG=also-commented",
+      "CORTEXAI_AGENT_HUB_IMAGE_TAG_EXTRA=untouched",
+      "OTHER = 'keep # this' # comment",
+      "",
+    ];
+    const contents = [
+      "CORTEXAI_AGENT_HUB_IMAGE_TAG=v1.0.0",
+      "CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS=v0.9.0",
+      ...unrelated,
+      " \tCORTEXAI_AGENT_HUB_IMAGE_TAG \t= v1.2.0 # pinned",
+      "\tCORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS = 'v1.1.0' # rollback",
+    ].join("\r\n");
+    const assignments = {
+      CORTEXAI_AGENT_HUB_IMAGE_TAG: "v2.0.0",
+      CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS: "v1.2.0",
+    };
+    const result = upsertEnvAssignments(contents, assignments);
+
+    expect(result).toBe(
+      [
+        "CORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0",
+        "CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS=v1.2.0",
+        ...unrelated,
+        "CORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0",
+        "CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS=v1.2.0",
+        "",
+      ].join("\r\n"),
+    );
+    expect(parse(result)).toMatchObject(assignments);
+  });
+
+  it.each(
+    ["'", '"', "`"].flatMap((quote) => ["", "\uFEFF", "\u00a0"].map((prefix) => [quote, prefix])),
+  )(
+    "preserves assignment-like text inside an unrelated %s quoted value with prefix %j",
+    (quote, prefix) => {
+      const unrelated = `${prefix}notes.value: ${quote}first\\\nCORTEXAI_AGENT_HUB_IMAGE_TAG=v0.9.0\n CORTEXAI_AGENT_HUB_IMAGE_TAG = v1.0.0\nlast${quote} # keep`;
+      const result = upsertEnvAssignments(`${unrelated}\nCORTEXAI_AGENT_HUB_IMAGE_TAG=v1.2.0\n`, {
+        CORTEXAI_AGENT_HUB_IMAGE_TAG: "v2.0.0",
+      });
+
+      expect(result).toBe(`${unrelated}\nCORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0\n`);
+      expect(parse(result)["notes.value"]).toBe(parse(unrelated)["notes.value"]);
+    },
+  );
+
+  it("preserves a leading BOM when rewriting managed duplicates", () => {
+    const result = upsertEnvAssignments(
+      "\uFEFFCORTEXAI_AGENT_HUB_IMAGE_TAG=v1.1.0\nCORTEXAI_AGENT_HUB_IMAGE_TAG = v1.2.0\n",
+      {
+        CORTEXAI_AGENT_HUB_IMAGE_TAG: "v2.0.0",
+      },
+    );
+    expect(result).toBe(
+      "\uFEFFCORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0\nCORTEXAI_AGENT_HUB_IMAGE_TAG=v2.0.0\n",
+    );
+    expect(parse(result).CORTEXAI_AGENT_HUB_IMAGE_TAG).toBe("v2.0.0");
   });
 
   it("refuses values that would inject a second assignment or a compose expression", () => {

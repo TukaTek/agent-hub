@@ -2,7 +2,8 @@
 
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -375,7 +376,7 @@ it("keeps the email step when Continue fails", async () => {
   expect(emailInput().readOnly).toBe(false);
 });
 
-it("signs in local accounts through the same two steps and keeps the next allowlist", async () => {
+it("signs in local accounts through the same two steps", async () => {
   stubServer("local");
   authClient.signIn.email.mockResolvedValue({ data: {}, error: null });
   await render("/sign-in?next=/integrations/setup");
@@ -385,7 +386,8 @@ it("signs in local accounts through the same two steps and keeps the next allowl
   await continueWithEmail();
   await type(await until(passwordInput), "password12");
   await click(button("Sign in"));
-  await until(() => container.textContent?.includes("integration setup"));
+  // Signed in: the routes move on once the session refetch lands (App.tsx keeps `next`).
+  await until(() => button("Working…")?.disabled);
   expect(authClient.signIn.email).toHaveBeenCalledExactlyOnceWith({
     email,
     password: "password12",
@@ -403,7 +405,7 @@ it("sends a local account an email code after the email step and signs in with i
   await render();
   await continueWithEmail();
   await type(await until(codeInput), "123456");
-  await until(() => container.textContent?.includes("app home"));
+  await until(() => button("Working…")?.disabled);
   expect(authClient.emailOtp.sendVerificationOtp).toHaveBeenCalledExactlyOnceWith({
     email,
     type: "sign-in",
@@ -426,7 +428,7 @@ it("keeps password sign-in one step away from the code", async () => {
   await click(button("Use password"));
   await type(await until(passwordInput), "password12");
   await click(button("Sign in"));
-  await until(() => container.textContent?.includes("app home"));
+  await until(() => button("Working…")?.disabled);
   expect(authClient.signIn.email).toHaveBeenCalledExactlyOnceWith({
     email,
     password: "password12",

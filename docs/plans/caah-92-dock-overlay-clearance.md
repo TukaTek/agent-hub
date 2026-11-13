@@ -28,16 +28,16 @@ CAAH-87 put the dock where the overlay already was. Both are pinned to bottom ce
 
 ## What the overlay covers in each layout
 
-| Viewport | Panel shape | Scale | Dock on screen (CSS px) | Covered by the overlay? |
-| --- | --- | --- | --- | --- |
-| 1920x1080 | wider than 16:10, full height | 1.28 | 153x82, 13 px from bottom | Yes. Only the top ~18 px of the icons show (the reported screenshot) |
-| 1440x900 | wider | 1.05 | 126x67, 10 px from bottom | Yes, almost entirely |
-| 1366x768 | wider | 0.89 | 107x57, 9 px from bottom | Yes, entirely (the overlay is wider) |
-| 1280x800 | wider | 0.93 | 111x59, 9 px from bottom | Yes, entirely |
-| 1024x768 | taller than 16:10, 36 px bars | 0.80 | 96x51, 44 px from bottom | Partly. The lower ~22 px of the icons |
-| 768x1024 (tablet portrait) | taller, 244 px bars | 0.60 | 72x38, mid-panel | No. The overlay sits in the black bar |
-| 390x844 (phone portrait) | taller, 272 px bars | 0.30 | 37x20, mid-panel | No, but the dock is tiny |
-| 844x390 (phone landscape) | wider | 0.42 | 50x27, 4 px from bottom | Yes, entirely |
+| Viewport                   | Panel shape                   | Scale | Dock on screen (CSS px)   | Covered by the overlay?                                              |
+| -------------------------- | ----------------------------- | ----- | ------------------------- | -------------------------------------------------------------------- |
+| 1920x1080                  | wider than 16:10, full height | 1.28  | 153x82, 13 px from bottom | Yes. Only the top ~18 px of the icons show (the reported screenshot) |
+| 1440x900                   | wider                         | 1.05  | 126x67, 10 px from bottom | Yes, almost entirely                                                 |
+| 1366x768                   | wider                         | 0.89  | 107x57, 9 px from bottom  | Yes, entirely (the overlay is wider)                                 |
+| 1280x800                   | wider                         | 0.93  | 111x59, 9 px from bottom  | Yes, entirely                                                        |
+| 1024x768                   | taller than 16:10, 36 px bars | 0.80  | 96x51, 44 px from bottom  | Partly. The lower ~22 px of the icons                                |
+| 768x1024 (tablet portrait) | taller, 244 px bars           | 0.60  | 72x38, mid-panel          | No. The overlay sits in the black bar                                |
+| 390x844 (phone portrait)   | taller, 272 px bars           | 0.30  | 37x20, mid-panel          | No, but the dock is tiny                                             |
+| 844x390 (phone landscape)  | wider                         | 0.42  | 50x27, 4 px from bottom   | Yes, entirely                                                        |
 
 The overlay isn't drawn while teaching (`dock={!recordingSkill}`) or for host desktops (`kind === "desktop"`, which has no screen). The native mobile app (`apps/mobile/app/computer.tsx`) has no overlay toolbar, so its dock is never covered. Electron hosts the web UI, so it behaves like the web rows above. Team desktops reuse `session.sh` and `tint2rc.in`, so they get the fix too. E2B and Box sandboxes run the Fluxbox fallback without a dock and aren't affected.
 
@@ -67,10 +67,12 @@ New framebuffer rectangle: about x 10–74, y 340–460. On screen, the dock's r
 ### Task 1: Reproduce the overlap in a web E2E test and capture the before set
 
 **Files:**
+
 - Create: `apps/web/e2e/computer-dock-clearance.spec.ts`
 - Create: `apps/web/e2e/fixtures/computer-desktop-idle.png` (`idle.png` from the latest `main` run's `computer-desktop` artifact: `gh run download <run-id> -n computer-desktop`)
 
 **Interfaces:**
+
 - Produces: `DOCK`, the framebuffer rectangle `{ x, y, width, height }` in 1280x800 pixels. Task 2 changes it.
 
 - [ ] **Step 1: Write the test with today's bottom-center dock rectangle**
@@ -85,8 +87,14 @@ import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from 
 // tint2rc.in's dock in framebuffer pixels; desktop_smoke.py asserts the real window matches.
 const DOCK = { x: 580, y: 726, width: 120, height: 64 };
 const VIEWPORTS = [
-  [1920, 1080], [1440, 900], [1366, 768], [1280, 800],
-  [1024, 768], [768, 1024], [390, 844], [844, 390],
+  [1920, 1080],
+  [1440, 900],
+  [1366, 768],
+  [1280, 800],
+  [1024, 768],
+  [768, 1024],
+  [390, 844],
+  [844, 390],
 ] as const;
 
 test("the computer overlay toolbar never covers the desktop dock", async ({ page }, testInfo) => {
@@ -100,7 +108,9 @@ test("the computer overlay toolbar never covers the desktop dock", async ({ page
   // ... signup, completeOnboarding, computer/boot, takeover poll, screenUrl route and
   // opening the computer exactly as in computer-workspace.spec.ts ...
   const screen = page.getByTitle("Assistant screen");
-  const toolbar = page.locator("nav").filter({ has: page.getByRole("button", { name: "Files", exact: true }) });
+  const toolbar = page
+    .locator("nav")
+    .filter({ has: page.getByRole("button", { name: "Files", exact: true }) });
   for (const [width, height] of VIEWPORTS) {
     await page.setViewportSize({ width, height });
     const frame = (await screen.boundingBox())!;
@@ -114,8 +124,10 @@ test("the computer overlay toolbar never covers the desktop dock", async ({ page
     const bar = (await toolbar.boundingBox())!;
     await captureScreenshot(page, testInfo, `computer-dock-${width}x${height}`);
     const overlaps =
-      bar.x < dock.x + dock.width && dock.x < bar.x + bar.width &&
-      bar.y < dock.y + dock.height && dock.y < bar.y + bar.height;
+      bar.x < dock.x + dock.width &&
+      dock.x < bar.x + bar.width &&
+      bar.y < dock.y + dock.height &&
+      dock.y < bar.y + bar.height;
     expect.soft(overlaps, `${width}x${height}`).toBe(false);
   }
 });
@@ -138,6 +150,7 @@ git commit -m "CAAH-92: reproduce the desktop dock hiding behind the overlay too
 ### Task 2: Move the dock to the left edge
 
 **Files:**
+
 - Modify: `infra/sandboxes/supervisor/src/desktop-config.test.ts:57-72`
 - Modify: `infra/sandboxes/computer/desktop/tint2rc.in`
 - Modify: `infra/sandboxes/computer/desktop_smoke.py` (`smoke()` metrics and `modern_checks()`)
@@ -145,6 +158,7 @@ git commit -m "CAAH-92: reproduce the desktop dock hiding behind the overlay too
 - Modify: `apps/web/e2e/fixtures/computer-desktop-idle.png` (replaced with this branch's CI `idle.png`)
 
 **Interfaces:**
+
 - Consumes: `DOCK` from Task 1.
 - Produces: the `dock_geometry` key, `{x, y, width, height}`, in the smoke's metrics JSON.
 
@@ -251,7 +265,7 @@ git commit -m "CAAH-92: move the desktop dock to the left edge, clear of the ove
 
 ## Open questions
 
-1. The Linear acceptance says "windows don't maximize underneath either one." This plan reads that as "no control hides window content": the dock stays beneath maximized windows, as in CAAH-87. Making the dock *always* clickable over a maximized Chromium needs a 74 px left strut (`strut_policy = follow_size`, `panel_layer = top`). That shrinks the bots' browser to about 1206x800 and changes the CAAH-87 geometry constraint and the `computer-replay` assertions. It's a two-line config delta on top of this plan if the PM wants it. Separately, the overlay already floats over the bottom center of a maximized window today. Fixing that means moving the overlay into the header (see the rejected alternatives).
+1. The Linear acceptance says "windows don't maximize underneath either one." This plan reads that as "no control hides window content": the dock stays beneath maximized windows, as in CAAH-87. Making the dock _always_ clickable over a maximized Chromium needs a 74 px left strut (`strut_policy = follow_size`, `panel_layer = top`). That shrinks the bots' browser to about 1206x800 and changes the CAAH-87 geometry constraint and the `computer-replay` assertions. It's a two-line config delta on top of this plan if the PM wants it. Separately, the overlay already floats over the bottom center of a maximized window today. Fixing that means moving the overlay into the header (see the rejected alternatives).
 2. Should phone layouts get a larger dock, or should the overlay offer a "relaunch browser" action instead? It's a separate issue either way.
 
 ## Self-review

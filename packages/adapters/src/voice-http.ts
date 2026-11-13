@@ -1,11 +1,18 @@
 import type { VoiceVerifyResult } from "@cortexai-agent-hub/adapter-kit";
 import { VoiceAccountError } from "@cortexai-agent-hub/adapter-kit";
 import type { VoiceAccountErrorCode } from "@cortexai-agent-hub/contracts";
+import { cancelResponseBody } from "@cortexai-agent-hub/core";
 import { readBodyCapped } from "./web-ssrf.js";
 
 /** A 2,000-character utterance should stay far below this, even at high MP3 bitrates. */
 export const MAX_SYNTHESIZED_AUDIO_BYTES = 16 * 1024 * 1024;
+export const MAX_SPEAK_CHARS = 2000;
 export const MAX_VOICE_JSON_BYTES = 1024 * 1024;
+
+/** Header-safe speech model id. A connection override wins over the deployment default. */
+export function isSpeechModelId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
+}
 
 /** Client disconnect plus a hard deadline — `context.signal` is always set. */
 export function voiceDeadline(signal: AbortSignal, ms: number): AbortSignal {
@@ -33,14 +40,6 @@ async function readVoiceBytes(
       throw new Error("Voice response is too large.");
     }
     throw error;
-  }
-}
-
-function cancelResponseBody(res: Response): void {
-  try {
-    void Promise.resolve(res.body?.cancel()).catch(() => undefined);
-  } catch {
-    // Provider response cleanup is best-effort and must not delay the size error.
   }
 }
 
@@ -85,7 +84,7 @@ export async function readVoiceJson(
   }
 }
 
-function detail(body: unknown): string {
+export function voiceErrorDetail(body: unknown): string {
   if (!body || typeof body !== "object") return "";
   const record = body as Record<string, unknown>;
   if (typeof record.detail === "string" && record.detail.trim()) return record.detail.trim();
@@ -134,7 +133,7 @@ export function voiceHttpError(
   what: string,
   body: unknown,
 ): string {
-  const theirs = detail(body);
+  const theirs = voiceErrorDetail(body);
   if (status === 401 || status === 403) {
     // ElevenLabs also answers 401 for spent quota and missing key permissions.
     const reason = reasonCode(body);
@@ -159,10 +158,14 @@ function openAiErrorCode(body: unknown): string | undefined {
   return typeof type === "string" ? type : undefined;
 }
 
+/** OpenAI also answers 429 for billing with other codes; only the message tells them apart. */
+const BILLING_MESSAGE =
+  /\bcredits?\b|billing|exceeded your current quota|paid subscription|account is not active/i;
+
 /**
  * A failure the user fixes in their provider account. 402 is spent credit (Fish Audio,
- * Cartesia), OpenAI sends 429 `insufficient_quota`, and ElevenLabs sends 401
- * `quota_exceeded`. Other 401s and 403s are a rejected key.
+ * Cartesia), OpenAI sends 429 `insufficient_quota` or a billing message, ElevenLabs
+ * sends 401 `quota_exceeded`. Other 401s and 403s are a rejected key.
  */
 export function voiceAccountIssue(
   status: number,
@@ -170,7 +173,10 @@ export function voiceAccountIssue(
 ): VoiceAccountErrorCode | undefined {
   if (status === 402) return "VOICE_OUT_OF_CREDIT";
   if (status === 429) {
-    return openAiErrorCode(body) === "insufficient_quota" ? "VOICE_OUT_OF_CREDIT" : undefined;
+    return openAiErrorCode(body) === "insufficient_quota" ||
+      BILLING_MESSAGE.test(voiceErrorDetail(body))
+      ? "VOICE_OUT_OF_CREDIT"
+      : undefined;
   }
   if (status !== 401 && status !== 403) return undefined;
   const reason = reasonCode(body);
@@ -178,7 +184,7 @@ export function voiceAccountIssue(
   return !reason || reason === "invalid_api_key" ? "VOICE_KEY_REJECTED" : undefined;
 }
 
-/** The error a failed provider request throws; account issues carry their code. */
+/** The error a failed provider request throws; any 401 or 403 is the user's account to fix. */
 export function voiceRequestError(
   status: number,
   provider: string,
@@ -189,7 +195,9 @@ export function voiceRequestError(
 ): Error {
   const message = voiceHttpError(status, provider, what, body);
   const code = voiceAccountIssue(status, rawBody);
-  return code ? new VoiceAccountError(code, message) : new Error(message);
+  return code || status === 401 || status === 403
+    ? new VoiceAccountError(code, message)
+    : new Error(message);
 }
 
 export async function requireOk(res: Response, provider: string, what: string): Promise<Response> {
@@ -209,14 +217,11 @@ export async function verifyVoiceHttpGet(options: {
       signal: voiceDeadline(options.signal, 20_000),
     });
     if (res.ok) return { ok: true };
+    const body = await readVoiceJson(res);
     return {
       ok: false,
-      message: voiceHttpError(
-        res.status,
-        options.provider,
-        "checking that key",
-        await readVoiceJson(res),
-      ),
+      message: voiceHttpError(res.status, options.provider, "checking that key", body),
+      code: voiceAccountIssue(res.status, body),
     };
   } catch {
     return {
@@ -224,4 +229,15 @@ export async function verifyVoiceHttpGet(options: {
       message: voiceUnreachable(options.provider),
     };
   }
+}
+
+const LANGUAGE_TAG = /^([A-Za-z]{2,3})(?:-[A-Za-z0-9]{2,8})*$/;
+
+/**
+ * The lowercase primary language subtag speech-to-text providers expect, or undefined when the
+ * value is not a tag we can honor ("es-ES" and "es" both ask for Spanish).
+ */
+export function voiceLanguageHint(language: string | undefined): string | undefined {
+  const match = LANGUAGE_TAG.exec(language?.trim() ?? "");
+  return match?.[1] ? match[1].toLowerCase() : undefined;
 }

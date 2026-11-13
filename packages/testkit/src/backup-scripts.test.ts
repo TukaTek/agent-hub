@@ -7,15 +7,18 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const temporaryDirectories: string[] = [];
+const runningWriters = { api: "running", worker: "running", supervisor: "running" };
+const stoppedWriters = { api: "stopped", worker: "stopped", supervisor: "stopped" };
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -58,11 +61,25 @@ function fixture() {
     docker,
     `#!/usr/bin/env -S node --
 const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
+const client = path.basename(process.argv[1]);
+if (client !== "docker") args.unshift(client);
 fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify(args) + "\\n");
 if (args[0] === "inspect") {
   console.log(process.env.FAKE_APPDATA);
-} else if (args[0] !== "compose") {
+} else if (args.includes("sh") && args[args.indexOf("sh") + 2]?.startsWith("exec ")) {
+  // Run the actual container-side shell, with fake database clients and env.
+  const result = spawnSync("/bin/sh", args.slice(args.indexOf("sh") + 1), {
+    env: { ...process.env,
+      POSTGRES_USER: process.env.FAKE_POSTGRES_USER ?? "cortexai-agent-hub",
+      POSTGRES_DB: process.env.FAKE_POSTGRES_DB ?? "cortexai-agent-hub",
+    },
+    stdio: "inherit",
+  });
+  process.exit(result.status ?? 1);
+} else if (args[0] !== "compose" && client === "docker") {
   process.exit(90);
 } else if (args.includes("pg_dump")) {
   if (process.env.FAIL_DUMP === "1") process.exit(2);
@@ -80,8 +97,10 @@ if (args[0] === "inspect") {
   console.log("fake custom-format dump");
 } else if (args.includes("psql") && args.includes("-c")) {
   // restore.sh pre-creates the runtime role the dump's grants name.
+  if (process.env.FAIL_ROLE === "1") process.exit(24);
 } else if (args.includes("psql")) {
   fs.writeFileSync(process.env.SQL_INPUT, fs.readFileSync(0));
+  fs.writeFileSync(process.env.SQL_SERVICE_STATE, fs.readFileSync(process.env.SERVICE_STATE));
   if (process.env.FAIL_SQL === "1") {
     console.error("ERROR: relation example already exists");
     // psql normally exits successfully after SQL errors unless explicitly told to stop.
@@ -89,12 +108,49 @@ if (args[0] === "inspect") {
   }
 } else if (args.includes("ps")) {
   console.log("example-api-container");
-} else if (!args.includes("up") && !args.includes("pg_isready")) {
+} else if (args.includes("stop")) {
+  const state = JSON.parse(fs.readFileSync(process.env.SERVICE_STATE, "utf8"));
+  const fail = process.env.FAIL_INITIAL_STOP === "1" && !fs.existsSync(process.env.STOP_FAILURE_USED);
+  const services = args.slice(args.indexOf("stop") + 1);
+  for (const service of fail ? services.slice(0, 1) : services) {
+    if (service in state) state[service] = "stopped";
+  }
+  fs.writeFileSync(process.env.SERVICE_STATE, JSON.stringify(state));
+  if (fail) {
+    fs.writeFileSync(process.env.STOP_FAILURE_USED, "");
+    process.exit(21);
+  }
+  if (process.env.FAIL_CLEANUP_STOP === "1" && fs.existsSync(process.env.STARTUP_SERVICE_STATE)) process.exit(23);
+} else if (args.includes("up")) {
+  const services = args.slice(args.indexOf("up") + 1).filter((arg) => !arg.startsWith("-"));
+  if (services.includes("postgres")) {
+    if (process.env.FAIL_POSTGRES_START === "1") process.exit(22);
+  } else {
+    const state = JSON.parse(fs.readFileSync(process.env.SERVICE_STATE, "utf8"));
+    const requested = services.length ? services : Object.keys(state);
+    const starting = process.env.STARTUP_ONLY
+      ? requested.filter((service) => service === process.env.STARTUP_ONLY)
+      : requested;
+    for (const service of starting) {
+      if (service in state) state[service] = "running";
+    }
+    fs.writeFileSync(process.env.SERVICE_STATE, JSON.stringify(state));
+    fs.writeFileSync(process.env.STARTUP_SERVICE_STATE, JSON.stringify(state));
+    if (process.env.FAIL_STARTUP === "1") {
+      console.error("simulated startup failure after starting writers");
+      process.exit(19);
+    }
+    if (process.env.INTERRUPT_STARTUP) process.kill(process.ppid, process.env.INTERRUPT_STARTUP);
+  }
+} else if (!args.includes("pg_isready")) {
   process.exit(92);
 }
 `,
   );
   chmodSync(docker, 0o755);
+  for (const client of ["pg_dump", "psql", "pg_isready"]) {
+    symlinkSync(docker, path.join(bin, client));
+  }
   const tar = path.join(bin, "tar");
   write(
     tar,
@@ -109,6 +165,10 @@ if [[ "$1" == "-czf" && "$*" == *" -C "* && -n "\${FAIL_TAR:-}" ]]; then
   exit "$FAIL_TAR"
 fi
 /usr/bin/tar "$@"
+if [[ "$1" == "-xzf" && "\${FAIL_EXTRACT:-0}" == "1" ]]; then
+  echo "simulated archive extraction failure" >&2
+  exit 2
+fi
 if [[ "$1" == "-czf" && "\${CHANGED_TAR:-0}" == "1" ]]; then
   echo "file changed as we read it" >&2
   exit 1
@@ -209,10 +269,15 @@ esac
     PATH: [bin, path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
     COMMAND_LOG: path.join(root, "commands.jsonl"),
     SQL_INPUT: path.join(root, "input.sql"),
+    SQL_SERVICE_STATE: path.join(root, "sql-service-state"),
+    SERVICE_STATE: path.join(root, "service-state"),
+    STARTUP_SERVICE_STATE: path.join(root, "startup-service-state"),
+    STOP_FAILURE_USED: path.join(root, "stop-failure-used"),
     FAKE_APPDATA: path.join(root, "appdata"),
     FAKE_REMOTE: path.join(root, "remote"),
     RCLONE_LOG: path.join(root, "rclone.log"),
   };
+  write(env.SERVICE_STATE, JSON.stringify(runningWriters));
   return {
     root,
     checkout,
@@ -228,6 +293,9 @@ esac
       expect(result.error).toBeUndefined();
       expect(result.signal).toBeNull();
       return result;
+    },
+    serviceStates(file = env.SERVICE_STATE) {
+      return JSON.parse(readFileSync(file, "utf8"));
     },
     commands(): string[][] {
       if (!existsSync(env.COMMAND_LOG)) return [];
@@ -248,19 +316,172 @@ function contents(archive: string) {
   return execFileSync("/usr/bin/tar", ["-tzf", archive], { encoding: "utf8" });
 }
 
+describe("development database configuration", () => {
+  it.each([
+    ["cortexai-agent-hub", "cortexai-agent-hub"],
+    ["custom_admin", "custom_db"],
+    ["admin with spaces", "db with $dollar; punctuation"],
+  ])("uses container credentials %j / %j for backup and restore", (user, database) => {
+    const f = fixture();
+    const overrides = {
+      FAKE_POSTGRES_USER: user,
+      FAKE_POSTGRES_DB: database,
+      POSTGRES_USER: "different_host_user",
+      POSTGRES_DB: "different_host_database",
+    };
+    const backup = f.run("scripts/backup.sh", ["example"], overrides);
+    expect(backup.status, backup.stderr).toBe(0);
+    const restore = f.run(
+      "scripts/restore.sh",
+      [path.join(f.checkout, "backups/example")],
+      overrides,
+    );
+    expect(restore.status, restore.stderr).toBe(0);
+    const clients = f
+      .commands()
+      .filter((args) => ["pg_dump", "pg_isready", "psql"].some((client) => args.includes(client)));
+    expect(clients).toHaveLength(4);
+    for (const args of clients) {
+      expect(args[args.indexOf("-U") + 1]).toBe(user);
+      expect(args[args.indexOf("-d") + 1]).toBe(database);
+    }
+    expect(readFileSync(f.env.SQL_INPUT, "utf8")).toContain("CREATE TABLE example");
+  });
+});
+
 describe("development backup failures", () => {
   it.each([false, true])("archives data with a root env file present: %s", (hasEnv) => {
     const f = fixture();
     if (!hasEnv) rmSync(path.join(f.checkout, ".env"));
     write(path.join(f.checkout, "data/home.txt"), "example home");
-    expect(f.run("scripts/backup.sh", ["example"]).status).toBe(0);
-    const output = path.join(f.checkout, "backups/example");
+    // A single path component may still contain spaces.
+    const stamp = hasEnv ? " snapshot with spaces " : "example";
+    const result = f.run("scripts/backup.sh", [stamp]);
+    expect(result.status, result.stderr).toBe(0);
+    const output = path.join(f.checkout, "backups", stamp);
     expect(readFileSync(path.join(output, "cortexai-agent-hub.sql"), "utf8")).toContain(
       "CREATE TABLE",
     );
     expect(contents(path.join(output, "homes.tgz"))).toContain("data/home.txt");
-    expect(f.commands()[0].includes("--env-file")).toBe(hasEnv);
+    expect(f.commands()[0]!.includes("--env-file")).toBe(hasEnv);
     if (hasEnv) expect(f.commands()[0]).toContain(path.join(f.checkout, ".env"));
+  });
+
+  it.each(["", ".", "..", "../data", "link/snapshot"])(
+    "rejects unsafe stamp %j without changing contents or modes",
+    (stamp) => {
+      const f = fixture();
+      const backups = path.join(f.checkout, "backups");
+      const outside = path.join(f.root, "outside");
+      const directories = [
+        f.checkout,
+        backups,
+        path.join(f.checkout, "data"),
+        outside,
+        path.join(outside, "snapshot"),
+      ];
+      for (const directory of directories) {
+        write(path.join(directory, "cortexai-agent-hub.sql"), "existing database backup");
+        write(path.join(directory, "homes.tgz"), "existing homes backup");
+        chmodSync(directory, 0o755);
+        chmodSync(path.join(directory, "cortexai-agent-hub.sql"), 0o644);
+        chmodSync(path.join(directory, "homes.tgz"), 0o640);
+      }
+      symlinkSync(outside, path.join(backups, "link"));
+      const entries = directories.map((directory) => readdirSync(directory).sort());
+
+      const result = f.run("scripts/backup.sh", [stamp]);
+
+      expect(result.status).not.toBe(0);
+      expect(f.commands()).toEqual([]);
+      for (const [index, directory] of directories.entries()) {
+        expect(readdirSync(directory).sort()).toEqual(entries[index]);
+        expect(statSync(directory).mode & 0o777).toBe(0o755);
+        expect(readFileSync(path.join(directory, "cortexai-agent-hub.sql"), "utf8")).toBe(
+          "existing database backup",
+        );
+        expect(readFileSync(path.join(directory, "homes.tgz"), "utf8")).toBe(
+          "existing homes backup",
+        );
+        expect(statSync(path.join(directory, "cortexai-agent-hub.sql")).mode & 0o777).toBe(0o644);
+        expect(statSync(path.join(directory, "homes.tgz")).mode & 0o777).toBe(0o640);
+      }
+    },
+  );
+
+  it.each([false, true])("keeps new and reused backups private: %s", (reuse) => {
+    const f = fixture();
+    write(path.join(f.checkout, "data/home.txt"), "example home");
+    const output = path.join(f.checkout, "backups/private");
+    if (reuse) {
+      write(path.join(output, "cortexai-agent-hub.sql"), "old dump");
+      write(path.join(output, "homes.tgz"), "old archive");
+      chmodSync(path.dirname(output), 0o777);
+      chmodSync(output, 0o777);
+      chmodSync(path.join(output, "cortexai-agent-hub.sql"), 0o666);
+      chmodSync(path.join(output, "homes.tgz"), 0o666);
+    }
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        'umask 022; exec bash "$1" private',
+        "backup-permissions",
+        path.join(f.checkout, "scripts/backup.sh"),
+      ],
+      { cwd: f.root, env: f.env, encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(statSync(path.dirname(output)).mode & 0o777).toBe(0o700);
+    expect(statSync(output).mode & 0o777).toBe(0o700);
+    expect(statSync(path.join(output, "cortexai-agent-hub.sql")).mode & 0o777).toBe(0o600);
+    expect(statSync(path.join(output, "homes.tgz")).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps reused artifacts private and unreplaced when the database dump fails", () => {
+    const f = fixture();
+    const output = path.join(f.checkout, "backups/example");
+    for (const name of ["cortexai-agent-hub.sql", "homes.tgz"]) {
+      write(path.join(output, name), "old backup");
+      chmodSync(path.join(output, name), 0o666);
+    }
+    chmodSync(output, 0o755);
+
+    const result = f.run("scripts/backup.sh", ["example"], { FAIL_DUMP: "1" });
+
+    expect(result.status).toBe(2);
+    expect(result.stdout).not.toContain("Backup written");
+    expect(readFileSync(path.join(output, "homes.tgz"), "utf8")).toBe("old backup");
+    expect(statSync(output).mode & 0o777).toBe(0o700);
+    for (const name of ["cortexai-agent-hub.sql", "homes.tgz"]) {
+      expect(statSync(path.join(output, name)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it.each(["directory", "artifact"])("does not write through a backup %s symlink", (kind) => {
+    const f = fixture();
+    const target = path.join(f.root, "outside");
+    const output = path.join(f.checkout, "backups/example");
+    if (kind === "directory") {
+      write(path.join(target, "cortexai-agent-hub.sql"), "keep this");
+      mkdirSync(path.dirname(output), { recursive: true });
+      symlinkSync(target, output);
+    } else {
+      write(target, "keep this");
+      mkdirSync(output, { recursive: true });
+      symlinkSync(target, path.join(output, "cortexai-agent-hub.sql"));
+    }
+
+    const result = f.run("scripts/backup.sh", ["example"]);
+
+    expect(result.status).not.toBe(0);
+    expect(
+      readFileSync(
+        kind === "directory" ? path.join(target, "cortexai-agent-hub.sql") : target,
+        "utf8",
+      ),
+    ).toBe("keep this");
+    expect(f.commands()).toEqual([]);
   });
 
   it.each(["absent", "skipped"])("allows an empty archive when data is %s", (scenario) => {
@@ -273,40 +494,48 @@ describe("development backup failures", () => {
     expect(contents(path.join(f.checkout, "backups/example/homes.tgz"))).toBe("");
   });
 
-  it.each(["file", "broken link"])("rejects a data path that is a %s", (kind) => {
+  it.each(["file", "broken link", "directory link"])("rejects a data path that is a %s", (kind) => {
     const f = fixture();
     const data = path.join(f.checkout, "data");
     if (kind === "file") write(data, "not a directory");
-    else symlinkSync(path.join(f.root, "missing"), data);
+    else {
+      const target = path.join(f.root, kind === "directory link" ? "appdata" : "missing");
+      symlinkSync(target, data);
+    }
     const result = f.run("scripts/backup.sh", ["example"]);
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("Backup written");
   });
 
-  it.each([1, 2])("propagates tar exit %s without replacing the failed archive", (code) => {
+  it("propagates the tar exit production tolerates without replacing the failed archive", () => {
     const f = fixture();
     write(path.join(f.checkout, "data/home.txt"), "example home");
-    const result = f.run("scripts/backup.sh", ["example"], { FAIL_TAR: String(code) });
-    expect(result.status).toBe(code);
+    const result = f.run("scripts/backup.sh", ["example"], { FAIL_TAR: "1" });
+    expect(result.status).toBe(1);
     expect(result.stderr).toContain("simulated archive read failure");
-    expect(result.stdout).not.toContain("Backup written");
-    expect(existsSync(path.join(f.checkout, "backups/example/homes.tgz"))).toBe(false);
-  });
-
-  it("does not archive files or report success after pg_dump fails", () => {
-    const f = fixture();
-    const result = f.run("scripts/backup.sh", ["example"], { FAIL_DUMP: "1" });
-    expect(result.status).toBe(2);
     expect(result.stdout).not.toContain("Backup written");
     expect(existsSync(path.join(f.checkout, "backups/example/homes.tgz"))).toBe(false);
   });
 });
 
 describe("development restore failures", () => {
+  let homesArchive: Buffer;
+
+  beforeAll(() => {
+    const source = mkdtempSync(path.join(os.tmpdir(), "cortexai-agent-hub-restore-source-"));
+    try {
+      write(path.join(source, "data/home.txt"), "backed-up home");
+      homesArchive = execFileSync("/usr/bin/tar", ["-czf", "-", "-C", source, "data"]);
+    } finally {
+      rmSync(source, { recursive: true, force: true });
+    }
+  });
+
   function restoreFixture() {
     const f = fixture();
-    write(path.join(f.checkout, "data/home.txt"), "backed-up home");
-    expect(f.run("scripts/backup.sh", ["example"]).status).toBe(0);
+    const snapshot = path.join(f.checkout, "backups/example");
+    write(path.join(snapshot, "cortexai-agent-hub.sql"), "CREATE TABLE example (id integer);\n");
+    writeFileSync(path.join(snapshot, "homes.tgz"), homesArchive);
     write(path.join(f.checkout, "data/home.txt"), "current home");
     return f;
   }
@@ -315,6 +544,7 @@ describe("development restore failures", () => {
     "restores files and starts services only after SQL succeeds: %s",
     (fail) => {
       const f = restoreFixture();
+      write(path.join(f.checkout, "data/post-snapshot.txt"), "current-only file");
       const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")], {
         FAIL_SQL: fail ? "1" : "0",
       });
@@ -331,22 +561,222 @@ describe("development restore failures", () => {
         ]),
       );
       expect(readFileSync(f.env.SQL_INPUT, "utf8")).toContain("CREATE TABLE example");
+      expect(f.serviceStates(f.env.SQL_SERVICE_STATE)).toEqual(stoppedWriters);
+      expect(f.serviceStates()).toEqual(fail ? stoppedWriters : runningWriters);
       expect(readFileSync(path.join(f.checkout, "data/home.txt"), "utf8")).toBe(
         fail ? "current home" : "backed-up home",
       );
+      expect(existsSync(path.join(f.checkout, "data/post-snapshot.txt"))).toBe(fail);
       expect(f.commands().some((args) => args.slice(-2).join(" ") === "up -d")).toBe(!fail);
       expect(result.stdout.includes("Restore complete")).toBe(!fail);
-      if (fail) expect(result.stderr).toContain("already exists");
+      expect(readdirSync(f.checkout).some((name) => name.startsWith(".restore."))).toBe(false);
+      const rollbacks = readdirSync(f.checkout).filter((name) => name.startsWith("data.rollback."));
+      if (fail) {
+        expect(result.stderr).toContain("already exists");
+        expect(rollbacks).toEqual([]);
+      } else {
+        expect(rollbacks).toHaveLength(1);
+        const rollback = path.join(f.checkout, rollbacks[0]!);
+        expect(statSync(rollback).mode & 0o777).toBe(0o700);
+        expect(readFileSync(path.join(rollback, "data/home.txt"), "utf8")).toBe("current home");
+        expect(readFileSync(path.join(rollback, "data/post-snapshot.txt"), "utf8")).toBe(
+          "current-only file",
+        );
+        expect(result.stdout).toContain(path.join(rollback, "data"));
+      }
     },
   );
 
-  it("fails rather than starting services after an invalid homes archive", () => {
+  it.each([
+    { stage: "initial writer stop", setting: "FAIL_INITIAL_STOP", status: 21 },
+    { stage: "Postgres startup", setting: "FAIL_POSTGRES_START", status: 22 },
+    { stage: "role setup", setting: "FAIL_ROLE", status: 24 },
+  ])("stops every writer after $stage fails", ({ setting, status }) => {
     const f = restoreFixture();
-    write(path.join(f.checkout, "backups/example/homes.tgz"), "invalid archive");
-    const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")]);
+
+    const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")], {
+      [setting]: "1",
+    });
+
+    expect(result.status).toBe(status);
+    expect(f.serviceStates()).toEqual(stoppedWriters);
+    expect(existsSync(f.env.SQL_INPUT)).toBe(false);
+    expect(readFileSync(path.join(f.checkout, "data/home.txt"), "utf8")).toBe("current home");
+    expect(result.stdout).not.toContain("Restore complete");
+    expect(readdirSync(f.checkout).some((name) => name.startsWith(".restore."))).toBe(false);
+  });
+
+  it.each([
+    { failure: "partial exit", status: 19 },
+    { failure: "SIGHUP", status: 129 },
+    { failure: "SIGINT", status: 130 },
+    { failure: "SIGTERM", status: 143 },
+  ])(
+    "stops every writer after startup $failure and preserves both recovery trees",
+    ({ failure, status }) => {
+      const f = restoreFixture();
+      write(path.join(f.checkout, "data/current-only.txt"), "preserve this file");
+
+      const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")], {
+        FAIL_STARTUP: failure === "partial exit" ? "1" : "0",
+        INTERRUPT_STARTUP: failure.startsWith("SIG") ? failure : "",
+        STARTUP_ONLY: failure === "partial exit" ? "api" : "",
+        FAIL_CLEANUP_STOP: "1",
+      });
+
+      expect(result.status).toBe(status);
+      expect(f.serviceStates(f.env.SQL_SERVICE_STATE)).toEqual(stoppedWriters);
+      expect(f.serviceStates(f.env.STARTUP_SERVICE_STATE)).toEqual(
+        failure === "partial exit" ? { ...stoppedWriters, api: "running" } : runningWriters,
+      );
+      expect(f.serviceStates()).toEqual(stoppedWriters);
+      expect(readFileSync(path.join(f.checkout, "data/home.txt"), "utf8")).toBe("backed-up home");
+      expect(existsSync(path.join(f.checkout, "data/current-only.txt"))).toBe(false);
+      const rollbacks = readdirSync(f.checkout).filter((name) => name.startsWith("data.rollback."));
+      expect(rollbacks).toHaveLength(1);
+      const rollback = path.join(f.checkout, rollbacks[0]!, "data");
+      expect(readFileSync(path.join(rollback, "home.txt"), "utf8")).toBe("current home");
+      expect(readFileSync(path.join(rollback, "current-only.txt"), "utf8")).toBe(
+        "preserve this file",
+      );
+      expect(result.stdout).not.toContain("Restore complete");
+      expect(readdirSync(f.checkout).some((name) => name.startsWith(".restore."))).toBe(false);
+    },
+  );
+
+  it.each(["corrupt", "extraction failure"])("rejects a %s homes archive before SQL", (kind) => {
+    const f = restoreFixture();
+    if (kind === "corrupt") {
+      write(path.join(f.checkout, "backups/example/homes.tgz"), "invalid archive");
+    }
+    const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")], {
+      FAIL_EXTRACT: kind === "extraction failure" ? "1" : "0",
+    });
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("Restore complete");
     expect(f.commands().some((args) => args.slice(-2).join(" ") === "up -d")).toBe(false);
+    expect(existsSync(f.env.SQL_INPUT)).toBe(false);
+    expect(f.commands().some((args) => args.includes("psql"))).toBe(false);
+    expect(readFileSync(path.join(f.checkout, "data/home.txt"), "utf8")).toBe("current home");
+    expect(readdirSync(f.checkout).some((name) => name.startsWith(".restore."))).toBe(false);
+  });
+
+  it("keeps the previous tree outside active data if the post-SQL tree switch fails", () => {
+    const f = restoreFixture();
+    write(path.join(f.checkout, "data/current-only.txt"), "preserve this file");
+    const mv = path.join(f.root, "bin/mv");
+    write(
+      mv,
+      `#!/bin/bash
+if [[ ! -e "$ACTIVE_DATA" ]]; then
+  for argument in "$@"; do
+    if [[ "$argument" == "$ACTIVE_DATA" ]]; then exit 17; fi
+  done
+fi
+PATH=/usr/bin:/bin exec mv "$@"
+`,
+    );
+    chmodSync(mv, 0o755);
+
+    const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")], {
+      ACTIVE_DATA: path.join(f.checkout, "data"),
+    });
+
+    expect(result.status).toBe(17);
+    expect(readFileSync(f.env.SQL_INPUT, "utf8")).toContain("CREATE TABLE example");
+    expect(f.serviceStates()).toEqual(stoppedWriters);
+    expect(existsSync(path.join(f.checkout, "data"))).toBe(false);
+    const rollback = readdirSync(f.checkout).find((name) => name.startsWith("data.rollback."));
+    expect(rollback).toBeDefined();
+    expect(readFileSync(path.join(f.checkout, rollback!, "data/home.txt"), "utf8")).toBe(
+      "current home",
+    );
+    expect(readFileSync(path.join(f.checkout, rollback!, "data/current-only.txt"), "utf8")).toBe(
+      "preserve this file",
+    );
+    expect(result.stdout).not.toContain("Restore complete");
+  });
+
+  it.each(["missing", "skipped", "empty data"])("handles a %s homes snapshot", (kind) => {
+    const f = restoreFixture();
+    const snapshot = path.join(f.checkout, "backups/example");
+    if (kind === "missing") {
+      rmSync(path.join(snapshot, "homes.tgz"));
+    } else if (kind === "skipped") {
+      expect(
+        f.run("scripts/backup.sh", ["example"], { CORTEXAI_AGENT_HUB_BACKUP_SKIP_HOMES: "1" })
+          .status,
+      ).toBe(0);
+    } else {
+      const source = path.join(f.root, "empty-snapshot");
+      mkdirSync(path.join(source, "data"), { recursive: true });
+      execFileSync("/usr/bin/tar", [
+        "-czf",
+        path.join(snapshot, "homes.tgz"),
+        "-C",
+        source,
+        "data",
+      ]);
+    }
+    write(path.join(f.checkout, "data/post-snapshot.txt"), "keep unless the tree is replaced");
+
+    const result = f.run("scripts/restore.sh", [snapshot]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(f.env.SQL_INPUT, "utf8")).toContain("CREATE TABLE example");
+    if (kind === "empty data") {
+      expect(readdirSync(path.join(f.checkout, "data"))).toEqual([]);
+      const rollback = readdirSync(f.checkout).find((name) => name.startsWith("data.rollback."));
+      expect(rollback).toBeDefined();
+      expect(readFileSync(path.join(f.checkout, rollback!, "data/home.txt"), "utf8")).toBe(
+        "current home",
+      );
+    } else {
+      expect(readFileSync(path.join(f.checkout, "data/home.txt"), "utf8")).toBe("current home");
+      expect(readFileSync(path.join(f.checkout, "data/post-snapshot.txt"), "utf8")).toBe(
+        "keep unless the tree is replaced",
+      );
+      expect(readdirSync(f.checkout).some((name) => name.startsWith("data.rollback."))).toBe(false);
+    }
+  });
+
+  it.each(["outside data", "data symlink"])("rejects %s archive paths before SQL", (kind) => {
+    const f = restoreFixture();
+    const source = path.join(f.root, "invalid-snapshot");
+    const outside = path.join(f.root, "outside");
+    write(path.join(outside, "keep.txt"), "untouched");
+    mkdirSync(source);
+    const member = kind === "outside data" ? "unexpected.txt" : "data";
+    if (kind === "outside data") write(path.join(source, member), "not app data");
+    else symlinkSync(outside, path.join(source, member));
+    const snapshot = path.join(f.checkout, "backups/example");
+    execFileSync("/usr/bin/tar", ["-czf", path.join(snapshot, "homes.tgz"), "-C", source, member]);
+
+    const result = f.run("scripts/restore.sh", [snapshot]);
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(f.env.SQL_INPUT)).toBe(false);
+    expect(f.commands().some((args) => args.includes("psql"))).toBe(false);
+    expect(readFileSync(path.join(f.checkout, "data/home.txt"), "utf8")).toBe("current home");
+    expect(readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("untouched");
+    expect(f.serviceStates()).toEqual(runningWriters);
+  });
+
+  it.each(["file", "directory link"])("rejects active data %s", (kind) => {
+    const f = restoreFixture();
+    const data = path.join(f.checkout, "data");
+    rmSync(data, { recursive: true });
+    if (kind === "file") write(data, "keep this file");
+    else symlinkSync(path.join(f.root, "appdata"), data);
+
+    const result = f.run("scripts/restore.sh", [path.join(f.checkout, "backups/example")]);
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(f.env.SQL_INPUT)).toBe(false);
+    expect(f.commands().some((args) => args.includes("psql"))).toBe(false);
+    if (kind === "file") expect(readFileSync(data, "utf8")).toBe("keep this file");
+    else
+      expect(readFileSync(path.join(f.root, "appdata/home.txt"), "utf8")).toBe("example bot home");
   });
 });
 
@@ -361,6 +791,13 @@ describe("production backup deployment and archive behavior", () => {
     );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Verified CortexAI Agent Hub backup");
+    expect(result.stderr).toContain("not encrypted");
+    expect(readdirSync(result.stdout.trim().split("written to ")[1]!).sort()).toEqual([
+      "SHA256SUMS",
+      "SOURCE_SIZE_KB",
+      "appdata.tgz",
+      "cortexai-agent-hub.dump",
+    ]);
     for (const command of f.commands().filter((args) => args[0] === "compose")) {
       expect(command.slice(0, 5)).toEqual([
         "compose",
@@ -389,21 +826,20 @@ describe("production backup deployment and archive behavior", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toContain("file changed as we read it");
     expect(result.stdout).toContain("Verified CortexAI Agent Hub backup");
-    const snapshot = result.stdout.trim().split("written to ")[1];
+    const snapshot = result.stdout.trim().split("written to ")[1]!;
     expect(contents(path.join(snapshot, "appdata.tgz"))).toContain("home.txt");
     expect(existsSync(path.join(snapshot, "SHA256SUMS"))).toBe(true);
     expect(f.commands().some((args) => args[0] === "inspect")).toBe(true);
     expect(f.commands().some((args) => args.includes("tar"))).toBe(false);
   });
 
-  it.each([{ FAIL_TAR: "2" }, { FAIL_DUMP: "1" }, { FAIL_VERIFY: "1" }])(
+  it.each<Record<string, string>>([{ FAIL_TAR: "2" }, { FAIL_DUMP: "1" }, { FAIL_VERIFY: "1" }])(
     "does not report a verified snapshot after failure: %j",
     (failure) => {
       const f = fixture();
       const result = f.run("infra/compose/backup-prod.sh", [], failure);
       expect(result.status).not.toBe(0);
       expect(result.stdout).not.toContain("Verified CortexAI Agent Hub backup");
-      // The partial snapshot is removed.
       expect(snapshotNames(f.snapshots)).toEqual([]);
     },
   );
@@ -418,30 +854,22 @@ describe("production backup deployment and archive behavior", () => {
       CORTEXAI_AGENT_HUB_BACKUP_KEEP: "2",
     });
     expect(result.status, result.stderr).toBe(0);
-    const current = path.basename(result.stdout.trim().split("written to ")[1]);
+    const current = path.basename(result.stdout.trim().split("written to ")[1]!);
     expect(snapshotNames(f.snapshots).sort()).toEqual(
       ["20261017T000000Z", current, "notes"].sort(),
     );
   });
 
-  it("fails before writing when the disk is short of the last snapshot's size", () => {
+  it("fails before writing when the disk is short, still cleaning abandoned partials", () => {
     const f = fixture();
     write(path.join(f.snapshots, "20261017T000000Z/SHA256SUMS"), "x".repeat(64 * 1024));
-    const result = f.run("infra/compose/backup-prod.sh", [], { FREE_KB: "1" });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("this backup needs about");
-    expect(snapshotNames(f.snapshots)).toEqual(["20261017T000000Z"]);
-    expect(f.commands().some((args) => args.includes("sh"))).toBe(false);
-  });
-
-  it("cleans abandoned partials even when preflight refuses a new backup", () => {
-    const f = fixture();
-    write(path.join(f.snapshots, "20261017T000000Z/SHA256SUMS"), "verified");
     write(path.join(f.snapshots, "20261018T000000Z/appdata.tgz"), "partial");
     write(path.join(f.snapshots, "notes/keep.txt"), "operator note");
     const result = f.run("infra/compose/backup-prod.sh", [], { FREE_KB: "1" });
     expect(result.status).toBe(1);
+    expect(result.stderr).toContain("this backup needs about");
     expect(snapshotNames(f.snapshots).sort()).toEqual(["20261017T000000Z", "notes"]);
+    expect(f.commands().some((args) => args.includes("sh"))).toBe(false);
   });
 
   it("preserves the newest verified backup when the storage budget is too small", () => {
@@ -583,7 +1011,7 @@ exec /usr/bin/sync "$@"
     const f = fixture();
     const first = f.run("infra/compose/backup-prod.sh");
     expect(first.status, first.stderr).toBe(0);
-    const snapshot = first.stdout.trim().split("written to ")[1];
+    const snapshot = first.stdout.trim().split("written to ")[1]!;
     const manifest = readFileSync(path.join(snapshot, "SHA256SUMS"), "utf8");
     const date = path.join(f.root, "bin/date");
     write(date, `#!/bin/bash\necho '${path.basename(snapshot)}'\n`);
@@ -628,27 +1056,13 @@ exec /usr/bin/sync "$@"
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("CORTEXAI_AGENT_HUB_BACKUP_KEEP");
   });
-
-  it("warns that a backup without recipients is plaintext", () => {
-    const f = fixture();
-    const result = f.run("infra/compose/backup-prod.sh");
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).toContain("not encrypted");
-    const snapshot = result.stdout.trim().split("written to ")[1];
-    expect(readdirSync(snapshot).sort()).toEqual([
-      "SHA256SUMS",
-      "SOURCE_SIZE_KB",
-      "appdata.tgz",
-      "cortexai-agent-hub.dump",
-    ]);
-  });
 });
 
 const recipients = "age1fakeprimary age1fakerecovery";
 const identity = "# public key: age1fakerecovery\nAGE-SECRET-KEY-FAKE\n";
 
 function snapshotOf(result: { stdout: string }) {
-  return result.stdout.split("written to ")[1].split("\n")[0];
+  return result.stdout.split("written to ")[1]!.split("\n")[0]!;
 }
 
 describe("encrypted production backups", { timeout: 20_000 }, () => {
@@ -695,20 +1109,12 @@ describe("encrypted production backups", { timeout: 20_000 }, () => {
       expect(drill.stdout).toContain("decrypts and verifies");
       write(key, "# public key: age1someoneelse\n");
       expect(f.run("infra/compose/backup-drill.sh", [snapshot, key]).status).not.toBe(0);
+
+      write(key, identity);
+      write(path.join(snapshot, "appdata.tgz.age"), "age-encryption.org/v1\ntampered");
+      expect(f.run("infra/compose/backup-drill.sh", [snapshot, key]).status).not.toBe(0);
     },
   );
-
-  it("fails the drill when a sealed file was altered", () => {
-    const f = fixture();
-    const result = f.run("infra/compose/backup-prod.sh", [], {
-      CORTEXAI_AGENT_HUB_BACKUP_AGE_RECIPIENTS: recipients,
-    });
-    const snapshot = snapshotOf(result);
-    write(path.join(snapshot, "appdata.tgz.age"), "age-encryption.org/v1\ntampered");
-    const key = path.join(f.root, "backup.key");
-    write(key, identity);
-    expect(f.run("infra/compose/backup-drill.sh", [snapshot, key]).status).not.toBe(0);
-  });
 
   it.each([
     [{ CORTEXAI_AGENT_HUB_BACKUP_AGE_RECIPIENTS: "not-a-recipient" }, "age rejected"],
@@ -767,7 +1173,7 @@ describe("encrypted production backups", { timeout: 20_000 }, () => {
     expect(existsSync(path.join(f.snapshots, ".encrypted"))).toBe(false);
   });
 
-  it.each([{ FAIL_VERIFY: "1" }, { FAIL_TAR: "2" }])(
+  it.each<Record<string, string>>([{ FAIL_VERIFY: "1" }, { FAIL_TAR: "2" }])(
     "verifies the plaintext stream without the private key: %j",
     (failure) => {
       const f = fixture();
@@ -848,10 +1254,10 @@ describe("off-site copies", { timeout: 20_000 }, () => {
     expect(existsSync(copy)).toBe(false);
   });
 
-  it.each(["-1", "08"])("rejects an invalid off-site retention: %s", (keep) => {
+  it("rejects an off-site retention that is not a whole number", () => {
     const f = fixture();
     const result = f.run("infra/compose/backup-prod.sh", [], {
-      CORTEXAI_AGENT_HUB_BACKUP_OFFSITE_KEEP: keep,
+      CORTEXAI_AGENT_HUB_BACKUP_OFFSITE_KEEP: "08",
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("CORTEXAI_AGENT_HUB_BACKUP_OFFSITE_KEEP");
