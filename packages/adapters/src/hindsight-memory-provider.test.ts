@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import type { AdapterContext, SemanticMemoryConversationRequest } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  SemanticMemoryConversationRequest,
+} from "@cortexai-agent-hub/adapter-kit";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HINDSIGHT_CLOUD_BASE_URL } from "./hindsight-client.js";
@@ -1081,8 +1084,12 @@ describe("Hindsight conversations", () => {
       ].sort(),
     );
     expect(fake.requests.filter((request) => request.method === "GET")).toHaveLength(4);
-    expect([...(fake.documents.get(OWN_BANK) ?? [])]).toEqual(["cortexai-agent-hub-thread-1-4-bot-1"]);
-    expect([...(fake.documents.get(TEAM_BANK) ?? [])]).toEqual(["cortexai-agent-hub-thread-1-2-bot-2"]);
+    expect([...(fake.documents.get(OWN_BANK) ?? [])]).toEqual([
+      "cortexai-agent-hub-thread-1-4-bot-1",
+    ]);
+    expect([...(fake.documents.get(TEAM_BANK) ?? [])]).toEqual([
+      "cortexai-agent-hub-thread-1-2-bot-2",
+    ]);
   });
 
   it("shares one cleanup deadline across deletes and later document listings", async () => {

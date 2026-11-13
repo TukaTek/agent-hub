@@ -1,7 +1,7 @@
-import { MenuView } from "@expo/ui/community/menu";
-import { useLingui } from "@lingui/react/macro";
 import type { AccountSecurity } from "@cortexai-agent-hub/contracts";
 import { accountDisplay, displayName } from "@cortexai-agent-hub/core";
+import { MenuView } from "@expo/ui/community/menu";
+import { useLingui } from "@lingui/react/macro";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, Text } from "react-native";

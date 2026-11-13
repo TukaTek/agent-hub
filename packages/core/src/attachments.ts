@@ -1,4 +1,8 @@
-import type { AttachmentMimeType, HistoryToolStep, MessageBlock } from "@cortexai-agent-hub/contracts";
+import type {
+  AttachmentMimeType,
+  HistoryToolStep,
+  MessageBlock,
+} from "@cortexai-agent-hub/contracts";
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_COUNT_CEILING,

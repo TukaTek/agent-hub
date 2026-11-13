@@ -1,13 +1,17 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type {
   BotSecretMetadata,
   VaultCsv,
   VaultImportResult,
   VaultImportRow,
 } from "@cortexai-agent-hub/contracts";
-import { newVaultImportRows, vaultImportCounts, vaultImportProblems } from "@cortexai-agent-hub/contracts";
+import {
+  newVaultImportRows,
+  vaultImportCounts,
+  vaultImportProblems,
+} from "@cortexai-agent-hub/contracts";
 import { vaultImportProblemLines, vaultImportText } from "@cortexai-agent-hub/i18n/vault";
 import { Button } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useState } from "react";
 import { VaultPageHeader } from "./VaultPageHeader";
 

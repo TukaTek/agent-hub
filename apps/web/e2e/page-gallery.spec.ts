@@ -62,7 +62,9 @@ const dots = (page: Page) => page.locator(".cortexai-agent-hub-gallery-dots butt
 
 /** Exactly one dot is current, and it is this one. */
 async function expectMarked(page: Page, index: number) {
-  await expect(page.locator(".cortexai-agent-hub-gallery-dots button[aria-current]")).toHaveCount(1);
+  await expect(page.locator(".cortexai-agent-hub-gallery-dots button[aria-current]")).toHaveCount(
+    1,
+  );
   await expect(dots(page).nth(index)).toHaveAttribute("aria-current", "true");
 }
 

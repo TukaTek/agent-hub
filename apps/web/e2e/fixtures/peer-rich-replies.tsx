@@ -1,6 +1,6 @@
+import { DEFAULT_BOT_AVATAR_COLOR } from "@cortexai-agent-hub/ui-web";
 import { setupI18n } from "@lingui/core";
 import { I18nProvider } from "@lingui/react";
-import { DEFAULT_BOT_AVATAR_COLOR } from "@cortexai-agent-hub/ui-web";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
 import { PeerMessagesOverlay } from "../../src/pages/PeerMessagesOverlay";

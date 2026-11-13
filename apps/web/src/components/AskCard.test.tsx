@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { i18n } from "@lingui/core";
 import type { LoginFieldInput } from "@cortexai-agent-hub/contracts";
 import { BLOCKED_ITEM_ANSWER, UNCHOSEN_ITEM_ANSWER } from "@cortexai-agent-hub/contracts";
+import { i18n } from "@lingui/core";
 import type { ReactNode } from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";

@@ -4,7 +4,11 @@ import {
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
 } from "@cortexai-agent-hub/contracts";
-import { inferAttachmentMimeType, isStaticPng, PNG_ANIMATION_HEADER_BYTES } from "@cortexai-agent-hub/core";
+import {
+  inferAttachmentMimeType,
+  isStaticPng,
+  PNG_ANIMATION_HEADER_BYTES,
+} from "@cortexai-agent-hub/core";
 import * as DocumentPicker from "expo-document-picker";
 import { File, FileMode } from "expo-file-system";
 import type * as ImageManipulatorModule from "expo-image-manipulator";

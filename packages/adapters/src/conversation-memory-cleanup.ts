@@ -1,4 +1,8 @@
-import type { AdapterContext, BackgroundJobPayloads, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  BackgroundJobPayloads,
+  JobPublisher,
+} from "@cortexai-agent-hub/adapter-kit";
 import { memoryPurgeHistoryJob } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";

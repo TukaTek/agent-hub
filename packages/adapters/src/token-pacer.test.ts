@@ -90,7 +90,9 @@ describe("TokenPacer", () => {
 describe("pacerTokensPerMinute", () => {
   it("is off unless the limit is set", () => {
     expect(pacerTokensPerMinute("local", {})).toBeUndefined();
-    expect(pacerTokensPerMinute("local", { CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE: " " })).toBeUndefined();
+    expect(
+      pacerTokensPerMinute("local", { CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE: " " }),
+    ).toBeUndefined();
   });
   it("paces only the local provider", () => {
     const env = { CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE: "5000" };

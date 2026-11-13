@@ -1,4 +1,7 @@
-import type { MessagingInboundMessage, TeamChatInboundMessage } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  MessagingInboundMessage,
+  TeamChatInboundMessage,
+} from "@cortexai-agent-hub/adapter-kit";
 import { SpaceDeletionInProgressError } from "@cortexai-agent-hub/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Inbound from "./messaging-inbound.js";

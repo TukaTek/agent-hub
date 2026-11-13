@@ -464,7 +464,10 @@ describe("setup", () => {
     const ui = await boot(null, ENGLISH, "darwin");
     selectMode("new");
     submitForm();
-    const missing = { ...stackState("docker-missing"), message: "CortexAI Agent Hub needs Docker Desktop." };
+    const missing = {
+      ...stackState("docker-missing"),
+      message: "CortexAI Agent Hub needs Docker Desktop.",
+    };
     ui.startResult.resolve(missing);
     await flush();
     ui.resolveStackState(missing);
@@ -495,7 +498,10 @@ describe("setup", () => {
     const ui = await boot(null, ENGLISH, "darwin");
     selectMode("new");
     submitForm();
-    const missing = { ...stackState("docker-missing"), message: "CortexAI Agent Hub needs Docker Desktop." };
+    const missing = {
+      ...stackState("docker-missing"),
+      message: "CortexAI Agent Hub needs Docker Desktop.",
+    };
     ui.startResult.resolve(missing);
     await flush();
     ui.resolveStackState(missing);
@@ -554,7 +560,9 @@ describe("setup", () => {
     const ui = await boot(null, { lang: "es", dir: "ltr", messages: ES_MESSAGES });
     expect(document.documentElement.lang).toBe("es");
     expect(document.documentElement.dir).toBe("ltr");
-    expect(document.querySelector("h1")?.textContent).toBe("Te damos la bienvenida a CortexAI Agent Hub");
+    expect(document.querySelector("h1")?.textContent).toBe(
+      "Te damos la bienvenida a CortexAI Agent Hub",
+    );
     expect(document.querySelector('label[for="mode-new"] .choice-title')?.textContent).toBe(
       "Esta computadora",
     );

@@ -14,7 +14,12 @@ import {
 } from "@cortexai-agent-hub/adapters";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { userTurnMessageForRun } from "@cortexai-agent-hub/core";
-import type { Prisma, PrismaClient, SendUserMessageInput, SendUserMessageResult } from "@cortexai-agent-hub/db";
+import type {
+  Prisma,
+  PrismaClient,
+  SendUserMessageInput,
+  SendUserMessageResult,
+} from "@cortexai-agent-hub/db";
 import { SendClaimLostError } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import { materializeCurrentTurnFiles } from "../../../packages/adapters/src/thread-artifacts.js";

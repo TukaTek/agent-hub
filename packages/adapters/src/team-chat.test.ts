@@ -8,7 +8,12 @@ import {
 } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { teamChatAmbientPrompt, teamChatPrompt } from "@cortexai-agent-hub/core";
-import type { Prisma, PrismaClient, SendUserMessageInput, SendUserMessageResult } from "@cortexai-agent-hub/db";
+import type {
+  Prisma,
+  PrismaClient,
+  SendUserMessageInput,
+  SendUserMessageResult,
+} from "@cortexai-agent-hub/db";
 import { SendClaimLostError, SpaceDeletionInProgressError } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";
 import { inboundDeliveryClientNonce, messagingWakeIdempotencyKey } from "./inbound-delivery.js";

@@ -8,7 +8,9 @@ beforeEach(() => {
   sink = createTestSink();
   installLogger(createLogger({ service: "cortexai-agent-hub-api", sinks: [sink] }));
 });
-afterEach(() => installLogger(createLogger({ service: "cortexai-agent-hub-api", level: "off", sinks: [] })));
+afterEach(() =>
+  installLogger(createLogger({ service: "cortexai-agent-hub-api", level: "off", sinks: [] })),
+);
 
 const logger = authLibraryLogger("auth.request.failed");
 const answer = (status: number) => async () => {

@@ -1,5 +1,10 @@
 import type { Bot, ChatAlert, ProductEvent } from "@cortexai-agent-hub/contracts";
-import { chatSnoozed, isRetryableError, reconnectDelayMs, retryDelayMs } from "@cortexai-agent-hub/core";
+import {
+  chatSnoozed,
+  isRetryableError,
+  reconnectDelayMs,
+  retryDelayMs,
+} from "@cortexai-agent-hub/core";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef } from "react";
 import {

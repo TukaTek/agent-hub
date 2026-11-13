@@ -208,7 +208,8 @@ export const HI_MESSAGES: Record<string, string> = {
     "उस सर्वर से कनेक्ट करें जिसे आप या आपकी टीम पहले से चलाते हैं।",
   "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
     "इस कंप्यूटर पर चलने के लिए CortexAI Agent Hub को Docker Desktop चाहिए।",
-  "CortexAI Agent Hub needs Docker to run on this computer.": "इस कंप्यूटर पर चलने के लिए CortexAI Agent Hub को Docker चाहिए।",
+  "CortexAI Agent Hub needs Docker to run on this computer.":
+    "इस कंप्यूटर पर चलने के लिए CortexAI Agent Hub को Docker चाहिए।",
   "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
     "Docker Desktop एक मुफ़्त ऐप है जो CortexAI Agent Hub को बैकग्राउंड में चलाता है। इसे इंस्टॉल करें और एक बार खोलें।",
   "Install Docker Engine and start it.": "Docker Engine इंस्टॉल करके शुरू करें।",

@@ -1,3 +1,4 @@
+import { getLogger } from "@cortexai-agent-hub/logging";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import type {
@@ -6,7 +7,6 @@ import type {
   JsonSchemaValidatorResult,
   jsonSchemaValidator,
 } from "@modelcontextprotocol/sdk/validation/types.js";
-import { getLogger } from "@cortexai-agent-hub/logging";
 
 const PATTERN_PREVIEW_CHARS = 160;
 const REASON_PREVIEW_CHARS = 300;

@@ -1,4 +1,3 @@
-import { Trans } from "@lingui/react/macro";
 import {
   Button,
   Field,
@@ -9,6 +8,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans } from "@lingui/react/macro";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
 import type { ConnectionMode } from "./ConnectionModeFields";

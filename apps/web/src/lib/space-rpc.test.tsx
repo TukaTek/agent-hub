@@ -12,7 +12,9 @@ vi.mock("./rpc", () => {
     bots: {
       claimEmailAddress: async ({ name }: { name: string }) => {
         calls.push(
-          spaceId === undefined ? window.localStorage.getItem("cortexai-agent-hub:space-id") : spaceId,
+          spaceId === undefined
+            ? window.localStorage.getItem("cortexai-agent-hub:space-id")
+            : spaceId,
         );
         return { address: `${name}@bots.cortexai-agent-hub.test` };
       },

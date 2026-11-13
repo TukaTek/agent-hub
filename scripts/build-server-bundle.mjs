@@ -192,7 +192,9 @@ fs.writeFileSync(
 fs.mkdirSync(outDir, { recursive: true });
 const archive = path.join(outDir, `${name}.tar.xz`);
 fs.rmSync(archive, { force: true });
-execFileSync("tar", ["-C", work, "-cJf", archive, "cortexai-agent-hub-server"], { stdio: "inherit" });
+execFileSync("tar", ["-C", work, "-cJf", archive, "cortexai-agent-hub-server"], {
+  stdio: "inherit",
+});
 fs.rmSync(work, { recursive: true, force: true });
 
 const sha256 = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");

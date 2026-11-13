@@ -510,9 +510,9 @@ describe("withMentions", () => {
   });
 
   it("strips a model mention wrapper while preserving inline code in its label", () => {
-    expect(withMentions(["[Use `Planner`](cortexai-agent-hub-mention:bot-1) is ready."], [planner])).toEqual([
-      `${link} Use \`Planner\` is ready.`,
-    ]);
+    expect(
+      withMentions(["[Use `Planner`](cortexai-agent-hub-mention:bot-1) is ready."], [planner]),
+    ).toEqual([`${link} Use \`Planner\` is ready.`]);
   });
 
   it("continues processing valid blocks after a malformed block", () => {

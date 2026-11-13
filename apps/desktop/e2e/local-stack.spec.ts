@@ -153,7 +153,8 @@ async function launch(mode: FakeDockerMode | "missing") {
     env: {
       ...env,
       // "missing" points at where the fake docker will be written, so a spec can install it later.
-      CORTEXAI_AGENT_HUB_DOCKER_BINARY: mode === "missing" ? fakeDockerPath() : await writeFakeDocker(mode),
+      CORTEXAI_AGENT_HUB_DOCKER_BINARY:
+        mode === "missing" ? fakeDockerPath() : await writeFakeDocker(mode),
       CORTEXAI_AGENT_HUB_LOCAL_WEB_URL: serverUrl,
       CORTEXAI_AGENT_HUB_IMAGE_TAG: IMAGE_TAG,
     },

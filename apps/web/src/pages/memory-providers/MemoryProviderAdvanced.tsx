@@ -1,5 +1,10 @@
+import {
+  Button,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@cortexai-agent-hub/ui-web";
 import { Trans } from "@lingui/react/macro";
-import { Button, Collapsible, CollapsibleContent, CollapsibleTrigger } from "@cortexai-agent-hub/ui-web";
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 

@@ -2,7 +2,12 @@ import type { MessagingSurface } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { DatabaseOutage } from "@cortexai-agent-hub/db";
 import type { LogEvent } from "@cortexai-agent-hub/logging";
-import { createLogger, createTestSink, getLogger, installLogger } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  getLogger,
+  installLogger,
+} from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessagingDelivery } from "./messaging-delivery.js";
 import { jobQueueLogger } from "./wakeup.js";

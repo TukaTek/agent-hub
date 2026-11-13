@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { asSystem, createDb, provisionMessagingIdentity, runAsSystem } from "@cortexai-agent-hub/db";
+import {
+  asSystem,
+  createDb,
+  provisionMessagingIdentity,
+  runAsSystem,
+} from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const databaseUrl = process.env.DATABASE_URL;

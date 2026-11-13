@@ -1,6 +1,10 @@
-import { i18n } from "@lingui/core";
 import type { VaultSaveDrop, VaultSaveSent } from "@cortexai-agent-hub/core";
-import { secretAnswerRefusal, vaultImportProblemList, vaultSaveDrops } from "@cortexai-agent-hub/core";
+import {
+  secretAnswerRefusal,
+  vaultImportProblemList,
+  vaultSaveDrops,
+} from "@cortexai-agent-hub/core";
+import { i18n } from "@lingui/core";
 
 /**
  * Vault text both apps show, kept here so the copy and its choice can't drift between them. Static

@@ -222,7 +222,12 @@ describe("AppleContainerSandboxProvider", () => {
   it("re-applies the firewall when reusing a running VM of the same bot", async () => {
     const fake = fakeCli({ "cortexai-agent-hub-old": { botId: "bot-a" } });
     const computer = await fake.provider.provision(
-      { botId: "bot-a", homePath: "/unused", providerKind: "local-vm", providerRef: "cortexai-agent-hub-old" },
+      {
+        botId: "bot-a",
+        homePath: "/unused",
+        providerKind: "local-vm",
+        providerRef: "cortexai-agent-hub-old",
+      },
       context,
     );
     expect(computer).toMatchObject({ providerRef: "cortexai-agent-hub-old", fresh: false });
@@ -232,7 +237,9 @@ describe("AppleContainerSandboxProvider", () => {
 
   it("removes nothing when it cannot tell who owns a VM", async () => {
     const fake = fakeCli();
-    await expect(fake.provider.stop(ref("cortexai-agent-hub-unreadable"))).rejects.toThrow(/inspect failed/);
+    await expect(fake.provider.stop(ref("cortexai-agent-hub-unreadable"))).rejects.toThrow(
+      /inspect failed/,
+    );
     expect(fake.calls().some((call) => call.argv[0] === "rm")).toBe(false);
   });
 
@@ -249,7 +256,9 @@ describe("AppleContainerSandboxProvider", () => {
         context,
       ),
     ).rejects.toThrow(/belongs to another bot/);
-    await expect(fake.provider.stop(ref("cortexai-agent-hub-other"))).rejects.toThrow(/another bot/);
+    await expect(fake.provider.stop(ref("cortexai-agent-hub-other"))).rejects.toThrow(
+      /another bot/,
+    );
     expect(Object.keys(fake.vms())).toEqual(["cortexai-agent-hub-other"]);
   });
 
@@ -262,8 +271,12 @@ describe("AppleContainerSandboxProvider", () => {
       { botId: "bot-a", homePath: "/unused" },
       context,
     );
-    expect(Object.keys(fake.vms()).sort()).toEqual([computer.providerRef, "cortexai-agent-hub-other"].sort());
-    expect(fake.calls().map((call) => call.argv.join(" "))).toContain("network rm cortexai-agent-hub-orphan");
+    expect(Object.keys(fake.vms()).sort()).toEqual(
+      [computer.providerRef, "cortexai-agent-hub-other"].sort(),
+    );
+    expect(fake.calls().map((call) => call.argv.join(" "))).toContain(
+      "network rm cortexai-agent-hub-orphan",
+    );
   });
 
   it("fails closed and removes the VM and network when the image has no nft", async () => {
@@ -312,12 +325,9 @@ describe("AppleContainerSandboxProvider", () => {
       "1000",
       "--workdir",
     ]);
-    expect(exec.slice(exec.indexOf("cortexai-agent-hub-1"), exec.indexOf("cortexai-agent-hub-1") + 4)).toEqual([
-      "cortexai-agent-hub-1",
-      "setpriv",
-      "--no-new-privs",
-      "--",
-    ]);
+    expect(
+      exec.slice(exec.indexOf("cortexai-agent-hub-1"), exec.indexOf("cortexai-agent-hub-1") + 4),
+    ).toEqual(["cortexai-agent-hub-1", "setpriv", "--no-new-privs", "--"]);
 
     await fake.provider.writeFile(
       ref("cortexai-agent-hub-1"),
@@ -346,7 +356,10 @@ describe("AppleContainerSandboxProvider", () => {
     await fake.provider.stop(ref("cortexai-agent-hub-1"));
     expect(fake.vms()).toEqual({});
     expect(fake.calls().map((call) => call.argv.join(" "))).toEqual(
-      expect.arrayContaining(["rm --force cortexai-agent-hub-1", "network rm cortexai-agent-hub-1"]),
+      expect.arrayContaining([
+        "rm --force cortexai-agent-hub-1",
+        "network rm cortexai-agent-hub-1",
+      ]),
     );
     expect(await fake.provider.isRunning(ref("cortexai-agent-hub-1"), context)).toBe(false);
   });

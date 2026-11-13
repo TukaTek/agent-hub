@@ -1,4 +1,7 @@
-import { BillingNoMonthlyCreditsError, BillingPaymentNotCompletedError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  BillingNoMonthlyCreditsError,
+  BillingPaymentNotCompletedError,
+} from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
 import { byokTierOf, StripeBillingProvider } from "./stripe-billing.js";
 

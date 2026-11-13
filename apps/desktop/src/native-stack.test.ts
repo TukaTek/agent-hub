@@ -472,7 +472,9 @@ describe("NativeStackController", () => {
     });
     const controller = new NativeStackController(deps);
     expect((await controller.start()).phase).toBe("ready");
-    expect(runs.find((call) => call.args[0] === "create")?.args).toContain("POSTGRES_USER=cortexai-agent-hub");
+    expect(runs.find((call) => call.args[0] === "create")?.args).toContain(
+      "POSTGRES_USER=cortexai-agent-hub",
+    );
     expect(targets).toEqual(["cortexai-agent-hub"]);
     const migrate = runs.find((call) => call.args[0]?.endsWith("migrate-database.js"));
     expect(migrate?.env.DATABASE_MIGRATION_URL).toMatch(/^postgres:\/\/cortexai-agent-hub:/);

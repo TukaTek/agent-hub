@@ -138,7 +138,9 @@ describe("moveDockerStack", () => {
       `cp abc123:/data/. ${dataDir}`,
       "compose docker-compose.images.yml --project-name cortexai-agent-hub-desktop stop",
     ]);
-    expect(calls[3]?.input).toContain("CREATE ROLE cortexai_agent_hub_app NOLOGIN NOSUPERUSER NOBYPASSRLS");
+    expect(calls[3]?.input).toContain(
+      "CREATE ROLE cortexai_agent_hub_app NOLOGIN NOSUPERUSER NOBYPASSRLS",
+    );
     const [from, to] = piped[0]!;
     expect(from.command).toBe("/usr/local/bin/docker");
     expect(from.args.slice(-6)).toEqual([

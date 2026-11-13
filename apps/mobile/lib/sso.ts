@@ -1,5 +1,5 @@
-import { t } from "@lingui/core/macro";
 import { SIGNUP_SURFACE_HEADER } from "@cortexai-agent-hub/contracts";
+import { t } from "@lingui/core/macro";
 import { Platform } from "react-native";
 import { authHeaders, currentApiBase, fetchMobileJson } from "./api";
 import { clearSpace } from "./api-server";

@@ -414,7 +414,10 @@ describe("replaying an earlier reply's tool steps", () => {
     ]);
     expect(JSON.stringify(messages)).not.toContain("[tool calls this reply made]");
     for (const message of messages.slice(1)) {
-      expect(message).toMatchObject({ cortexAiAgentHubHistory: true, cortexAiAgentHubMessageId: "m2" });
+      expect(message).toMatchObject({
+        cortexAiAgentHubHistory: true,
+        cortexAiAgentHubMessageId: "m2",
+      });
       expect(isHistoryReply(message)).toBe(true);
     }
   });

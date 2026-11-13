@@ -85,7 +85,9 @@ describe("development database selection", () => {
     }
     expect(branchDatabaseName("a/b", "branch")).not.toBe(branchDatabaseName("a_b", "branch"));
     expect(branchDatabaseName("db", "a/b")).not.toBe(branchDatabaseName("db", "a-b"));
-    expect(branchDatabaseName("cortexai-agent-hub", "main")).toBe("cortexai-agent-hub_main_0d6e4079");
+    expect(branchDatabaseName("cortexai-agent-hub", "main")).toBe(
+      "cortexai-agent-hub_main_0d6e4079",
+    );
   });
 
   it("fails without starting another database when the configured one is unreachable", async () => {

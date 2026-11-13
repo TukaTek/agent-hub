@@ -6,7 +6,11 @@ import type {
   ComputerRef,
   SandboxProvider,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { AttachmentImageMimeType, ComputerMode, MessageBlock } from "@cortexai-agent-hub/contracts";
+import type {
+  AttachmentImageMimeType,
+  ComputerMode,
+  MessageBlock,
+} from "@cortexai-agent-hub/contracts";
 import {
   ARTIFACT_DESCRIPTION_MAX_LENGTH,
   ARTIFACT_NAME_MAX_LENGTH,

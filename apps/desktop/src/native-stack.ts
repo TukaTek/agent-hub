@@ -678,7 +678,9 @@ export class NativeStackController extends StackLifecycle {
     let existing = await this.inspectDatabase(cli, signal);
     if (existing === null && ports.database !== undefined && ports.database !== holder) {
       throw new StartFailure(
-        t("Your CortexAI Agent Hub data is in a different computer runtime. Quit the one running, then retry."),
+        t(
+          "Your CortexAI Agent Hub data is in a different computer runtime. Quit the one running, then retry.",
+        ),
       );
     }
     if (ports.database === undefined) {

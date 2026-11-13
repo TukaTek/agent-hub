@@ -17,7 +17,15 @@ function compose(args: string[], options?: Parameters<typeof execFileSync>[2]) {
   return execFileSync("docker", [...composeBaseArgs(repoRoot), ...args], options);
 }
 
-const psql = (sqlArgs: string[]) => ["exec", "-T", "postgres", "psql", "-U", "cortexai-agent-hub", ...sqlArgs];
+const psql = (sqlArgs: string[]) => [
+  "exec",
+  "-T",
+  "postgres",
+  "psql",
+  "-U",
+  "cortexai-agent-hub",
+  ...sqlArgs,
+];
 
 // Unquoted Postgres identifiers cannot contain hyphens.
 const SIDE_DATABASE = `cortexai_agent_hub_restore_${randomUUID().replaceAll("-", "")}`;

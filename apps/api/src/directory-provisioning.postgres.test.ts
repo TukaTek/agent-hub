@@ -5,7 +5,12 @@ import { join } from "node:path";
 import type { TransactionalEmailProvider } from "@cortexai-agent-hub/adapter-kit";
 import { FakeSandboxProvider } from "@cortexai-agent-hub/adapters";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { asSystem, bootstrapUserSpace, createRepos, reserveBotEmailSend } from "@cortexai-agent-hub/db";
+import {
+  asSystem,
+  bootstrapUserSpace,
+  createRepos,
+  reserveBotEmailSend,
+} from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AppHandles } from "./app.js";
 import { createApp } from "./app.js";

@@ -569,7 +569,12 @@ test("move an own-key plan to a bigger tier", async ({ page }, testInfo) => {
 test("yearly billing shows the monthly computer reset separately from renewal", async ({
   page,
 }, testInfo) => {
-  await signup(page, `annual-hours-${Date.now()}@cortexai-agent-hub.test`, "password12", "Demo Customer");
+  await signup(
+    page,
+    `annual-hours-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Demo Customer",
+  );
   await completeOnboarding(page);
   await page.route("**/api/auth/capabilities", async (route) => {
     const response = await route.fetch();

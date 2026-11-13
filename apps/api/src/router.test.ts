@@ -7,7 +7,11 @@ import {
   routineWakeupJob,
   SecretStoreUnavailableError,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { McpOAuthSummary, PiOAuthConnected, PiOAuthPersist } from "@cortexai-agent-hub/adapters";
+import type {
+  McpOAuthSummary,
+  PiOAuthConnected,
+  PiOAuthPersist,
+} from "@cortexai-agent-hub/adapters";
 import * as adapters from "@cortexai-agent-hub/adapters";
 import {
   COMPUTER_SCREEN_UNAVAILABLE,

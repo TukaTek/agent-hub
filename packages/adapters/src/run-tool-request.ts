@@ -1,5 +1,9 @@
 import type { ConnectorCall, ConnectorTool } from "@cortexai-agent-hub/adapter-kit";
-import { BOT_INSTRUCTIONS_MAX_LENGTH, BotSecretAuth, OneTimeCodeTarget } from "@cortexai-agent-hub/contracts";
+import {
+  BOT_INSTRUCTIONS_MAX_LENGTH,
+  BotSecretAuth,
+  OneTimeCodeTarget,
+} from "@cortexai-agent-hub/contracts";
 import { redactSecrets } from "@cortexai-agent-hub/core";
 import { runLoginKind } from "@cortexai-agent-hub/db";
 import { prepareAgentConnectionResponse } from "./agent-connections.js";

@@ -1,9 +1,9 @@
-import { useLingui } from "@lingui/react/macro";
 import type { VaultKind, VaultPolicy } from "@cortexai-agent-hub/contracts";
 import { VaultPolicy as Policies } from "@cortexai-agent-hub/contracts";
 import { vaultAccessControls, vaultBotChoices } from "@cortexai-agent-hub/core";
 import { vaultPolicyLabels } from "@cortexai-agent-hub/i18n/vault";
 import { ToggleGroup, ToggleGroupItem } from "@cortexai-agent-hub/ui-web";
+import { useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSpaceQueries } from "../../lib/query";

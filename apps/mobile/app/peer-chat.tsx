@@ -1,6 +1,11 @@
 import { ChatMarkdown } from "@cortexai-agent-hub/chat-ui/native";
 import type { PeerConversation } from "@cortexai-agent-hub/core";
-import { displayName, loadPeerHistory, newestPageCards, peerConversations } from "@cortexai-agent-hub/core";
+import {
+  displayName,
+  loadPeerHistory,
+  newestPageCards,
+  peerConversations,
+} from "@cortexai-agent-hub/core";
 import { typeScale } from "@cortexai-agent-hub/ui-tokens";
 import { useLingui } from "@lingui/react/macro";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";

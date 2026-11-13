@@ -41,7 +41,12 @@ test("a bot email claim stays in its shell's Space when another tab switches Spa
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `bot-email-space-${stamp}@cortexai-agent-hub.test`, "password12", "Bot Email Space");
+  await signup(
+    page,
+    `bot-email-space-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Bot Email Space",
+  );
   await completeOnboarding(page);
 
   const home = await rpc<{ id: string }>(page, "spaces/create", { name: "Email Home" });
@@ -67,7 +72,10 @@ test("a bot email claim stays in its shell's Space when another tab switches Spa
   await expect(header.getByRole("button", { name: "Get an email address" })).toBeVisible();
 
   const otherTab = await page.context().newPage();
-  await otherTab.addInitScript((id) => localStorage.setItem("cortexai-agent-hub:space-id", id), other.id);
+  await otherTab.addInitScript(
+    (id) => localStorage.setItem("cortexai-agent-hub:space-id", id),
+    other.id,
+  );
   await otherTab.goto(`/app/${otherBot.id}`);
   await expect(otherTab.getByPlaceholder("Message Other")).toBeVisible();
 

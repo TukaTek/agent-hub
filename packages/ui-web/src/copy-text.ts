@@ -37,7 +37,8 @@ export async function writeClipboard(text: string, isCurrent = () => true): Prom
     // A desktop document can lose focus even during a Copy click.
   }
   if (!isCurrent()) return false;
-  const desktop = (globalThis as { cortexAiAgentHubDesktop?: CortexAiAgentHubDesktop }).cortexAiAgentHubDesktop;
+  const desktop = (globalThis as { cortexAiAgentHubDesktop?: CortexAiAgentHubDesktop })
+    .cortexAiAgentHubDesktop;
   if (desktop?.clipboard) {
     try {
       if (await desktop.clipboard.writeText(text)) return true;

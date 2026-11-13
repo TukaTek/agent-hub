@@ -524,7 +524,12 @@ test("change-trigger screenshot walkthrough", { tag: "@nightly" }, async ({ page
 });
 
 test("an HTTPS change trigger saves and reopens", async ({ page }, testInfo) => {
-  await signup(page, `http-watch-${Date.now()}@cortexai-agent-hub.test`, "password12", "Routine Watch");
+  await signup(
+    page,
+    `http-watch-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Routine Watch",
+  );
   await completeOnboarding(page);
   const botId = activeBotId(page);
   await openBotPanelTab(page, "Routines");

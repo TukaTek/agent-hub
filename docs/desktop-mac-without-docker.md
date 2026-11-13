@@ -31,22 +31,22 @@ uninstalled: everything ran from the expanded release package in a private direc
 sudo and without the system installer. The first rows were measured before the in-VM firewall
 existed; the egress row shows the result with it.
 
-| Step                                                        | Result                                                                                                                                                               |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `container` 1.7.1 release package (Apple-signed, notarized) | Expanded with `pkgutil`; `container system start --install-root … --app-root … --log-root …` registered user launchd agents in 45 s, including kernel download       |
-| Pull `ghcr.io/tukatek/agent-hub/computer:edge` (linux/arm64)   | 50 s, 1.58 GB unpacked                                                                                                                                               |
-| First computer VM, noVNC gateway ready                      | 11 s (includes the one-time 66 MB init image); later VMs 2–3 s                                                                                                       |
-| Host reaches VM screen gateway                              | `http://<vm-ip>:6080/embed.html` and per-bot `:6100` answered 200                                                                                                    |
-| Two computers on separate networks                          | Cannot reach each other; each reaches the internet                                                                                                                   |
-| VM reaching the host                                        | With the firewall: host listeners on `127.0.0.1` and `0.0.0.0` and the LAN router refused; internet, DNS and SSH to github.com work; uid 1000 cannot flush the rules |
-| `local-vm` provider, opt-in live test                       | Provisioned in 2.8 s; shared workspace contract, Chromium screenshot on the bot's display, screen URL, workspace export, stop and network cleanup all passed         |
-| Official `postgres:16` image as a VM (Compose's digest)     | Pull of the linux/arm64 variant only: 25 s, 151.5 MB, 452 MB unpacked. First start with init about 3 s, restarts about 2 s; published on `127.0.0.1` only            |
-| Desktop controller end to end (Node, scratch runtime)       | First start 64 s; sign-up and bot creation; restart 4.6 s with data intact; DB VM killed while ready recovered in 3.4 s; taken DB port recreated the VM, data intact |
-| API, worker, web as Node processes                          | `/internal/health` reports `sandbox: local-vm`; Graphile worker connected; web preview served and proxied the API                                                    |
-| Sign up, create bot, `computer.boot` through the web origin | Computer running 4 s after boot; `computer.screenUrl` issued a capability URL                                                                                        |
-| Proxied screen                                              | Capability URL page served through the web proxy; its websocket returned the VNC `RFB 003.008` banner from the VM                                                    |
-| Persistence                                                 | File written in VM 1 survived `computer.stop` (checkpoint into `DATA_DIR/homes`) and was present in a brand-new VM 2 after `computer.boot`                           |
-| Memory                                                      | One computer with Chromium: about 970 MB host RSS (2 GB cap). Database VM: about 540 MB (1 GB cap). API + worker + web: under 245 MB (measured with native Postgres) |
+| Step                                                         | Result                                                                                                                                                               |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `container` 1.7.1 release package (Apple-signed, notarized)  | Expanded with `pkgutil`; `container system start --install-root … --app-root … --log-root …` registered user launchd agents in 45 s, including kernel download       |
+| Pull `ghcr.io/tukatek/agent-hub/computer:edge` (linux/arm64) | 50 s, 1.58 GB unpacked                                                                                                                                               |
+| First computer VM, noVNC gateway ready                       | 11 s (includes the one-time 66 MB init image); later VMs 2–3 s                                                                                                       |
+| Host reaches VM screen gateway                               | `http://<vm-ip>:6080/embed.html` and per-bot `:6100` answered 200                                                                                                    |
+| Two computers on separate networks                           | Cannot reach each other; each reaches the internet                                                                                                                   |
+| VM reaching the host                                         | With the firewall: host listeners on `127.0.0.1` and `0.0.0.0` and the LAN router refused; internet, DNS and SSH to github.com work; uid 1000 cannot flush the rules |
+| `local-vm` provider, opt-in live test                        | Provisioned in 2.8 s; shared workspace contract, Chromium screenshot on the bot's display, screen URL, workspace export, stop and network cleanup all passed         |
+| Official `postgres:16` image as a VM (Compose's digest)      | Pull of the linux/arm64 variant only: 25 s, 151.5 MB, 452 MB unpacked. First start with init about 3 s, restarts about 2 s; published on `127.0.0.1` only            |
+| Desktop controller end to end (Node, scratch runtime)        | First start 64 s; sign-up and bot creation; restart 4.6 s with data intact; DB VM killed while ready recovered in 3.4 s; taken DB port recreated the VM, data intact |
+| API, worker, web as Node processes                           | `/internal/health` reports `sandbox: local-vm`; Graphile worker connected; web preview served and proxied the API                                                    |
+| Sign up, create bot, `computer.boot` through the web origin  | Computer running 4 s after boot; `computer.screenUrl` issued a capability URL                                                                                        |
+| Proxied screen                                               | Capability URL page served through the web proxy; its websocket returned the VNC `RFB 003.008` banner from the VM                                                    |
+| Persistence                                                  | File written in VM 1 survived `computer.stop` (checkpoint into `DATA_DIR/homes`) and was present in a brand-new VM 2 after `computer.boot`                           |
+| Memory                                                       | One computer with Chromium: about 970 MB host RSS (2 GB cap). Database VM: about 540 MB (1 GB cap). API + worker + web: under 245 MB (measured with native Postgres) |
 
 The live provider test is `VERIFY_LOCAL_VM=1 LOCAL_VM_CLI=<path to container> pnpm exec vitest run
 packages/adapters/src/apple-container-sandbox.test.ts`. It is skipped by default and in CI.
@@ -57,13 +57,13 @@ behavior, and anything packaged or signed as part of the app.
 
 ## Server stack without Docker
 
-| Today (Docker Compose)                 | Mac without Docker                                                                                                                      |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Today (Docker Compose)                 | Mac without Docker                                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `postgres:16` container, named volume  | The same image and digest as a VM through the computer runtime: `cortexai-agent-hub-postgres` VM, network and volume, 1 GB, `127.0.0.1:<port>` only |
-| `migrate` container (`pnpm db:deploy`) | Same migration code run by Electron-as-Node before the API starts                                                                       |
-| `api`, `worker` containers             | `dist/index.js` of each, run with `ELECTRON_RUN_AS_NODE=1` from the app binary (no separate Node)                                       |
-| `web` container (`vite preview`)       | The built web assets plus the existing screen/API proxy, served by a small Node process on loopback                                     |
-| `sandbox-supervisor` + Docker socket   | Gone. The API and worker call the `container` CLI (theirs or downloaded) through the `local-vm` provider                                |
+| `migrate` container (`pnpm db:deploy`) | Same migration code run by Electron-as-Node before the API starts                                                                                   |
+| `api`, `worker` containers             | `dist/index.js` of each, run with `ELECTRON_RUN_AS_NODE=1` from the app binary (no separate Node)                                                   |
+| `web` container (`vite preview`)       | The built web assets plus the existing screen/API proxy, served by a small Node process on loopback                                                 |
+| `sandbox-supervisor` + Docker socket   | Gone. The API and worker call the `container` CLI (theirs or downloaded) through the `local-vm` provider                                            |
 
 ### How the desktop app runs it
 

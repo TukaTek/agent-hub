@@ -1,4 +1,8 @@
-import type { BotSecretMetadata, LoginFieldInput, VaultPolicy } from "@cortexai-agent-hub/contracts";
+import type {
+  BotSecretMetadata,
+  LoginFieldInput,
+  VaultPolicy,
+} from "@cortexai-agent-hub/contracts";
 import {
   BLOCKED_ITEM_ANSWER,
   encodeLoginSecret,

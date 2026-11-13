@@ -6,10 +6,10 @@ import path from "node:path";
 import type { HostScreen } from "@cortexai-agent-hub/adapters/host-screen";
 import { startUserDeviceClient } from "@cortexai-agent-hub/adapters/user-device-client";
 import type {
+  CortexAiAgentHubDesktopDevice,
   DesktopLocalStackState,
   DesktopReachability,
   DesktopSetup,
-  CortexAiAgentHubDesktopDevice,
 } from "@cortexai-agent-hub/contracts";
 import type { BrowserWindow, Session } from "electron";
 import {

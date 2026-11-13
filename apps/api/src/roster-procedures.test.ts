@@ -1,6 +1,6 @@
-import { createRouterClient } from "@orpc/server";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { appContract } from "@cortexai-agent-hub/contracts";
+import { createRouterClient } from "@orpc/server";
 import { describe, expect, it, vi } from "vitest";
 import { ROSTER_PROCEDURES, rosterChangeFor } from "./roster-procedures.js";
 import type { RouterDeps } from "./router.js";

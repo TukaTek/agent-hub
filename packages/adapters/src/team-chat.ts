@@ -165,7 +165,8 @@ export class TeamChat {
   async mirrorTranscript(message: TeamChatMessage, files?: TranscriptFiles): Promise<void> {
     if (message.threadMessageId) return;
     const conversation = message.externalConversation;
-    if (!conversation.thread) throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
+    if (!conversation.thread)
+      throw new Error("Team chat conversation has no CortexAI Agent Hub thread");
     const stored = files ?? {
       artifacts: await this.deps.prisma.artifact.findMany({
         where: {

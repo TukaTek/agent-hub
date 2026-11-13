@@ -206,7 +206,9 @@ export function createRouterContext(deps: RouterDeps) {
           ? {
               ...entry,
               managed: true,
-              billing: runsOnHostedCredits(auth, entry) ? "Uses CortexAI Agent Hub credits" : entry.billing,
+              billing: runsOnHostedCredits(auth, entry)
+                ? "Uses CortexAI Agent Hub credits"
+                : entry.billing,
             }
           : entry,
       );

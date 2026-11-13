@@ -1,6 +1,6 @@
+import { BLOCKED_ITEM_ANSWER } from "@cortexai-agent-hub/contracts";
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { BLOCKED_ITEM_ANSWER } from "@cortexai-agent-hub/contracts";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
 test("renders masked secret card and saves without putting the value in chat", async ({

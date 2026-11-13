@@ -381,12 +381,12 @@ computer image by Apple's [`container`](https://github.com/apple/container) runt
 (Virtualization.framework). It needs Apple silicon and macOS 26 or newer, with the `container`
 system service started; no Docker, supervisor or socket is involved.
 
-| Variable                  | Default                                | Notes                                        |
-| ------------------------- | -------------------------------------- | -------------------------------------------- |
-| `LOCAL_VM_CLI`            | `container`                            | Path to the `container` CLI                  |
+| Variable                  | Default                                   | Notes                                        |
+| ------------------------- | ----------------------------------------- | -------------------------------------------- |
+| `LOCAL_VM_CLI`            | `container`                               | Path to the `container` CLI                  |
 | `LOCAL_VM_COMPUTER_IMAGE` | `ghcr.io/tukatek/agent-hub/computer:edge` | Must include `nft`; older images are refused |
-| `LOCAL_VM_CPUS`           | `2`                                    | CPUs of each VM                              |
-| `LOCAL_VM_MEMORY`         | `2g`                                   | Memory of each VM                            |
+| `LOCAL_VM_CPUS`           | `2`                                       | CPUs of each VM                              |
+| `LOCAL_VM_MEMORY`         | `2g`                                      | Memory of each VM                            |
 
 Each start creates a VM and a network of its own, both named `cortexai-agent-hub-<uuid>`, labelled
 `cortexai-agent-hub.bot-id=<bot id>`; one carrying another bot's id is never reused or removed. The image's

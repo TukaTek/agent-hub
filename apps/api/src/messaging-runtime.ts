@@ -6,8 +6,15 @@ import type {
   SandboxProvider,
   SecretStore,
 } from "@cortexai-agent-hub/adapter-kit";
-import type { MessagingDelivery, MessagingInstallations, TeamChat } from "@cortexai-agent-hub/adapters";
-import { applyMessagingOutboundStatus, createMessagingTeamChatHistory } from "@cortexai-agent-hub/adapters";
+import type {
+  MessagingDelivery,
+  MessagingInstallations,
+  TeamChat,
+} from "@cortexai-agent-hub/adapters";
+import {
+  applyMessagingOutboundStatus,
+  createMessagingTeamChatHistory,
+} from "@cortexai-agent-hub/adapters";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
 import { provisionMessagingIdentity, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";

@@ -208,7 +208,8 @@ export const HE_MESSAGES: Record<string, string> = {
     "התחברות לשרת שאתם או הצוות שלכם כבר מפעילים.",
   "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
     "CortexAI Agent Hub צריך את Docker Desktop כדי לפעול במחשב הזה.",
-  "CortexAI Agent Hub needs Docker to run on this computer.": "CortexAI Agent Hub צריך את Docker כדי לפעול במחשב הזה.",
+  "CortexAI Agent Hub needs Docker to run on this computer.":
+    "CortexAI Agent Hub צריך את Docker כדי לפעול במחשב הזה.",
   "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
     "Docker Desktop היא אפליקציה חינמית שמפעילה את CortexAI Agent Hub ברקע. מתקינים ופותחים אותה פעם אחת.",
   "Install Docker Engine and start it.": "מתקינים את Docker Engine ומפעילים אותו.",

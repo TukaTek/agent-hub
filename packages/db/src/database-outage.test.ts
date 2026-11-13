@@ -1,5 +1,10 @@
 import type { LogEvent } from "@cortexai-agent-hub/logging";
-import { createLogger, createTestSink, getLogger, installLogger } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  getLogger,
+  installLogger,
+} from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isDatabaseUnavailable } from "./client.js";
 import { DatabaseOutage } from "./database-outage.js";

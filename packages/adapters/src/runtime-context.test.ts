@@ -752,7 +752,8 @@ describe("runtime context policy", () => {
     }).prepareContext(context, model);
     const reply = prepared.messages.filter(
       (message) =>
-        (message as Message & { cortexAiAgentHubMessageId?: string }).cortexAiAgentHubMessageId === "message-22",
+        (message as Message & { cortexAiAgentHubMessageId?: string }).cortexAiAgentHubMessageId ===
+        "message-22",
     );
     expect(reply.map((message) => message.role)).toEqual([
       "assistant",

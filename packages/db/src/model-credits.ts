@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentUsage, BillingCreditPurchase } from "@cortexai-agent-hub/adapter-kit";
-import { MODEL_CREDITS_EXHAUSTED_ERROR, MODEL_UNPRICED_FOR_CREDITS_ERROR } from "@cortexai-agent-hub/core";
+import {
+  MODEL_CREDITS_EXHAUSTED_ERROR,
+  MODEL_UNPRICED_FOR_CREDITS_ERROR,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "./client.js";
 import type { Prisma } from "./generated/prisma/client.js";
 import { enforceModelCreditCap } from "./model-credit-cap.js";

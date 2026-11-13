@@ -1,5 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { EncryptedSecretStore, InfisicalSecretStore, migrateSecrets } from "@cortexai-agent-hub/adapters";
+import {
+  EncryptedSecretStore,
+  InfisicalSecretStore,
+  migrateSecrets,
+} from "@cortexai-agent-hub/adapters";
 import type { PrismaClient, SpaceKeyRecord } from "@cortexai-agent-hub/db";
 import { ContentKeyRing, encryptText, LocalKeyProvider } from "@cortexai-agent-hub/db";
 import { describe, expect, it, vi } from "vitest";

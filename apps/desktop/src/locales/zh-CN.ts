@@ -198,7 +198,8 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   "Connect to a server you or your team already run.": "连接到你或你的团队已在运行的服务器。",
   "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
     "CortexAI Agent Hub 需要 Docker Desktop 才能在这台电脑上运行。",
-  "CortexAI Agent Hub needs Docker to run on this computer.": "CortexAI Agent Hub 需要 Docker 才能在这台电脑上运行。",
+  "CortexAI Agent Hub needs Docker to run on this computer.":
+    "CortexAI Agent Hub 需要 Docker 才能在这台电脑上运行。",
   "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
     "Docker Desktop 是一款免费应用，可在后台运行 CortexAI Agent Hub。安装并打开一次即可。",
   "Install Docker Engine and start it.": "安装并启动 Docker Engine。",

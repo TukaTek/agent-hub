@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { i18n } from "@lingui/core";
 import type { BotSecretMetadata, SettingsScope } from "@cortexai-agent-hub/contracts";
 import { encodeCardSecret, encodeLoginSecret, noneSkipped } from "@cortexai-agent-hub/contracts";
+import { i18n } from "@lingui/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";

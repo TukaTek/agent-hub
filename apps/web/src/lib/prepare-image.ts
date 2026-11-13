@@ -1,5 +1,9 @@
 import { ATTACHMENT_IMAGE_MAX_EDGE, ATTACHMENT_IMAGE_QUALITY } from "@cortexai-agent-hub/contracts";
-import { inferAttachmentMimeType, isStaticPng, PNG_ANIMATION_HEADER_BYTES } from "@cortexai-agent-hub/core";
+import {
+  inferAttachmentMimeType,
+  isStaticPng,
+  PNG_ANIMATION_HEADER_BYTES,
+} from "@cortexai-agent-hub/core";
 
 // Recompress byte-heavy images even when their dimensions already fit.
 const IMAGE_RECOMPRESS_BYTES = 5 * 1024 * 1024;

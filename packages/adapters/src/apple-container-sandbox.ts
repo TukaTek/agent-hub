@@ -36,7 +36,12 @@ const CLI_TIMEOUT_MS = 60_000;
 // The first computer downloads the image (about 600 MB compressed).
 const CREATE_TIMEOUT_MS = 15 * 60_000;
 const IMAGE_USER = "1000";
-const IMAGE_COMMAND = ["/usr/bin/env", "-u", "LD_PRELOAD", "/usr/local/bin/cortexai-agent-hub-computer"];
+const IMAGE_COMMAND = [
+  "/usr/bin/env",
+  "-u",
+  "LD_PRELOAD",
+  "/usr/local/bin/cortexai-agent-hub-computer",
+];
 const BOT_ID_LABEL = "cortexai-agent-hub.bot-id";
 const KIND = "local-vm";
 

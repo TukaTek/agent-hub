@@ -96,7 +96,12 @@ test("a failed space search says so instead of No results", async ({ page }, tes
 });
 
 test("a bot found by search can be pinned from its result", async ({ page }, testInfo) => {
-  await signup(page, `sidebar-search-pin-${Date.now()}@cortexai-agent-hub.test`, "password12", "Search Pin");
+  await signup(
+    page,
+    `sidebar-search-pin-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Search Pin",
+  );
   await completeOnboarding(page);
   const sidebar = page.locator("aside").first();
   await sidebar.getByTestId("sidebar-search-trigger").click();

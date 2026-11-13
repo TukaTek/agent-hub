@@ -516,7 +516,10 @@ describe("inline links", () => {
     try {
       const host = mount(<Text>{url}</Text>);
       act(() => host.querySelector("a")!.click());
-      expect(postMessage).toHaveBeenCalledWith({ type: "cortexai-agent-hub-page:open-link", url }, "*");
+      expect(postMessage).toHaveBeenCalledWith(
+        { type: "cortexai-agent-hub-page:open-link", url },
+        "*",
+      );
     } finally {
       postMessage.mockRestore();
     }

@@ -564,7 +564,9 @@ export class HindsightMemoryProvider implements SemanticMemoryProvider {
         {
           items: [item],
           async: false,
-          operation_id: operationUuid(`cortexai-agent-hub-save:${bank}:${context.operationId}:${fact}`),
+          operation_id: operationUuid(
+            `cortexai-agent-hub-save:${bank}:${context.operationId}:${fact}`,
+          ),
         },
         signal,
       );

@@ -5,7 +5,11 @@ import type {
   TransactionalEmailProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import { EmailRecipientRejectedError } from "@cortexai-agent-hub/adapter-kit";
-import { cancelResponseBody, parseRetryAfter, readBoundedJsonResponse } from "@cortexai-agent-hub/core";
+import {
+  cancelResponseBody,
+  parseRetryAfter,
+  readBoundedJsonResponse,
+} from "@cortexai-agent-hub/core";
 
 const MAX_RESPONSE_BYTES = 4_096;
 

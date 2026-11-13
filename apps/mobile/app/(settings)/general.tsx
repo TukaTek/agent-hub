@@ -1,5 +1,5 @@
-import { useLingui } from "@lingui/react/macro";
 import { APP_LOCALE_LABELS } from "@cortexai-agent-hub/core";
+import { useLingui } from "@lingui/react/macro";
 import * as Notifications from "expo-notifications";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";

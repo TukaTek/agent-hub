@@ -1,11 +1,11 @@
-import type { ToolCall } from "@earendil-works/pi-ai";
-import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
 import {
   FLEET_TOOL_NAMES,
   TICKET_COMMENT_MAX_LENGTH,
   TICKET_DESCRIPTION_MAX_LENGTH,
   TICKET_TITLE_MAX_LENGTH,
 } from "@cortexai-agent-hub/contracts";
+import type { ToolCall } from "@earendil-works/pi-ai";
+import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
 import { describe, expect, it } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
 import { lazyCatalogTools, parseConnectorToolArgs } from "./lazy-tool-catalog.js";
