@@ -144,6 +144,8 @@ async function runTool(tool: ToolCase, outcome: Outcome) {
     },
     attempt: {
       create: vi.fn(async () => ({ id: "attempt-1" })),
+      // One attempt: the run is not retrying after outside content, so saving needs no approval.
+      count: vi.fn(async () => 1),
       findMany: vi.fn(async () => []),
       update: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),

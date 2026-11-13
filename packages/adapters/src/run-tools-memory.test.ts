@@ -31,7 +31,14 @@ it.each(["isolated", "shared"])(
       thread: { historyCompactedUpToSeq: null },
       context: {},
       state: { tainted: false },
-      memory: { scope, semantic: { recall: vi.fn(async () => response) } },
+      secrets: [],
+      memory: {
+        scope,
+        semantic: {
+          describe: () => ({ id: "fake-memory" }),
+          recall: vi.fn(async () => response),
+        },
+      },
       deps: { prisma: { run: { updateMany: vi.fn(async () => ({ count: 1 })) } } },
     };
     expect(

@@ -452,7 +452,8 @@ describe("vault values under the envelope keys", () => {
         signal: AbortSignal.timeout(20),
         remote: { fetch, resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
       }),
-    ).rejects.toMatchObject({ name: "TimeoutError" });
+      // secret_request reports a stalled read to the bot as a failed request.
+    ).resolves.toEqual({ error: "Request was cancelled before it finished." });
     expect(fetch).not.toHaveBeenCalled();
   }, 2_000);
 

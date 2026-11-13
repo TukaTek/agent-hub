@@ -1469,7 +1469,7 @@ describe("Hindsight connection", () => {
       "cortexai-agent-hub-0123456789abcdef0123456789ABCDEF",
       "cortexai-agent-hub-clegacyspaceid",
       "cortexai-agent-hub-private-team-bot-1",
-      "CORTEXAI_AGENT_HUB-legacy-organization",
+      "CORTEXAI-AGENT-HUB-legacy-organization",
       "notes,cortexai-agent-hub-notes",
       "notes,cortexai-agent-hub-01234567-89ab-cdef-0123-456789abcdef-bot-9",
     ]) {

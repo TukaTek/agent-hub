@@ -330,11 +330,13 @@ describe("clipToolResultText", () => {
 
   it("does not split an emoji at the limit", () => {
     const clipped = clipToolResultText(`${"a".repeat(89)}😀b`, 90);
-    expect(clipped).toBe(`${"a".repeat(89)}…`);
+    expect(clipped).toBe(`${"a".repeat(89)}…\n${toolResultTruncationNotice(90)}`);
   });
 
   it("keeps an emoji that ends exactly at the limit", () => {
-    expect(clipToolResultText(`${"a".repeat(88)}😀b`, 90)).toBe(`${"a".repeat(88)}😀…`);
+    expect(clipToolResultText(`${"a".repeat(88)}😀b`, 90)).toBe(
+      `${"a".repeat(88)}😀…\n${toolResultTruncationNotice(90)}`,
+    );
   });
 });
 
@@ -348,7 +350,7 @@ describe("clipToolResultContent", () => {
       15,
     );
     const last = clipped[1] as { text: string };
-    expect(last.text).toBe(`${"b".repeat(4)}…`);
+    expect(last.text).toBe(`${"b".repeat(4)}…\n${toolResultTruncationNotice(15)}`);
   });
 
   it("shares one character budget across all text parts and leaves images", () => {
