@@ -79,7 +79,7 @@ export const TR_MESSAGES: Record<string, string> = {
   "Set up CortexAI Agent Hub": "CortexAI Agent Hub’yu Kur",
   "Quit CortexAI Agent Hub": "CortexAI Agent Hub’dan Çık",
   "Welcome to CortexAI Agent Hub": "CortexAI Agent Hub’ya hoş geldiniz",
-  "Choose which server this app should use.": "Bu uygulamanın hangi sunucuyu kullanacağını seçin.",
+  "Choose where CortexAI Agent Hub runs.": "CortexAI Agent Hub'nun nerede çalışacağını seçin.",
   Instance: "Örnek",
   "This computer": "Bu bilgisayar",
   "Existing instance": "Mevcut örnek",
@@ -90,7 +90,6 @@ export const TR_MESSAGES: Record<string, string> = {
   "Name: value": "Ad: değer",
   "Check connection": "Bağlantıyı denetle",
   Continue: "Devam",
-  "Check again": "Yeniden denetle",
   Retry: "Yeniden dene",
   "Getting ready…": "Hazırlanıyor…",
   "Downloading CortexAI Agent Hub…": "CortexAI Agent Hub indiriliyor…",
@@ -145,15 +144,12 @@ export const TR_MESSAGES: Record<string, string> = {
     "Bağlanıldı ancak kurulum bir sonraki açılış için kaydedilemedi. Devam’a yeniden tıklayın.",
   "The app-managed CortexAI Agent Hub services are not ready. Retry setup.":
     "Uygulamanın yönettiği CortexAI Agent Hub hizmetleri hazır değil. Kurulumu yeniden deneyin.",
-  "Docker is not installed on this computer.": "Bu bilgisayarda Docker yüklü değil.",
   "Docker is installed, but Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin.":
     "Docker yüklü ancak Docker Compose eksik. Docker Desktop’ı veya docker-compose-plugin’i yükleyin.",
   "Could not check Docker Compose. Check the output below, then retry.":
     "Docker Compose denetlenemedi. Aşağıdaki çıktıyı inceleyip yeniden deneyin.",
-  "Docker is installed but not running. Start Docker, then check again.":
-    "Docker yüklü ancak çalışmıyor. Docker’ı başlatıp yeniden denetleyin.",
-  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), sign out and back in, then check again.":
-    "Bu kullanıcı Docker’a erişemiyor. Kullanıcıyı docker grubuna ekleyin (sudo usermod -aG docker $USER), oturumu kapatıp yeniden açın ve tekrar denetleyin.",
+  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), then sign out and back in.":
+    "Bu kullanıcı Docker’a erişemiyor. Kullanıcıyı docker grubuna ekleyin (sudo usermod -aG docker $USER), ardından oturumu kapatıp yeniden açın.",
   "The start was interrupted. Retry to continue.":
     "Başlatma kesildi. Devam etmek için yeniden deneyin.",
   "Images for {tag} are not published yet. Try again in a few minutes.":
@@ -194,4 +190,37 @@ export const TR_MESSAGES: Record<string, string> = {
   "Chat Details": "Sohbet Ayrıntıları",
   Help: "Yardım",
   "Keyboard Shortcuts": "Klavye Kısayolları",
+  "Downloading CortexAI Agent Hub failed. Check the internet connection, then retry.":
+    "CortexAI Agent Hub indirilemedi. İnternet bağlantısını kontrol edip yeniden deneyin.",
+  "Could not move your data from Docker. Check the output below, then retry.":
+    "Verileriniz Docker'dan taşınamadı. Aşağıdaki çıktıyı kontrol edip yeniden deneyin.",
+  "The computer runtime already running is too old. Update or quit it, then retry.":
+    "Zaten çalışan bilgisayar çalışma ortamı çok eski. Güncelleyin veya kapatın, ardından yeniden deneyin.",
+  "Your CortexAI Agent Hub data is in a different computer runtime. Quit the one running, then retry.":
+    "CortexAI Agent Hub verileriniz farklı bir bilgisayar çalışma ortamında. Çalışanı kapatın, ardından yeniden deneyin.",
+  "Run CortexAI Agent Hub without Docker?": "CortexAI Agent Hub Docker olmadan çalıştırılsın mı?",
+  "Your bots and data move over. Docker is stopped, not removed.":
+    "Botlarınız ve verileriniz taşınır. Docker durdurulur, kaldırılmaz.",
+  Move: "Taşı",
+  "Keep Docker": "Docker'ı koru",
+  "Nothing to install.": "Yüklenecek bir şey yok.",
+  "Your data stays on this computer.": "Verileriniz bu bilgisayarda kalır.",
+  "Connect to a server you or your team already run.":
+    "Sizin veya ekibinizin zaten çalıştırdığı bir sunucuya bağlanın.",
+  "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
+    "CortexAI Agent Hub'nun bu bilgisayarda çalışması için Docker Desktop gerekir.",
+  "CortexAI Agent Hub needs Docker to run on this computer.":
+    "CortexAI Agent Hub'nun bu bilgisayarda çalışması için Docker gerekir.",
+  "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
+    "Docker Desktop, CortexAI Agent Hub'yu arka planda çalıştıran ücretsiz bir uygulamadır. Yükleyip bir kez açın.",
+  "Install Docker Engine and start it.": "Docker Engine'i yükleyip başlatın.",
+  "Download Docker Desktop": "Docker Desktop'ı indir",
+  "Install Docker": "Docker'ı yükle",
+  "Docker is installed but not running. Open it to continue.":
+    "Docker yüklü ama çalışmıyor. Devam etmek için açın.",
+  "Starting {app}…": "{app} başlatılıyor…",
+  "Waiting for Docker Desktop…": "Docker Desktop bekleniyor…",
+  "Waiting for Docker…": "Docker bekleniyor…",
+  "Docker is installed but not running. Start the Docker service to continue.":
+    "Docker yüklü ama çalışmıyor. Devam etmek için Docker hizmetini başlatın.",
 };

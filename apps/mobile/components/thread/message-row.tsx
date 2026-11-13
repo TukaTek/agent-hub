@@ -1,5 +1,10 @@
 import { markdownCodeBlocks } from "@cortexai-agent-hub/chat-ui/native";
-import type { BotAvatarSet, LoginFieldInput, MessageReaction } from "@cortexai-agent-hub/contracts";
+import type {
+  BotAvatarSet,
+  LoginFieldInput,
+  MessageBlock,
+  MessageReaction,
+} from "@cortexai-agent-hub/contracts";
 import { canReactToThreadMessage, MESSAGE_REACTIONS } from "@cortexai-agent-hub/contracts";
 import type { ChildBotBlock, PeerExchange } from "@cortexai-agent-hub/core";
 import {
@@ -80,6 +85,7 @@ type MessageRowProps = {
   readOnly: boolean;
   onCall: boolean;
   canAnswer: boolean;
+  separateAnswers?: ReadonlySet<MessageBlock>;
   canDismiss: boolean;
   highlighted: boolean;
   separator: boolean;
@@ -119,6 +125,7 @@ export const MessageRow = memo(function MessageRow({
   readOnly,
   onCall,
   canAnswer,
+  separateAnswers,
   canDismiss,
   highlighted,
   separator,
@@ -448,6 +455,7 @@ export const MessageRow = memo(function MessageRow({
                 bots={bots}
                 members={members}
                 canAnswer={canAnswer}
+                separateAnswers={separateAnswers}
                 canDismiss={canDismiss}
                 onAnswer={actions.answer}
                 onOpenBot={actions.openBot}

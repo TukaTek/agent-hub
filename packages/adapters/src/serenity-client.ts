@@ -6,7 +6,7 @@ import {
   isNonPublicAddress,
 } from "@cortexai-agent-hub/contracts";
 import { cancelResponseBody } from "@cortexai-agent-hub/core";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Agent } from "undici";
 import {
@@ -14,6 +14,7 @@ import {
   redactConnectorPayload,
   sanitizeConnectorError,
 } from "./connector-safety.js";
+import { createMcpClient } from "./mcp-output-schema.js";
 import type { ResolvedAddress, ResolveHostname } from "./network-address.js";
 import { createAddressCheckedLookup } from "./network-address.js";
 import type { RemoteTransportDependencies, SafeRemoteFetch } from "./remote-mcp.js";
@@ -329,7 +330,10 @@ async function withSerenityClient<T>(
       return assertNotRateLimited(response);
     },
   });
-  const client = new Client({ name: "cortexai-agent-hub", version: "0.1.0" }, { capabilities: {} });
+  const client = createMcpClient(
+    { name: "cortexai-agent-hub", version: "0.1.0" },
+    { capabilities: {} },
+  );
   try {
     await client.connect(transport, { signal: requestSignal, timeout: SERENITY_TIMEOUT_MS });
     // A server or proxy may echo the bearer token it received; never hand it to the model.

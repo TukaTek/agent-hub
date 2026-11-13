@@ -22,7 +22,7 @@ for artifact in "$OUT/cortexai-agent-hub.sql" "$OUT/homes.tgz"; do
     chmod 600 "$artifact"
   fi
 done
-"${compose[@]}" exec -T postgres pg_dump -U cortexai-agent-hub cortexai-agent-hub > "$OUT/cortexai-agent-hub.sql"
+"${compose[@]}" exec -T postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$OUT/cortexai-agent-hub.sql"
 if [[ "${CORTEXAI_AGENT_HUB_BACKUP_SKIP_HOMES:-0}" == "1" ]] || [[ ! -e "$ROOT/data" && ! -L "$ROOT/data" ]]; then
   tar -czf "$OUT/homes.tgz" --files-from /dev/null
 else

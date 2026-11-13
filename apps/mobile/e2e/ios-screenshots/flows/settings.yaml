@@ -7,7 +7,7 @@ name: Settings
       CORTEXAI_AGENT_HUB_ACTIVE_EMAIL: ${CORTEXAI_AGENT_HUB_SCREENSHOT_EMAIL}
 - openLink: "cortexai-agent-hub:///account"
 - extendedWaitUntil:
-    visible: ".*Change password.*"
+    visible: "General"
     timeout: 15000
 - assertNotVisible: "(?s).*__[A-Za-z0-9]+__.*"
 - assertNotVisible: "(?is).*[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}.*"
@@ -15,22 +15,25 @@ name: Settings
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 01-account
-- tapOn: "Dark"
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: 02-account-dark
-- tapOn: "System"
-- scrollUntilVisible:
-    element: "Advanced"
-    direction: DOWN
-    timeout: 10000
-- tapOn: "Advanced"
+- tapOn: "General"
 - extendedWaitUntil:
     visible: "Stream replies"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
-- takeScreenshot: 03-account-advanced
+- takeScreenshot: 02-general
+- tapOn: "Dark"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 03-general-dark
+- tapOn: "System"
+- openLink: "cortexai-agent-hub:///profile"
+- extendedWaitUntil:
+    visible: ".*Change password.*"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 03-profile
 - openLink: "cortexai-agent-hub:///change-password"
 - extendedWaitUntil:
     visible: "Current password"
@@ -148,7 +151,7 @@ name: Settings
 - waitForAnimationToEnd:
     timeout: 5000
 - takeScreenshot: 16-computer
-- openLink: "cortexai-agent-hub:///account"
+- openLink: "cortexai-agent-hub:///profile"
 - scrollUntilVisible:
     element: ".*Delete account.*"
     direction: DOWN
@@ -162,14 +165,10 @@ name: Settings
     timeout: 3000
 - takeScreenshot: 17-delete-prompt
 - tapOn: "Cancel"
-# Account reopens where it was scrolled, below Language.
-- openLink: "cortexai-agent-hub:///account"
-- scrollUntilVisible:
-    element: "Language"
-    direction: UP
+- openLink: "cortexai-agent-hub:///general"
+- extendedWaitUntil:
+    visible: "Language"
     timeout: 15000
-    visibilityPercentage: 100
-    centerElement: true
 - tapOn: "Language"
 - extendedWaitUntil:
     visible: "Deutsch"
@@ -191,11 +190,11 @@ name: Settings
 - extendedWaitUntil:
     visible: "Search artifacts.*"
     timeout: 15000
-- assertNotVisible: ".*Change password.*"
+- assertNotVisible: "General"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 20-artifacts
-- openLink: "cortexai-agent-hub:///account"
+- openLink: "cortexai-agent-hub:///general"
 - scrollUntilVisible:
     element: "Haptics"
     direction: UP

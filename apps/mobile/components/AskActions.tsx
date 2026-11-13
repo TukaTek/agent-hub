@@ -1,4 +1,5 @@
 import { BOT_INSTRUCTIONS_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
+import { resolveAskChoice } from "@cortexai-agent-hub/core";
 import { useLingui } from "@lingui/react/macro";
 import { useState } from "react";
 import type { ViewProps } from "react-native";
@@ -16,6 +17,7 @@ export function AskActions({
   approval,
   instructions,
   disabled,
+  selectedAnswer,
   onAnswer,
   accessibilityActions,
   onAccessibilityAction,
@@ -25,6 +27,7 @@ export function AskActions({
   approval: boolean;
   instructions?: string;
   disabled?: boolean;
+  selectedAnswer?: string;
   onAnswer: (answer: string) => Promise<void>;
   accessibilityActions?: ViewProps["accessibilityActions"];
   onAccessibilityAction?: ViewProps["onAccessibilityAction"];
@@ -115,6 +118,11 @@ export function AskActions({
               label={askActionLabel(action, { approval, site })}
               prominence={emphasized ? "primary" : "secondary"}
               fill={!approval}
+              selected={
+                approval || selectedAnswer === undefined
+                  ? undefined
+                  : resolveAskChoice(selectedAnswer, actions)?.id === action.id
+              }
               align={approval ? "center" : "start"}
               disabled={disabled || submitting}
               busy={pendingAction === action.id}

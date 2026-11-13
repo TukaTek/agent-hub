@@ -4,9 +4,11 @@ import {
   authCapabilitiesSchema,
   legacyAccountSecurity,
   legacyAuthCapabilitiesSchema,
+  SIGNUP_SURFACE_HEADER,
 } from "@cortexai-agent-hub/contracts";
 import { displayName, signupRequiresEmailVerification } from "@cortexai-agent-hub/core";
 import { t } from "@lingui/core/macro";
+import { Platform } from "react-native";
 import type { PendingSignOut } from "./api";
 import {
   authHeaders,
@@ -48,6 +50,7 @@ async function postAuth(path: string, input: Record<string, string>, apiBase = c
         "content-type": "application/json",
         origin: "cortexai-agent-hub://",
         "accept-language": getActiveUiLocale(),
+        [SIGNUP_SURFACE_HEADER]: Platform.OS,
       },
       body: JSON.stringify(input),
     },

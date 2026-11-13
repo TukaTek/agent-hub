@@ -1,9 +1,10 @@
+import { BillingPaymentNotCompletedError } from "@cortexai-agent-hub/adapter-kit";
 import { BillingEmulator } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { BYOK_TIERS } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { asSystem, billingAccountForOrganization, createDb } from "@cortexai-agent-hub/db";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBillingService, TRIAL_DAYS } from "./billing.js";
 
 const dbTests = process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
@@ -167,5 +168,14 @@ dbTests("model credit billing service", () => {
       code: "CONFLICT",
     });
     await expect(service.status(actor)).resolves.toMatchObject({ state: "canceled" });
+  });
+  it("answers payment required when the card is not charged for an upgrade", async () => {
+    vi.spyOn(provider, "setMonthlyCredits").mockRejectedValueOnce(
+      new BillingPaymentNotCompletedError(),
+    );
+    await expect(service.setMonthlyCredits(actor, 5000)).rejects.toMatchObject({
+      code: "PAYMENT_REQUIRED",
+      status: 402,
+    });
   });
 });

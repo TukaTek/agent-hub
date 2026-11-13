@@ -79,7 +79,7 @@ export const PT_BR_MESSAGES: Record<string, string> = {
   "Set up CortexAI Agent Hub": "Configurar o CortexAI Agent Hub",
   "Quit CortexAI Agent Hub": "Encerrar o CortexAI Agent Hub",
   "Welcome to CortexAI Agent Hub": "Boas-vindas ao CortexAI Agent Hub",
-  "Choose which server this app should use.": "Escolha qual servidor este app deve usar.",
+  "Choose where CortexAI Agent Hub runs.": "Escolha onde o CortexAI Agent Hub roda.",
   Instance: "Instância",
   "This computer": "Este computador",
   "Existing instance": "Instância existente",
@@ -90,7 +90,6 @@ export const PT_BR_MESSAGES: Record<string, string> = {
   "Name: value": "Nome: valor",
   "Check connection": "Verificar conexão",
   Continue: "Continuar",
-  "Check again": "Verificar novamente",
   Retry: "Tentar novamente",
   "Getting ready…": "Preparando…",
   "Downloading CortexAI Agent Hub…": "Baixando o CortexAI Agent Hub…",
@@ -149,15 +148,12 @@ export const PT_BR_MESSAGES: Record<string, string> = {
     "Conectado, mas não foi possível salvar a configuração para a próxima abertura. Clique em Continuar novamente.",
   "The app-managed CortexAI Agent Hub services are not ready. Retry setup.":
     "Os serviços do CortexAI Agent Hub gerenciados pelo app não estão prontos. Refaça a configuração.",
-  "Docker is not installed on this computer.": "O Docker não está instalado neste computador.",
   "Docker is installed, but Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin.":
     "O Docker está instalado, mas o Docker Compose está ausente. Instale o Docker Desktop ou o docker-compose-plugin.",
   "Could not check Docker Compose. Check the output below, then retry.":
     "Não foi possível verificar o Docker Compose. Confira a saída abaixo e tente novamente.",
-  "Docker is installed but not running. Start Docker, then check again.":
-    "O Docker está instalado, mas não está em execução. Inicie o Docker e verifique novamente.",
-  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), sign out and back in, then check again.":
-    "Este usuário não tem acesso ao Docker. Adicione-o ao grupo docker (sudo usermod -aG docker $USER), saia e entre de novo e verifique novamente.",
+  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), then sign out and back in.":
+    "Este usuário não tem acesso ao Docker. Adicione-o ao grupo docker (sudo usermod -aG docker $USER) e depois saia e entre de novo.",
   "The start was interrupted. Retry to continue.":
     "A inicialização foi interrompida. Tente novamente para continuar.",
   "Images for {tag} are not published yet. Try again in a few minutes.":
@@ -199,4 +195,37 @@ export const PT_BR_MESSAGES: Record<string, string> = {
   "Chat Details": "Detalhes do chat",
   Help: "Ajuda",
   "Keyboard Shortcuts": "Atalhos de teclado",
+  "Downloading CortexAI Agent Hub failed. Check the internet connection, then retry.":
+    "Não foi possível baixar o CortexAI Agent Hub. Verifique a conexão com a internet e tente novamente.",
+  "Could not move your data from Docker. Check the output below, then retry.":
+    "Não foi possível mover seus dados do Docker. Confira a saída abaixo e tente novamente.",
+  "The computer runtime already running is too old. Update or quit it, then retry.":
+    "O runtime de computadores que já está em execução é antigo demais. Atualize ou encerre-o e tente novamente.",
+  "Your CortexAI Agent Hub data is in a different computer runtime. Quit the one running, then retry.":
+    "Seus dados do CortexAI Agent Hub estão em outro runtime de computadores. Encerre o que está em execução e tente novamente.",
+  "Run CortexAI Agent Hub without Docker?": "Usar o CortexAI Agent Hub sem Docker?",
+  "Your bots and data move over. Docker is stopped, not removed.":
+    "Seus bots e dados vêm junto. O Docker é parado, não removido.",
+  Move: "Mover",
+  "Keep Docker": "Manter o Docker",
+  "Nothing to install.": "Nada para instalar.",
+  "Your data stays on this computer.": "Seus dados ficam neste computador.",
+  "Connect to a server you or your team already run.":
+    "Conecte-se a um servidor que você ou sua equipe já executam.",
+  "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
+    "O CortexAI Agent Hub precisa do Docker Desktop para rodar neste computador.",
+  "CortexAI Agent Hub needs Docker to run on this computer.":
+    "O CortexAI Agent Hub precisa do Docker para rodar neste computador.",
+  "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
+    "O Docker Desktop é um app gratuito que roda o CortexAI Agent Hub em segundo plano. Instale e abra uma vez.",
+  "Install Docker Engine and start it.": "Instale o Docker Engine e inicie-o.",
+  "Download Docker Desktop": "Baixar Docker Desktop",
+  "Install Docker": "Instalar Docker",
+  "Docker is installed but not running. Open it to continue.":
+    "O Docker está instalado, mas não está em execução. Abra-o para continuar.",
+  "Starting {app}…": "Iniciando {app}…",
+  "Waiting for Docker Desktop…": "Aguardando o Docker Desktop…",
+  "Waiting for Docker…": "Aguardando o Docker…",
+  "Docker is installed but not running. Start the Docker service to continue.":
+    "O Docker está instalado, mas não está em execução. Inicie o serviço do Docker para continuar.",
 };

@@ -40,6 +40,7 @@ const KUBERNETES_SANDBOX =
   "SANDBOX_PROVIDER=kubernetes runs the api and worker in a cluster, not Compose";
 
 /** Read by code but never passed to the api or worker containers, with the reason. */
+const LOCAL_VM = "Mac VM computers, which only the desktop app's native stack runs";
 const NOT_PASSED: Record<string, string> = {
   VITEST: "set by the test runner",
   OWNER_EMAIL: "bootstrap-owner CLI input, passed on its own command line",
@@ -65,6 +66,13 @@ const NOT_PASSED: Record<string, string> = {
     "passed only to the migration CLI by the production deploy script",
   CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS:
     "read by the updater sidecar, which has its own environment",
+  CORTEXAI_AGENT_HUB_DB_PACKAGE_DIR:
+    "passed only to the migration CLI by the desktop app's native stack",
+  CORTEXAI_AGENT_HUB_ENV_FILE: "set by the desktop app's native stack so no stray .env is read",
+  LOCAL_VM_CLI: LOCAL_VM,
+  LOCAL_VM_COMPUTER_IMAGE: LOCAL_VM,
+  LOCAL_VM_CPUS: LOCAL_VM,
+  LOCAL_VM_MEMORY: LOCAL_VM,
   KUBERNETES_SANDBOX_COMPUTER_IMAGE: KUBERNETES_SANDBOX,
   KUBERNETES_SANDBOX_HOME_CLAIM: KUBERNETES_SANDBOX,
   KUBERNETES_SANDBOX_HOME_COLOCATE_LABELS: KUBERNETES_SANDBOX,

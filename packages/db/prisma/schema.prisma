@@ -22,16 +22,24 @@ model AiDataConsent {
 }
 
 model User {
-  aiDataConsents                  AiDataConsent[]
-  pages                           Page[]
-  id                              String                          @id
-  name                            String
-  email                           String
-  emailVerified                   Boolean                         @default(false)
-  image                           String?
-  createdAt                       DateTime                        @default(now())
-  updatedAt                       DateTime                        @updatedAt
-  avatarStyle                     String                          @default("organic")
+  aiDataConsents AiDataConsent[]
+  pages          Page[]
+  id                          String                       @id
+  name                        String
+  email                       String
+  emailVerified               Boolean                      @default(false)
+  /// Validated first-touch campaign labels and the client that created the account. Deleted with it.
+  signupSurface                String?
+  signupUtmSource              String?
+  signupUtmMedium              String?
+  signupUtmCampaign            String?
+  signupUtmContent             String?
+  signupUtmTerm                String?
+  signupReferringDomain        String?
+  image                       String?
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  avatarStyle                 String                       @default("organic")
   /// The icon set this user's bots wear unless one is pinned to another: "organic" or "cortexai-agent-hub".
   botAvatarSet                    String                          @default("organic")
   /// IANA timezone such as "Pacific/Auckland". Null until set; bots then get UTC only.
@@ -52,53 +60,59 @@ model User {
   /// Set while the account may not sign in or run work; its content stays. Cleared to reactivate.
   deactivatedAt                   DateTime?
   /// Operator-set recorded hosted model usage ceiling, including pending reservations.
-  modelCreditCapMicros            BigInt?
-  sessions                        Session[]
-  accounts                        Account[]
-  scimSubject                     ScimSubject?
-  scimUsers                       ScimUser[]
-  scimIdentityTombstones          ScimIdentityTombstone[]
-  scimProjectionGrants            ScimProjectionGrant[]
-  passkeys                        Passkey[]
-  members                         Member[]
-  accessGrants                    AccessGrant[]
-  invitations                     Invitation[]
-  modelCredentials                UserModelCredential[]
-  voiceCredentials                UserVoiceCredential[]
-  paymentWallet                   PaymentWallet?
-  spendingLimit                   SpendingLimit?
-  payments                        Payment[]
-  secrets                         Secret[]
-  mcpServers                      McpServer[]
-  botSections                     BotSection[]
-  actionApprovalRules             ActionApprovalRule[]
-  actionAutoReviewPreferences     ActionAutoReviewPreference[]
-  modelRoleChoices                UserModelRoleChoice[]
-  modelPreferences                UserModelPreference[]
-  voicePreferences                UserVoicePreference[]
-  approvalRules                   UserActionApprovalRule[]
-  autoReviewPreference            UserActionAutoReviewPreference?
-  createdSpaces                   Space[]                         @relation("SpaceCreator")
-  spaceInvites                    SpaceInvite[]                   @relation("SpaceInviteCreator")
-  botSecrets                      BotSecret[]
-  vaultCredentials                VaultCredential[]
-  agentSecrets                    AgentSecret[]
-  createdTickets                  Ticket[]                        @relation("TicketCreatorUser")
-  ticketComments                  TicketComment[]                 @relation("TicketCommentAuthorUser")
-  pushToken                       PushToken?
-  callPushDevices                 CallPushDevice[]
-  workActivityTokens              WorkActivityToken[]
-  workActivityStartTokens         WorkActivityStartToken[]
-  trustedLinkSites                TrustedLinkSite[]
-  feedbackReports                 FeedbackReport[]
-  emailSends                      EmailSend[]
-  botEmailSends                   BotEmailSend[]
-  signupSurvey                    SignupSurvey?
-  computerRuns                    ComputerRun[]
-  devices                         UserDevice[]
-  hubIdentity                     HubIdentity?
-  messagingInstallations          MessagingInstallation[]
-  messagingInstallSessions        MessagingInstallSession[]
+  modelCreditCapMicros        BigInt?
+  /// Operator-controlled bot email allowance per rolling 24 hours. Zero pauses sending.
+  botEmailDailyLimit          Int                          @default(10)
+  /// Allows replies to authenticated incoming senders; never arbitrary outbound recipients.
+  botEmailRepliesEnabled      Boolean                      @default(false)
+  /// Operator-approved recipients for requested reports or other expected workflow mail.
+  botEmailAllowedRecipients   String[]                     @default([])
+  sessions                    Session[]
+  accounts                    Account[]
+  scimSubject                 ScimSubject?
+  scimUsers                   ScimUser[]
+  scimIdentityTombstones      ScimIdentityTombstone[]
+  scimProjectionGrants        ScimProjectionGrant[]
+  passkeys                    Passkey[]
+  members                     Member[]
+  accessGrants                AccessGrant[]
+  invitations                 Invitation[]
+  modelCredentials            UserModelCredential[]
+  voiceCredentials            UserVoiceCredential[]
+  paymentWallet               PaymentWallet?
+  spendingLimit               SpendingLimit?
+  payments                    Payment[]
+  secrets                     Secret[]
+  mcpServers                  McpServer[]
+  botSections                 BotSection[]
+  actionApprovalRules         ActionApprovalRule[]
+  actionAutoReviewPreferences ActionAutoReviewPreference[]
+  modelRoleChoices            UserModelRoleChoice[]
+  modelPreferences            UserModelPreference[]
+  voicePreferences            UserVoicePreference[]
+  approvalRules               UserActionApprovalRule[]
+  autoReviewPreference        UserActionAutoReviewPreference?
+  createdSpaces               Space[]                      @relation("SpaceCreator")
+  spaceInvites                SpaceInvite[]                @relation("SpaceInviteCreator")
+  botSecrets BotSecret[]
+  vaultCredentials VaultCredential[]
+  agentSecrets               AgentSecret[]
+  createdTickets              Ticket[]                     @relation("TicketCreatorUser")
+  ticketComments              TicketComment[]              @relation("TicketCommentAuthorUser")
+  pushToken                   PushToken?
+  callPushDevices             CallPushDevice[]
+  workActivityTokens          WorkActivityToken[]
+  workActivityStartTokens     WorkActivityStartToken[]
+  trustedLinkSites            TrustedLinkSite[]
+  feedbackReports             FeedbackReport[]
+  emailSends                  EmailSend[]
+  botEmailSends               BotEmailSend[]
+  signupSurvey                SignupSurvey?
+  computerRuns                ComputerRun[]
+  devices                     UserDevice[]
+  hubIdentity                 HubIdentity?
+  messagingInstallations      MessagingInstallation[]
+  messagingInstallSessions    MessagingInstallSession[]
 
   @@unique([email])
   @@map("user")
@@ -736,6 +750,8 @@ model Space {
   chatGroups                  ChatGroup[]
   botSecrets                  BotSecret[]
   vaultCredentials            VaultCredential[]
+  vaultCredentialBots         VaultCredentialBot[]
+  vaultCredentialLimits       VaultCredentialLimit[]
   externalConversations       ExternalConversation[]
   agentSecrets                AgentSecret[]
   board                       Board?
@@ -893,6 +909,7 @@ model AuditEvent {
 
   @@index([organizationId, createdAt])
   @@index([createdAt])
+  @@index([targetType, targetId, createdAt])
   @@map("audit_events")
 }
 
@@ -1029,56 +1046,57 @@ model Bot {
   color                   String
   avatarSet               String            @default("organic")
   /// True once the owner picks this bot a set other than their default; the default no longer moves it.
-  avatarSetPinned         Boolean           @default(false)
-  notifyOnFinish          Boolean           @default(true)
-  pinned                  Boolean           @default(false)
-  position                Int               @default(0)
-  sectionId               String?
-  section                 BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
-  archivedAt              DateTime?
-  parentBotId             String?
-  spawnKey                String?
-  memoryScope             String?
-  parent                  Bot?              @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
-  children                Bot[]             @relation("BotChildren")
-  createdAt               DateTime          @default(now())
-  updatedAt               DateTime          @updatedAt
-  thread                  Thread?           @relation("BotThread")
-  helperThreads           Thread[]          @relation("BotHelperThreads")
-  computerId              String?
-  computer                Computer?         @relation(fields: [computerId], references: [id], onDelete: SetNull)
-  computerSwitching       Boolean           @default(false)
-  voiceId                 String?
-  autoSpeak               Boolean           @default(false)
-  modelProvider           String?
-  modelId                 String?
-  thinkingLevel           String?
-  disabledBuiltinTools    String[]          @default([])
-  webhookSecretId         String?
-  teamChatAmbientEnabled  Boolean           @default(false)
-  teamChatRules           String            @default("")
-  crossSpaceCommunication Boolean           @default(true)
-  dailyCheckIns           Boolean           @default(true)
-  fleetManagement         Boolean           @default(true)
-  replyMode               String            @default("chat")
-  routines                Routine[]
-  scratchpadItems         ScratchpadItem[]
-  taughtSkills            TaughtSkill[]
-  memoryDocuments         MemoryDocument[]
-  agentHome               AgentHome?
-  browserProfile          BrowserProfile?
-  artifacts               Artifact[]
-  pages                   Page[]
-  tasks                   Task[]
-  runs                    Run[]
-  steeringMessages        SteeringMessage[]
-  mcpServers              BotMcpServer[]
-  agentImports            AgentImport[]
-  groupMembers            ChatGroupMember[]
-  botSecrets              BotSecret[]
-  assignedTickets         Ticket[]          @relation("TicketAssigneeBot")
-  createdTickets          Ticket[]          @relation("TicketCreatorBot")
-  ticketComments          TicketComment[]   @relation("TicketCommentAuthorBot")
+  avatarSetPinned   Boolean           @default(false)
+  notifyOnFinish    Boolean           @default(true)
+  pinned            Boolean           @default(false)
+  position          Int               @default(0)
+  sectionId         String?
+  section           BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  archivedAt        DateTime?
+  parentBotId       String?
+  spawnKey          String?
+  memoryScope       String?
+  parent            Bot?              @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
+  children          Bot[]             @relation("BotChildren")
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  thread            Thread?           @relation("BotThread")
+  helperThreads     Thread[]          @relation("BotHelperThreads")
+  computerId        String?
+  computer          Computer?         @relation(fields: [computerId], references: [id], onDelete: SetNull)
+  computerSwitching Boolean           @default(false)
+  voiceId           String?
+  autoSpeak         Boolean           @default(false)
+  modelProvider     String?
+  modelId           String?
+  thinkingLevel     String?
+  disabledBuiltinTools String[] @default([])
+  webhookSecretId   String?
+  teamChatAmbientEnabled Boolean @default(false)
+  teamChatRules          String  @default("")
+  crossSpaceCommunication Boolean @default(true)
+  dailyCheckIns Boolean @default(true)
+  fleetManagement        Boolean @default(true)
+  replyMode              String  @default("chat")
+  routines          Routine[]
+  scratchpadItems   ScratchpadItem[]
+  taughtSkills      TaughtSkill[]
+  memoryDocuments   MemoryDocument[]
+  agentHome         AgentHome?
+  browserProfile    BrowserProfile?
+  artifacts         Artifact[]
+  pages             Page[]
+  tasks             Task[]
+  runs              Run[]
+  steeringMessages  SteeringMessage[]
+  mcpServers        BotMcpServer[]
+  vaultCredentials  VaultCredentialBot[]
+  agentImports      AgentImport[]
+  groupMembers      ChatGroupMember[]
+  botSecrets BotSecret[]
+  assignedTickets   Ticket[]          @relation("TicketAssigneeBot")
+  createdTickets    Ticket[]          @relation("TicketCreatorBot")
+  ticketComments    TicketComment[]   @relation("TicketCommentAuthorBot")
 
   externalConversations ExternalConversation[]
   emailAddress          BotEmailAddress?
@@ -1234,7 +1252,10 @@ model Message {
   runId                 String?
   clientNonce           String?
   /// Blind-index search tokens for the encrypted blocks; NULL until the row is encrypted.
-  searchTokens          Int[]
+  searchTokens     Int[]
+  /// A bot reply's tool calls as sent and returned (JSON, see ToolHistorySchema), encrypted like
+  /// the blocks. Only the bot's runs read it: message reads leave it out unless they select it.
+  toolHistory      String?
   sourceRuns            Run[]             @relation("RunSourceMessage")
   externalTranscriptFor ExternalMessage?
   steeringMessages      SteeringMessage[]
@@ -1310,6 +1331,8 @@ model Run {
   modelPinned          Boolean           @default(false)
   // A group message that named nobody reached this member; it may end without a reply.
   groupReplyOptional   Boolean           @default(false)
+  // The prompt and history replay version the run's latest attempt used, to compare outcomes across releases.
+  promptVersion        String?
   error                String?
   leaseOwner           String?
   leaseFence           Int               @default(0)
@@ -1331,8 +1354,8 @@ model Run {
   lateSince            DateTime?
   completedAt          DateTime?
   botOutcomeReturnedAt DateTime?
+  // What the run said is recorded for delivery to the chat app its turn came from.
   messagingMirroredAt  DateTime?
-  teamChatMirroredAt   DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   attempts             Attempt[]
@@ -1344,8 +1367,6 @@ model Run {
   @@index([status, wakeAt])
   @@index([status, leaseExpiresAt])
   @@index([status, updatedAt, id])
-  @@index([trigger, status, messagingMirroredAt, updatedAt])
-  @@index([trigger, status, teamChatMirroredAt, updatedAt])
   @@index([spaceId, botId])
   @@index([botId, createdAt])
   @@index([taskId])
@@ -1648,6 +1669,9 @@ model BotEmailSend {
   /// No relation: a deleted bot's sends still count toward its owner's limit.
   botId  String
   sentAt DateTime @default(now())
+  /// Envelope recipients reserved before delivery, including failed attempts. Legacy writers
+  /// omit the count and are conservatively charged the maximum envelope size.
+  recipientCount Int @default(10)
 
   @@index([userId, sentAt])
   @@map("bot_email_sends")
@@ -1896,7 +1920,6 @@ model Computer {
   controlLeaseId          String?
   controlLeaseExpiresAt   DateTime?
   controlBotId            String?
-  controlRunId            String?
   /// The person holding user control. A Space's members share its computers, never a lease.
   controlUserId           String?
   controlFence            Int                      @default(0)
@@ -2219,18 +2242,25 @@ model McpOAuthSession {
   @@map("mcp_oauth_sessions")
 }
 
-/// A subscription sign-in waiting for its pasted code, so whichever API process
-/// receives the code can finish it. The ciphertext holds the PKCE verifier.
+/// A pending subscription sign-in and its outcome, so any API process can report,
+/// finish or cancel it. A pasted-code sign-in's ciphertext holds its PKCE verifier.
 model ModelOAuthSession {
-  id         String   @id
-  spaceId    String
-  space      Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  userId     String
-  provider   String
+  id             String    @id
+  spaceId        String
+  space          Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId         String
+  provider       String
   /// The connection it signs in to; a newer sign-in for the same one replaces it.
-  scope      String
-  ciphertext String
-  createdAt  DateTime @default(now())
+  scope          String
+  ciphertext     String?
+  /// pending, saving, connected or failed.
+  status         String    @default("pending")
+  error          String?
+  /// The saved connection, once connected.
+  result         Json?
+  /// The process waiting on the provider renews this; a lapsed lease means it is gone.
+  leaseExpiresAt DateTime?
+  createdAt      DateTime  @default(now())
 
   @@index([userId, provider])
   @@index([scope])
@@ -2327,24 +2357,31 @@ model MessagingLinkCode {
   @@map("messaging_link_codes")
 }
 
+/// One outgoing chat message: the record of what was sent, in the order its conversation gets it.
 model MessagingOutbound {
-  id              String    @id @default(cuid())
-  idempotencyKey  String    @unique
+  id              String   @id @default(cuid())
+  idempotencyKey  String   @unique
+  /// dm, group, intro, or team (a team-chat reply).
   kind            String
-  /// DM rows resolve their thread through the identity at drain time.
+  /// DM rows resolve their thread through the identity when they are sent.
   identityId      String?
-  /// Group/intro rows post straight to this provider thread id.
+  /// Group, intro and team rows post straight to this provider thread id.
   threadId        String?
   body            String
-  status          String    @default("pending")
-  attempts        Int       @default(0)
-  nextAttemptAt   DateTime?
+  /// pending, retry (its backup job retries it), sent or failed. Sent with no providerHandle: in flight.
+  status          String   @default("pending")
   providerHandle  String?
+  /// Set while this release's claim is in flight. A stale claim without it is the previous
+  /// release's, which may well have gone out, so it is never sent again.
+  claimedAt       DateTime?
   sourceMessageId String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  @@index([status, nextAttemptAt])
+  @@index([identityId, createdAt])
+  @@index([threadId, createdAt])
+  @@index([claimedAt])
+  @@index([status, updatedAt])
   @@map("messaging_outbound")
 }
 
@@ -2401,12 +2438,54 @@ model VaultCredential {
   origin     String
   auth       Json
   ciphertext String
+  policy     String   @default("allow")
+  /// Spaces where only the owner's bots in `bots` may use it; none chosen means none may.
+  limits     VaultCredentialLimit[]
+  bots       VaultCredentialBot[]
+  /// More HTTPS origins a login fills on, set only by its owner.
+  alsoOn     String[] @default([])
+  /// When a run used up its tries of this login's authenticator codes; none are typed until a save.
+  codesStoppedAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([spaceId])
   // Unique index vault_credentials_userId_spaceId_name_key (NULLS NOT DISTINCT) is created in SQL.
   @@map("vault_credentials")
+}
+
+/// A bot its owner chose for a vault item. `spaceId` is the bot's Space, also for an item in the
+/// account vault, which each Space that uses it chooses its own bots for.
+model VaultCredentialBot {
+  id           String          @id @default(cuid())
+  credentialId String
+  credential   VaultCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  botId        String
+  bot          Bot             @relation(fields: [botId], references: [id], onDelete: Cascade)
+  userId       String
+  spaceId      String
+  space        Space           @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime        @default(now())
+
+  @@unique([credentialId, botId])
+  @@index([userId, spaceId, botId])
+  @@map("vault_credential_bots")
+}
+
+/// A Space where a vault item is limited to the bots chosen for it there. An item in the account
+/// vault is limited in each Space that uses it on its own.
+model VaultCredentialLimit {
+  id           String          @id @default(cuid())
+  credentialId String
+  credential   VaultCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  userId       String
+  spaceId      String
+  space        Space           @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime        @default(now())
+
+  @@unique([credentialId, spaceId])
+  @@index([userId, spaceId])
+  @@map("vault_credential_limits")
 }
 
 model ExternalConversation {
@@ -2449,22 +2528,20 @@ model ExternalMessage {
   batchContext           String?
   engagementReason       String?
   judgedAt               DateTime?
-  status                 String               @default("received")
-  runId                  String?              @unique
-  run                    Run?                 @relation(fields: [runId], references: [id], onDelete: SetNull)
-  threadMessageId        String?              @unique
-  threadMessage          Message?             @relation(fields: [threadMessageId], references: [id], onDelete: SetNull)
-  attempts               Int                  @default(0)
-  nextAttemptAt          DateTime?
-  lastError              String?
-  providerReplyHandle    String?
-  deliveredAt            DateTime?
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
+  /// received, observed, deferred, running, delivered (its reply is recorded) or ignored.
+  status                 String                @default("received")
+  runId                  String?               @unique
+  run                    Run?                  @relation(fields: [runId], references: [id], onDelete: SetNull)
+  threadMessageId        String?               @unique
+  threadMessage          Message?              @relation(fields: [threadMessageId], references: [id], onDelete: SetNull)
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
 
   @@unique([externalConversationId, providerEventId])
-  @@index([status, nextAttemptAt])
+  @@index([externalConversationId, status, createdAt])
   @@index([externalConversationId, senderIsBot, createdAt])
+  @@index([externalConversationId, senderId, judgedAt])
+  @@index([status, updatedAt])
   @@map("external_messages")
 }
 

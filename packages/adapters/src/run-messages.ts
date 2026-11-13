@@ -1,8 +1,9 @@
-import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import type { HistoryToolStep, MessageBlock } from "@cortexai-agent-hub/contracts";
 import {
   callIdFromClientNonce,
   isBackgroundRunTrigger,
   redactSecrets,
+  splitToolHistory,
 } from "@cortexai-agent-hub/core";
 import type { Prisma, RunLease } from "@cortexai-agent-hub/db";
 import {
@@ -12,6 +13,7 @@ import {
   withTransactionRetry,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import { redactConnectorPayload } from "./connector-safety.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 
 /** Deps for one attempt: its run's history writes carry the lease, so a superseded attempt cannot write. */
@@ -33,6 +35,15 @@ export function runLeaseFor(
   return deps.runLease?.runId === runId ? deps.runLease : undefined;
 }
 
+/** Stored call arguments with the run's secrets redacted inside their values, still valid JSON. */
+function redactedArguments(json: string, secrets: string[]): string {
+  try {
+    return JSON.stringify(redactConnectorPayload(JSON.parse(json), secrets));
+  } catch {
+    return "{}";
+  }
+}
+
 export function redactBlocks(blocks: MessageBlock[], secrets: string[]): MessageBlock[] {
   return blocks.map((block) => {
     if (block.kind === "text") {
@@ -48,10 +59,24 @@ export function redactBlocks(blocks: MessageBlock[], secrets: string[]): Message
     if (block.kind === "steps") {
       return {
         ...block,
-        steps: block.steps.map((step) => ({
+        steps: (block.steps as HistoryToolStep[]).map((step) => ({
           ...step,
           label: redactSecrets(step.label, secrets),
           ...(step.note === undefined ? {} : { note: redactSecrets(step.note, secrets) }),
+          // Secrets a later call revealed are redacted from earlier calls' arguments too.
+          ...(step.calls
+            ? {
+                calls: step.calls.map((call) => ({
+                  ...call,
+                  ...(call.arguments === undefined
+                    ? {}
+                    : { arguments: redactedArguments(call.arguments, secrets) }),
+                  ...(call.result === undefined
+                    ? {}
+                    : { result: redactSecrets(call.result, secrets) }),
+                })),
+              }
+            : {}),
         })),
       };
     }
@@ -128,10 +153,14 @@ export async function persistMessageInTransaction(
   allowCancelledRun = false,
   lease?: RunLease,
 ) {
+  // Clients get the blocks without the kept calls, in the message and in its event alike.
+  const { blocks: shown, toolHistory } = splitToolHistory(blocks);
+  blocks = shown;
   const message = await createThreadMessageInTransaction(tx, {
     threadId: run.threadId,
     role,
     blocks,
+    toolHistory,
     botId: run.botId,
     runId: run.id,
     markUnread,

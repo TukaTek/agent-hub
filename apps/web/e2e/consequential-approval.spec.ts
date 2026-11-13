@@ -108,7 +108,7 @@ test("A change asks without an approval model, and approvals settings shape what
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
 });
 
-test("A webhook run's card says why it asks after Always allow", async ({ page }, testInfo) => {
+test("A webhook run follows Always allow without asking", async ({ page }) => {
   const stamp = Date.now();
   await signup(
     page,
@@ -117,12 +117,8 @@ test("A webhook run's card says why it asks after Always allow", async ({ page }
     "Webhook Approval",
   );
   await completeOnboarding(page);
-  const reason = page.getByText(
-    "Asked because a webhook started this run. Always allow doesn't skip this.",
-  );
 
   await requestDestinationWrite(page, "write this to the destination crm as a note");
-  await expect(reason).toHaveCount(0);
   await page.getByRole("button", { name: "Always allow this tool", exact: true }).click();
   await expect(page.getByText("Always allowed", { exact: true })).toBeVisible();
   await waitForRunIdle(page);
@@ -152,19 +148,10 @@ test("A webhook run's card says why it asks after Always allow", async ({ page }
           ?.status ?? null,
       { timeout: 30_000 },
     )
-    .toBe("waiting_input");
+    .toBeNull();
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(reason).toHaveCount(1);
-  await expect(
-    page.getByRole("button", { name: "Always allow this tool", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByTestId("ask-detail").last()).toContainText(
-    "Asked because a webhook started this run.",
-  );
-  await captureScreenshot(page, testInfo, "57-webhook-run-approval-reason");
+  await expectComposerReady(page);
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
 });
 
 async function sendDestinationWrite(page: Page, prompt: string) {

@@ -1,4 +1,5 @@
 import type { PlaywrightScreenshot } from "./playwright-report-dashboard.js";
+import commitMarker from "./screenshot-commit-marker.json" with { type: "json" };
 
 export const PLAYWRIGHT_PR_SCREENSHOT_COMMENT_MARKER =
   "<!-- cortexai-agent-hub-playwright-screenshots -->";
@@ -99,6 +100,7 @@ export function buildPlaywrightPrScreenshotComment(input: {
 
   return [
     PLAYWRIGHT_PR_SCREENSHOT_COMMENT_MARKER,
+    commitMarker.template.replace("{sha}", input.sha),
     "### Playwright screenshots",
     "",
     featureSection,

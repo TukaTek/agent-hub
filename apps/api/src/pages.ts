@@ -9,6 +9,7 @@ import type {
   SharedPage,
 } from "@cortexai-agent-hub/contracts";
 import { pageShareTokenFromSlug, pageShareUrl } from "@cortexai-agent-hub/contracts";
+import { escapeSearchWildcards } from "@cortexai-agent-hub/core";
 import type { PageShareSecret, Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { IsolationError, isRecordNotFound, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -125,7 +126,9 @@ export async function listPages(
     ...(input.groupId ? { groupId: input.groupId } : {}),
     ...(input.botId ? { botId: input.botId, ...(input.groupId ? {} : { groupId: null }) } : {}),
     ...(input.cursor ? { AND: [afterCursor(decodeCursor(input.cursor))] } : {}),
-    ...(input.query ? { title: { contains: input.query, mode: "insensitive" } } : {}),
+    ...(input.query
+      ? { title: { contains: escapeSearchWildcards(input.query), mode: "insensitive" } }
+      : {}),
   };
   const rows = await prisma.page.findMany({
     where,

@@ -1,23 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunModel, AgentRuntime, SecretStore } from "@cortexai-agent-hub/adapter-kit";
-import {
-  deploymentModelRole,
-  formatCurrentTimeInstruction,
-  hasHostedModelCredits,
-  hostedModelCreditObserver,
-  parseModelSecret,
-  refreshStoredModelCredential,
-  resolveMemberMainModel,
-  resolveStoredModelAuth,
-  retireToReconnectMarker,
-  secretValuesToRedact,
-  serializeModelSecret,
-  toOAuthCredential,
-} from "@cortexai-agent-hub/adapters";
 import { redactSecrets, withHubModelDefaults } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { findModelCredential, recordUsage } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
+import { formatCurrentTimeInstruction } from "./current-time.js";
+import {
+  refreshStoredModelCredential,
+  resolveStoredModelAuth,
+  retireToReconnectMarker,
+} from "./model-credential-refresh.js";
+import { hostedModelCreditObserver } from "./model-credit-observer.js";
+import { deploymentModelRole, resolveMemberMainModel } from "./model-roles.js";
+import { parseModelSecret, secretValuesToRedact, serializeModelSecret } from "./model-secret.js";
+import { hasHostedModelCredits } from "./model-selection.js";
+import { toOAuthCredential } from "./pi-credentials.js";
 
 const MAX_RULES_CHARS = 4_000;
 const MAX_MESSAGES = 20;

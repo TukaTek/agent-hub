@@ -111,9 +111,9 @@ test("setup offers CortexAI Agent Hub Cloud first, with local and existing insta
   const setup = await app.firstWindow();
 
   await expect(setup.getByRole("heading", { name: "Welcome to CortexAI Agent Hub" })).toBeVisible();
-  await expect(setup.getByText("Choose which server this app should use.")).toBeVisible();
-  await expect(setup.getByText("This computer")).toBeVisible();
-  await expect(setup.getByText("Existing instance")).toBeVisible();
+  await expect(setup.getByText("Choose where CortexAI Agent Hub runs.")).toBeVisible();
+  await expect(setup.getByText("This computer", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Existing instance", { exact: true })).toBeVisible();
   await expect(setup.locator(".card")).toHaveCount(0);
 
   // There is no hosted service, so Cloud stays hidden and This computer is the default.

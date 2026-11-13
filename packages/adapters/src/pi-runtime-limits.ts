@@ -1,6 +1,7 @@
 import { DEFAULT_MODEL_MAX_TOKENS } from "@cortexai-agent-hub/contracts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { LOCAL_PROVIDER_ID } from "./pi-local-provider-id.js";
+import { sliceWellFormed } from "./utf8.js";
 
 /** Per-attempt wait for response headers; this does not cap active streaming duration. */
 export const MODEL_STREAM_TIMEOUT_MS = 120_000;
@@ -116,7 +117,7 @@ export function clipToolResultText(text: string, limit: number = TOOL_RESULT_TEX
 }
 
 function clipText(text: string, keep: number, limit: number): string {
-  return `${text.slice(0, keep)}…\n${toolResultTruncationNotice(limit)}`;
+  return `${sliceWellFormed(text, keep)}…\n${toolResultTruncationNotice(limit)}`;
 }
 
 /**

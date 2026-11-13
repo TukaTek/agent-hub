@@ -1,5 +1,6 @@
 import type { SpaceMemoryConfig } from "@cortexai-agent-hub/contracts";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
+import { HindsightSettingsForm } from "./HindsightSettingsForm";
 import { SerenitySettingsForm } from "./SerenitySettingsForm";
 import { SupermemorySettingsForm } from "./SupermemorySettingsForm";
 
@@ -10,6 +11,7 @@ export interface MemoryProviderConnectionDraft {
 
 export interface MemoryProviderSettingsFormProps {
   busy: boolean;
+  advancedSettings: ReactNode;
   onConnect: (draft: MemoryProviderConnectionDraft) => Promise<boolean>;
 }
 
@@ -39,6 +41,15 @@ export const MEMORY_PROVIDER_SETTINGS: readonly MemoryProviderSettingsRegistrati
       const endpoint = config.settings.endpoint ?? "Serenity";
       const mode = config.settings.allowWrites === "true" ? "read/write" : "recall only";
       return `${label || endpoint}, ${mode}`;
+    },
+  },
+  {
+    id: "hindsight",
+    name: "Hindsight",
+    SettingsForm: HindsightSettingsForm,
+    connectedLabel: (config) => {
+      const { mode, baseUrl } = config.settings;
+      return mode === "local" ? `Self-hosted (${baseUrl})` : "Hindsight Cloud";
     },
   },
 ];

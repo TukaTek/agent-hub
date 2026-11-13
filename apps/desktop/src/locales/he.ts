@@ -76,7 +76,7 @@ export const HE_MESSAGES: Record<string, string> = {
   "Set up CortexAI Agent Hub": "הגדרת CortexAI Agent Hub",
   "Quit CortexAI Agent Hub": "יציאה מ-CortexAI Agent Hub",
   "Welcome to CortexAI Agent Hub": "ברוכים הבאים ל-CortexAI Agent Hub",
-  "Choose which server this app should use.": "יש לבחור באיזה שרת האפליקציה תשתמש.",
+  "Choose where CortexAI Agent Hub runs.": "בחרו איפה CortexAI Agent Hub יפעל.",
   Instance: "מופע",
   "This computer": "המחשב הזה",
   "Existing instance": "מופע קיים",
@@ -87,7 +87,6 @@ export const HE_MESSAGES: Record<string, string> = {
   "Name: value": "שם: ערך",
   "Check connection": "בדיקת חיבור",
   Continue: "המשך",
-  "Check again": "בדיקה חוזרת",
   Retry: "ניסיון חוזר",
   "Getting ready…": "מתכוננים…",
   "Downloading CortexAI Agent Hub…": "מוריד את CortexAI Agent Hub…",
@@ -144,15 +143,12 @@ export const HE_MESSAGES: Record<string, string> = {
     "החיבור הצליח, אבל לא ניתן היה לשמור את ההגדרה להפעלה הבאה. יש ללחוץ שוב על ״המשך״.",
   "The app-managed CortexAI Agent Hub services are not ready. Retry setup.":
     "שירותי CortexAI Agent Hub שהאפליקציה מנהלת אינם מוכנים. יש לנסות את ההגדרה שוב.",
-  "Docker is not installed on this computer.": "Docker לא מותקן במחשב הזה.",
   "Docker is installed, but Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin.":
     "Docker מותקן, אבל Docker Compose חסר. יש להתקין את Docker Desktop או את docker-compose-plugin.",
   "Could not check Docker Compose. Check the output below, then retry.":
     "לא ניתן היה לבדוק את Docker Compose. יש לעיין בפלט שלמטה ולנסות שוב.",
-  "Docker is installed but not running. Start Docker, then check again.":
-    "Docker מותקן אבל לא פועל. יש להפעיל את Docker ולבדוק שוב.",
-  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), sign out and back in, then check again.":
-    "למשתמש הזה אין גישה ל-Docker. יש להוסיף אותו לקבוצה docker (sudo usermod -aG docker $USER), לצאת מהמערכת ולהיכנס שוב, ואז לבדוק שוב.",
+  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), then sign out and back in.":
+    "למשתמש הזה אין גישה ל-Docker. יש להוסיף אותו לקבוצה docker (sudo usermod -aG docker $USER), ואז לצאת מהמערכת ולהיכנס שוב.",
   "The start was interrupted. Retry to continue.": "ההפעלה נקטעה. יש לנסות שוב כדי להמשיך.",
   "Images for {tag} are not published yet. Try again in a few minutes.":
     "האימג׳ים עבור {tag} עדיין לא פורסמו. כדאי לנסות שוב בעוד כמה דקות.",
@@ -193,4 +189,36 @@ export const HE_MESSAGES: Record<string, string> = {
   "Chat Details": "פרטי הצ׳אט",
   Help: "עזרה",
   "Keyboard Shortcuts": "קיצורי מקלדת",
+  "Downloading CortexAI Agent Hub failed. Check the internet connection, then retry.":
+    "ההורדה של CortexAI Agent Hub נכשלה. בדקו את החיבור לאינטרנט ונסו שוב.",
+  "Could not move your data from Docker. Check the output below, then retry.":
+    "לא ניתן להעביר את הנתונים מ-Docker. בדקו את הפלט למטה ונסו שוב.",
+  "The computer runtime already running is too old. Update or quit it, then retry.":
+    "סביבת ההרצה של המחשבים שכבר פועלת ישנה מדי. עדכנו או סגרו אותה ונסו שוב.",
+  "Your CortexAI Agent Hub data is in a different computer runtime. Quit the one running, then retry.":
+    "הנתונים שלכם ב-CortexAI Agent Hub נמצאים בסביבת הרצה אחרת של המחשבים. סגרו את זו שפועלת ונסו שוב.",
+  "Run CortexAI Agent Hub without Docker?": "להפעיל את CortexAI Agent Hub בלי Docker?",
+  "Your bots and data move over. Docker is stopped, not removed.":
+    "הבוטים והנתונים שלכם יועברו. Docker ייעצר, לא יוסר.",
+  Move: "העברה",
+  "Keep Docker": "להשאיר את Docker",
+  "Nothing to install.": "אין מה להתקין.",
+  "Your data stays on this computer.": "הנתונים שלכם נשארים במחשב הזה.",
+  "Connect to a server you or your team already run.":
+    "התחברות לשרת שאתם או הצוות שלכם כבר מפעילים.",
+  "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
+    "CortexAI Agent Hub צריך את Docker Desktop כדי לפעול במחשב הזה.",
+  "CortexAI Agent Hub needs Docker to run on this computer.": "CortexAI Agent Hub צריך את Docker כדי לפעול במחשב הזה.",
+  "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
+    "Docker Desktop היא אפליקציה חינמית שמפעילה את CortexAI Agent Hub ברקע. מתקינים ופותחים אותה פעם אחת.",
+  "Install Docker Engine and start it.": "מתקינים את Docker Engine ומפעילים אותו.",
+  "Download Docker Desktop": "הורדת Docker Desktop",
+  "Install Docker": "התקנת Docker",
+  "Docker is installed but not running. Open it to continue.":
+    "Docker מותקן אבל לא פועל. פותחים אותו כדי להמשיך.",
+  "Starting {app}…": "{app} מופעל…",
+  "Waiting for Docker Desktop…": "ממתין ל-Docker Desktop…",
+  "Waiting for Docker…": "ממתין ל-Docker…",
+  "Docker is installed but not running. Start the Docker service to continue.":
+    "Docker מותקן אבל לא פועל. יש להפעיל את שירות Docker כדי להמשיך.",
 };

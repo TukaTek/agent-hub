@@ -1,5 +1,6 @@
 import type { LoginFieldInput } from "@cortexai-agent-hub/contracts";
 import { LoginSecretValue, loginCardFields } from "@cortexai-agent-hub/contracts";
+import { secretAnswerErrorText } from "@cortexai-agent-hub/i18n/vault";
 import { ph } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
@@ -70,8 +71,8 @@ export function SecretAskSheet({
     setError(null);
     try {
       await onSave(answer, remember);
-    } catch {
-      setError(t`Could not send answer`);
+    } catch (err) {
+      setError(secretAnswerErrorText(err, t`Could not send answer`));
     } finally {
       setSubmitting(false);
     }

@@ -18,8 +18,10 @@ import {
   offeredCatalog,
   providerCatalogCache,
   providerLiveCatalogsForSpace,
+  runsOnHostedCredits,
   savedCatalogSelections,
   scriptedCatalogEntry,
+  spaceCanRunCatalogModel,
   validateConnectedModelChoice,
 } from "@cortexai-agent-hub/adapters";
 import type {
@@ -49,6 +51,7 @@ import { createAgentSkillsService } from "../agent-skills.js";
 import { createBotRemoval } from "../bot-removal.js";
 import { createMcpServers } from "../mcp-servers.js";
 import { createModelConnector, prepareAllowedThinkingLevels } from "../model-credentials.js";
+import { rosterChangeFor } from "../roster-procedures.js";
 import type { RouterDeps } from "../router.js";
 import { createRoutineAnnouncer } from "../routines.js";
 import { procedureSecurityEvent } from "../security-audit.js";
@@ -188,23 +191,25 @@ export function createRouterContext(deps: RouterDeps) {
           (auth.byProvider[entry.provider] ||
             auth.byModel[entry.provider] ||
             entry.provider === auth.managedProvider) &&
-          hiddenCatalogModel(entry),
+          (hiddenCatalogModel(entry) || !spaceCanRunCatalogModel(auth, entry)),
       )
     )
       selected = await savedCatalogSelections(deps.prisma, actor.userId);
-    return offeredCatalog(merged, selected).map((entry) =>
-      entry.provider === auth.managedProvider
-        ? {
-            ...entry,
-            managed: true,
-            billing:
-              auth.secretIdByModel[entry.provider]?.[entry.id] ||
-              auth.secretIdByProvider[entry.provider]
-                ? entry.billing
-                : "Uses CortexAI Agent Hub credits",
-          }
-        : entry,
-    );
+    // A saved choice stays listed so its role can still be edited; its runs ask for a key.
+    return offeredCatalog(merged, selected)
+      .filter(
+        (entry) =>
+          spaceCanRunCatalogModel(auth, entry) || selected?.has(`${entry.provider}:${entry.id}`),
+      )
+      .map((entry) =>
+        entry.provider === auth.managedProvider
+          ? {
+              ...entry,
+              managed: true,
+              billing: runsOnHostedCredits(auth, entry) ? "Uses CortexAI Agent Hub credits" : entry.billing,
+            }
+          : entry,
+      );
   };
 
   // Shown where a member chose no model, so the list names what actually runs.
@@ -436,6 +441,8 @@ export function createRouterContext(deps: RouterDeps) {
     const result = await next();
     const event = procedureSecurityEvent(path, input, context.actor);
     if (event) await recordSecurityEvent(event);
+    const rosterChange = rosterChangeFor(path, context.actor, input, result.output);
+    if (rosterChange) void deps.events?.publishRosterChange?.(rosterChange);
     return result;
   });
 

@@ -1,4 +1,6 @@
 import { t } from "@lingui/core/macro";
+import { SIGNUP_SURFACE_HEADER } from "@cortexai-agent-hub/contracts";
+import { Platform } from "react-native";
 import { authHeaders, currentApiBase, fetchMobileJson } from "./api";
 import { clearSpace } from "./api-server";
 import {
@@ -41,6 +43,7 @@ export async function continueWithSso(
           "content-type": "application/json",
           origin: "cortexai-agent-hub://",
           "x-skip-oauth-proxy": "true",
+          [SIGNUP_SURFACE_HEADER]: Platform.OS,
           ...headers,
         },
         body: JSON.stringify({

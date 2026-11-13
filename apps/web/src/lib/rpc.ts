@@ -17,7 +17,11 @@ import { reportClientError } from "./monitoring";
 const SPACE_STORAGE_KEY = "cortexai-agent-hub:space-id";
 export const ORGANIZATION_SPACES_STORAGE_KEY = "cortexai-agent-hub:org-spaces";
 
-type RpcClientContext = { spaceId?: string | null };
+type RpcClientContext = {
+  spaceId?: string | null;
+  /** Finish the call even if the page is closing. */
+  keepalive?: boolean;
+};
 
 export function selectedSpaceId(): string | null {
   if (typeof window === "undefined") return null;
@@ -94,6 +98,7 @@ const link = new RPCLink<RpcClientContext>({
       response = await fetch(request, {
         headers,
         credentials: "include",
+        keepalive: options.context.keepalive,
         // Keep cancellation attached directly to fetch rather than only a cloned Request.
         signal: options.signal,
       });

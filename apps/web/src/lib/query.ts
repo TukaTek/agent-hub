@@ -1,5 +1,5 @@
 import type { AppBootstrap } from "@cortexai-agent-hub/contracts";
-import { isRetryableError } from "@cortexai-agent-hub/core";
+import { isRetryableError, retryDelayMs } from "@cortexai-agent-hub/core";
 import type { RouterUtils } from "@orpc/tanstack-query";
 import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 import type { DataTag, QueryKey } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ export const queryClient = new QueryClient({
       refetchOnMount: "always",
       refetchOnWindowFocus: false,
       retry: (failures, error) => failures < 1 && isRetryableError(error),
+      retryDelay: (_failures, error) => retryDelayMs(error, 1_000),
     },
   },
 });
@@ -112,7 +113,8 @@ export function useQueryUserId(): string | null {
 /** Query helpers for the space these components act on: a bound settings space or the selected one. */
 export function useSpaceQueries(): SpaceQueries {
   const userId = useQueryUserId();
-  const spaceId = useBoundSpaceId() ?? selectedSpaceId();
+  const boundSpaceId = useBoundSpaceId();
+  const spaceId = boundSpaceId === undefined ? selectedSpaceId() : boundSpaceId;
   return spaceQueries(userId, spaceId);
 }
 

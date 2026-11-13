@@ -65,6 +65,8 @@ import {
   withoutThinkingBlocks,
   withoutThinkingFrom,
 } from "./thinking-signatures.js";
+import type { PacerSlot } from "./token-pacer.js";
+import { pacerTokensPerMinute, sharedTokenPacer } from "./token-pacer.js";
 
 /** Why a reply ended before the model finished it. */
 export type CutReplyReason = "connection" | "limit";
@@ -178,15 +180,17 @@ function assistantHasVisibleOutput(message: AssistantMessage): boolean {
   );
 }
 
-function eventHasVisibleOutput(event: AssistantMessageEvent): boolean {
-  if (event.type === "toolcall_start" || event.type === "toolcall_end") return true;
-  if (event.type === "text_delta" || event.type === "toolcall_delta") {
-    if (event.delta.length > 0) return true;
-  }
-  if (event.type === "text_end" && event.content.length > 0) return true;
-  if (event.type === "done") return assistantHasVisibleOutput(event.message);
-  if (event.type === "error") return assistantHasVisibleOutput(event.error);
-  return assistantHasVisibleOutput(event.partial);
+/**
+ * Reply text the user is shown as it streams. Thinking and tool calls are held back until the
+ * call ends: no tool runs before then and nothing renders a tool call's arguments, so a call that
+ * fails before any text can be retried from scratch with its partial tool calls discarded.
+ */
+function eventHasVisibleText(
+  event: Exclude<AssistantMessageEvent, { type: "done" } | { type: "error" }>,
+): boolean {
+  if (event.type === "text_delta") return event.delta.length > 0;
+  if (event.type === "text_end") return event.content.length > 0;
+  return assistantText(event.partial).length > 0;
 }
 
 export const MAX_SELF_RECOVERIES_PER_RUN = 3;
@@ -601,6 +605,27 @@ export function fallbackAwareModelStream(
         sentTarget.model.contextWindow,
         operatorMaxTokens(sentTarget.model),
       );
+      // Wait only as long as CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE needs (token-pacer.ts).
+      let paceSlot: PacerSlot | undefined;
+      const paceLimit = pacerTokensPerMinute(target.config.provider);
+      if (paceLimit !== undefined) {
+        const paced = await sharedTokenPacer.acquire(
+          `${target.config.provider}|${sentTarget.model.baseUrl}`,
+          estimateModelContextTokens(requestContext(), estimatePiImageTokens),
+          paceLimit,
+          signal,
+        );
+        paceSlot = paced.slot;
+        // Time spent pacing is not model time: keep it out of the request budget.
+        startedAt += paced.waitedMs;
+        if (paced.waitedMs >= 1_000) {
+          getLogger().info("model.pacer.wait", {
+            runId: state.request.runId,
+            provider: target.config.provider,
+            waitedMs: paced.waitedMs,
+          });
+        }
+      }
       try {
         const apiKey = target.credentials?.accessToken ?? target.apiKey;
         const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
@@ -615,6 +640,7 @@ export function fallbackAwareModelStream(
               : attemptOptions,
         );
       } catch (error) {
+        paceSlot?.release();
         log("failed", { error });
         finishWithThrownError(target, error);
         return;
@@ -623,6 +649,10 @@ export function fallbackAwareModelStream(
         for await (const event of stream) {
           lastEventType = event.type;
           if (event.type !== "start" && event.type !== "error") firstEventAt ??= Date.now();
+          if (event.type === "error") paceSlot?.release();
+          if (event.type === "done") {
+            paceSlot?.settle(event.message.usage.input + event.message.usage.cacheRead);
+          }
           if (event.type === "error") {
             recordFailure(target, event.error.errorMessage ?? "Model request failed.");
             const stall = streamStallReason(event.error);
@@ -652,7 +682,8 @@ export function fallbackAwareModelStream(
             }
             let terminalEvent = event;
             let requestLimitTooSmall = false;
-            const hasTerminalVisibleOutput = assistantHasVisibleOutput(event.error);
+            // A failed call runs none of its tool calls, so only text counts as shown.
+            const hasTerminalVisibleOutput = assistantText(event.error).length > 0;
             if (
               !stall &&
               !sawVisibleOutput &&
@@ -971,7 +1002,7 @@ export function fallbackAwareModelStream(
             ...event.partial,
             content: event.partial.content.map((part) => ({ ...part })),
           };
-          if (eventHasVisibleOutput(event)) {
+          if (eventHasVisibleText(event)) {
             sawVisibleOutput = true;
             for (const pending of buffered) output.push(pending);
             buffered = [];

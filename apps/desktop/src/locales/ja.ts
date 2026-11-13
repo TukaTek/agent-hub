@@ -80,7 +80,7 @@ export const JA_MESSAGES: Record<string, string> = {
   "Set up CortexAI Agent Hub": "CortexAI Agent Hubを設定",
   "Quit CortexAI Agent Hub": "CortexAI Agent Hubを終了",
   "Welcome to CortexAI Agent Hub": "CortexAI Agent Hubへようこそ",
-  "Choose which server this app should use.": "このアプリで使うサーバを選んでください。",
+  "Choose where CortexAI Agent Hub runs.": "CortexAI Agent Hubを動かす場所を選んでください。",
   Instance: "インスタンス",
   "This computer": "このコンピュータ",
   "Existing instance": "既存のインスタンス",
@@ -91,7 +91,6 @@ export const JA_MESSAGES: Record<string, string> = {
   "Name: value": "名前: 値",
   "Check connection": "接続を確認",
   Continue: "続ける",
-  "Check again": "もう一度確認",
   Retry: "再試行",
   "Getting ready…": "準備しています…",
   "Downloading CortexAI Agent Hub…": "CortexAI Agent Hubをダウンロードしています…",
@@ -151,16 +150,12 @@ export const JA_MESSAGES: Record<string, string> = {
     "接続しましたが、次回の起動用に設定を保存できませんでした。もう一度「続ける」をクリックしてください。",
   "The app-managed CortexAI Agent Hub services are not ready. Retry setup.":
     "アプリが管理するCortexAI Agent Hubサービスの準備ができていません。設定をやり直してください。",
-  "Docker is not installed on this computer.":
-    "このコンピュータにはDockerがインストールされていません。",
   "Docker is installed, but Docker Compose is missing. Install Docker Desktop or the docker-compose-plugin.":
     "Dockerはインストールされていますが、Docker Composeがありません。Docker Desktopまたはdocker-compose-pluginをインストールしてください。",
   "Could not check Docker Compose. Check the output below, then retry.":
     "Docker Composeを確認できませんでした。下の出力を確認してから再試行してください。",
-  "Docker is installed but not running. Start Docker, then check again.":
-    "Dockerはインストールされていますが、実行されていません。Dockerを起動してからもう一度確認してください。",
-  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), sign out and back in, then check again.":
-    "このユーザはDockerにアクセスできません。dockerグループに追加し（sudo usermod -aG docker $USER）、サインアウトしてサインインし直してから、もう一度確認してください。",
+  "This user cannot access Docker. Add it to the docker group (sudo usermod -aG docker $USER), then sign out and back in.":
+    "このユーザはDockerにアクセスできません。dockerグループに追加し（sudo usermod -aG docker $USER）、サインアウトしてサインインし直してください。",
   "The start was interrupted. Retry to continue.":
     "起動が中断されました。続けるには再試行してください。",
   "Images for {tag} are not published yet. Try again in a few minutes.":
@@ -202,4 +197,37 @@ export const JA_MESSAGES: Record<string, string> = {
   "Chat Details": "チャットの詳細",
   Help: "ヘルプ",
   "Keyboard Shortcuts": "キーボードショートカット",
+  "Downloading CortexAI Agent Hub failed. Check the internet connection, then retry.":
+    "CortexAI Agent Hubをダウンロードできませんでした。インターネット接続を確認してから、もう一度お試しください。",
+  "Could not move your data from Docker. Check the output below, then retry.":
+    "Dockerからデータを移行できませんでした。下の出力を確認してから、もう一度お試しください。",
+  "The computer runtime already running is too old. Update or quit it, then retry.":
+    "すでに実行中のコンピューターランタイムが古すぎます。更新するか終了してから、もう一度お試しください。",
+  "Your CortexAI Agent Hub data is in a different computer runtime. Quit the one running, then retry.":
+    "CortexAI Agent Hubのデータは別のコンピューターランタイムにあります。実行中のものを終了してから、もう一度お試しください。",
+  "Run CortexAI Agent Hub without Docker?": "DockerなしでCortexAI Agent Hubを実行しますか？",
+  "Your bots and data move over. Docker is stopped, not removed.":
+    "ボットとデータは引き継がれます。Dockerは停止されますが、削除はされません。",
+  Move: "移行",
+  "Keep Docker": "Dockerを使い続ける",
+  "Nothing to install.": "インストール不要です。",
+  "Your data stays on this computer.": "データはこのコンピュータに保存されます。",
+  "Connect to a server you or your team already run.":
+    "あなたやチームがすでに運用しているサーバーに接続します。",
+  "CortexAI Agent Hub needs Docker Desktop to run on this computer.":
+    "このコンピュータでCortexAI Agent Hubを動かすにはDocker Desktopが必要です。",
+  "CortexAI Agent Hub needs Docker to run on this computer.":
+    "このコンピュータでCortexAI Agent Hubを動かすにはDockerが必要です。",
+  "Docker Desktop is a free app that runs CortexAI Agent Hub in the background. Install it and open it once.":
+    "Docker Desktopは、CortexAI Agent Hubをバックグラウンドで動かす無料のアプリです。インストールして一度開いてください。",
+  "Install Docker Engine and start it.": "Docker Engineをインストールして起動してください。",
+  "Download Docker Desktop": "Docker Desktopをダウンロード",
+  "Install Docker": "Dockerをインストール",
+  "Docker is installed but not running. Open it to continue.":
+    "Dockerはインストールされていますが、実行されていません。開くと続行します。",
+  "Starting {app}…": "{app}を起動しています…",
+  "Waiting for Docker Desktop…": "Docker Desktopを待っています…",
+  "Waiting for Docker…": "Dockerを待っています…",
+  "Docker is installed but not running. Start the Docker service to continue.":
+    "Dockerはインストールされていますが、実行されていません。続行するにはDockerサービスを起動してください。",
 };

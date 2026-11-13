@@ -12,6 +12,7 @@ const ENV_KEYS = [
   "CORTEXAI_AGENT_HUB_LOCAL_MODELS_URL",
   "CORTEXAI_AGENT_HUB_LOCAL_CONTEXT_WINDOW",
   "CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS",
+  "CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE",
   "CORTEXAI_AGENT_HUB_LOCAL_REASONING_MODELS",
 ] as const;
 
@@ -106,6 +107,14 @@ describe("local model provider", () => {
     expect(() => localProvider()).toThrow(
       /CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS must be a positive integer/,
     );
+    delete process.env.CORTEXAI_AGENT_HUB_LOCAL_MAX_TOKENS;
+
+    for (const bad of ["abc", "-5", "0", "3.7"]) {
+      process.env.CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE = bad;
+      expect(() => localProvider(), `tokens per minute "${bad}"`).toThrow(
+        /CORTEXAI_AGENT_HUB_LOCAL_TOKENS_PER_MINUTE must be a positive integer/,
+      );
+    }
   });
 
   it("marks only the exact model ids the operator declares as reasoning", () => {

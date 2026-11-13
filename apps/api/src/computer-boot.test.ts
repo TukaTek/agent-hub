@@ -1,6 +1,6 @@
 import { SandboxDamagedError } from "@cortexai-agent-hub/adapter-kit";
 import type * as Adapters from "@cortexai-agent-hub/adapters";
-import { ComputerBusyError } from "@cortexai-agent-hub/adapters";
+import { ComputerBusyError, ComputerRecoveryRequiredError } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { Prisma } from "@cortexai-agent-hub/db";
@@ -195,6 +195,27 @@ describe("computer boot", () => {
     const response = await boot(prisma);
 
     expect(response?.status).toBe(404);
+    expect(lifecycle.provisionComputer).toHaveBeenCalledOnce();
+    expect(lifecycle.releaseComputerExecutionLease).toHaveBeenCalledOnce();
+  });
+
+  it("returns the quarantine recovery instruction over RPC without starting the computer", async () => {
+    const error = new ComputerRecoveryRequiredError();
+    lifecycle.provisionComputer.mockRejectedValue(error);
+    const prisma = {
+      spaceMember: { count: vi.fn(async () => 1) },
+      bot: {
+        findFirst: vi.fn().mockResolvedValue({
+          ...stoppedBot,
+          computer: { ...stoppedBot.computer, state: "quarantined" },
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    const response = await boot(prisma);
+
+    expect(response?.status).toBe(409);
+    expect(await response?.text()).toContain(error.message);
     expect(lifecycle.provisionComputer).toHaveBeenCalledOnce();
     expect(lifecycle.releaseComputerExecutionLease).toHaveBeenCalledOnce();
   });

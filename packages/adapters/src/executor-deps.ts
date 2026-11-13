@@ -19,8 +19,9 @@ import type {
   WebProvider,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient, RunLease, ThreadEvents } from "@cortexai-agent-hub/db";
-import type { CloudAgentConnection } from "./cloud-agent-factory.js";
+import type { CloudAgentConnection, UserCloudAgents } from "./cloud-agent-factory.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
+import type { MessagingDelivery } from "./messaging-delivery.js";
 import type { CodexLiveCatalog } from "./pi-codex-catalog.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import type { TicketChangeNotifier } from "./ticket-changes.js";
@@ -70,6 +71,8 @@ export interface ExecutorDeps {
   phoneCallRingSeconds?: number;
   /** Messaging surface; absent means zero identity queries and no chat prompts. */
   messaging?: { hasIdentity(botId: string): Promise<boolean> };
+  /** Sends what runs say to the chat apps their turns came from; absent without one. */
+  messagingDelivery?: MessagingDelivery;
   listConnectedPluginSlugs?: (userId: string) => Promise<string[]>;
   /** Builtin web_search / web_fetch. Defaults to keyless HTTP when omitted. */
   web?: WebProvider;
@@ -82,6 +85,8 @@ export interface ExecutorDeps {
   mcpAllowPrivateEndpoint?: boolean;
   /** Remote cloud coding agents. Null/omit means tools stay uninjected. */
   cloudAgent?: CloudAgentConnection | null;
+  /** Environments users connected themselves; a run uses its user's before the deployment's. */
+  userCloudAgents?: UserCloudAgents;
   /** The deployment's payment wallet. Null/omit means purchase tools stay uninjected. */
   paymentWallet?: PaymentWalletProvider | null;
   /** Optional Auto Review verifier. When omitted, the factory selects from env (llm | jev | scripted). */

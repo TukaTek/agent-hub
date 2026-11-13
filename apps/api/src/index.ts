@@ -1,4 +1,4 @@
-import type { Socket } from "node:net";
+import type { Server } from "node:http";
 import { unwrapEnvFromKeyManager } from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import { stopOnShutdownSignals } from "@cortexai-agent-hub/core/node/shutdown-signals";
@@ -11,6 +11,7 @@ import { createRootLogger } from "@cortexai-agent-hub/logging/axiom";
 import { watchEventLoopStalls } from "@cortexai-agent-hub/logging/event-loop";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
+import { trackConnections } from "./drain.js";
 import { loadEnv } from "./env.js";
 import { HUB_POLICY_RESTART_EXIT_CODE, startApiHubPolicy } from "./hub-policy.js";
 
@@ -42,25 +43,17 @@ try {
   // Desktop apps hold an outbound socket so bots can reach the user's own computer.
   if (handleUpgrade) server.on("upgrade", handleUpgrade);
 
-  // SSE streams never end on their own, so server.close() alone would wait forever;
-  // force-close sockets still open after a short grace period.
-  const sockets = new Set<Socket>();
-  server.on("connection", (socket) => {
-    sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
-  });
+  // The deploy allows 30 seconds after the stop signal; leave time for stop() and the log flush.
+  const drain = trackConnections(server as Server);
+  // Outlive the proxy's 2-minute idle reuse, or a request can hit a socket Node just closed.
+  (server as Server).keepAliveTimeout = 125_000;
 
   let stopping = false;
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
     stopStallWatch();
-    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
-    const grace = setTimeout(() => {
-      for (const socket of sockets) socket.destroy();
-    }, 2_000);
-    await closed;
-    clearTimeout(grace);
+    await drain(20_000);
     await stop();
     await hubPolicy?.close();
     await logger.flush({ timeoutMs: 2_000 });
