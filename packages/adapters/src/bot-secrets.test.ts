@@ -105,6 +105,14 @@ async function fixture(auth = destination.auth) {
   return { input, fetch, findFirst, registerRedactions };
 }
 
+// secret_request prepares a download target on the run's computer before it sends anything.
+const runComputer = {
+  stored: { homeKey: "home-1" },
+  get: async () => ({ kind: "test", id: "computer-1" }),
+  mode: "dedicated",
+  checkpoint: { markDirty: () => undefined },
+};
+
 describe("authenticated secret requests", () => {
   it("retries failed audit inserts before deduplicating a use", async () => {
     const createMany = vi
@@ -149,6 +157,7 @@ describe("authenticated secret requests", () => {
       bot: { id: "bot-1", name: "Research bot" },
       thread: { id: "thread-1" },
       context: { signal: input.signal },
+      computer: runComputer,
       secrets: [] as string[],
       state: {
         vaultUses: new Set<string>(),
@@ -232,6 +241,7 @@ describe("authenticated secret requests", () => {
         bot: { id: "bot-1", name: "Research bot" },
         thread: { id: "thread-1" },
         context: { signal: input.signal },
+        computer: runComputer,
         secrets: [] as string[],
         state: {
           vaultUses: new Set<string>(),

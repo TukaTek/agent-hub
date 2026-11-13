@@ -19,8 +19,6 @@ import { parseScreenLeaseId } from "@cortexai-agent-hub/core";
 import { browserProfilePathForScreen } from "@cortexai-agent-hub/core/node/desktop-runtime";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
-import type { SecretDownloadTarget } from "./bot-secrets.js";
-import { downloadFilenameCandidates, getFileDownloadCap } from "./bot-secrets.js";
 import {
   normalizeWorkspacePath,
   resolveBotWorkspacePath,
@@ -33,6 +31,8 @@ import {
   resolveAgentHomePath,
 } from "./home.js";
 import { isSandboxDamagedError } from "./sandbox-errors.js";
+import type { SecretDownloadTarget } from "./secret-downloads.js";
+import { downloadFilenameCandidates, getFileDownloadCap } from "./secret-downloads.js";
 import { shouldSkipPortableWorkspaceFile, WORKSPACE_SAVE_LIMITS } from "./workspace-save-policy.js";
 
 export { shouldSkipPortableWorkspaceFile, WORKSPACE_SAVE_LIMITS } from "./workspace-save-policy.js";
