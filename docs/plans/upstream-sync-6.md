@@ -94,7 +94,7 @@ After the merge:
 
 ## Judgment calls
 
-- **Grok Bot agent import:** upstream's import of a Grok Bot self-export is kept. The fork's identity test now skips the import feature's files when it checks for that product name.
+- **Agent import from another assistant product:** upstream's import of a self-export from that product is kept. The fork's identity test now skips the import feature's files when it checks for that product name.
 - **Organizations under Hub:** creation, members and invitations are off. Renaming and deleting organizations, which the fork allowed before, are also refused under Hub.
 - **Fork sign-in screens:** kept whole, so upstream's provider chooser and demo button are not shown even outside Hub mode. The API still offers them when configured.
 - **Subagents:** upstream runs helpers as background runs now, so the fork's in-process subagent fallback and its tests are gone.
