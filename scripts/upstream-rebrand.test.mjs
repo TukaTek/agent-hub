@@ -13,6 +13,7 @@ describe("rebrand", () => {
     [`labels["${old}.computerOwner"]`, 'labels["cortexai-agent-hub.computerOwner"]'],
     [`window.__${old}NativeKeys = true`, "window.__cortexAiAgentHubNativeKeys = true"],
     [`process.env.${OLD}_ALLOWED_HOSTS`, "process.env.CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"],
+    [`"${OLD}-memory-test"`, '"CORTEXAI-AGENT-HUB-memory-test"'],
     [`window.${old}ComputerKeyboard`, "window.cortexAiAgentHubComputerKeyboard"],
     [`class ${Old}NetworkCache {}`, "class CortexAiAgentHubNetworkCache {}"],
     [`appName: "${Old}"`, 'appName: "CortexAI Agent Hub"'],
