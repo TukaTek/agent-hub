@@ -1,3 +1,4 @@
+import { expectLinearTime } from "@cortexai-agent-hub/contracts/test-timing";
 import {
   MODEL_CONTEXT_TOO_SMALL_ERROR,
   VERBATIM_TOOL_RESULT_TOO_LARGE_ERROR,
@@ -325,9 +326,10 @@ describe("bounded context selection", () => {
       subject: `subject ${index} `.repeat(20),
       messageText: `body ${index} `.repeat(400),
     }));
-    const startedAt = performance.now();
-    const shortened = shortenToolResultText(JSON.stringify({ data: { messages } }), 12_000);
-    expect(performance.now() - startedAt).toBeLessThan(3_000);
+    let shortened = "";
+    expectLinearTime(() => {
+      shortened = shortenToolResultText(JSON.stringify({ data: { messages } }), 12_000);
+    });
     const parsed = JSON.parse(shortened);
     expect(parsed.data.messages).toHaveLength(1000);
     expect(parsed.data.messages[999].messageId).toBe("m999");

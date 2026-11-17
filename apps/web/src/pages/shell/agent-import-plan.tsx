@@ -8,14 +8,7 @@ import type {
 } from "@cortexai-agent-hub/contracts";
 import { BOT_DESCRIPTION_MAX_LENGTH, BOT_NAME_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
 import { looksLikeCredential } from "@cortexai-agent-hub/core";
-import {
-  Button,
-  Checkbox,
-  Input,
-  Label,
-  NativeSelect,
-  NativeSelectOption,
-} from "@cortexai-agent-hub/ui-web";
+import { Button, Checkbox, Input, Label, OptionSelect } from "@cortexai-agent-hub/ui-web";
 import {
   Collapsible,
   CollapsibleContent,
@@ -141,6 +134,7 @@ export function AgentImportPlanReview({
       connected: t`Already connected`,
       invalid_file: t`Could not read these files`,
       default: defaultNote,
+      reconnect: t`Connect it again`,
     })[reason];
   const warningText = (warning: AgentImportWarning) =>
     warning === "runs_code"
@@ -229,21 +223,20 @@ export function AgentImportPlanReview({
                 ),
                 entry.content,
                 <>
-                  <NativeSelect
+                  <OptionSelect<AgentImportMemoryDestination>
                     size="sm"
+                    className="w-fit"
                     aria-label={t`Memory for ${title}`}
                     value={destination}
                     disabled={unchecked.has(entry.id)}
-                    onChange={(event) =>
-                      setDestinations((current) => ({
-                        ...current,
-                        [entry.id]: event.target.value as AgentImportMemoryDestination,
-                      }))
+                    onValueChange={(value) =>
+                      setDestinations((current) => ({ ...current, [entry.id]: value }))
                     }
-                  >
-                    <NativeSelectOption value="bot">{t`This bot`}</NativeSelectOption>
-                    <NativeSelectOption value="space">{t`All bots`}</NativeSelectOption>
-                  </NativeSelect>
+                    options={[
+                      { value: "bot", label: t`This bot` },
+                      { value: "space", label: t`All bots` },
+                    ]}
+                  />
                   {entry.containsKey || entry.stock
                     ? note(
                         [entry.containsKey ? keyNote : null, entry.stock ? defaultNote : null]

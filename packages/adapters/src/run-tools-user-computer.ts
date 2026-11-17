@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AgentToolExecutionResult, ProcessEvent } from "@cortexai-agent-hub/adapter-kit";
-import { redactSecrets, sandboxCommandTimeoutMs } from "@cortexai-agent-hub/core";
+import { redactSecrets } from "@cortexai-agent-hub/core";
+import { sandboxCommandTimeoutMs } from "@cortexai-agent-hub/core/node/sandbox-command";
 import { z } from "zod";
 import type { HostComputerEnvironment } from "./host-computer-protocol.js";
 import type {

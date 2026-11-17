@@ -1,6 +1,6 @@
 import type { Connection, ConnectionCatalogItem, RpcOutput } from "@cortexai-agent-hub/contracts";
 import { CONNECTION_LABEL_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
-import { catalogItemKey, humanizeToolName } from "@cortexai-agent-hub/core";
+import { appToolLabel, catalogItemKey } from "@cortexai-agent-hub/core";
 import { ph } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { Dispatch, SetStateAction } from "react";
@@ -140,7 +140,7 @@ export function IntegrationDetail({
             ) : (
               tools.map((tool) => (
                 <Text key={tool.name} style={styles.toolName}>
-                  {humanizeToolName(tool.name)}
+                  {appToolLabel(tool.name, item.slug)}
                 </Text>
               ))
             )}

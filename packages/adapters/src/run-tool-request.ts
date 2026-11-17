@@ -38,6 +38,7 @@ import {
 import type { RunContext } from "./run-context.js";
 import {
   isRunTainted,
+  markReadOutsideContent,
   neverAsks,
   OWN_INSTRUCTIONS_BASELINE_UNKNOWN_ERROR,
   refuseOwnerSettingsChange,
@@ -170,6 +171,7 @@ export async function resolveToolRequest(
         connectorCall = resolved.call;
       }
     } catch (error) {
+      await markReadOutsideContent(ctx);
       return { error: sanitizeConnectorError(error) };
     }
   }
@@ -291,6 +293,7 @@ export async function resolveToolRequest(
         try {
           assertConnectorToolArgs(liveSchema, args);
         } catch (error) {
+          await markReadOutsideContent(ctx);
           return { error: sanitizeConnectorError(error) };
         }
       }
@@ -542,6 +545,8 @@ export async function prepareToolRequest(
         !now ||
         now.site !== approved.site ||
         now.label !== approved.label ||
+        now.amount === "?" ||
+        now.total === "?" ||
         now.amount !== approved.amount ||
         (now.total ?? "") !== (approved.total ?? "")
       )

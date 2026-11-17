@@ -27,11 +27,7 @@ it.skipIf(!databaseUrl)(
         },
       });
       ({ spaceId } = await runAsSystem("local capability fixture", () =>
-        bootstrapUserSpace(
-          db.prisma,
-          { id: userId },
-          { signupsEnabled: "false", signupAllowlist: "" },
-        ),
+        bootstrapUserSpace(db.prisma, { id: userId }),
       ));
       await system.deploymentSettings.update({
         where: { id: "default" },

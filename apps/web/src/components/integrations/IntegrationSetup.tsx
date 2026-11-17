@@ -1,5 +1,5 @@
 import type { IntegrationCatalogResult } from "@cortexai-agent-hub/contracts";
-import { newClientId } from "@cortexai-agent-hub/core";
+import { customMcpServerInput } from "@cortexai-agent-hub/core";
 import { Button, Disclosure, Input } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
@@ -74,14 +74,7 @@ export function IntegrationSetup({
   async function connect(name: string, url: string) {
     await run(async () => {
       const existing = (await rpc.mcp.servers.list()).find((server) => server.endpoint === url);
-      const server =
-        existing ??
-        (await rpc.mcp.servers.create({
-          slug: `integration-${newClientId().slice(0, 8)}`,
-          name,
-          transport: "streamable_http",
-          endpoint: url,
-        }));
+      const server = existing ?? (await rpc.mcp.servers.create(customMcpServerInput(name, url)));
       const result = await connectMcpOauth(server.id);
       if (result === "cancelled") return;
       if (botId) await rpc.mcp.assignments.approve({ botId, serverId: server.id });

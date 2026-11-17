@@ -7,6 +7,7 @@ import type {
 import { historyCompactJob, runJobKey } from "@cortexai-agent-hub/adapter-kit";
 import {
   CapturingNotificationProvider,
+  handoffToGroupBot,
   MessagingTeamChatEmulator,
   messageBot,
 } from "@cortexai-agent-hub/adapters";
@@ -19,11 +20,14 @@ import type {
 import {
   ACTIVE_RUN_STATUSES,
   attachmentComputerPath,
+  BACKGROUND_HELPER_TRIGGER,
+  HELPER_RESULT_TRIGGER,
   isTerminal,
   splitToolHistory,
 } from "@cortexai-agent-hub/core";
 import type { createDb } from "@cortexai-agent-hub/db";
-import { createThreadEvents } from "@cortexai-agent-hub/db";
+import { createThreadEvents, readJsonColumn, storedMessageBlocks } from "@cortexai-agent-hub/db";
+import { z } from "zod";
 import type { HostedApp } from "../apps/mcp-host.js";
 import { hostOverMcp } from "../apps/mcp-host.js";
 import { discardBotIntroRun } from "../discard-bot-intro.js";
@@ -640,6 +644,22 @@ export async function runTrial(
             where: { id: runId },
             select: { sourceMessageId: true },
           }));
+      } else if ("fromMember" in step) {
+        const memberId = group?.memberIds.get(step.fromMember);
+        if (!group || !memberId)
+          throw new EvalFailure("harness", "A fromMember step needs a group member");
+        runId = (await deliverPeerMessage(
+          prisma,
+          handles.jobs,
+          { id: memberId, name: step.fromMember },
+          botId,
+          step.text,
+          group.id,
+        ))!;
+        ({ sourceMessageId: unaddressedMessageId } = await prisma.run.findUniqueOrThrow({
+          where: { id: runId },
+          select: { sourceMessageId: true },
+        }));
       } else if ("fromPeer" in step) {
         if (!peer) throw new EvalFailure("harness", "A fromPeer step needs the case's peer bot");
         await deliverPeerMessage(
@@ -758,7 +778,11 @@ export async function runTrial(
           .slice(stepIndex + 1)
           .some(
             (next) =>
-              "ask" in next || "slack" in next || "wakeRoutine" in next || "fromPeer" in next,
+              "ask" in next ||
+              "slack" in next ||
+              "wakeRoutine" in next ||
+              "fromPeer" in next ||
+              "fromMember" in next,
           )
       )
         setupRunIds.add(runId);
@@ -969,10 +993,10 @@ export async function runTrial(
           await prisma.message.findMany({
             where: { runId, role: "bot" },
             orderBy: { seq: "asc" },
-            select: { blocks: true },
+            select: { id: true, blocks: true },
           })
         ).flatMap((message) =>
-          (message.blocks as MessageBlock[]).flatMap((block) =>
+          storedMessageBlocks(message).flatMap((block) =>
             block.kind === "bot_message_sent" && block.toBotId === peer?.id ? [block.text] : [],
           ),
         );
@@ -984,7 +1008,7 @@ export async function runTrial(
       if ("wakeRoutine" in step) {
         const messages = await prisma.message.findMany({
           where: { runId, role: "bot" },
-          select: { blocks: true },
+          select: { id: true, blocks: true },
         });
         const observed = realtime.events.filter((event) => event.runId === runId);
         routineRuns.push({
@@ -995,7 +1019,7 @@ export async function runTrial(
               select: { userId: true },
             }),
           ),
-          messages: messages.map((m) => m.blocks as RoutineEvidence["messages"][number]),
+          messages: messages.map((m) => storedMessageBlocks(m)),
           progress: observed
             .filter((event) => event.type === "thread.progress")
             .map((event) => event.payload),
@@ -1012,6 +1036,73 @@ export async function runTrial(
       // the product's own fixed notices, never a bare status code from an explanation.
       if (/unknown model|invalid api.?key|authentication.*(?:failed|error)/i.test(lastText))
         throw new EvalFailure("provider", lastText);
+    }
+    let delegation: Evidence["delegation"];
+    if (scenario.delegation) {
+      if (!handles.awaitIdle)
+        throw new EvalFailure("harness", "Delegation evals require executor draining");
+      await withinDeadline(handles.awaitIdle(), deadline);
+      const helpers = await prisma.run.findMany({
+        where: { botId, trigger: BACKGROUND_HELPER_TRIGGER, delegatedFromRunId: { in: runIds } },
+        select: { id: true, status: true },
+      });
+      const results = await prisma.run.findMany({
+        where: {
+          botId,
+          trigger: HELPER_RESULT_TRIGGER,
+          delegatedFromRunId: { in: helpers.map((r) => r.id) },
+        },
+        select: { id: true, status: true },
+      });
+      const snapshot = await rpc<{
+        messages: Array<{ runId?: string | null; blocks: MessageBlock[] }>;
+      }>(app, cookie, "threads/get", group ? { groupId: group.id } : { botId });
+      delegation = {
+        helpers: await Promise.all(
+          helpers.map(async (helper) => ({
+            status: helper.status,
+            calls: await (async () => {
+              const completions = await prisma.event.findMany({
+                where: { runId: helper.id, type: "agent.tool.completed" },
+                select: { id: true, payload: true },
+              });
+              return (handles?.toolCallObservations ?? [])
+                .filter((call) => call.runId === helper.id)
+                .map((call) => ({
+                  name: call.name,
+                  args: call.args,
+                  succeeded: completions.some((event) => {
+                    const payload = readJsonColumn(
+                      z.object({
+                        executionId: z.string().optional(),
+                        name: z.string().optional(),
+                        outcome: z.string().optional(),
+                      }),
+                      event.payload,
+                      { table: "events", column: "payload", id: event.id },
+                      { fallback: {} },
+                    );
+                    return (
+                      call.executionId !== undefined &&
+                      payload.executionId === call.executionId &&
+                      payload.name === call.name &&
+                      payload.outcome === "succeeded"
+                    );
+                  }),
+                }));
+            })(),
+          })),
+        ),
+        results: results.map((run) => ({
+          status: run.status,
+          text: snapshot.messages
+            .filter((message) => message.runId === run.id)
+            .flatMap((message) =>
+              message.blocks.flatMap((block) => (block.kind === "text" ? [block.text] : [])),
+            )
+            .join("\n"),
+        })),
+      };
     }
     const files: Evidence["files"] = {};
     for (const path of scenario.files ?? []) {
@@ -1069,9 +1160,17 @@ export async function runTrial(
         : undefined;
     const evidence: Evidence = {
       text: lastText,
+      ...(delegation ? { delegation } : {}),
       ...(historySummary ? { historySummary } : {}),
       replies,
       memberReplies,
+      ...(group
+        ? {
+            groupProgressEvents: await prisma.event.count({
+              where: { threadId: group.threadId, type: "thread.progress" },
+            }),
+          }
+        : {}),
       routineRuns,
       peerExchanges,
       ...(deliveries.length ? { deliveries } : {}),
@@ -1109,6 +1208,7 @@ export async function runTrial(
       Object.entries({
         ...files,
         "final-response": lastText,
+        ...(delegation ? { delegation: JSON.stringify(delegation) } : {}),
         ...(scenario.history && replies.length > 1
           ? Object.fromEntries(replies.map((reply, index) => [`turn-${index + 1}-response`, reply]))
           : {}),
@@ -1288,8 +1388,8 @@ async function rpc<T>(app: App, cookie: string, proc: string, body: unknown = {}
 }
 
 /**
- * Speak as the peer through message_bot's own delivery, so the subject wakes exactly as it
- * would from a teammate. The peer's turn is fixture setup: no model is paid to write its words.
+ * Speak as a teammate through message_bot or a group handoff, so the subject wakes
+ * through the product delivery path. The peer's turn is fixture setup: no model is paid to write its words.
  */
 async function deliverPeerMessage(
   prisma: EvalApp["prisma"],
@@ -1297,6 +1397,7 @@ async function deliverPeerMessage(
   peer: { id: string; name: string },
   targetBotId: string,
   text: string,
+  groupId?: string,
 ) {
   const { spaceId, userId, thread } = await prisma.bot.findUniqueOrThrow({
     where: { id: peer.id },
@@ -1320,17 +1421,34 @@ async function deliverPeerMessage(
       botId: peer.id,
       threadId: thread.id,
       taskId: task.id,
-      status: "completed",
+      status: groupId ? "running" : "completed",
       trigger: "user",
-      completedAt: new Date(),
+      completedAt: groupId ? null : new Date(),
     },
   });
+  if (groupId) {
+    try {
+      const sent = await handoffToGroupBot(
+        { prisma, events: createThreadEvents(prisma), jobs },
+        { id: run.id, spaceId, threadId: thread.id, botId: peer.id, userId },
+        groupId,
+        { bot_id: targetBotId, message: text },
+      );
+      if (!sent.ok) throw new EvalFailure("harness", `Group handoff failed: ${sent.error}`);
+      return sent.runId;
+    } finally {
+      await prisma.run.update({
+        where: { id: run.id },
+        data: { status: "completed", completedAt: new Date() },
+      });
+    }
+  }
   const sent = await messageBot(
     { prisma, events: createThreadEvents(prisma), jobs },
     { id: run.id, spaceId, threadId: thread.id, botId: peer.id, userId },
     peer,
     { bot_id: targetBotId, message: text, intent: "request" },
-    { allowTerminalSource: true },
+    { returnFrom: "ended" },
   );
   if (!sent.ok) throw new EvalFailure("harness", `Peer message was not delivered: ${sent.error}`);
 }
@@ -1345,11 +1463,11 @@ async function deliveredBySubject(
   if (!ids.length) return [];
   const messages = await prisma.message.findMany({
     where: { threadId: { in: ids } },
-    select: { blocks: true },
+    select: { id: true, blocks: true },
     orderBy: { seq: "asc" },
   });
   return messages.flatMap((message) => {
-    const blocks = message.blocks as MessageBlock[];
+    const blocks = storedMessageBlocks(message);
     const sent = blocks.find(
       (block) =>
         (block.kind === "bot_message_received" || block.kind === "handoff") &&

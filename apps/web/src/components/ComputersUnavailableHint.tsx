@@ -1,3 +1,4 @@
+import { useTimeout } from "@cortexai-agent-hub/chat-ui/hooks";
 import { Button, buttonVariants, Spinner } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
@@ -45,14 +46,13 @@ export function ComputersUnavailableHint({
     setProvider(initialProvider);
   }, [initialProvider]);
 
-  useEffect(() => {
-    if (phase !== "recovered") return;
-    const timer = window.setTimeout(() => {
+  useTimeout(
+    () => {
       onRecoveryDismissedRef.current?.();
       setPhase("idle");
-    }, 4000);
-    return () => window.clearTimeout(timer);
-  }, [phase]);
+    },
+    phase === "recovered" ? 4000 : null,
+  );
 
   const unavailable = computersAreUnavailable(provider);
 

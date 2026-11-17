@@ -27,28 +27,26 @@ export const JA_MESSAGES: Record<string, string> = {
   "Enter this code in CortexAI Agent Hub to confirm it's you:":
     "ご本人であることを確認するには、CortexAI Agent Hubで次のコードを入力してください:",
   "Welcome to CortexAI Agent Hub": "CortexAI Agent Hubへようこそ",
-  "Thanks for signing up for CortexAI Agent Hub.":
-    "CortexAI Agent Hubにご登録いただきありがとうございます。",
-  "CortexAI Agent Hub also has apps for": "CortexAI Agent Hubには次のアプリもあります:",
-  "Questions or ideas?": "ご質問やアイデアはありますか？",
-  "Join us on Discord": "Discordに参加する",
-  "CortexAI Agent Hub is open source. If you like it,":
-    "CortexAI Agent Hubはオープンソースです。気に入っていただけたら、",
-  "a star on GitHub": "GitHubでのスター",
-  "helps others find it.": "が、ほかの人に見つけてもらう助けになります。",
-  "Want to run it on your own servers?": "自分のサーバで動かしたいですか？",
-  "Self-host CortexAI Agent Hub": "CortexAI Agent Hubをセルフホストする",
-  "Have any questions? Reply to this email.": "ご質問があれば、このメールに返信してください。",
+  "Welcome to CortexAI Agent Hub. The people who get the most out of it do three things:":
+    "CortexAI Agent Hub へようこそ。CortexAI Agent Hub を最大限に活用している人は、次の 3 つをしています。",
+  "Get the apps": "アプリを入手する",
+  "CortexAI Agent Hub runs on {platforms}, so your bots can reach you wherever you are.":
+    "CortexAI Agent Hub は {platforms} で使えるので、ボットはどこにいてもあなたに連絡できます。",
+  "Join the community": "コミュニティに参加する",
+  "See what others are building, get help fast, and tell us what to build next on {discord}.":
+    "{discord} で、ほかの人が作っているものを見たり、すぐに助けを得たり、次に作ってほしいものを教えてください。",
+  "Star us on GitHub": "GitHub でスターを付ける",
+  "CortexAI Agent Hub is open source. {star} helps more people find it.":
+    "CortexAI Agent Hub はオープンソースです。{star} は、より多くの人が CortexAI Agent Hub を見つける助けになります。",
+  "A star on GitHub": "GitHub のスター",
+  "Questions? Just reply. I read every one.":
+    "質問があれば、このメールに返信してください。すべて読んでいます。",
   Unsubscribe: "配信停止",
   "Invite a friend": "友だちを招待",
   "Invite a friend to CortexAI Agent Hub: they get {weeks} weeks free, and you earn a free month when they start a qualifying subscription with a new card.":
     "友だちをCortexAI Agent Hubに招待しましょう。友だちは{weeks}週間無料で使え、新しいカードで対象のサブスクリプションを始めると、あなたは1か月無料になります。",
   "Open CortexAI Agent Hub": "CortexAI Agent Hubを開き",
   "and choose Invite friends for your link.": "「友だちを招待」を選ぶとリンクを取得できます。",
-  "Have any questions? Just reply to this email.":
-    "ご質問があれば、このメールに返信するだけでOKです。",
-  "If you're enjoying CortexAI Agent Hub,": "CortexAI Agent Hubを気に入っていただけたら、",
-  "give us a star on GitHub": "GitHubでスターをお願いします",
   "We received your CortexAI Agent Hub plugin": "CortexAI Agent Hubプラグインを受け付けました",
   "Thanks for submitting a plugin to the CortexAI Agent Hub marketplace.":
     "CortexAI Agent Hubマーケットプレイスにプラグインを申請いただきありがとうございます。",
@@ -79,4 +77,17 @@ export const JA_MESSAGES: Record<string, string> = {
     "再登録しない場合、保存されたコンピューターのファイルは{date}に削除されます。",
   "Your saved computer files will be deleted on {date} unless you choose a plan.":
     "プランを選択しない場合、保存されたコンピューターのファイルは{date}に削除されます。",
+  "{inviter} invited you to {organization} on CortexAI Agent Hub":
+    "{inviter}さんがCortexAI Agent Hubの{organization}にあなたを招待しました",
+  "{inviter} invited you to join {organization} on CortexAI Agent Hub.":
+    "{inviter}さんがCortexAI Agent Hubの{organization}への参加にあなたを招待しました。",
+  "Join {organization}": "{organization}に参加",
+  "This invitation expires in 7 days. Sign in with this email address to accept it.":
+    "この招待は7日後に期限切れになります。承諾するには、このメールアドレスでサインインしてください。",
+  "{inviter} invited you to {space} on CortexAI Agent Hub":
+    "{inviter}さんがCortexAI Agent Hubの{space}にあなたを招待しました",
+  "{inviter} invited you to join {space} on CortexAI Agent Hub.":
+    "{inviter}さんがCortexAI Agent Hubの{space}への参加にあなたを招待しました。",
+  "Join {space}": "{space}に参加",
+  "This invitation expires in 7 days.": "この招待は7日後に期限切れになります。",
 };

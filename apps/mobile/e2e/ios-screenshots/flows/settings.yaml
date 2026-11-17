@@ -15,6 +15,17 @@ name: Settings
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 01-account
+- openLink: "cortexai-agent-hub:///computers"
+- extendedWaitUntil:
+    visible: "No paired computers"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 01-computers-empty
+- openLink: "cortexai-agent-hub:///account"
+- extendedWaitUntil:
+    visible: "General"
+    timeout: 15000
 - tapOn: "General"
 - extendedWaitUntil:
     visible: "Stream replies"
@@ -94,6 +105,13 @@ name: Settings
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 10-ai-data-sharing
+- openLink: "cortexai-agent-hub:///labs"
+- extendedWaitUntil:
+    visible: "Board"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 10b-labs
 - openLink: "cortexai-agent-hub:///routine?botId=${CORTEXAI_AGENT_HUB_SCREENSHOT_BOT_ID}&botName=Researcher&routineId=${CORTEXAI_AGENT_HUB_SCREENSHOT_ROUTINE_ID}"
 - extendedWaitUntil:
     visible: ".*Weekly fixture review.*"
@@ -131,6 +149,14 @@ name: Settings
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 14-bot-profile-menu
+- tapOn: "Delete…"
+- extendedWaitUntil:
+    visible: ".*will be deleted too.*"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 14-bot-delete-warning
+- tapOn: "Cancel"
 - openLink: "cortexai-agent-hub:///group-settings?groupId=${CORTEXAI_AGENT_HUB_SCREENSHOT_GROUP_ID}"
 - extendedWaitUntil:
     visible: ".*Delete group.*"

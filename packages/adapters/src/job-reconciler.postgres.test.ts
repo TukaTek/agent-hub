@@ -42,14 +42,7 @@ describePostgres("bounded routine reconciliation (PostgreSQL contract)", () => {
     let identity: Awaited<ReturnType<typeof provisionMessagingIdentity>> | undefined;
     try {
       identity = await runAsSystem("reconciliation fixture", () =>
-        provisionMessagingIdentity(
-          db.prisma,
-          { provider: "email", address },
-          {
-            signupsEnabled: undefined,
-            signupAllowlist: undefined,
-          },
-        ),
+        provisionMessagingIdentity(db.prisma, { provider: "email", address }),
       );
       const nextRunAt = new Date(Date.now() - 1_000);
       const prefix = `routine-${randomUUID()}-`;
@@ -73,6 +66,7 @@ describePostgres("bounded routine reconciliation (PostgreSQL contract)", () => {
           published.push(job);
         },
         enqueueIn: async () => undefined,
+        enqueueManyIn: async () => undefined,
         cancelIn: async () => undefined,
         cancel: async () => undefined,
         close: async () => undefined,

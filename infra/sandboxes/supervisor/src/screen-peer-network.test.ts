@@ -1,6 +1,6 @@
 import type * as NodeHttp from "node:http";
 import { Readable } from "node:stream";
-import { resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import { resolveSupervisorToken } from "@cortexai-agent-hub/core/node/secrets-guard";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({

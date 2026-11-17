@@ -6,17 +6,6 @@ import type {
   ComputerRef,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { ComputerMode } from "@cortexai-agent-hub/contracts";
-import { DEFAULT_COMPUTER_SCREEN } from "@cortexai-agent-hub/core";
-
-/** The boat image ships a 1080p screen; every other sandbox uses the core default. */
-const BOAT_COMPUTER_SCREEN = { width: 1920, height: 1080 } as const;
-
-export function computerScreenSize(kind: string | null | undefined): {
-  width: number;
-  height: number;
-} {
-  return kind === "boat" ? BOAT_COMPUTER_SCREEN : DEFAULT_COMPUTER_SCREEN;
-}
 
 export function toComputerRef(computer: {
   homeKey: string;
@@ -27,7 +16,7 @@ export function toComputerRef(computer: {
   return {
     id: computer.providerRef,
     botId: computer.homeKey,
-    kind: computer.kind as ComputerRef["kind"],
+    kind: computer.kind,
     providerRef: computer.providerRef,
   };
 }
@@ -77,11 +66,22 @@ export function clampRounded(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
 }
 
+/**
+ * A path that leaves the folder it must stay in. Not a refusal by itself: the path may be one a
+ * provider listed, which is a fault to log. A route that passes a caller's own path answers it.
+ */
+export class WorkspacePathError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspacePathError";
+  }
+}
+
 export function normalizeWorkspacePath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/^\/+/, "");
   const segments = normalized.split("/").filter(Boolean);
   if (segments.some((segment) => segment === "." || segment === "..")) {
-    throw new Error("Path escapes the computer workspace");
+    throw new WorkspacePathError("Path escapes the computer workspace");
   }
   return segments.join("/");
 }
@@ -116,12 +116,6 @@ export function teamBotWorkspaceDirectory(botId: string): string {
   return path.posix.join("bots", normalizeWorkspacePath(botId));
 }
 
-export function teamWorkspaceInstruction(botId: string): string {
-  const home = teamBotWorkspaceDirectory(botId);
-  const sharedFromShell = `${path.posix.relative(home, "shared")}/`;
-  return `Your Team Computer home is ${home}. Relative file paths and shell working directories start there. Put intentionally shared work under shared/. File tools resolve shared/ and bots/ from the Team root, but shell commands do not: from your home, a shell command reaches shared work as ${sharedFromShell}, and a shell cwd of shared starts in it. Other bots' folders are visible under bots/; treat them as their working areas.`;
-}
-
 export function resolveBotWorkspacePath(
   scope: ComputerMode,
   botId: string,
@@ -152,8 +146,12 @@ export function resolveBotWorkspaceCwd(
   botId: string,
   requestedCwd: string | undefined,
 ): string | undefined {
-  if (scope !== "team")
-    return requestedCwd === undefined ? undefined : expandHomePrefix(requestedCwd);
+  if (scope !== "team") {
+    if (requestedCwd === undefined) return undefined;
+    const expanded = expandHomePrefix(requestedCwd);
+    if (expanded === requestedCwd) return requestedCwd;
+    return stripVirtualWorkspaceRoot(expanded) || undefined;
+  }
   if (!requestedCwd || requestedCwd === ".") return teamBotWorkspaceDirectory(botId);
   if (path.posix.isAbsolute(requestedCwd) || path.win32.isAbsolute(requestedCwd))
     return requestedCwd;
@@ -178,7 +176,7 @@ export function resolveBotUploadPath(
   ) {
     return normalized;
   }
-  throw new Error("Path escapes the bot workspace");
+  throw new WorkspacePathError("Path escapes the bot workspace");
 }
 
 export function displayBotWorkspacePath(

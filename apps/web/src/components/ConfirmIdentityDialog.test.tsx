@@ -2,6 +2,7 @@
 
 import type { AccountSecurity } from "@cortexai-agent-hub/contracts";
 import { IDENTITY_CONFIRMATION_REQUIRED } from "@cortexai-agent-hub/contracts";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import { ORPCError } from "@orpc/client";
 import type { ComponentProps, ReactNode } from "react";
 import { act, useState } from "react";
@@ -189,10 +190,8 @@ it("gives the caller the server's error when the dialog is dismissed", async () 
 
 it("ignores a confirmation that finishes after its dialog was dismissed", async () => {
   vi.mocked(fetchAccountSecurity).mockResolvedValue(security({}));
-  let finish: () => void = () => undefined;
-  vi.mocked(confirmIdentity).mockImplementationOnce(
-    () => new Promise<void>((resolve) => (finish = resolve)),
-  );
+  const finish = deferred();
+  vi.mocked(confirmIdentity).mockImplementationOnce(() => finish.promise);
   const first = needsConfirmationOnce();
   const second = needsConfirmationOnce();
   await act(async () => root.render(<Reveal action={first} />));
@@ -202,7 +201,7 @@ it("ignores a confirmation that finishes after its dialog was dismissed", async 
   await act(async () => button("Close").click());
   await act(async () => root.render(<Reveal action={second} />));
   await act(async () => button("Reveal").click());
-  await act(async () => finish());
+  await act(async () => finish.resolve());
   expect(host.querySelector('[role="dialog"]')).not.toBeNull();
   expect(second).toHaveBeenCalledTimes(1);
   expect(first).toHaveBeenCalledTimes(1);
@@ -218,3 +217,21 @@ it("lets an account without a password request another code", async () => {
   expect(requestIdentityCode).toHaveBeenCalledTimes(2);
   expect(host.querySelector<HTMLInputElement>("#confirm-identity-code")?.value).toBe("");
 });
+
+it.each(["google", "apple"])(
+  "hides unsupported linked %s identity without email delivery",
+  async (id) => {
+    vi.mocked(fetchAccountSecurity).mockResolvedValue(
+      security({
+        hasPassword: false,
+        emailDeletion: false,
+        linkedProviderIds: [id],
+      }),
+    );
+    await act(async () => root.render(<Reveal action={needsConfirmationOnce()} />));
+    await act(async () => button("Reveal").click());
+    expect(button("Continue with Provider")).toBeUndefined();
+    expect(button("Email me a code")).toBeUndefined();
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+  },
+);

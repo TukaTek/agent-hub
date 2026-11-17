@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   allocateTicketNumber,
@@ -9,7 +10,7 @@ import {
   runAsTenant,
 } from "@cortexai-agent-hub/db";
 import { createRouterClient } from "@orpc/server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { createRouter } from "./router.js";
 
@@ -27,13 +28,9 @@ describe.skipIf(!enabled)("board prefix rename (PostgreSQL)", () => {
   const spaceId = `board-rename-space-${suffix}`;
 
   const client = () =>
-    createRouterClient(
-      createRouter({
-        prisma,
-        env: { ticketBoardEnabled: true },
-      } as unknown as RouterDeps),
-      { context: { actor } },
-    );
+    createRouterClient(createRouter({ prisma, env: {} } as unknown as RouterDeps), {
+      context: { actor },
+    });
 
   beforeAll(() =>
     runAsSystem("board rename fixture", async () => {
@@ -45,6 +42,7 @@ describe.skipIf(!enabled)("board prefix rename (PostgreSQL)", () => {
           name: "Board rename",
           email: `${userId}@cortexai-agent-hub.test`,
           emailVerified: false,
+          labs: ["board"],
         },
       });
       await prisma.organization.create({
@@ -91,14 +89,8 @@ describe.skipIf(!enabled)("board prefix rename (PostgreSQL)", () => {
     // the insert transaction. Hold that transaction open on a deferred to
     // reproduce the production interleaving the conditional update must beat.
     let creatorPid!: number;
-    let signalInserted!: () => void;
-    const ticketInserted = new Promise<void>((resolve) => {
-      signalInserted = resolve;
-    });
-    let releaseCreator!: () => void;
-    const hold = new Promise<void>((resolve) => {
-      releaseCreator = resolve;
-    });
+    const ticketInserted = deferred();
+    const hold = deferred();
     const creator = runAsTenant(actor, () =>
       prisma.$transaction(
         async (tx) => {
@@ -121,15 +113,15 @@ describe.skipIf(!enabled)("board prefix rename (PostgreSQL)", () => {
               createdByUserId: userId,
             },
           });
-          signalInserted();
-          await hold;
+          ticketInserted.resolve();
+          await hold.promise;
         },
         { timeout: 20_000 },
       ),
     );
     // A creator that fails before its inserted signal fails the test here,
     // instead of hanging until the timeout waiting for a signal that never comes.
-    await Promise.race([ticketInserted, creator]);
+    await Promise.race([ticketInserted.promise, creator]);
 
     const rename = client().boards.rename({ name: "Launch", ticketPrefix: "OPS" });
     // The rename can reject as soon as the creator commits, before the assertion below
@@ -140,24 +132,25 @@ describe.skipIf(!enabled)("board prefix rename (PostgreSQL)", () => {
       // the board row lock this creator holds: a Lock-waiting backend that
       // pg_blocking_pids names this creator as blocking, running the boards
       // update. An unrelated ungranted lock in the database must not do.
-      const deadline = Date.now() + 5_000;
-      for (;;) {
-        const { rows } = await db.pool.query<{ blocked: number }>(
-          `SELECT count(*)::int AS blocked
-               FROM pg_stat_activity a
-              WHERE a.datname = current_database()
-                AND a.pid <> pg_backend_pid()
-                AND a.wait_event_type = 'Lock'
-                AND $1::int = ANY (pg_blocking_pids(a.pid))
-                AND a.query LIKE 'UPDATE%"boards" SET%'`,
-          [creatorPid],
-        );
-        if (rows[0]!.blocked > 0) break;
-        if (Date.now() > deadline) throw new Error("rename never blocked on the board row lock");
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
+      await vi.waitFor(
+        async () => {
+          const { rows } = await db.pool.query<{ blocked: number }>(
+            `SELECT count(*)::int AS blocked
+                 FROM pg_stat_activity a
+                WHERE a.datname = current_database()
+                  AND a.pid <> pg_backend_pid()
+                  AND a.wait_event_type = 'Lock'
+                  AND $1::int = ANY (pg_blocking_pids(a.pid))
+                  AND a.query LIKE 'UPDATE%"boards" SET%'`,
+            [creatorPid],
+          );
+          if (!(rows[0]!.blocked > 0))
+            throw new Error("rename never blocked on the board row lock");
+        },
+        { timeout: 5_000, interval: 25 },
+      );
 
-      releaseCreator();
+      hold.resolve();
       await creator;
 
       await expect(rename).rejects.toMatchObject({
@@ -177,7 +170,7 @@ describe.skipIf(!enabled)("board prefix rename (PostgreSQL)", () => {
         ),
       ).toBe(1);
     } finally {
-      releaseCreator();
+      hold.resolve();
       await creator.catch(() => undefined);
       await rename.catch(() => undefined);
     }

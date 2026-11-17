@@ -22,6 +22,7 @@
     "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/db": "workspace:*",
+    "@cortexai-agent-hub/logging": "workspace:*",
     "@cortexai-agent-hub/ui-tokens": "workspace:*",
     "better-auth": "1.7.18",
     "react": "19.3.1",

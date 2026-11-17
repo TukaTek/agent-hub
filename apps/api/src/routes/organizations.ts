@@ -1,31 +1,55 @@
+import { organizationInvitationEmail } from "@cortexai-agent-hub/auth";
 import {
-  CannotDeleteLastOrganizationError,
+  acceptOrganizationInvitation,
+  cancelOrganizationInvitation,
   createOrganizationForUser,
+  createOrganizationInvitation,
   firstOrganizationSpace,
+  forgetRevokedMember,
+  GUEST_ROLE,
   InvalidSpaceNameError,
+  leaveOrganizationSpaces,
   listMemberOrganizations,
-  OrganizationLimitError,
+  listOrganizationMembers,
+  previewOrganizationInvitation,
   recordAuditEvent,
   renameOrganization,
+  revokeOrganizationMember,
   runAsSystem,
-  SharedOrganizationError,
-  SpaceDeletionInProgressError,
+  setOrganizationMemberRole,
 } from "@cortexai-agent-hub/db";
+import { bestEffort } from "@cortexai-agent-hub/logging";
 import { ORPCError } from "@orpc/server";
 import { deleteOrganization } from "../account-deletion.js";
+import { invitationRecipientKey, sendInvitationEmail } from "../invitation-email.js";
+import type { RouterDeps } from "../router.js";
+import { afterSpaceDeparture } from "../space-departure.js";
 import type { RouterContext } from "./context.js";
+
+function invitationUrl(deps: RouterDeps, invitationId: string): string {
+  return new URL(`/join/${invitationId}`, deps.env.webOrigin).toString();
+}
 
 export function organizationsRoutes(ctx: RouterContext) {
   const { deps, authed } = ctx;
   return {
     organizations: {
       list: authed.organizations.list.handler(({ context }) =>
-        runAsSystem("list the organizations a user belongs to", () =>
-          listMemberOrganizations(deps.prisma, context.actor),
-        ),
+        runAsSystem("list the organizations a user belongs to", async () => {
+          const listed = await listMemberOrganizations(deps.prisma, context.actor);
+          return {
+            ...listed,
+            // Hub manages tenancy, so nobody renames or deletes an organization here.
+            organizations: deps.env.hubManaged
+              ? listed.organizations.map((organization) => ({ ...organization, canManage: false }))
+              : listed.organizations,
+            organizationsEnabled: Boolean(deps.env.organizationsEnabled),
+          };
+        }),
       ),
       create: authed.organizations.create.handler(({ context, input }) =>
         runAsSystem("create an organization for its owner", async () => {
+          requireOrganizations(deps);
           let organization: Awaited<ReturnType<typeof createOrganizationForUser>>;
           try {
             organization = await createOrganizationForUser(deps.prisma, {
@@ -33,8 +57,6 @@ export function organizationsRoutes(ctx: RouterContext) {
               name: input.name,
             });
           } catch (error) {
-            if (error instanceof OrganizationLimitError)
-              throw new ORPCError("BAD_REQUEST", { message: error.message });
             if (error instanceof InvalidSpaceNameError) throw invalidOrganizationName();
             throw error;
           }
@@ -49,6 +71,7 @@ export function organizationsRoutes(ctx: RouterContext) {
       ),
       rename: authed.organizations.rename.handler(({ context, input }) =>
         runAsSystem("rename an organization for its owner", async () => {
+          refuseUnderHub(deps);
           let renamed: { id: string; name: string };
           try {
             renamed = await renameOrganization(deps.prisma, {
@@ -69,21 +92,198 @@ export function organizationsRoutes(ctx: RouterContext) {
           return renamed;
         }),
       ),
+      members: {
+        list: authed.organizations.members.list.handler(({ context, input }) =>
+          runAsSystem("list an organization's members for one of them", async () => {
+            const listed = await listOrganizationMembers(deps.prisma, {
+              organizationId: input.organizationId,
+              userId: context.actor.userId,
+            });
+            // With management off, everyone sees the members and nobody manages them.
+            if (!deps.env.organizationsEnabled)
+              return {
+                members: listed.members.map((member) => ({ ...member, manageable: false })),
+                invitations: [],
+                canManage: false,
+              };
+            return {
+              ...listed,
+              invitations: listed.invitations.map((invitation) => ({
+                id: invitation.id,
+                email: invitation.email,
+                url: invitationUrl(deps, invitation.id),
+                expiresAt: invitation.expiresAt.toISOString(),
+              })),
+            };
+          }),
+        ),
+        setRole: authed.organizations.members.setRole.handler(({ context, input }) =>
+          runAsSystem("change an organization member's role", async () => {
+            requireOrganizations(deps);
+            await setOrganizationMemberRole(deps.prisma, {
+              organizationId: input.organizationId,
+              userId: context.actor.userId,
+              memberUserId: input.userId,
+              role: input.role,
+            });
+            await recordAuditEvent({
+              action: "organization.member.role_changed",
+              actor: { type: "user", id: context.actor.userId },
+              organizationId: input.organizationId,
+              target: { type: "user", id: input.userId, label: input.role },
+            });
+            void deps.events?.publishOrganizationChange?.(input.organizationId);
+            return { ok: true as const };
+          }),
+        ),
+        remove: authed.organizations.members.remove.handler(({ context, input }) =>
+          runAsSystem("remove someone from an organization", async () => {
+            requireOrganizations(deps);
+            const ref = {
+              organizationId: input.organizationId,
+              userId: context.actor.userId,
+              memberUserId: input.userId,
+            };
+            await revokeOrganizationMember(deps.prisma, ref);
+            // The members changed once the revocation committed, so they hear it even if a later
+            // step fails; the removed person's own list loses the organization too.
+            try {
+              // Their seat ends with their membership, before their Spaces change hands.
+              await bestEffort(
+                "seat count after a removal",
+                deps.billing?.syncSeats(input.organizationId),
+              );
+              await leaveOrganizationSpaces(
+                deps.prisma,
+                {
+                  organizationId: input.organizationId,
+                  userId: input.userId,
+                  removedBy: context.actor.userId,
+                },
+                async (departure) => {
+                  await afterSpaceDeparture(
+                    deps,
+                    { spaceId: departure.spaceId, userId: context.actor.userId },
+                    departure,
+                  );
+                  // Whoever took the Space over sees it change, as when they leave it.
+                  void deps.events?.publishRosterChange?.({ spaceIds: [departure.spaceId] });
+                },
+              );
+              await forgetRevokedMember(deps.prisma, ref);
+              // Someone who accepted a new invitation meanwhile stays, and is not recorded as removed.
+              const rejoined = await deps.prisma.member.findFirst({
+                where: {
+                  organizationId: input.organizationId,
+                  userId: input.userId,
+                  role: { not: GUEST_ROLE },
+                },
+                select: { id: true },
+              });
+              if (!rejoined)
+                await recordAuditEvent({
+                  action: "organization.member.removed",
+                  actor: { type: "user", id: context.actor.userId },
+                  organizationId: input.organizationId,
+                  target: { type: "user", id: input.userId },
+                });
+            } finally {
+              void deps.events?.publishOrganizationChange?.(input.organizationId, [input.userId]);
+            }
+            return { ok: true as const };
+          }),
+        ),
+      },
+      invitations: {
+        create: authed.organizations.invitations.create.handler(({ context, input }) =>
+          runAsSystem("invite someone to an organization", async () => {
+            requireOrganizations(deps);
+            const invitation = await createOrganizationInvitation(deps.prisma, {
+              organizationId: input.organizationId,
+              userId: context.actor.userId,
+              email: input.email,
+              sendsEmail: Boolean(deps.email),
+              recipientKey: invitationRecipientKey(deps),
+            });
+            // Past an address's daily limit the pending invitation comes back unchanged.
+            if (invitation.created) {
+              await recordAuditEvent({
+                action: "organization.invitation.created",
+                actor: { type: "user", id: context.actor.userId },
+                organizationId: input.organizationId,
+                target: { type: "invitation", id: invitation.id },
+              });
+              void deps.events?.publishOrganizationChange?.(input.organizationId);
+            }
+            const url = invitationUrl(deps, invitation.id);
+            const emailed =
+              invitation.send &&
+              (await sendInvitationEmail(deps, context.actor.userId, invitation.email, (locale) =>
+                organizationInvitationEmail(invitation.email, { ...invitation, url }, locale),
+              ));
+            return { url, emailed };
+          }),
+        ),
+        cancel: authed.organizations.invitations.cancel.handler(({ context, input }) =>
+          runAsSystem("cancel an organization invitation", async () => {
+            requireOrganizations(deps);
+            const cancelled = await cancelOrganizationInvitation(deps.prisma, {
+              organizationId: input.organizationId,
+              userId: context.actor.userId,
+              invitationId: input.invitationId,
+            });
+            // Only a pending invitation of this organization's is recorded as cancelled.
+            if (cancelled) {
+              await recordAuditEvent({
+                action: "organization.invitation.cancelled",
+                actor: { type: "user", id: context.actor.userId },
+                organizationId: input.organizationId,
+                target: { type: "invitation", id: input.invitationId },
+              });
+              void deps.events?.publishOrganizationChange?.(input.organizationId);
+            }
+            return { ok: true as const };
+          }),
+        ),
+        // The invitee is not a member yet, so these look the organization up by the invitation.
+        preview: authed.organizations.invitations.preview.handler(({ context, input }) =>
+          runAsSystem("preview an invitation for its invitee", () => {
+            requireOrganizations(deps);
+            return previewOrganizationInvitation(deps.prisma, {
+              invitationId: input.invitationId,
+              userId: context.actor.userId,
+              requireVerifiedEmail: Boolean(deps.email),
+            });
+          }),
+        ),
+        accept: authed.organizations.invitations.accept.handler(({ context, input }) =>
+          runAsSystem("join an organization by invitation", async () => {
+            requireOrganizations(deps);
+            const joined = await acceptOrganizationInvitation(deps.prisma, {
+              invitationId: input.invitationId,
+              userId: context.actor.userId,
+              requireVerifiedEmail: Boolean(deps.email),
+            });
+            await recordAuditEvent({
+              action: "organization.member.joined",
+              actor: { type: "user", id: context.actor.userId },
+              organizationId: joined.organizationId,
+              target: { type: "invitation", id: input.invitationId },
+            });
+            await bestEffort(
+              "seat count after a join",
+              deps.billing?.syncSeats(joined.organizationId),
+            );
+            void deps.events?.publishOrganizationChange?.(joined.organizationId);
+            return { spaceId: joined.spaceId };
+          }),
+        ),
+      },
       remove: authed.organizations.remove.handler(({ context, input }) =>
         runAsSystem("delete an organization with its content", async () => {
+          refuseUnderHub(deps);
           const { userId } = context.actor;
-          try {
-            await deleteOrganization(deps, userId, input.organizationId);
-          } catch (error) {
-            if (
-              error instanceof CannotDeleteLastOrganizationError ||
-              error instanceof SharedOrganizationError
-            )
-              throw new ORPCError("BAD_REQUEST", { message: error.message });
-            if (error instanceof SpaceDeletionInProgressError)
-              throw new ORPCError("CONFLICT", { message: error.message });
-            throw error;
-          }
+          await deleteOrganization(deps, userId, input.organizationId);
           return {
             ok: true as const,
             activeSpaceId: await firstOrganizationSpace(deps.prisma, userId),
@@ -92,6 +292,18 @@ export function organizationsRoutes(ctx: RouterContext) {
       ),
     },
   };
+}
+
+/** Creating organizations and managing members is opt-in, and always off under Hub sign-in. */
+function requireOrganizations(deps: RouterDeps) {
+  if (!deps.env.organizationsEnabled)
+    throw new ORPCError("FORBIDDEN", { message: "Organization management is turned off" });
+}
+
+/** Hub manages tenancy, so organizations don't change here under Hub sign-in. */
+function refuseUnderHub(deps: RouterDeps) {
+  if (deps.env.hubManaged)
+    throw new ORPCError("FORBIDDEN", { message: "Organizations are managed by Hub" });
 }
 
 function invalidOrganizationName() {

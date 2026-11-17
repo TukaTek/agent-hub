@@ -1,10 +1,11 @@
+import { publicSignInProviders } from "@cortexai-agent-hub/auth";
 import type { AuthCapabilitiesResponse } from "@cortexai-agent-hub/contracts";
 import type { AppEnv } from "./env.js";
 
 type SsoAvailability = "available" | "unavailable" | "checking";
 
 export function authCapabilities(
-  env: Pick<AppEnv, "hubAuth" | "oidc" | "passwordAuth" | "webOrigin">,
+  env: Pick<AppEnv, "hubAuth" | "oidc" | "social" | "passwordAuth" | "webOrigin" | "demoAccount">,
   options: {
     email: boolean;
     billing: boolean;
@@ -17,7 +18,8 @@ export function authCapabilities(
 ): AuthCapabilitiesResponse {
   if (env.hubAuth) {
     const hubSso = Boolean(env.hubAuth.sso);
-    // Hub owns sign-in, so no local credential (password, email code or passkey) is offered.
+    // Hub owns sign-in, so no local credential (password, email code, passkey, social
+    // provider or demo login) is offered.
     return {
       mode: "hub",
       hubSso,
@@ -29,6 +31,8 @@ export function authCapabilities(
       emailCode: false,
       billing: false,
       passkeyRpId: null,
+      providers: [],
+      demoAccount: null,
     };
   }
   const passwordAuth = env.passwordAuth !== false;
@@ -38,6 +42,7 @@ export function authCapabilities(
     sso: env.oidc
       ? { name: env.oidc.name, availability: options.ssoAvailability ?? "checking" }
       : null,
+    providers: publicSignInProviders(env.social, env.oidc),
     passwordAuth,
     passwordReset: passwordAuth && options.email,
     resetUrl: passwordAuth && options.email ? new URL("/reset-password", env.webOrigin).href : null,
@@ -46,5 +51,6 @@ export function authCapabilities(
     passkeyRpId: options.passkeyRpId ?? null,
     ...(options.nativePasskeys ? { nativePasskeys: options.nativePasskeys } : {}),
     crispWebsiteId: options.billing ? (options.crispWebsiteId ?? null) : null,
+    demoAccount: env.demoAccount ?? null,
   };
 }

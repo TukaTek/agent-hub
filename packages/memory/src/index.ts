@@ -11,7 +11,7 @@ import type {
   MemoryStore,
   PortableFile,
 } from "@cortexai-agent-hub/adapter-kit";
-import { MEMORY_REVISION_CONFLICT_ERROR } from "@cortexai-agent-hub/adapter-kit";
+import { MemoryRevisionConflictError } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { Prisma, withTransactionRetry } from "@cortexai-agent-hub/db";
 
@@ -86,7 +86,7 @@ export class MarkdownMemoryStore implements MemoryStore {
           });
           if (request.expectedRevision !== undefined) {
             const live = existing?.revision ?? 0;
-            if (live !== request.expectedRevision) throw new Error(MEMORY_REVISION_CONFLICT_ERROR);
+            if (live !== request.expectedRevision) throw new MemoryRevisionConflictError();
           }
           const doc = existing
             ? await tx.memoryDocument.update({

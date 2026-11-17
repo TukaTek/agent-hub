@@ -6,7 +6,6 @@ import type {
 import {
   computerControlExpireJob,
   computerControlExpireJobKey,
-  runContinueJob,
 } from "@cortexai-agent-hub/adapter-kit";
 import { COMPUTER_CONTROL_LEASE_MS } from "@cortexai-agent-hub/core";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
@@ -14,6 +13,7 @@ import { recordComputerRunEnd } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { toComputerRef } from "./computer-support.js";
 import { isSandboxGoneError } from "./sandbox-errors.js";
+import { wakeRun } from "./wake-run.js";
 
 // Who holds a computer's user control is decided in one place, next to the computer rows.
 export {
@@ -42,13 +42,7 @@ export async function enqueueTakeoverContinuation(
   jobs: JobPublisher,
   runId: string | null,
 ): Promise<void> {
-  if (!runId) return;
-  try {
-    await jobs.enqueue(runContinueJob(runId));
-  } catch (error) {
-    // The release is durable; reconciliation will retry this queued run.
-    getLogger().error("takeover continuation enqueue", error);
-  }
+  if (runId) await wakeRun(jobs, runId);
 }
 
 /**

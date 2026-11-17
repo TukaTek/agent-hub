@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
+import {
+  captureScreenshot,
+  chooseOption,
+  completeOnboarding,
+  openUserSettings,
+  signup,
+} from "./helpers";
 
 test("changing language updates settings overflow without resizing", async ({ page }, testInfo) => {
   const stamp = Date.now();
@@ -152,6 +158,10 @@ test("settings shell is two-pane and deep-links Models Memory Voice Usage", asyn
   await deleteAccount.scrollIntoViewIfNeeded();
   await expect(deleteAccount).toBeVisible();
   await captureScreenshot(page, testInfo, "settings-general-delete-account");
+  await deleteAccount.click();
+  await expect(settings.getByLabel("Current password", { exact: true })).toBeVisible();
+  await captureScreenshot(page, testInfo, "settings-general-delete-confirmation");
+  await deleteAccount.click();
 
   await settings.getByTestId("settings-nav-models").click();
   await expect(settings).toHaveAttribute("data-settings-section", "models");
@@ -166,7 +176,7 @@ test("settings shell is two-pane and deep-links Models Memory Voice Usage", asyn
   const memory = settings.getByTestId("memory-settings");
   await memory.getByRole("button", { name: "Connect memory provider", exact: true }).click();
   await expect(memory.getByLabel("Provider")).toBeVisible();
-  await memory.getByLabel("Provider").selectOption("serenity");
+  await chooseOption(memory.getByLabel("Provider"), "Serenity");
   await expect(memory.getByLabel("MCP endpoint")).toBeVisible();
   await expect(memory.getByLabel("Bearer token")).toBeVisible();
   await expect(memory.getByRole("button", { name: "Recall only" })).not.toBeVisible();
@@ -180,7 +190,7 @@ test("settings shell is two-pane and deep-links Models Memory Voice Usage", asyn
   await expect(settings.getByTestId("voice-settings")).toBeVisible();
   await captureScreenshot(page, testInfo, "settings-shell-voice");
   const voice = settings.getByTestId("voice-settings");
-  await voice.getByLabel("Provider", { exact: true }).selectOption("xai");
+  await chooseOption(voice.getByLabel("Provider", { exact: true }), "xAI");
   await expect(voice.getByLabel("API key", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "settings-shell-voice-xai");
 
@@ -234,8 +244,8 @@ test("self-hosted memory settings in light and dark", async ({ page }, testInfo)
     memory.locator(".cortexai-agent-hub-scroll").evaluate((element) => {
       element.scrollTop = 0;
     });
-
-  await memory.getByLabel("Provider").selectOption("supermemory");
+  await chooseOption(memory.getByLabel("Provider"), "Supermemory");
+  await scrollToTop();
   await expect(memory.getByLabel("Organization API key", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "memory-supermemory-cloud");
   await memory.getByRole("button", { name: "Advanced", exact: true }).click();
@@ -248,7 +258,7 @@ test("self-hosted memory settings in light and dark", async ({ page }, testInfo)
   await expect(documents).toBeVisible();
   await captureScreenshot(page, testInfo, "memory-supermemory-local-bottom");
 
-  await memory.getByLabel("Provider").selectOption("hindsight");
+  await chooseOption(memory.getByLabel("Provider"), "Hindsight");
   await scrollToTop();
   await expect(memory.getByLabel("API key", { exact: true })).toBeVisible();
   await expect(memory.getByLabel("Recall from banks", { exact: true })).not.toBeVisible();
@@ -298,7 +308,7 @@ test("self-hosted memory settings in light and dark", async ({ page }, testInfo)
 
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await memory.getByLabel("Provider").selectOption("supermemory");
+  await chooseOption(memory.getByLabel("Provider"), "Supermemory");
   await scrollToTop();
   await memory.getByRole("button", { name: "Advanced", exact: true }).click();
   await memory.getByRole("button", { name: "Cloud", exact: true }).click();
@@ -311,4 +321,52 @@ test("self-hosted memory settings in light and dark", async ({ page }, testInfo)
   await documents.scrollIntoViewIfNeeded();
   await expect(documents).toBeVisible();
   await captureScreenshot(page, testInfo, "memory-dark-bottom");
+});
+
+test("a connected memory provider edits with its saved settings", async ({ page }, testInfo) => {
+  // The connection is served by the route below; nothing is saved or sent to Hindsight.
+  const stamp = Date.now();
+  await signup(
+    page,
+    `memory-edit-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Memory settings",
+  );
+  await completeOnboarding(page);
+  await page.route(/\/rpc\/memory\/providerConfig(\?|$)/, (route) =>
+    route.fulfill({
+      json: {
+        json: {
+          provider: "hindsight",
+          settings: { recallBanks: "other-app", retainConversations: "false" },
+          defaultMemoryScope: "isolated",
+          updatedAt: "2026-11-01T00:00:00.000Z",
+          connectionLabel: "Hindsight Cloud",
+        },
+      },
+    }),
+  );
+  await page.reload();
+  const settings = await openUserSettings(page, "memory");
+  const memory = settings.getByTestId("memory-settings");
+  await memory.getByRole("button", { name: "Edit", exact: true }).click();
+  await memory.getByRole("button", { name: "Advanced", exact: true }).click();
+  await expect(memory.getByRole("button", { name: "Cloud", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(memory.getByLabel("API key", { exact: true })).toHaveAttribute(
+    "placeholder",
+    "Saved",
+  );
+  await expect(memory.getByLabel("Recall from banks", { exact: true })).toHaveValue("other-app");
+  await expect(memory.getByRole("switch", { name: "Learn from conversations" })).not.toBeChecked();
+  const save = memory.getByRole("button", { name: "Save", exact: true });
+  // Nothing the stored key can reach has changed, so it saves without the key.
+  await expect(save).toBeEnabled();
+  await save.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await captureScreenshot(page, testInfo, "memory-provider-edit");
+  // Another bank is something more the key could read, so it is asked for again.
+  await memory.getByLabel("Recall from banks", { exact: true }).fill("other-app,journal");
+  await expect(save).toBeDisabled();
 });

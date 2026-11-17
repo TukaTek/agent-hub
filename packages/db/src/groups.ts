@@ -5,7 +5,7 @@ import {
   resolveBotAvatarSet,
 } from "@cortexai-agent-hub/contracts";
 import { displayName } from "@cortexai-agent-hub/core";
-import { cancelRunsInTransaction } from "./cancel-runs.js";
+import { cancelRunsInTransaction, conversationRunsWhere } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases, restoreBotUnderComputerQuota } from "./computers.js";
 import { transientRunEventsWhere } from "./events.js";
@@ -210,7 +210,6 @@ const groupTargetInclude = {
           name: true,
           color: true,
           avatarSet: true,
-          runs: activeRunSelection,
         },
       },
     },
@@ -233,7 +232,6 @@ export async function snapshotRunTeardownTargets(
   tx: Prisma.TransactionClient,
   runIds: string[],
   expiresAfter?: Date,
-  ignoreStaleLegacy = false,
 ): Promise<{ leasedRunIds: string[]; targets: RunTeardownTarget[] }> {
   if (runIds.length === 0) return { leasedRunIds: [], targets: [] };
   const leases = await tx.computerExecutionLease.findMany({
@@ -244,23 +242,11 @@ export async function snapshotRunTeardownTargets(
     select: { computerId: true, botId: true, runId: true, fence: true },
   });
   const leasedRunIds = [...new Set(leases.map((lease) => lease.runId))];
-  // Reclaim rewrites the lease runId. Resume must not follow a leftover executionRunId.
-  const legacyRunIds = ignoreStaleLegacy ? leasedRunIds : runIds;
-  if (legacyRunIds.length === 0) return { leasedRunIds, targets: [] };
+  if (leases.length === 0) return { leasedRunIds, targets: [] };
 
-  const leaseComputerIds = [...new Set(leases.map((lease) => lease.computerId))];
   const computers = await tx.computer.findMany({
-    where: leaseComputerIds.length
-      ? { OR: [{ id: { in: leaseComputerIds } }, { executionRunId: { in: legacyRunIds } }] }
-      : { executionRunId: { in: legacyRunIds } },
-    select: {
-      id: true,
-      homeKey: true,
-      kind: true,
-      providerRef: true,
-      executionBotId: true,
-      executionRunId: true,
-    },
+    where: { id: { in: [...new Set(leases.map((lease) => lease.computerId))] } },
+    select: { id: true, homeKey: true, kind: true, providerRef: true },
   });
   const computerById = new Map(computers.map((computer) => [computer.id, computer]));
   const targets: RunTeardownTarget[] = [];
@@ -273,17 +259,12 @@ export async function snapshotRunTeardownTargets(
     targets.push({ id, homeKey, kind, providerRef, botId, runId, fence });
   };
   for (const lease of leases) addTarget(lease.computerId, lease.botId, lease.runId, lease.fence);
-  for (const computer of computers) {
-    if (!computer.executionBotId || !computer.executionRunId) continue;
-    if (!legacyRunIds.includes(computer.executionRunId)) continue;
-    addTarget(computer.id, computer.executionBotId, computer.executionRunId, 0);
-  }
   return { leasedRunIds, targets };
 }
 
 async function resumeArchivedGroupTeardown(tx: Prisma.TransactionClient, threadId: string) {
   const cancelled = await tx.run.findMany({
-    where: { threadId, status: "cancelled" },
+    where: { ...conversationRunsWhere(threadId), status: "cancelled" },
     select: { id: true },
   });
   // Cleanup sets expiresAt to epoch and leaves runId. A TTL lapse is still after that.
@@ -291,7 +272,6 @@ async function resumeArchivedGroupTeardown(tx: Prisma.TransactionClient, threadI
     tx,
     cancelled.map((run) => run.id),
     new Date(0),
-    true,
   );
   if (leasedRunIds.length === 0) throw new IsolationError();
   return { cancelledRunIds: leasedRunIds, computers: targets };
@@ -485,6 +465,7 @@ export function createGroupRepos(prisma: PrismaClient) {
           },
         });
         if (!current?.thread) throw new IsolationError();
+        await tx.$queryRaw`SELECT id FROM threads WHERE id = ${current.thread.id} FOR UPDATE`;
         if (input.expectedBotIds) {
           const expected = new Set(input.expectedBotIds);
           const active = current.members.filter((member) => member.bot.archivedAt === null);
@@ -512,7 +493,7 @@ export function createGroupRepos(prisma: PrismaClient) {
         const activeRuns = removedBotIds.length
           ? await tx.run.findMany({
               where: {
-                threadId: current.thread.id,
+                ...conversationRunsWhere(current.thread.id),
                 botId: { in: removedBotIds },
                 status: {
                   in: ["queued", "leased", "running", "waiting_input", "waiting_takeover"],
@@ -579,11 +560,12 @@ export function createGroupRepos(prisma: PrismaClient) {
           select: { archivedAt: true, thread: { select: { id: true } } },
         });
         if (!current?.thread) throw new IsolationError();
+        await tx.$queryRaw`SELECT id FROM threads WHERE id = ${current.thread.id} FOR UPDATE`;
         if (current.archivedAt) return resumeArchivedGroupTeardown(tx, current.thread.id);
 
         const activeRuns = await tx.run.findMany({
           where: {
-            threadId: current.thread.id,
+            ...conversationRunsWhere(current.thread.id),
             status: { in: activeRunStatuses },
           },
           select: { id: true, taskId: true, userId: true, spaceId: true },
@@ -608,18 +590,10 @@ export function createGroupRepos(prisma: PrismaClient) {
       });
     },
 
-    /** After teardown: expire the cancelled runs' leases and legacy columns. */
+    /** After teardown: expire the cancelled runs' leases. */
     async releaseArchivedRunLeases(runIds: string[]) {
       if (runIds.length === 0) return;
       await expireComputerExecutionLeases(prisma, { runId: { in: runIds } });
-      await prisma.computer.updateMany({
-        where: { executionRunId: { in: runIds } },
-        data: {
-          executionRunId: null,
-          executionBotId: null,
-          executionLeaseExpiresAt: null,
-        },
-      });
     },
 
     /**
@@ -681,7 +655,10 @@ export function createGroupRepos(prisma: PrismaClient) {
         // cancel them first so the route can stop their work and release the leases.
         const activeRuns = thread
           ? await tx.run.findMany({
-              where: { threadId: thread.id, status: { in: activeRunStatuses } },
+              where: {
+                ...conversationRunsWhere(thread.id),
+                status: { in: activeRunStatuses },
+              },
               select: { id: true, taskId: true, userId: true, spaceId: true },
             })
           : [];

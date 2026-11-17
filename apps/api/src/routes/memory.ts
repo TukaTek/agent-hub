@@ -1,18 +1,21 @@
-import { MEMORY_REVISION_CONFLICT_ERROR } from "@cortexai-agent-hub/adapter-kit";
+import { MemoryRevisionConflictError } from "@cortexai-agent-hub/adapter-kit";
 import {
   buildAgentMemoryPrompt,
   isScratchpadStatus,
   listScratchpadItems,
   mapScratchpadItem,
+  memoryProviderDescriptors,
   readAgentMemory,
 } from "@cortexai-agent-hub/adapters";
 import { isDeletableMemoryDocument } from "@cortexai-agent-hub/contracts";
+import { ClientError } from "@cortexai-agent-hub/core";
 import { findSpaceMemoryConfig, IsolationError } from "@cortexai-agent-hub/db";
 import { ORPCError } from "@orpc/server";
 import {
   disconnectMemoryProvider,
   persistMemoryProviderConfig,
   serializeSpaceMemoryConfig,
+  updateMemoryProviderConfig,
   updateMemoryProviderDefaultScope,
 } from "../memory-provider-config.js";
 import type { RouterContext } from "./context.js";
@@ -78,8 +81,8 @@ export function memoryRoutes(ctx: RouterContext) {
             },
           )
           .catch((error: unknown) => {
-            if (error instanceof Error && error.message === MEMORY_REVISION_CONFLICT_ERROR) {
-              throw new ORPCError("CONFLICT", { message: error.message });
+            if (error instanceof MemoryRevisionConflictError) {
+              throw new ClientError("CONFLICT", error.message);
             }
             throw error;
           });
@@ -136,8 +139,12 @@ export function memoryRoutes(ctx: RouterContext) {
         const config = await findSpaceMemoryConfig(deps.prisma, context.actor.spaceId);
         return config ? serializeSpaceMemoryConfig(config) : null;
       }),
+      providers: authed.memory.providers.handler(() => memoryProviderDescriptors()),
       connectProvider: authed.memory.connectProvider.handler(async ({ context, input }) =>
         persistMemoryProviderConfig(deps, context.actor, input),
+      ),
+      updateProvider: authed.memory.updateProvider.handler(async ({ context, input }) =>
+        updateMemoryProviderConfig(deps, context.actor, input),
       ),
       setDefaultScope: authed.memory.setDefaultScope.handler(async ({ context, input }) =>
         updateMemoryProviderDefaultScope(deps, context.actor, input.defaultMemoryScope),

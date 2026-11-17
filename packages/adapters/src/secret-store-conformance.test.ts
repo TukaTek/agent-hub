@@ -1,4 +1,5 @@
 import type { AdapterContext, SecretStore } from "@cortexai-agent-hub/adapter-kit";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import {
   createLogger,
   createTestSink,
@@ -95,6 +96,23 @@ describe("Infisical lifecycle and REST", () => {
     expect(fake.values.size).toBe(1);
     await a.close();
     await b.close();
+  });
+  it("says which refs name a remote entry that only a delete removes", async () => {
+    const encrypted = new EncryptedSecretStore("test-key");
+    const composed = new ComposedSecretStore(
+      new EncryptedSecretStore("test-key"),
+      new InfisicalSecretStore(infisicalFake().options),
+    );
+    await composed.start();
+    const remote = await composed.put("remote", secretTestContext);
+    const local = await composed.put("otp", secretTestContext, { ephemeral: true });
+    const inline = await encrypted.put("inline", secretTestContext);
+    expect(composed.isRemote(remote.ref)).toBe(true);
+    expect(composed.isRemote(local.ref)).toBe(false);
+    expect(composed.isRemote(inline.ref)).toBe(false);
+    expect(encrypted.isRemote(inline.ref)).toBe(false);
+    expect(new ComposedSecretStore(encrypted).isRemote(remote.ref)).toBe(false);
+    await composed.close();
   });
   it("deduplicates login, reauthenticates proactively, retries 401 once and honours Retry-After on 429 and backs off 5xx", async () => {
     const fake = infisicalFake();
@@ -413,14 +431,8 @@ describe("Infisical lifecycle and REST", () => {
     const writer = new InfisicalSecretStore(fake.options);
     const record = await writer.put("before", secretTestContext);
     await writer.close();
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const reading = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const gate = deferred();
+    const reading = deferred();
     let first = true;
     const fetcher: typeof fetch = async (input, init) => {
       const response = await fake.fetcher(input, init);
@@ -430,8 +442,8 @@ describe("Infisical lifecycle and REST", () => {
         first
       ) {
         first = false;
-        started();
-        await gate;
+        reading.resolve();
+        await gate.promise;
       }
       return response;
     };
@@ -439,14 +451,14 @@ describe("Infisical lifecycle and REST", () => {
     await store.start();
     try {
       const pending = store.load(record.ref, record.id);
-      await reading;
+      await reading.promise;
       fake.values.set(record.ref.split(":").at(-1)!, "after");
       store.invalidate(record.ref);
-      release();
+      gate.resolve();
       await expect(pending).resolves.toBe("after");
       await expect(store.load(record.ref, record.id)).resolves.toBe("after");
     } finally {
-      release();
+      gate.resolve();
       await store.close();
     }
   });
@@ -475,27 +487,21 @@ describe("Infisical lifecycle and REST", () => {
   });
   it("cancels one caller during shared login without cancelling other callers", async () => {
     const fake = infisicalFake();
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const loginStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const gate = deferred();
+    const loginStarted = deferred();
     fake.gate = async () => {
-      started();
-      await gate;
+      loginStarted.resolve();
+      await gate.promise;
     };
     const store = new InfisicalSecretStore(fake.options);
     const controller = new AbortController();
     const cancelled = store.put("cancelled", { ...secretTestContext, signal: controller.signal });
     const survived = store.put("survived", secretTestContext);
-    await loginStarted;
+    await loginStarted.promise;
     controller.abort();
     await expect(cancelled).rejects.toThrow();
     fake.gate = undefined;
-    release();
+    gate.resolve();
     try {
       const record = await survived;
       expect(fake.logins).toBe(1);
@@ -554,14 +560,8 @@ describe("Infisical lifecycle and REST", () => {
     const writer = new InfisicalSecretStore(fake.options);
     const record = await writer.put("before", secretTestContext);
     await writer.close();
-    let release!: () => void;
-    let started!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const reading = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const gate = deferred();
+    const reading = deferred();
     let gets = 0;
     const fetcher: typeof fetch = async (input, init) => {
       const response = await fake.fetcher(input, init);
@@ -570,8 +570,8 @@ describe("Infisical lifecycle and REST", () => {
         !String(input).includes("cortexai-agent-hub_start_check") &&
         ++gets === 1
       ) {
-        started();
-        await gate;
+        reading.resolve();
+        await gate.promise;
       }
       return response;
     };
@@ -581,19 +581,19 @@ describe("Infisical lifecycle and REST", () => {
     store.onChange(changed);
     try {
       const older = store.load(record.ref, record.id);
-      await reading;
+      await reading.promise;
       fake.values.set(record.ref.split(":").at(-1)!, "after");
       store.invalidate(record.ref);
       changed.mockClear();
       const newer = store.load(record.ref, record.id);
       expect(gets).toBe(1);
-      release();
+      gate.resolve();
       await expect(Promise.all([older, newer])).resolves.toEqual(["after", "after"]);
       await expect(store.load(record.ref, record.id)).resolves.toBe("after");
       expect(gets).toBe(2);
       expect(changed).not.toHaveBeenCalled();
     } finally {
-      release();
+      gate.resolve();
       await store.close();
     }
   });

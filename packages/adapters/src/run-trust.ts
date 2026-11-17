@@ -1,7 +1,9 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
 import {
+  BACKGROUND_HELPER_TRIGGER,
   connectorKindFromToolName,
+  HELPER_RESULT_TRIGGER,
   inboundRoutinePrompts,
   SITE_SENDING_TOOLS,
   siteAlwaysAllowed,
@@ -11,6 +13,7 @@ import {
   findAutoReviewPreference,
   listApprovalRules,
   storedBatchActions,
+  storedMessageBlocks,
 } from "@cortexai-agent-hub/db";
 import { boundDirectApprovalDetails, catalogApprovalDetails } from "./approval-effect.js";
 import type { ExecutorDeps } from "./executor-deps.js";
@@ -18,6 +21,7 @@ import type { EffectiveModelRole } from "./model-roles.js";
 import { effectiveModelRole } from "./model-roles.js";
 import { routineTaskInstructions } from "./routine-watch.js";
 import { CATALOG_APPROVAL_TOOL, PASSED_EFFECT_STATUSES } from "./run-effects.js";
+import { loadRunOrigin } from "./run-origin.js";
 import { BUILTIN_AGENT_TOOL_NAMES } from "./run-tool-selection.js";
 
 /**
@@ -60,15 +64,15 @@ export function connectorTrustKeys(
 export function createRunTrustLoaders(
   deps: ExecutorDeps,
   input: {
-    run: { userId: string; spaceId: string; trigger: string };
+    run: { userId: string; spaceId: string; trigger: string; delegatedFromRunId?: string | null };
     runId: string;
     botId: string;
     taskPrompt: string;
     ownerStartedRun: boolean;
     messagingChannelRun: boolean;
-    sourceMessage: { role: string; blocks: unknown } | null;
+    sourceMessage: { id: string; role: string; blocks: unknown } | null;
     /** The owner's own chat-app message that started a messaging run; absent for anyone else. */
-    ownerChatMessageBlocks?: unknown;
+    ownerChatMessageBlocks?: MessageBlock[];
     connectedPlugins: readonly { provider: string }[];
   },
 ) {
@@ -119,15 +123,35 @@ export function createRunTrustLoaders(
   let ownerWordsPromise: Promise<string> | undefined;
   const loadOwnerWords = () => {
     ownerWordsPromise ??= (async () => {
+      if (run.trigger === BACKGROUND_HELPER_TRIGGER || run.trigger === HELPER_RESULT_TRIGGER) {
+        // Delegation inherits privacy; outside speakers cannot authorize owner actions.
+        if (messagingChannelRun) return "";
+        const origin = await loadRunOrigin(deps.prisma, {
+          ...run,
+          id: runId,
+          botId,
+          delegatedFromRunId: run.delegatedFromRunId ?? null,
+        });
+        const message = origin?.sourceMessage;
+        if (
+          message?.role !== "user" ||
+          message.authorUserId !== run.userId ||
+          message.threadId !== origin?.threadId
+        )
+          return "";
+        return storedMessageBlocks(message)
+          .flatMap((block) => (block.kind === "text" ? [block.text] : []))
+          .join("\n");
+      }
       // The executor passes chat-app blocks only for the owner's own message.
       const ownerBlocks =
         ownerStartedRun && !messagingChannelRun && sourceMessage?.role === "user"
-          ? sourceMessage.blocks
+          ? storedMessageBlocks(sourceMessage)
           : run.trigger === "messaging"
             ? ownerChatMessageBlocks
             : undefined;
       if (ownerBlocks) {
-        return (ownerBlocks as MessageBlock[])
+        return ownerBlocks
           .flatMap((block) => (block.kind === "text" ? [block.text] : []))
           .join("\n");
       }

@@ -2,13 +2,14 @@ import type { AgentRunRequest, AgentRuntime } from "@cortexai-agent-hub/adapter-
 import { createRunExecutor, createWebProvider, PiAgentRuntime } from "@cortexai-agent-hub/adapters";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycle from "../../adapters/src/computer-lifecycle.js";
-import { parallelMcpFixture } from "../../adapters/src/parallel-web.test-support.js";
 import { resolveRuntimeModel } from "../../adapters/src/pi-runtime-models.js";
+import { parallelMcpFixture } from "../../adapters/src/providers/web/parallel/parallel-web.test-support.js";
 import { startModelEmulator } from "./model-emulator.js";
 
 vi.mock("../../adapters/src/computer-lifecycle.js", async (original) => ({
   ...(await original<typeof ComputerLifecycle>()),
   acquireComputerExecutionLease: async () => null,
+  waitForRunComputerLease: async () => null,
   acquireDedicatedScreenLeaseFence: async (
     _prisma: unknown,
     input: { computerId: string; botId: string; runId: string },

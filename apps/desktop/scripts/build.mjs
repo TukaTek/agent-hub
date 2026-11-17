@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["src/main.ts"],
+  entryPoints: ["src/main/main.ts"],
   outfile: "dist/main.js",
   bundle: true,
   platform: "node",
@@ -17,7 +17,7 @@ await build({
     "process.env.CORTEXAI_AGENT_HUB_DESKTOP_RELEASE": JSON.stringify(
       process.env.CORTEXAI_AGENT_HUB_DESKTOP_RELEASE ?? "",
     ),
-    // Self-hosted builds associated with their own passkey domain (see src/passkeys.ts).
+    // Self-hosted builds associated with their own passkey domain (see src/main/passkeys.ts).
     "process.env.CORTEXAI_AGENT_HUB_PASSKEY_RP_ID": JSON.stringify(
       process.env.CORTEXAI_AGENT_HUB_PASSKEY_RP_ID ?? "",
     ),

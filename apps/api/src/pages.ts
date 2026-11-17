@@ -9,7 +9,7 @@ import type {
   SharedPage,
 } from "@cortexai-agent-hub/contracts";
 import { pageShareTokenFromSlug, pageShareUrl } from "@cortexai-agent-hub/contracts";
-import { escapeSearchWildcards } from "@cortexai-agent-hub/core";
+import { ClientError, escapeSearchWildcards } from "@cortexai-agent-hub/core";
 import type { PageShareSecret, Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { IsolationError, isRecordNotFound, runAsSystem } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -72,9 +72,9 @@ async function requirePage(prisma: PrismaClient, actor: Actor, pageId: string) {
   return row;
 }
 
-export class PageListCursorError extends Error {
+export class PageListCursorError extends ClientError {
   constructor() {
-    super("Invalid page list cursor");
+    super("BAD_REQUEST", "Invalid page list cursor");
   }
 }
 
@@ -223,9 +223,9 @@ export async function pinPage(prisma: PrismaClient, actor: Actor, pageId: string
   );
 }
 
-export class PageShareConflictError extends Error {
+export class PageShareConflictError extends ClientError {
   constructor() {
-    super("The page's sharing changed at the same time; try again");
+    super("CONFLICT", "The page's sharing changed at the same time; try again");
   }
 }
 

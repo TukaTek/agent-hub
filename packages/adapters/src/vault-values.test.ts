@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { AdapterContext, SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import type { BotSecretDestination } from "@cortexai-agent-hub/contracts";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient, SpaceKeyRecord, SpaceKeyStore } from "@cortexai-agent-hub/db";
 import {
   ContentKeyRing,
@@ -1016,15 +1017,12 @@ describe("moving vault values to the envelope keys", () => {
       const before = db.keys.map((key) => key.id);
       const controller = new AbortController();
       // The key manager answers when the test lets it, which is after the command has stopped.
-      let answerNow = () => {};
-      const answered = new Promise<void>((resolve) => {
-        answerNow = resolve;
-      });
+      const answered = deferred();
       const real = db.provider[call].bind(db.provider) as (...args: unknown[]) => Promise<never>;
       const stalled = vi.spyOn(db.provider, call).mockImplementation(((...args: unknown[]) => {
         controller.abort(new Error("interrupted"));
         if (answer === "never answers") return new Promise<never>(() => {});
-        return answered.then(() => real(...args));
+        return answered.promise.then(() => real(...args));
       }) as never);
       // Every key ring call the command makes, to wait for the ones it gave up on.
       const ringCalls: Promise<unknown>[] = [];
@@ -1044,7 +1042,7 @@ describe("moving vault values to the envelope keys", () => {
       expect(stalled).toHaveBeenCalled();
       // A key manager that never answers leaves nothing to wait for; a late answer is waited out.
       if (answer === "answers after the interruption") {
-        answerNow();
+        answered.resolve();
         await Promise.allSettled(ringCalls);
       }
       expect(db.keys.map((key) => key.id)).toEqual(before);

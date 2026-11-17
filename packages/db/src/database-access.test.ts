@@ -4,6 +4,7 @@ import {
   provisionRuntimeRole,
   rowSecurityWarning,
   scramSha256Verifier,
+  timeZoneWarning,
 } from "./database-access.js";
 
 const sent = vi.hoisted(() => [] as string[]);
@@ -106,5 +107,24 @@ describe("provisionRuntimeRole", () => {
       /^CREATE ROLE "cortexai_agent_hub_app" LOGIN PASSWORD 'SCRAM-SHA-256\$4096:/,
     );
     expect(sent.join("\n")).not.toContain("app-password");
+  });
+});
+
+describe("timeZoneWarning", () => {
+  const session = (zone: string) =>
+    ({ $queryRawUnsafe: async () => [{ zone, login: "cortexai_agent_hub_app", database: "cortexai-agent-hub" }] }) as never;
+
+  it.each(["UTC", "Etc/UTC", "GMT", "Etc/GMT", "GMT0", "Etc/GMT+0", "Greenwich", "Zulu"])(
+    "stays quiet for %s",
+    async (zone) => {
+      await expect(timeZoneWarning(session(zone))).resolves.toBeUndefined();
+    },
+  );
+
+  it("warns for a zone with an offset, naming the database and the login", async () => {
+    const warning = await timeZoneWarning(session("Europe/London"));
+    expect(warning).toContain("ALTER DATABASE cortexai-agent-hub SET timezone TO 'UTC'");
+    expect(warning).toContain("ALTER ROLE cortexai_agent_hub_app");
+    expect(warning).not.toContain("db:migrate");
   });
 });

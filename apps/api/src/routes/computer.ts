@@ -1,21 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
-import { computerControlExpireJobKey } from "@cortexai-agent-hub/adapter-kit";
-import type { ComputerExecutionLease } from "@cortexai-agent-hub/adapters";
+import {
+  computerControlExpireJobKey,
+  SandboxFileTooLargeError,
+} from "@cortexai-agent-hub/adapter-kit";
 import {
   applyTeachingDesktopInput,
-  COMPUTER_SCREEN_UNAVAILABLE,
-  ComputerBusyError,
+  ComputerScreenUnavailableError,
   checkpointAndStopComputer,
-  computerSupportsTerminal,
-  computerSupportsUpdate,
   computerUpdateView,
   controlLeaseExpiresAt,
   diskUsedPercent,
   displayBotWorkspacePath,
   endTeachingWithLease,
   ensureComputerWorkspaceLayout,
-  isComputerScreenUnavailable,
   isSandboxGoneError,
   provisionComputer,
   queueComputerUpdate,
@@ -24,11 +22,13 @@ import {
   resolveBotUploadPath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
+  sandboxKindCapabilities,
   scheduleComputerSleep,
   screenLeaseIdForRun,
   sleepDeferReason,
   toComputerRef,
   touchRunningComputer,
+  WorkspacePathError,
 } from "@cortexai-agent-hub/adapters";
 import {
   attachmentMaxBytes,
@@ -38,7 +38,8 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import {
   ACTIVE_RUN_STATUSES,
-  COMPUTER_USING_RUNS,
+  ClientError,
+  computerUsingRuns,
   scrollDirection,
 } from "@cortexai-agent-hub/core";
 import { addScreenProxyCapability } from "@cortexai-agent-hub/core/node/screen-capability";
@@ -105,19 +106,11 @@ export function computerRoutes(ctx: RouterContext) {
         }
         const ctx = computerContext(context.actor, bot.id, "boot");
         const manualRunId = `boot:${randomUUID()}`;
-        let lease: ComputerExecutionLease | null;
-        try {
-          lease = await acquireBootLease(deps.prisma, {
-            computerId: bot.computer.id,
-            runId: manualRunId,
-            botId: bot.id,
-          });
-        } catch (error) {
-          if (error instanceof ComputerBusyError) {
-            throw new ORPCError("CONFLICT", { message: "Computer is busy" });
-          }
-          throw error;
-        }
+        const lease = await acquireBootLease(deps.prisma, {
+          computerId: bot.computer.id,
+          runId: manualRunId,
+          botId: bot.id,
+        });
         const computerId = bot.computer.id;
         try {
           await getLogger().withContext({ reason: "manual" }, () =>
@@ -128,12 +121,9 @@ export function computerRoutes(ctx: RouterContext) {
           );
           scheduleComputerSleep(deps.jobs, bot.computer.id);
         } catch (error) {
-          if (error instanceof ComputerBusyError) {
-            throw new ORPCError("CONFLICT", { message: "Computer is busy" });
-          }
           // The bot was deleted or moved to another computer while this boot waited.
           if (isRecordNotFound(error)) {
-            throw new ORPCError("NOT_FOUND", { message: "Computer no longer exists" });
+            throw new ClientError("NOT_FOUND", "Computer no longer exists");
           }
           throw error;
         } finally {
@@ -181,7 +171,7 @@ export function computerRoutes(ctx: RouterContext) {
             botId: { not: bot.id },
             status: { in: [...ACTIVE_RUN_STATUSES] },
             bot: { computerId: bot.computer.id },
-            ...COMPUTER_USING_RUNS,
+            ...computerUsingRuns(),
           },
           select: { id: true },
         });
@@ -263,35 +253,43 @@ export function computerRoutes(ctx: RouterContext) {
         const bot = await repos.getBot(context.actor, input.botId);
         if (!bot.computer) throw new IsolationError();
         assertNotAnotherPersonsControl(bot.computer, context.actor);
-        if (!computerSupportsUpdate(bot.computer.kind))
+        if (!sandboxKindCapabilities(bot.computer.kind).inPlaceUpdate)
           throw new ORPCError("BAD_REQUEST", {
             message: "Computer recovery is not available on this device",
           });
         try {
-          return await queueComputerUpdate(deps, bot.computer.id, bot.id, "recover");
-        } catch (error) {
-          if (error instanceof ComputerBusyError)
-            throw new ORPCError("CONFLICT", { message: "Computer is busy" });
-          throw error;
+          const update = await queueComputerUpdate(deps, bot.computer.id, bot.id, "recover");
+          deps.analytics?.capture(context.actor.userId, {
+            name: "computer_repair_started",
+            action: "recover",
+          });
+          return update;
+        } finally {
+          // A refused start can still have dismissed earlier failures.
+          await deps.events.publishSpaceChange?.(context.actor.spaceId, "computerUpdates");
         }
       }),
-      reset: authed.computer.reset.handler(async ({ context, input }) =>
-        runComputerReplace(deps, context, input.botId, "reset", "reset"),
-      ),
+      reset: authed.computer.reset.handler(async ({ context, input }) => {
+        const status = await runComputerReplace(deps, context, input.botId, "reset", "reset");
+        // Counted once the reset ran, so a refused request is not a repair.
+        deps.analytics?.capture(context.actor.userId, {
+          name: "computer_repair_started",
+          action: "reset",
+        });
+        return status;
+      }),
       update: authed.computer.update.handler(async ({ context, input }) => {
         const bot = await repos.getBot(context.actor, input.botId);
         if (!bot.computer) throw new IsolationError();
         assertNotAnotherPersonsControl(bot.computer, context.actor);
-        if (!computerSupportsUpdate(bot.computer.kind))
+        if (!sandboxKindCapabilities(bot.computer.kind).inPlaceUpdate)
           throw new ORPCError("BAD_REQUEST", {
             message: "Computer update is not available on this device",
           });
         try {
           return await queueComputerUpdate(deps, bot.computer.id, bot.id);
-        } catch (error) {
-          if (error instanceof ComputerBusyError)
-            throw new ORPCError("CONFLICT", { message: "Computer is busy" });
-          throw error;
+        } finally {
+          await deps.events.publishSpaceChange?.(context.actor.spaceId, "computerUpdates");
         }
       }),
       updates: authed.computer.updates.handler(async ({ context }) => {
@@ -321,7 +319,7 @@ export function computerRoutes(ctx: RouterContext) {
         throw new ORPCError("FORBIDDEN");
       }),
       dismissUpdate: authed.computer.dismissUpdate.handler(async ({ context, input }) => {
-        await deps.prisma.computerUpdate.updateMany({
+        const dismissed = await deps.prisma.computerUpdate.updateMany({
           where: {
             id: input.id,
             status: "failed",
@@ -332,6 +330,8 @@ export function computerRoutes(ctx: RouterContext) {
           },
           data: { status: "dismissed" },
         });
+        if (dismissed.count > 0)
+          await deps.events.publishSpaceChange?.(context.actor.spaceId, "computerUpdates");
         return { ok: true as const };
       }),
       dismissDiskWarning: authed.computer.dismissDiskWarning.handler(async ({ context, input }) => {
@@ -487,15 +487,16 @@ export function computerRoutes(ctx: RouterContext) {
               maxBytes: MAX_COMPUTER_TEXT_FILE_BYTES,
             })
             .catch((error: unknown) => {
-              if (error instanceof Error && /exceeds|too large/i.test(error.message)) {
-                throw new ORPCError("BAD_REQUEST", { message: "file is too large to preview" });
+              if (error instanceof SandboxFileTooLargeError) {
+                throw new ClientError("BAD_REQUEST", "file is too large to preview");
               }
               throw error;
             });
           try {
             content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-          } catch {
-            throw new ORPCError("BAD_REQUEST", { message: "file is not a text file" });
+          } catch (error) {
+            if (!(error instanceof TypeError)) throw error;
+            throw new ClientError("BAD_REQUEST", "file is not a text file");
           }
         } else {
           try {
@@ -503,12 +504,12 @@ export function computerRoutes(ctx: RouterContext) {
               maxBytes: MAX_COMPUTER_TEXT_FILE_BYTES,
             });
           } catch (error) {
-            if (error instanceof Error && error.message.startsWith("agent home file exceeds ")) {
-              throw new ORPCError("BAD_REQUEST", { message: "file is too large to preview" });
+            if (error instanceof SandboxFileTooLargeError) {
+              throw new ClientError("BAD_REQUEST", "file is too large to preview");
             }
             // The file browser can ask for a file deleted since it last listed.
             if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-              throw new ORPCError("NOT_FOUND", { message: "file not found" });
+              throw new ClientError("NOT_FOUND", "file not found");
             }
             throw error;
           }
@@ -537,10 +538,11 @@ export function computerRoutes(ctx: RouterContext) {
             { maxBytes: attachmentMaxBytes(deps.env) },
           )
           .catch((error: unknown) => {
-            if (error instanceof Error && /exceeds|too large/i.test(error.message)) {
-              throw new ORPCError("BAD_REQUEST", {
-                message: `File exceeds the ${attachmentSizeLabel(attachmentMaxBytes(deps.env))} download limit.`,
-              });
+            if (error instanceof SandboxFileTooLargeError) {
+              throw new ClientError(
+                "BAD_REQUEST",
+                `File exceeds the ${attachmentSizeLabel(attachmentMaxBytes(deps.env))} download limit.`,
+              );
             }
             throw error;
           });
@@ -576,9 +578,9 @@ export function computerRoutes(ctx: RouterContext) {
         try {
           storedPath = resolveBotUploadPath(parseComputerMode(computer.scope), bot.id, input.path);
         } catch (error) {
-          if (error instanceof Error && /escapes/i.test(error.message)) {
-            throw new ORPCError("BAD_REQUEST", { message: error.message });
-          }
+          // This path is the caller's own, so leaving the workspace is theirs to fix.
+          if (error instanceof WorkspacePathError)
+            throw new ClientError("BAD_REQUEST", error.message);
           throw error;
         }
         await deps.sandbox.writeFile(
@@ -615,7 +617,7 @@ export function computerRoutes(ctx: RouterContext) {
           !computer?.providerRef ||
           computer.state !== "running" ||
           !deps.sandbox.connectTerminal ||
-          !computerSupportsTerminal(computer.kind)
+          !sandboxKindCapabilities(computer.kind).terminal
         ) {
           return { url: null };
         }
@@ -683,8 +685,8 @@ export function computerRoutes(ctx: RouterContext) {
             await computerScreenContext(deps.prisma, context.actor, computer.id, bot.id, "screen"),
           )
           .catch(async (error: unknown) => {
-            if (isComputerScreenUnavailable(error)) {
-              throw new ORPCError("CONFLICT", { message: COMPUTER_SCREEN_UNAVAILABLE });
+            if (error instanceof ComputerScreenUnavailableError) {
+              throw new ClientError("CONFLICT", error.message);
             }
             return clearGoneSandbox(deps, computer, error);
           });
@@ -706,6 +708,14 @@ export function computerRoutes(ctx: RouterContext) {
             undefined,
             session.headers,
           ),
+          // The view is part of what a screen shows: taking or releasing control changes it.
+          ...(session.singleUseSignIn
+            ? {
+                singleUseSignIn: {
+                  screen: `${session.singleUseSignIn.screen}:${holder ? "control" : "view"}`,
+                },
+              }
+            : {}),
         };
       }),
       preview: authed.computer.preview.handler(async ({ context, input }) => {

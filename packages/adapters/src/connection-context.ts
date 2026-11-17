@@ -1,8 +1,8 @@
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import type { PluginConnectionRow } from "./composio-connector.js";
-import { planLiveConnectionSync } from "./composio-connector.js";
 import type { ExecutorDeps } from "./executor-deps.js";
+import type { PluginConnectionRow } from "./providers/integration/composio/composio-connector.js";
+import { planLiveConnectionSync } from "./providers/integration/composio/composio-connector.js";
 
 export function selectRunConnections<
   T extends { connectorId: string; provider: string; status: string },

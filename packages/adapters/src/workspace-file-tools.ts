@@ -1,15 +1,18 @@
+import path from "node:path";
 import type { AdapterContext, ComputerRef, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
-import { isSandboxProviderOutage } from "@cortexai-agent-hub/adapter-kit";
+import { isSandboxProviderOutage, SandboxFileTooLargeError } from "@cortexai-agent-hub/adapter-kit";
 import type { ComputerMode } from "@cortexai-agent-hub/contracts";
 import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
 import { redactSecrets } from "@cortexai-agent-hub/core";
 import { PLOT_TOOL_GUIDE, searchChartCatalog } from "@cortexai-agent-hub/core/plot-catalog";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { JSDOM } from "jsdom";
+import { READ_FILE_MAX_BYTES, READ_FILE_MAX_KB } from "./builtin-computer.tool-definition.js";
 import {
   displayBotWorkspacePath,
   resolveBotWorkspacePath,
   stripWorkspaceRoot,
+  teamBotWorkspaceDirectory,
 } from "./computer-support.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
@@ -38,7 +41,14 @@ export type RunWorkspace = {
   spillUser?: string;
 };
 
-const MAX_MODEL_FILE_BYTES = 250_000;
+/** Names the file as the shell sees it: on a Team Computer the shell starts in the bot's home, not the Team root. */
+function fileTooLarge(computerMode: ComputerMode, botId: string, storedPath: string) {
+  const shellPath =
+    computerMode === "team"
+      ? path.posix.relative(teamBotWorkspaceDirectory(botId), storedPath)
+      : storedPath;
+  return `file is over ${READ_FILE_MAX_KB} KB; read parts of ${shellPath} with shell (grep, sed -n, tail)`;
+}
 
 /** The stored path a file tool's requested path resolves to. */
 export function resolveFileToolPath(workspace: RunWorkspace, requestedPath: string) {
@@ -210,27 +220,24 @@ export async function readFileFromTool(
   workspace: RunWorkspace,
   args: Record<string, unknown>,
 ) {
-  const { computer, context, runSecrets } = workspace;
+  const { botId, computerMode, computer, context, runSecrets } = workspace;
   const filePath = String(args.path ?? "");
   const storedPath = resolveFileToolPath(workspace, filePath);
   // A saved tool result can be one long JSON line, so it pages by character instead of by line.
   const spilled = spillPathOwner(storedPath) !== undefined;
-  const maxBytes = spilled ? MAX_PAGED_READ_BYTES : MAX_MODEL_FILE_BYTES;
+  const maxBytes = spilled ? MAX_PAGED_READ_BYTES : READ_FILE_MAX_BYTES;
   let bytes: Uint8Array;
   try {
     bytes = await sandbox.readFile(await computer(), storedPath, context, { maxBytes });
   } catch (error) {
-    if (error instanceof Error && /exceeds \d+ bytes/.test(error.message)) {
-      return {
-        error: "file is too large for model context",
-        path: filePath,
-      };
+    if (error instanceof SandboxFileTooLargeError) {
+      return { error: fileTooLarge(computerMode, botId, storedPath), path: filePath };
     }
     throw error;
   }
   if (bytes.byteLength > maxBytes) {
     return {
-      error: "file is too large for model context",
+      error: fileTooLarge(computerMode, botId, storedPath),
       path: filePath,
       size: bytes.byteLength,
     };

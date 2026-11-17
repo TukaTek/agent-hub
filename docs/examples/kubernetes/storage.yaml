@@ -1,0 +1,45 @@
+# See ../../self-host-kubernetes.md before applying.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cortexai-agent-hub-database
+  labels:
+    cortexai-agent-hub.example/phase: foundation
+  namespace: cortexai-agent-hub
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cortexai-agent-hub-data
+  labels:
+    cortexai-agent-hub.example/phase: foundation
+  namespace: cortexai-agent-hub
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cortexai-agent-hub-web-assets
+  labels:
+    cortexai-agent-hub.example/phase: foundation
+  namespace: cortexai-agent-hub
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

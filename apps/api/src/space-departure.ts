@@ -1,6 +1,5 @@
 import type { JobPublisher, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
-import { runContinueJob } from "@cortexai-agent-hub/adapter-kit";
-import { expireComputerControl, stopCancelledGroupRuns } from "@cortexai-agent-hub/adapters";
+import { expireComputerControl, stopCancelledGroupRuns, wakeRun } from "@cortexai-agent-hub/adapters";
 import type { PrismaClient, SpaceDeparture, ThreadEvents } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 
@@ -27,6 +26,8 @@ export async function afterSpaceDeparture(
       }),
     ),
   );
+  // Their routines pass to the owner, paused.
+  await deps.events.publishSpaceChange?.(actor.spaceId, "routines");
   await stopCancelledGroupRuns(deps, actor, departure).catch((error) => {
     getLogger().error("space departure run teardown", error);
   });
@@ -37,11 +38,5 @@ export async function afterSpaceDeparture(
       }),
     ),
   );
-  await Promise.all(
-    departure.continuationRunIds.map((runId) =>
-      deps.jobs.enqueue(runContinueJob(runId)).catch((error) => {
-        getLogger().error("steering continuation enqueue", error);
-      }),
-    ),
-  );
+  await Promise.all(departure.continuationRunIds.map((runId) => wakeRun(deps.jobs, runId)));
 }

@@ -6,7 +6,6 @@ import type {
 import {
   PaymentWalletDisconnected,
   PaymentWalletRequestRejected,
-  runContinueJob,
 } from "@cortexai-agent-hub/adapter-kit";
 import type { Purchase } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -18,6 +17,8 @@ import {
   PURCHASE_POLL_MS,
 } from "./purchase-service.js";
 import { releaseUnpaidPurchase } from "./spending-gate.js";
+import { wakeRun } from "./wake-run.js";
+import { purchaseWakePrompt } from "./wakes.prompt.js";
 
 /** Providers expire approval requests after 30 minutes; stop asking a little later. */
 export const PURCHASE_POLL_DEADLINE_MS = 35 * 60_000;
@@ -150,7 +151,7 @@ async function settle(
         botId: purchase.botId,
         threadId: purchase.threadId,
         userId: purchase.userId,
-        prompt: `Purchase ${purchase.id} is ${next.status}. Use purchase_status to continue.`,
+        prompt: purchaseWakePrompt(purchase.id, next.status),
         status: "queued",
       },
     });
@@ -169,12 +170,7 @@ async function settle(
     return { nextPollAt, wakeRunId: run.id };
   });
   if (!committed) return;
-  if (committed.wakeRunId) {
-    // The run reconciler recovers a queued wake after an enqueue failure.
-    await deps.jobs.enqueue(runContinueJob(committed.wakeRunId)).catch(() => {
-      getLogger().warn("purchase wake deferred to reconciliation");
-    });
-  }
+  if (committed.wakeRunId) await wakeRun(deps.jobs, committed.wakeRunId);
   if (committed.nextPollAt) await enqueuePurchasePoll(deps, purchase.id, committed.nextPollAt);
 }
 

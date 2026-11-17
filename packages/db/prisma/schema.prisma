@@ -22,24 +22,26 @@ model AiDataConsent {
 }
 
 model User {
-  aiDataConsents AiDataConsent[]
-  pages          Page[]
-  id                          String                       @id
-  name                        String
-  email                       String
-  emailVerified               Boolean                      @default(false)
+  aiDataConsents                  AiDataConsent[]
+  pages                           Page[]
+  id                              String                          @id
+  name                            String
+  email                           String
+  emailVerified                   Boolean                         @default(false)
   /// Validated first-touch campaign labels and the client that created the account. Deleted with it.
-  signupSurface                String?
-  signupUtmSource              String?
-  signupUtmMedium              String?
-  signupUtmCampaign            String?
-  signupUtmContent             String?
-  signupUtmTerm                String?
-  signupReferringDomain        String?
-  image                       String?
-  createdAt                   DateTime                     @default(now())
-  updatedAt                   DateTime                     @updatedAt
-  avatarStyle                 String                       @default("organic")
+  signupSurface                   String?
+  signupUtmSource                 String?
+  signupUtmMedium                 String?
+  signupUtmCampaign               String?
+  signupUtmContent                String?
+  signupUtmTerm                   String?
+  signupReferringDomain           String?
+  /// The partner program click this account signed up from; its organizations' plan payments credit that partner.
+  signupPartnerClickId            String?
+  image                           String?
+  createdAt                       DateTime                        @default(now())
+  updatedAt                       DateTime                        @updatedAt
+  avatarStyle                     String                          @default("organic")
   /// The icon set this user's bots wear unless one is pinned to another: "organic" or "cortexai-agent-hub".
   botAvatarSet                    String                          @default("organic")
   /// IANA timezone such as "Pacific/Auckland". Null until set; bots then get UTC only.
@@ -47,6 +49,8 @@ model User {
   /// The app language last chosen, such as "es" or "pt-BR". Null until an app reports it;
   /// emails then follow the language of the browser that asked for them.
   locale                          String?
+  /// Labs features this person turned on, by contracts' LabFeature id. Unknown ids are ignored.
+  labs                            String[]                        @default([])
   marketingEmailOptOutAt          DateTime?
   /// When an organization this person owns first subscribed; uses up every trial kind.
   billingTrialUsedAt              DateTime?
@@ -60,59 +64,59 @@ model User {
   /// Set while the account may not sign in or run work; its content stays. Cleared to reactivate.
   deactivatedAt                   DateTime?
   /// Operator-set recorded hosted model usage ceiling, including pending reservations.
-  modelCreditCapMicros        BigInt?
+  modelCreditCapMicros            BigInt?
   /// Operator-controlled bot email allowance per rolling 24 hours. Zero pauses sending.
-  botEmailDailyLimit          Int                          @default(10)
+  botEmailDailyLimit              Int                             @default(10)
   /// Allows replies to authenticated incoming senders; never arbitrary outbound recipients.
-  botEmailRepliesEnabled      Boolean                      @default(false)
+  botEmailRepliesEnabled          Boolean                         @default(false)
   /// Operator-approved recipients for requested reports or other expected workflow mail.
-  botEmailAllowedRecipients   String[]                     @default([])
-  sessions                    Session[]
-  accounts                    Account[]
-  scimSubject                 ScimSubject?
-  scimUsers                   ScimUser[]
-  scimIdentityTombstones      ScimIdentityTombstone[]
-  scimProjectionGrants        ScimProjectionGrant[]
-  passkeys                    Passkey[]
-  members                     Member[]
-  accessGrants                AccessGrant[]
-  invitations                 Invitation[]
-  modelCredentials            UserModelCredential[]
-  voiceCredentials            UserVoiceCredential[]
-  paymentWallet               PaymentWallet?
-  spendingLimit               SpendingLimit?
-  payments                    Payment[]
-  secrets                     Secret[]
-  mcpServers                  McpServer[]
-  botSections                 BotSection[]
-  actionApprovalRules         ActionApprovalRule[]
-  actionAutoReviewPreferences ActionAutoReviewPreference[]
-  modelRoleChoices            UserModelRoleChoice[]
-  modelPreferences            UserModelPreference[]
-  voicePreferences            UserVoicePreference[]
-  approvalRules               UserActionApprovalRule[]
-  autoReviewPreference        UserActionAutoReviewPreference?
-  createdSpaces               Space[]                      @relation("SpaceCreator")
-  spaceInvites                SpaceInvite[]                @relation("SpaceInviteCreator")
-  botSecrets BotSecret[]
-  vaultCredentials VaultCredential[]
-  agentSecrets               AgentSecret[]
-  createdTickets              Ticket[]                     @relation("TicketCreatorUser")
-  ticketComments              TicketComment[]              @relation("TicketCommentAuthorUser")
-  pushToken                   PushToken?
-  callPushDevices             CallPushDevice[]
-  workActivityTokens          WorkActivityToken[]
-  workActivityStartTokens     WorkActivityStartToken[]
-  trustedLinkSites            TrustedLinkSite[]
-  feedbackReports             FeedbackReport[]
-  emailSends                  EmailSend[]
-  botEmailSends               BotEmailSend[]
-  signupSurvey                SignupSurvey?
-  computerRuns                ComputerRun[]
-  devices                     UserDevice[]
-  hubIdentity                 HubIdentity?
-  messagingInstallations      MessagingInstallation[]
-  messagingInstallSessions    MessagingInstallSession[]
+  botEmailAllowedRecipients       String[]                        @default([])
+  sessions                        Session[]
+  accounts                        Account[]
+  scimSubject                     ScimSubject?
+  scimUsers                       ScimUser[]
+  scimIdentityTombstones          ScimIdentityTombstone[]
+  scimProjectionGrants            ScimProjectionGrant[]
+  passkeys                        Passkey[]
+  members                         Member[]
+  accessGrants                    AccessGrant[]
+  invitations                     Invitation[]
+  modelCredentials                UserModelCredential[]
+  voiceCredentials                UserVoiceCredential[]
+  paymentWallet                   PaymentWallet?
+  spendingLimit                   SpendingLimit?
+  payments                        Payment[]
+  secrets                         Secret[]
+  mcpServers                      McpServer[]
+  botSections                     BotSection[]
+  actionApprovalRules             ActionApprovalRule[]
+  actionAutoReviewPreferences     ActionAutoReviewPreference[]
+  modelRoleChoices                UserModelRoleChoice[]
+  modelPreferences                UserModelPreference[]
+  voicePreferences                UserVoicePreference[]
+  approvalRules                   UserActionApprovalRule[]
+  autoReviewPreference            UserActionAutoReviewPreference?
+  createdSpaces                   Space[]                         @relation("SpaceCreator")
+  spaceInvites                    SpaceInvite[]                   @relation("SpaceInviteCreator")
+  botSecrets                      BotSecret[]
+  vaultCredentials                VaultCredential[]
+  agentSecrets                    AgentSecret[]
+  createdTickets                  Ticket[]                        @relation("TicketCreatorUser")
+  ticketComments                  TicketComment[]                 @relation("TicketCommentAuthorUser")
+  pushRegistrations               PushRegistration[]
+  callPushDevices                 CallPushDevice[]
+  workActivityTokens              WorkActivityToken[]
+  workActivityStartTokens         WorkActivityStartToken[]
+  trustedLinkSites                TrustedLinkSite[]
+  feedbackReports                 FeedbackReport[]
+  emailSends                      EmailSend[]
+  botEmailSends                   BotEmailSend[]
+  signupSurvey                    SignupSurvey?
+  computerRuns                    ComputerRun[]
+  devices                         UserDevice[]
+  hubIdentity                     HubIdentity?
+  messagingInstallations          MessagingInstallation[]
+  messagingInstallSessions        MessagingInstallSession[]
 
   @@unique([email])
   @@map("user")
@@ -212,19 +216,21 @@ model HubSsoNative {
   @@map("hub_sso_native")
 }
 
-/// One current device registration per account, matching the notification API contract.
+/// One row per signed-in device; a device token belongs to one account at a time.
 /// No session FK: password changes delete a session before the replacement is created.
-model PushToken {
-  userId       String   @id
+model PushRegistration {
+  userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ciphertext   String
   tokenDigest  String   @unique
   sessionId    String
+  ciphertext   String
   /// "android_sender" when the installed Android build renders data-only sender pushes.
   presentation String?
   updatedAt    DateTime @updatedAt
 
-  @@map("push_tokens")
+  @@id([userId, tokenDigest])
+  @@index([sessionId])
+  @@map("push_registrations")
 }
 
 /// Encrypted call registrations per installation. Legacy message push remains compatible.
@@ -372,8 +378,8 @@ model Passkey {
   @@map("passkey")
 }
 
-// Directory provisioning (SCIM 2.0), owned by the auth library's SCIM plugin. Field names and
-// types must match the plugin's schema; the plugin reads and writes these tables directly.
+// Directory provisioning (SCIM 2.0), owned by the auth library's SCIM plugin, which reads and
+// writes these tables directly; a test in packages/auth compares them with its schema.
 
 model ScimConnectionBinding {
   id                              String    @id
@@ -600,6 +606,23 @@ model Referral {
 
   @@index([referrerOrganizationId])
   @@map("referrals")
+}
+
+/// A plan payment reported to the partner program, so each is reported, and refunded, once.
+/// Kept by billing customer, not organization: a refund after the account is deleted must still
+/// withdraw the commission.
+model PartnerSale {
+  invoiceId        String    @id
+  customerId       String
+  /// When the provider created the invoice, so a later refund check reads back far enough.
+  invoiceCreatedAt DateTime
+  createdAt        DateTime  @default(now())
+  /// When the sale was sent, set just before sending; cleared when the send failed so it is retried.
+  reportedAt       DateTime?
+  refundedAt       DateTime?
+
+  @@index([customerId])
+  @@map("partner_sales")
 }
 
 model AccessGrant {
@@ -847,9 +870,6 @@ model DeploymentSettings {
   id                              String   @id @default("default")
   /// Deprecated: retained for rolling-release compatibility; never authorizes app users.
   ownerUserId                     String?
-  signupsEnabled                  Boolean  @default(true)
-  signupAllowlist                 String   @default("")
-  signupPolicyInitialized         Boolean  @default(false)
   defaultModelProvider            String?
   defaultModelId                  String?
   deploymentModelCredentialCipher String?
@@ -1034,69 +1054,69 @@ model SpaceVoicePreference {
 }
 
 model Bot {
-  screenGeneration        Int               @default(0)
-  id                      String            @id @default(cuid())
+  screenGeneration        Int                  @default(0)
+  id                      String               @id @default(cuid())
   spaceId                 String
-  space                   Space             @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  space                   Space                @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   userId                  String
   name                    String
-  description             String            @default("")
-  instructions            String            @default("")
-  instructionHistory      Json              @default("[]")
+  description             String               @default("")
+  instructions            String               @default("")
+  instructionHistory      Json                 @default("[]")
   color                   String
-  avatarSet               String            @default("organic")
+  avatarSet               String               @default("organic")
   /// True once the owner picks this bot a set other than their default; the default no longer moves it.
-  avatarSetPinned   Boolean           @default(false)
-  notifyOnFinish    Boolean           @default(true)
-  pinned            Boolean           @default(false)
-  position          Int               @default(0)
-  sectionId         String?
-  section           BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
-  archivedAt        DateTime?
-  parentBotId       String?
-  spawnKey          String?
-  memoryScope       String?
-  parent            Bot?              @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
-  children          Bot[]             @relation("BotChildren")
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  thread            Thread?           @relation("BotThread")
-  helperThreads     Thread[]          @relation("BotHelperThreads")
-  computerId        String?
-  computer          Computer?         @relation(fields: [computerId], references: [id], onDelete: SetNull)
-  computerSwitching Boolean           @default(false)
-  voiceId           String?
-  autoSpeak         Boolean           @default(false)
-  modelProvider     String?
-  modelId           String?
-  thinkingLevel     String?
-  disabledBuiltinTools String[] @default([])
-  webhookSecretId   String?
-  teamChatAmbientEnabled Boolean @default(false)
-  teamChatRules          String  @default("")
-  crossSpaceCommunication Boolean @default(true)
-  dailyCheckIns Boolean @default(true)
-  fleetManagement        Boolean @default(true)
-  replyMode              String  @default("chat")
-  routines          Routine[]
-  scratchpadItems   ScratchpadItem[]
-  taughtSkills      TaughtSkill[]
-  memoryDocuments   MemoryDocument[]
-  agentHome         AgentHome?
-  browserProfile    BrowserProfile?
-  artifacts         Artifact[]
-  pages             Page[]
-  tasks             Task[]
-  runs              Run[]
-  steeringMessages  SteeringMessage[]
-  mcpServers        BotMcpServer[]
-  vaultCredentials  VaultCredentialBot[]
-  agentImports      AgentImport[]
-  groupMembers      ChatGroupMember[]
-  botSecrets BotSecret[]
-  assignedTickets   Ticket[]          @relation("TicketAssigneeBot")
-  createdTickets    Ticket[]          @relation("TicketCreatorBot")
-  ticketComments    TicketComment[]   @relation("TicketCommentAuthorBot")
+  avatarSetPinned         Boolean              @default(false)
+  notifyOnFinish          Boolean              @default(true)
+  pinned                  Boolean              @default(false)
+  position                Int                  @default(0)
+  sectionId               String?
+  section                 BotSection?          @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  archivedAt              DateTime?
+  parentBotId             String?
+  spawnKey                String?
+  memoryScope             String?
+  parent                  Bot?                 @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
+  children                Bot[]                @relation("BotChildren")
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  thread                  Thread?              @relation("BotThread")
+  helperThreads           Thread[]             @relation("BotHelperThreads")
+  computerId              String?
+  computer                Computer?            @relation(fields: [computerId], references: [id], onDelete: SetNull)
+  computerSwitching       Boolean              @default(false)
+  voiceId                 String?
+  autoSpeak               Boolean              @default(false)
+  modelProvider           String?
+  modelId                 String?
+  thinkingLevel           String?
+  disabledBuiltinTools    String[]             @default([])
+  webhookSecretId         String?
+  teamChatAmbientEnabled  Boolean              @default(false)
+  teamChatRules           String               @default("")
+  crossSpaceCommunication Boolean              @default(true)
+  dailyCheckIns           Boolean              @default(true)
+  fleetManagement         Boolean              @default(true)
+  replyMode               String               @default("chat")
+  routines                Routine[]
+  scratchpadItems         ScratchpadItem[]
+  taughtSkills            TaughtSkill[]
+  memoryDocuments         MemoryDocument[]
+  agentHome               AgentHome?
+  browserProfile          BrowserProfile?
+  artifacts               Artifact[]
+  pages                   Page[]
+  tasks                   Task[]
+  runs                    Run[]
+  steeringMessages        SteeringMessage[]
+  mcpServers              BotMcpServer[]
+  vaultCredentials        VaultCredentialBot[]
+  agentImports            AgentImport[]
+  groupMembers            ChatGroupMember[]
+  botSecrets              BotSecret[]
+  assignedTickets         Ticket[]             @relation("TicketAssigneeBot")
+  createdTickets          Ticket[]             @relation("TicketCreatorBot")
+  ticketComments          TicketComment[]      @relation("TicketCommentAuthorBot")
 
   externalConversations ExternalConversation[]
   emailAddress          BotEmailAddress?
@@ -1252,10 +1272,10 @@ model Message {
   runId                 String?
   clientNonce           String?
   /// Blind-index search tokens for the encrypted blocks; NULL until the row is encrypted.
-  searchTokens     Int[]
+  searchTokens          Int[]
   /// A bot reply's tool calls as sent and returned (JSON, see ToolHistorySchema), encrypted like
   /// the blocks. Only the bot's runs read it: message reads leave it out unless they select it.
-  toolHistory      String?
+  toolHistory           String?
   sourceRuns            Run[]             @relation("RunSourceMessage")
   externalTranscriptFor ExternalMessage?
   steeringMessages      SteeringMessage[]
@@ -1337,6 +1357,10 @@ model Run {
   leaseOwner           String?
   leaseFence           Int               @default(0)
   leaseExpiresAt       DateTime?
+  // Set when the current worker claims the computer; reset on a new attempt.
+  computerUseStartedAt DateTime?
+  // Original run for delegated work; authorization is recovered from its user message.
+  delegatedFromRunId   String?
   checkpoint           String?
   clientNonce          String?
   sourceMessageId      String?
@@ -1445,6 +1469,7 @@ model CloudAgent {
   generation           Int       @default(0)
   wakeGeneration       Int       @default(-1)
   version              Int       @default(0)
+  /// Kept only for the previous release, which claims the row instead of taking the agent's lease.
   leaseToken           String?
   leaseExpiresAt       DateTime?
   nextPollAt           DateTime? @default(now())
@@ -1663,15 +1688,15 @@ model BotEmailMessage {
 /// One email a bot sent, for the daily send limits. Kept apart from the bot and its Space, so
 /// deleting a bot or spreading bots over Spaces never resets what its owner has sent.
 model BotEmailSend {
-  id     String   @id @default(cuid())
-  userId String
-  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// No relation: a deleted bot's sends still count toward its owner's limit.
-  botId  String
-  sentAt DateTime @default(now())
+  botId          String
+  sentAt         DateTime @default(now())
   /// Envelope recipients reserved before delivery, including failed attempts. Legacy writers
   /// omit the count and are conservatively charged the maximum envelope size.
-  recipientCount Int @default(10)
+  recipientCount Int      @default(10)
 
   @@index([userId, sentAt])
   @@map("bot_email_sends")
@@ -1728,7 +1753,7 @@ model AgentImport {
   userId        String
   botId         String
   bot           Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
-  /// openclaw | hermes | document
+  /// openclaw | hermes | document | grok_bot
   source        String
   created       Json
   /// Idempotency: a retry with the same key and digest returns the same bot.
@@ -1741,7 +1766,7 @@ model AgentImport {
   @@map("agent_imports")
 }
 
-/// Claude Agent Skills: SKILL.md recipes shared across assistants (not per-bot).
+/// Skills: reusable how-to recipes shared across bots (not per-bot).
 /// Distinct from TaughtSkill (demo/record playbooks).
 model AgentSkill {
   id          String             @id @default(cuid())
@@ -1774,7 +1799,7 @@ model Connection {
   spaceId     String
   space       Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   userId      String
-  connectorId String   @default("composio")
+  connectorId String
   provider    String
   displayName String
   status      String
@@ -1891,64 +1916,61 @@ model ComputerUpdate {
 }
 
 model Computer {
-  screenGeneration        Int                      @default(0)
-  id                      String                   @id @default(cuid())
-  spaceId                 String
-  space                   Space                    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  userId                  String
-  scope                   String                   @default("team")
-  scopeKey                String                   @unique
-  homeKey                 String                   @unique
-  homeRevision            String                   @default("empty")
+  screenGeneration      Int                      @default(0)
+  id                    String                   @id @default(cuid())
+  spaceId               String
+  space                 Space                    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId                String
+  scope                 String                   @default("team")
+  scopeKey              String                   @unique
+  homeKey               String                   @unique
+  homeRevision          String                   @default("empty")
   /// When the sandbox was read for `homeRevision`; null when an older release saved it.
-  homeRevisionAt          DateTime?
+  homeRevisionAt        DateTime?
   /// When a damaged system last made CortexAI Agent Hub stop and start the computer by itself. Tried once
   /// until a later save shows the computer works again.
-  autoRecoveredAt         DateTime?
+  autoRecoveredAt       DateTime?
   /// The machine at `providerRef` came from a start whose restore never finished, so it holds no
   /// full copy of the saved home: nothing is saved from it, and the next start restores it.
-  restorePending          Boolean                  @default(false)
+  restorePending        Boolean                  @default(false)
   /// Object storage only: random id naming the home's objects, its data key (wrapped by the
   /// space key) and the revision stored there. Deleting the computer deletes the key.
-  homeStorageId           String?                  @unique
-  homeStorageKey          String?
-  homeStorageRevision     String?
-  kind                    String
-  providerRef             String?
-  state                   String                   @default("stopped")
-  controlHolder           String                   @default("none")
-  controlLeaseId          String?
-  controlLeaseExpiresAt   DateTime?
-  controlBotId            String?
+  homeStorageId         String?                  @unique
+  homeStorageKey        String?
+  homeStorageRevision   String?
+  kind                  String
+  providerRef           String?
+  state                 String                   @default("stopped")
+  controlHolder         String                   @default("none")
+  controlLeaseId        String?
+  controlLeaseExpiresAt DateTime?
+  controlBotId          String?
   /// The person holding user control. A Space's members share its computers, never a lease.
-  controlUserId           String?
-  controlFence            Int                      @default(0)
-  executionRunId          String?
-  executionBotId          String?
-  executionLeaseExpiresAt DateTime?
-  executionFence          Int                      @default(0)
-  screenUrl               String?
+  controlUserId         String?
+  controlFence          Int                      @default(0)
+  screenUrl             String?
   /// When the computer last started running; bounds how long it can stay up in one stretch.
-  runningSince            DateTime?
+  runningSince          DateTime?
   /// The home's disk as the computer last reported it; null where it was never measured.
-  diskUsedBytes           BigInt?
-  diskFreeBytes           BigInt?
+  diskUsedBytes         BigInt?
+  diskFreeBytes         BigInt?
   /// How full the disk was when the user hid its warning; the warning returns once it is fuller.
-  diskDismissedPercent    Int?
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  bots                    Bot[]
-  executionLeases         ComputerExecutionLease[]
-  maintenanceId           String?
-  updates                 ComputerUpdate[]
-  homeDeletionNotice      HomeDeletionNotice?
+  diskDismissedPercent  Int?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  bots                  Bot[]
+  executionLeases       ComputerExecutionLease[]
+  maintenanceId         String?
+  updates               ComputerUpdate[]
+  homeDeletionNotice    HomeDeletionNotice?
 
   @@index([spaceId, scope])
   @@map("computers")
 }
 
 /// Hosted billing only: a stopped computer whose saved home is due for deletion after its plan
-/// ended or it went unused. `claimId` leases the row to one process while it emails.
+/// ended or it went unused. `claimId` is kept only for the previous release, which claims the row
+/// while it emails instead of taking the organization's lease.
 model HomeDeletionNotice {
   computerId     String    @id
   computer       Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
@@ -1961,6 +1983,17 @@ model HomeDeletionNotice {
   createdAt      DateTime  @default(now())
 
   @@map("home_deletion_notices")
+}
+
+/// One holder at a time for long work across processes. `withLease` in packages/db/src/leases.ts
+/// is the only writer. A release deletes its row; `fence` comes from `leases_fence_seq`, so a key's
+/// next holder always outranks every earlier one.
+model Lease {
+  key       String   @id
+  fence     BigInt
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@map("leases")
 }
 
 /// One stretch a computer ran at its provider, from `computers.runningSince` until it stopped,
@@ -2303,6 +2336,9 @@ model MessagingIdentity {
   verifiedAt           DateTime?
   lastInboundAt        DateTime?
   outboundSinceInbound Int                    @default(0)
+  /// Provider handle of the reply that last released messages held behind the outbound cap.
+  /// A redelivery of that reply answers no request: it was sent before they went out.
+  capReleaseHandle     String?
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
@@ -2359,8 +2395,8 @@ model MessagingLinkCode {
 
 /// One outgoing chat message: the record of what was sent, in the order its conversation gets it.
 model MessagingOutbound {
-  id              String   @id @default(cuid())
-  idempotencyKey  String   @unique
+  id              String    @id @default(cuid())
+  idempotencyKey  String    @unique
   /// dm, group, intro, or team (a team-chat reply).
   kind            String
   /// DM rows resolve their thread through the identity when they are sent.
@@ -2369,14 +2405,14 @@ model MessagingOutbound {
   threadId        String?
   body            String
   /// pending, retry (its backup job retries it), sent or failed. Sent with no providerHandle: in flight.
-  status          String   @default("pending")
+  status          String    @default("pending")
   providerHandle  String?
   /// Set while this release's claim is in flight. A stale claim without it is the previous
   /// release's, which may well have gone out, so it is never sent again.
   claimedAt       DateTime?
   sourceMessageId String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([identityId, createdAt])
   @@index([threadId, createdAt])
@@ -2425,29 +2461,29 @@ model BotSecret {
 /// own rows instead, which no other Space can read. `name` is the handle bots use, `auth` says what
 /// kind of item it is and how it is used, and `ciphertext` holds every value, contacts included.
 model VaultCredential {
-  id         String   @id
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  spaceId    String?
-  space      Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  name       String
+  id             String                 @id
+  userId         String
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spaceId        String?
+  space          Space?                 @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  name           String
   /// What people call it; empty uses a default read from the item.
-  title      String   @default("")
+  title          String                 @default("")
   /// When the bot should use it, such as "For travel".
-  note       String   @default("")
-  origin     String
-  auth       Json
-  ciphertext String
-  policy     String   @default("allow")
+  note           String                 @default("")
+  origin         String
+  auth           Json
+  ciphertext     String
+  policy         String                 @default("allow")
   /// Spaces where only the owner's bots in `bots` may use it; none chosen means none may.
-  limits     VaultCredentialLimit[]
-  bots       VaultCredentialBot[]
+  limits         VaultCredentialLimit[]
+  bots           VaultCredentialBot[]
   /// More HTTPS origins a login fills on, set only by its owner.
-  alsoOn     String[] @default([])
+  alsoOn         String[]               @default([])
   /// When a run used up its tries of this login's authenticator codes; none are typed until a save.
   codesStoppedAt DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   @@index([spaceId])
   // Unique index vault_credentials_userId_spaceId_name_key (NULLS NOT DISTINCT) is created in SQL.
@@ -2529,13 +2565,13 @@ model ExternalMessage {
   engagementReason       String?
   judgedAt               DateTime?
   /// received, observed, deferred, running, delivered (its reply is recorded) or ignored.
-  status                 String                @default("received")
-  runId                  String?               @unique
-  run                    Run?                  @relation(fields: [runId], references: [id], onDelete: SetNull)
-  threadMessageId        String?               @unique
-  threadMessage          Message?              @relation(fields: [threadMessageId], references: [id], onDelete: SetNull)
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
+  status                 String               @default("received")
+  runId                  String?              @unique
+  run                    Run?                 @relation(fields: [runId], references: [id], onDelete: SetNull)
+  threadMessageId        String?              @unique
+  threadMessage          Message?             @relation(fields: [threadMessageId], references: [id], onDelete: SetNull)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
 
   @@unique([externalConversationId, providerEventId])
   @@index([externalConversationId, status, createdAt])
@@ -2639,6 +2675,10 @@ model ModelCreditAccount {
   balanceMicros         BigInt             @default(0)
   pendingCreditCheckout Boolean            @default(false)
   byokFreeUntil         DateTime?
+  /// Numbers each provider read of purchases in the order it started.
+  purchaseReadsStarted  BigInt             @default(0)
+  /// The newest read that applied every purchase it saw; older reads are skipped.
+  purchaseReadApplied   BigInt             @default(0)
   entries               ModelCreditEntry[]
   lots                  ModelCreditLot[]
   createdAt             DateTime           @default(now())
@@ -2654,6 +2694,10 @@ model ModelCreditEntry {
   account                ModelCreditAccount @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   source                 String             @unique
   amountMicros           BigInt
+  /// A purchase's paid credits an open dispute holds back; `amountMicros` excludes them.
+  disputedMicros         BigInt             @default(0)
+  /// The provider read that last changed this purchase; older reads are skipped.
+  purchaseRead           BigInt             @default(0)
   pending                Boolean            @default(false)
   callId                 String?            @unique
   userId                 String?

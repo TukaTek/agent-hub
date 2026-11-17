@@ -7,7 +7,7 @@ import {
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
 import { describe, expect, it } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { builtinAgentTools } from "./builtin.tool-definition.js";
 import { lazyCatalogTools, parseConnectorToolArgs } from "./lazy-tool-catalog.js";
 import {
   jsonSchemaParameters,

@@ -1,8 +1,9 @@
-import type { JobPublisher, MessagingSurface, SecretStore } from "@cortexai-agent-hub/adapter-kit";
+import type { MessagingSurface, SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { InstalledMessagingSurface } from "./installed-messaging-surface.js";
 import { MessagingInstallations } from "./messaging-installations.js";
-import { SlackInstallProvider } from "./slack-install-provider.js";
+import { SlackInstallProvider } from "./providers/messaging/slack/slack-install-provider.js";
+import type { SecretCleanupDeps } from "./secret-cleanup.js";
 
 export function installedMessaging(
   prisma: PrismaClient,
@@ -13,8 +14,8 @@ export function installedMessaging(
     slackSigningSecret?: string;
     apiUrl?: string;
   },
-  fallback?: MessagingSurface,
-  cleanupJobs?: Pick<JobPublisher, "enqueue">,
+  fallback: MessagingSurface | undefined,
+  cleanupJobs: SecretCleanupDeps["jobs"],
 ): { messaging: MessagingSurface | undefined; installations: MessagingInstallations | undefined } {
   if (
     (config.slackClientId || config.slackClientSecret) &&

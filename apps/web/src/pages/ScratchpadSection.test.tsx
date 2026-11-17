@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ScratchpadItem } from "@cortexai-agent-hub/contracts";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
@@ -36,12 +37,13 @@ vi.mock("@cortexai-agent-hub/ui-web", () => ({
     size?: string;
   }) => <button type="button" {...props} />,
   Checkbox: ({
-    onCheckedChange: _onCheckedChange,
-    checked: _checked,
+    onCheckedChange,
+    checked,
     ...props
-  }: ComponentProps<"input"> & { onCheckedChange?: unknown }) => (
-    <input type="checkbox" {...props} />
-  ),
+  }: Omit<ComponentProps<"input">, "checked"> & {
+    checked?: boolean;
+    onCheckedChange?: (checked: boolean) => void;
+  }) => <input type="checkbox" {...props} onClick={() => onCheckedChange?.(!checked)} />,
   Input: (props: ComponentProps<"input">) => <input {...props} />,
   SectionHeading: ({
     variant: _variant,
@@ -225,13 +227,13 @@ it("reopens on the cached list and refreshes it in the background", async () => 
   await mount();
   await act(async () => root.unmount());
 
-  let resolveRead: (items: ScratchpadItem[]) => void = () => undefined;
-  api.list.mockImplementationOnce(() => new Promise((resolve) => (resolveRead = resolve)));
+  const resolveRead = deferred<ScratchpadItem[]>();
+  api.list.mockImplementationOnce(() => resolveRead.promise);
   root = createRoot(container);
   await mount();
   expect(container.textContent).toContain("Cached task");
   expect(api.list).toHaveBeenCalledTimes(2);
-  await act(async () => resolveRead([workItem("b", "Fresh task")]));
+  await act(async () => resolveRead.resolve([workItem("b", "Fresh task")]));
   await vi.waitFor(() => expect(container.textContent).toContain("Fresh task"));
   expect(container.textContent).not.toContain("Cached task");
 });
@@ -243,9 +245,9 @@ it("keeps an added item when an older background read lands after it", async () 
   await mount();
   await act(async () => root.unmount());
 
-  let resolveOlderRead: (items: ScratchpadItem[]) => void = () => undefined;
+  const resolveOlderRead = deferred<ScratchpadItem[]>();
   api.list
-    .mockImplementationOnce(() => new Promise((resolve) => (resolveOlderRead = resolve)))
+    .mockImplementationOnce(() => resolveOlderRead.promise)
     .mockResolvedValueOnce([added, existing]);
   api.create.mockResolvedValue(added);
   root = createRoot(container);
@@ -265,8 +267,47 @@ it("keeps an added item when an older background read lands after it", async () 
   await flush();
   expect(container.textContent).toContain("Added task");
   await act(async () => {
-    resolveOlderRead([existing]);
+    resolveOlderRead.resolve([existing]);
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect(container.textContent).toContain("Added task");
+});
+
+it.each(["remove", "complete"])("keeps the draft after the last item is %s", async (action) => {
+  const existing = workItem("a", "Existing task");
+  const added = workItem("b", "New draft");
+  api.list
+    .mockResolvedValueOnce([existing])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([added]);
+  api.remove.mockResolvedValue({ ok: true });
+  api.update.mockResolvedValue({ ...existing, status: "done" });
+  api.create.mockResolvedValue(added);
+  await mount();
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Add open work"]')!.click(),
+  );
+  const input = container.querySelector<HTMLInputElement>('[aria-label="New open-work item"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      input,
+      added.title,
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>(
+        action === "remove" ? '[aria-label="Remove"]' : '[aria-label="Complete"]',
+      )!
+      .click(),
+  );
+  await flush();
+  expect(
+    container.querySelector<HTMLInputElement>('[aria-label="New open-work item"]')?.value,
+  ).toBe(added.title);
+  await act(async () => input.form!.requestSubmit());
+  await flush();
+  expect(api.create).toHaveBeenCalledWith({ botId: "bot-fixture", title: added.title });
+  expect(container.textContent).toContain(added.title);
 });

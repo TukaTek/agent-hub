@@ -1,4 +1,5 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
+import { isToolActivityBlock } from "./tool-activity.js";
 
 /** A fenced block becomes a mention of itself, with its language if known. */
 function describeCodeBlock(fence: string): string {
@@ -29,12 +30,73 @@ function describeCodeBlock(fence: string): string {
   return name ? `. (a ${name} code block) ` : ". (a code block) ";
 }
 
+const PATH_LIKE = /[\w.@/-]+/g;
+const FILE_PATH = /(?:[\w.@-]+\/)+([\w.-]+\.\w{1,6})\b/g;
+/** Short enough that FILE_PATH's backtracking stays cheap; a longer run keeps only a trailing file name. */
+const MAX_PATH_LENGTH = 512;
+
+const FILE_NAME = /^[\w.-]+\.\w{1,6}$/;
+
 /** `a/b/c/file.ts` → `file.ts`. A path's directories are for the eye. */
 function shortenPaths(text: string): string {
-  return text.replace(/(?:[\w.@-]+\/){1,}([\w.-]+\.\w{1,6})\b/g, "$1");
+  return text.replace(PATH_LIKE, (run) => {
+    if (run.length <= MAX_PATH_LENGTH) return run.replace(FILE_PATH, "$1");
+    const name = run.slice(run.lastIndexOf("/") + 1);
+    return name !== run && FILE_NAME.test(name) ? name : run;
+  });
 }
 
 const ENDS_SENTENCE = /[.!?:;]\s*$/;
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+const SPACE = /\s/u;
+const LINE_END = /[\n\r\u2028\u2029]/;
+
+/**
+ * `*word*` and `_word_` → `word`, leaving `snake_case` and `2*3` alone.
+ *
+ * A marker opens when it follows no letter or digit and precedes a non-space;
+ * it closes at the nearest same marker on that line that follows a non-space
+ * and precedes no letter or digit. A regex with those lookarounds rescans the
+ * rest of the line for every unclosed opener, so this precomputes the nearest
+ * closer instead and stays linear in the input.
+ */
+function stripSingleEmphasis(text: string): string {
+  const chars = Array.from(text);
+  const n = chars.length;
+  const isWordChar = (k: number) => k >= 0 && k < n && WORD_CHAR.test(chars[k] ?? "");
+  const nextCloser: Record<string, Int32Array> = {
+    "*": new Int32Array(n + 1).fill(-1),
+    _: new Int32Array(n + 1).fill(-1),
+  };
+  for (let k = n - 1; k >= 0; k--) {
+    const char = chars[k] ?? "";
+    for (const [marker, next] of Object.entries(nextCloser)) {
+      if (LINE_END.test(char)) next[k] = -1;
+      else if (char === marker && k > 0 && !SPACE.test(chars[k - 1] ?? " ") && !isWordChar(k + 1))
+        next[k] = k;
+      else next[k] = next[k + 1] ?? -1;
+    }
+  }
+
+  let out = "";
+  let i = 0;
+  while (i < n) {
+    const char = chars[i] ?? "";
+    const next = nextCloser[char];
+    if (next && !isWordChar(i - 1) && i + 1 < n && !SPACE.test(chars[i + 1] ?? " ")) {
+      const close = next[i + 1] ?? -1;
+      if (close !== -1) {
+        out += chars.slice(i + 1, close).join("");
+        i = close + 1;
+        continue;
+      }
+    }
+    out += char;
+    i++;
+  }
+  return out;
+}
 
 /**
  * Markdown (or any agent output) → a line a voice can read.
@@ -83,7 +145,7 @@ export function speakable(input: string): string {
   text = text.replace(/^\s*>\s?/gm, "");
 
   text = text.replace(/(\*\*|__)(.*?)\1/g, "$2");
-  text = text.replace(/(?<![\p{L}\p{N}])(\*|_)(?=\S)(.*?)(?<=\S)\1(?![\p{L}\p{N}])/gu, "$2");
+  text = stripSingleEmphasis(text);
   text = text.replace(/~~(.*?)~~/g, "$1");
 
   text = text.replace(/\[[ xX]\]\s*/g, "");
@@ -232,9 +294,11 @@ export function narrateTool(toolName: string): string | null {
   return /^[\w .:/-]+$/.test(short) ? `running ${short}` : null;
 }
 
+/** What a voice reads from a message: the bot's own words, never its tool activity. */
 export function speechFromBlocks(blocks: MessageBlock[]): string {
   return blocks
     .map((block) => {
+      if (isToolActivityBlock(block)) return "";
       if (block.kind === "text" || block.kind === "progress" || block.kind === "meta")
         return block.text;
       if (block.kind === "ask") return block.text;

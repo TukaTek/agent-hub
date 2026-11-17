@@ -3,12 +3,12 @@ import { isBackgroundRunTrigger, redactSecrets } from "@cortexai-agent-hub/core"
 import { normalizedHttpUrl } from "@cortexai-agent-hub/core/egress";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import { executeCloudAgentTool } from "./cloud-agent-service.js";
-import { collectLogIds } from "./composio-connector.js";
 import { connectApp } from "./connect-app.js";
 import { redactConnectorPayload, sanitizeConnectorError } from "./connector-safety.js";
 import { mcpAppViewArguments, mcpAppViewResult } from "./mcp-app.js";
 import { addMcpServerFromTool } from "./mcp-server-tool.js";
 import { serviceCallFromTool, serviceSearchFromTool } from "./paid-service-tools.js";
+import { collectLogIds } from "./providers/integration/composio/composio-connector.js";
 import type { RunContext } from "./run-context.js";
 import { runScopedToolExecutionId } from "./run-effects.js";
 import { publishMessage } from "./run-messages.js";

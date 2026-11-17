@@ -2,8 +2,7 @@
 # Drop this file and .env into any directory, then:
 #   docker compose --env-file .env -f docker-compose.images.yml up -d
 #
-# Tag contract matches docs/self-host-upgrading.md (edge from main; release tags when published).
-# Default is edge because that tag is published on every main build (linux/amd64 + linux/arm64).
+# Defaults follow stable releases only; no fallback to main or prerelease builds.
 # Pin a published vX.Y.Z tag for a fixed version; `latest` moves to each new stable release.
 # Default SANDBOX_PROVIDER=docker boots a local computer via the in-stack supervisor (no E2B key).
 # Optional: set e2b / daytona / boat plus the matching API key for remote computers.
@@ -28,8 +27,9 @@ x-app-environment: &app-environment # Runtime
   AWS_KMS_SECRET_ACCESS_KEY:
   # on encrypts new content at rest; off stores it readable (docs/self-host-storage.md#content-encryption).
   CONTENT_ENCRYPTION: ${CONTENT_ENCRYPTION:-on}
-  # Optional: keep computer homes and artifacts in S3-compatible storage (docs/self-host-storage.md#shared-storage-migration).
+  # Optional: keep computer homes and artifacts in S3-compatible or Azure Blob storage (docs/self-host-storage.md#shared-storage-migration).
   OBJECT_STORAGE_BUCKET:
+  OBJECT_STORAGE_PROTOCOL:
   OBJECT_STORAGE_ENDPOINT:
   OBJECT_STORAGE_REGION:
   OBJECT_STORAGE_ACCESS_KEY_ID:
@@ -89,6 +89,7 @@ x-app-environment: &app-environment # Runtime
   LOG_LEVEL:
   SECURITY_EVENT_RETENTION_DAYS:
   AUDIT_EVENT_RETENTION_DAYS:
+  CHAT_HISTORY_RETENTION_DAYS:
   AUDIT_LOG_WEBHOOK_URL:
   AUDIT_LOG_WEBHOOK_AUTHORIZATION:
   LOG_FORMAT:
@@ -220,6 +221,7 @@ x-app-environment: &app-environment # Runtime
   SANDBOX_COMMAND_TIMEOUT_MS:
   SANDBOX_IDLE_MS:
   SANDBOX_MAX_COMPUTERS_PER_USER:
+  COMPUTER_DEFAULT_MODE:
   COMPUTER_MAX_ACTIVE_MS:
   COMPUTER_MAX_ACTIVE_UNBILLED_MS:
   BROWSER_PROVIDER:
@@ -239,6 +241,7 @@ x-app-environment: &app-environment # Runtime
   RAILWAY_ENVIRONMENT_ID:
   RAILWAY_SANDBOX_REGION:
   RAILWAY_MAX_WORKSPACE_FILE_BYTES:
+  CORTEXAI_AGENT_HUB_COMPUTER_PROXY:
   WUYING_ACCESS_KEY_ID:
   WUYING_ACCESS_KEY_SECRET:
   WUYING_DESKTOP_ID:
@@ -348,7 +351,9 @@ services:
 
   # Pull-only stub so `compose up` fetches the published desktop image without a checkout.
   computer:
-    image: ${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE:-ghcr.io/tukatek/agent-hub/computer}:${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG:-edge}
+    image: ${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE:-ghcr.io/tukatek/agent-hub/computer}:${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG:-latest}
+    # Keep locally cached rollback images; latest still refreshes when explicitly pulled.
+    pull_policy: missing
     command: ["true"]
     network_mode: none
     restart: "no"
@@ -384,7 +389,7 @@ services:
   # Runs from the app image. Not published as its own image and not exposed on the host:
   # access to the supervisor is equivalent to control of the Docker host.
   supervisor:
-    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-edge}
+    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["pnpm", "--filter", "@cortexai-agent-hub/sandbox-supervisor", "start"]
     init: true
@@ -400,7 +405,7 @@ services:
       SUPERVISOR_HOST: "0.0.0.0"
       SUPERVISOR_PORT: "7091"
       DOCKER_SOCKET: /var/run/docker.sock
-      CORTEXAI_AGENT_HUB_COMPUTER_IMAGE: ${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE:-ghcr.io/tukatek/agent-hub/computer}:${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG:-edge}
+      CORTEXAI_AGENT_HUB_COMPUTER_IMAGE: ${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE:-ghcr.io/tukatek/agent-hub/computer}:${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG:-latest}
       CORTEXAI_AGENT_HUB_COMPUTER_MEMORY: ${CORTEXAI_AGENT_HUB_COMPUTER_MEMORY:-2g}
       CORTEXAI_AGENT_HUB_COMPUTER_CPUS: ${CORTEXAI_AGENT_HUB_COMPUTER_CPUS:-2}
       CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT: ${CORTEXAI_AGENT_HUB_COMPUTER_PIDS_LIMIT:-2048}
@@ -410,6 +415,7 @@ services:
       SANDBOX_COMPUTER_EGRESS: ${SANDBOX_COMPUTER_EGRESS:-auto}
       SANDBOX_COMPUTER_DNS: ${SANDBOX_COMPUTER_DNS:-}
       SANDBOX_COMPUTER_MOUNTS: ${SANDBOX_COMPUTER_MOUNTS:-}
+      SANDBOX_COMPUTER_COMPUTE_GPUS: ${SANDBOX_COMPUTER_COMPUTE_GPUS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-}
       AXIOM_TOKEN: ${AXIOM_TOKEN:-}
@@ -443,7 +449,7 @@ services:
   # container gets the owner login: the API and worker connect as cortexai_agent_hub_app, which row-level
   # security binds, so code running in either cannot find a login that bypasses it.
   migrate:
-    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-edge}
+    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest}
     working_dir: /app/apps/api
     command: ["pnpm", "db:deploy"]
     restart: "no"
@@ -463,7 +469,7 @@ services:
         condition: service_healthy
 
   api:
-    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-edge}
+    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest}
     restart: unless-stopped
     # Node runs directly, not through pnpm: pnpm does not pass SIGTERM on, so a stop would kill the
     # process before its graceful shutdown finishes in-flight requests and jobs.
@@ -502,6 +508,13 @@ services:
       OIDC_NAME: ${OIDC_NAME:-SSO}
       OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
       OIDC_ALLOW_SIGNUP_BYPASS: ${OIDC_ALLOW_SIGNUP_BYPASS:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
+      APPLE_PRIVATE_KEY_FILE: ${APPLE_PRIVATE_KEY_FILE:-}
       SCIM_BEARER_TOKEN: ${SCIM_BEARER_TOKEN:-}
       SIGNUPS_ENABLED:
       SIGNUP_ALLOWLIST:
@@ -512,6 +525,7 @@ services:
       PRIVACY_POLICY_URL:
       INBOUND_EMAIL_SECRET:
       WELCOME_EMAIL_ENABLED:
+      EXPERIMENTS:
       EMAIL_PROVIDER:
       EMAIL_API_KEY:
       SMTP_URL:
@@ -520,6 +534,7 @@ services:
       STRIPE_SECRET_KEY:
       STRIPE_WEBHOOK_SECRET:
       STRIPE_PRICE_ID:
+      DUB_API_KEY:
       CRISP_WEBSITE_ID:
       INTEGRATIONS_CATALOG_URL:
       TEAM_CHAT_BOT_ID:
@@ -556,7 +571,7 @@ services:
       retries: 20
 
   worker:
-    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-edge}
+    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest}
     restart: unless-stopped
     # Directly, not through pnpm, so a stop reaches it (see the api command).
     working_dir: /app/apps/worker
@@ -584,6 +599,7 @@ services:
     environment:
       <<: *app-environment
       GRAPHILE_WORKER_CONCURRENCY:
+      RUN_DRAIN_ENABLED:
     volumes:
       - appdata:/data
     networks:
@@ -600,7 +616,7 @@ services:
         condition: service_healthy
 
   web:
-    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-edge}
+    image: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}:${CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest}
     restart: unless-stopped
     # Directly, not through pnpm, so a stop reaches it (see the api command).
     working_dir: /app/apps/web
@@ -626,7 +642,7 @@ services:
       # Set only by the packaged desktop app. Its authenticated probe prevents a
       # source dev server on the same host port from impersonating this stack.
       CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN: ${CORTEXAI_AGENT_HUB_DESKTOP_STACK_TOKEN:-}
-      CORTEXAI_AGENT_HUB_IMAGE_TAG: ${CORTEXAI_AGENT_HUB_IMAGE_TAG:-edge}
+      CORTEXAI_AGENT_HUB_IMAGE_TAG: ${CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest}
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET in .env}
       CORTEXAI_AGENT_HUB_CSP_SCRIPT_SRC: ${CORTEXAI_AGENT_HUB_CSP_SCRIPT_SRC:-}
       CORTEXAI_AGENT_HUB_CSP_CONNECT_SRC: ${CORTEXAI_AGENT_HUB_CSP_CONNECT_SRC:-}
@@ -640,12 +656,56 @@ services:
       api:
         condition: service_healthy
 
+  # Opt-in only: this process has root-equivalent Docker access, never a published port.
+  updater:
+    profiles: [updater]
+    image: ${CORTEXAI_AGENT_HUB_UPDATER_IMAGE:-ghcr.io/tukatek/agent-hub/updater}:${CORTEXAI_AGENT_HUB_UPDATER_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # Allow a 10-minute pull, 90-minute recreate and 90-minute recovery, plus checks.
+    stop_grace_period: 4h
+    init: true
+    user: root
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    environment:
+      NODE_ENV: production
+      CORTEXAI_AGENT_HUB_UPDATER_TOKEN: ${CORTEXAI_AGENT_HUB_UPDATER_TOKEN:-}
+      CORTEXAI_AGENT_HUB_UPDATER_HOST: "0.0.0.0"
+      CORTEXAI_AGENT_HUB_UPDATER_PORT: "7092"
+      CORTEXAI_AGENT_HUB_IMAGE: ${CORTEXAI_AGENT_HUB_IMAGE:-ghcr.io/tukatek/agent-hub/app}
+      CORTEXAI_AGENT_HUB_COMPUTER_IMAGE: ${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE:-ghcr.io/tukatek/agent-hub/computer}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cortexai-agent-hub}
+      CORTEXAI_AGENT_HUB_DEPLOY_DIR: ${CORTEXAI_AGENT_HUB_DEPLOY_DIR:-/srv/cortexai-agent-hub}
+      CORTEXAI_AGENT_HUB_COMPOSE_FILE: ${CORTEXAI_AGENT_HUB_COMPOSE_FILE:-docker-compose.images.yml}
+      CORTEXAI_AGENT_HUB_UPDATE_SERVICES: ${CORTEXAI_AGENT_HUB_UPDATE_SERVICES:-supervisor,computer}
+      COMPOSE_PATH_SEPARATOR: ${COMPOSE_PATH_SEPARATOR:-}
+      # Starting the updater does not enable scheduling. Set 6 to check every six hours.
+      CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS: ${CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${CORTEXAI_AGENT_HUB_DEPLOY_DIR:-/srv/cortexai-agent-hub}:${CORTEXAI_AGENT_HUB_DEPLOY_DIR:-/srv/cortexai-agent-hub}
+    networks:
+      - control
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:7092/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:
   appdata:
   webassets:
 
 networks:
+  control:
   app:
   data:
     internal: true

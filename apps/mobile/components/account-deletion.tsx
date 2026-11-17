@@ -1,4 +1,5 @@
 import type { AccountSecurity } from "@cortexai-agent-hub/contracts";
+import { identityConfirmationProviders } from "@cortexai-agent-hub/contracts";
 import { useLingui } from "@lingui/react/macro";
 import { useState } from "react";
 import {
@@ -171,17 +172,18 @@ export function useAccountDeletion({
           </Text>
           {!security?.hasPassword ? (
             <>
-              {security?.sso ? (
+              {(security ? identityConfirmationProviders(security) : []).map((provider) => (
                 <NativeActionButton
+                  key={provider.id}
                   label={t`Sign in again`}
                   disabled={pending}
                   onPress={() =>
                     void run(async () => {
-                      setSsoReauthenticated(await continueWithSso("reauthenticate"));
+                      setSsoReauthenticated(await continueWithSso("reauthenticate", provider.id));
                     })
                   }
                 />
-              ) : null}
+              ))}
               {security?.emailDeletion ? (
                 <NativeActionButton
                   label={t`Send deletion code`}

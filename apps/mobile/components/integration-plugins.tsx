@@ -1,11 +1,11 @@
 import type { ConnectionCatalogItem, PluginMarketplaceEntry } from "@cortexai-agent-hub/contracts";
-import { OTHER_PLUGINS } from "@cortexai-agent-hub/core";
+import { OTHER_PLUGINS, pluginSite } from "@cortexai-agent-hub/core";
 import { useLingui } from "@lingui/react/macro";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { native, useThemedStyles } from "../lib/native";
 import type { PluginParams } from "../lib/plugin-marketplace";
-import { pluginParams, pluginSite } from "../lib/plugin-marketplace";
+import { pluginParams } from "../lib/plugin-marketplace";
 import { createIntegrationsStyles, LOGO_SIZE } from "./integrations-styles";
 import { NativeActionButton } from "./native-action-button";
 import { PluginIcon } from "./plugin-icon";

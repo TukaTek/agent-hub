@@ -11,7 +11,7 @@ import {
   mcpServerNeedsSignIn,
   PluginPreviewSchema,
 } from "@cortexai-agent-hub/contracts";
-import { installedPluginParts } from "@cortexai-agent-hub/core";
+import { installedPluginParts, pluginSite } from "@cortexai-agent-hub/core";
 import { Button, Spinner } from "@cortexai-agent-hub/ui-web";
 import { Plural, Trans, useLingui } from "@lingui/react/macro";
 import { ArrowUpRight, Check, ChevronLeft, FileText, Plug } from "lucide-react";
@@ -43,19 +43,6 @@ export function pluginSelection(entry: PluginMarketplaceEntry): PluginSelection 
   };
 }
 
-/** GitHub homepages would give every plugin the same mark, so they never stand in for a site. */
-function pluginSite(entry: Pick<PluginMarketplaceEntry, "homepage" | "domains">): string | null {
-  const domain = entry.domains[0]?.replace(/^https?:\/\//, "");
-  if (domain) return `https://${domain}`;
-  try {
-    return entry.homepage && !new URL(entry.homepage).hostname.endsWith("github.com")
-      ? entry.homepage
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export function PluginLogo({
   name,
   logo,
@@ -85,7 +72,7 @@ export function PluginLogo({
     <div
       className={`${box} grid shrink-0 place-items-center border border-border/60 bg-favicon-plate font-semibold text-foreground`}
     >
-      {name[0]?.toUpperCase()}
+      {Array.from(name)[0]?.toUpperCase()}
     </div>
   );
 }

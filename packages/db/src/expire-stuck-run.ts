@@ -1,6 +1,6 @@
 import type { RealtimeFanout } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import type { StuckWorkStatus } from "@cortexai-agent-hub/core";
+import type { ExpirableWaitStatus } from "@cortexai-agent-hub/core";
 import {
   ACTIVE_RUN_STATUSES,
   stuckWorkExpiredNonce,
@@ -16,13 +16,14 @@ import {
 } from "./events.js";
 import { createThreadMessageInTransaction } from "./messages.js";
 import { clearEndedRunState } from "./run-secrets.js";
+import { publishSpaceChange } from "./space-changes.js";
 import { createPendingSteeringRun, discardAnsweredSteering } from "./thread-steering.js";
 import { withTransactionRetry } from "./transaction-retry.js";
 
 export interface ExpireStuckRunInput {
   runId: string;
   threadId: string;
-  status: StuckWorkStatus;
+  status: ExpirableWaitStatus;
   /** Episode clock. A newer claim or answer changes updatedAt and must win. */
   updatedAt: Date;
   now: Date;
@@ -128,14 +129,6 @@ export async function expireStuckRun(
     where: { runId: input.runId, ...transientRunEventsWhere() },
   });
   await expireComputerExecutionLeases(tx, { runId: input.runId });
-  await tx.computer.updateMany({
-    where: { executionRunId: input.runId },
-    data: {
-      executionRunId: null,
-      executionBotId: null,
-      executionLeaseExpiresAt: null,
-    },
-  });
   await discardAnsweredSteering(tx, { threadId: run.threadId, runId: input.runId });
   await tx.steeringMessage.updateMany({
     where: { runId: input.runId },
@@ -161,7 +154,7 @@ export async function endTakeoverWaits(
 ): Promise<number> {
   const waits = await prisma.run.findMany({
     where: { id: { in: runIds }, status: "waiting_takeover" },
-    select: { id: true, threadId: true, updatedAt: true },
+    select: { id: true, spaceId: true, threadId: true, updatedAt: true },
   });
   let ended = 0;
   for (const wait of waits) {
@@ -181,6 +174,7 @@ export async function endTakeoverWaits(
     if (!expired) continue;
     ended += 1;
     await notifyRealtime(realtime, wait.threadId, expired.seq);
+    await publishSpaceChange(realtime, wait.spaceId, "runs");
   }
   return ended;
 }

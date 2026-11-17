@@ -1,3 +1,4 @@
+import { useTimeout } from "@cortexai-agent-hub/chat-ui/hooks";
 import type { DesktopUpdateState } from "@cortexai-agent-hub/contracts";
 import { Button, SectionHeading, toast } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
@@ -15,36 +16,33 @@ function useDesktopUpdates() {
   const pending = useRef(false);
   const revision = useRef(0);
 
-  useEffect(() => {
+  // Each finished read schedules the next one, two seconds on.
+  const [nextRefresh, setNextRefresh] = useState<object | null>(null);
+  async function refresh() {
     if (!bridge) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      const started = revision.current;
-      try {
-        const next = await bridge!.state();
-        if (!stopped && started === revision.current && !pending.current) {
-          setState((current) =>
-            current &&
-            Object.entries(next).every(
-              ([key, value]) => current[key as keyof DesktopUpdateState] === value,
-            )
-              ? current
-              : next,
-          );
-        }
-      } catch {
-        // A disappearing bridge during shutdown should not interrupt the app.
-      } finally {
-        if (!stopped) timer = setTimeout(refresh, 2_000);
+    const started = revision.current;
+    try {
+      const next = await bridge.state();
+      if (started === revision.current && !pending.current) {
+        setState((current) =>
+          current &&
+          Object.entries(next).every(
+            ([key, value]) => current[key as keyof DesktopUpdateState] === value,
+          )
+            ? current
+            : next,
+        );
       }
+    } catch {
+      // A disappearing bridge during shutdown should not interrupt the app.
+    } finally {
+      setNextRefresh({});
     }
+  }
+  useEffect(() => {
     void refresh();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
   }, [bridge]);
+  useTimeout(() => void refresh(), bridge && nextRefresh ? 2_000 : null, nextRefresh);
 
   async function act(action: "check" | "install") {
     if (!bridge || pending.current) return;

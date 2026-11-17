@@ -1,4 +1,6 @@
 import type { RealtimeFanout } from "@cortexai-agent-hub/adapter-kit";
+import { DATABASE_KEEPALIVE } from "@cortexai-agent-hub/db";
+import { bestEffort } from "@cortexai-agent-hub/logging";
 import type { Notification } from "pg";
 import { Client } from "pg";
 
@@ -48,6 +50,8 @@ export class PostgresRealtimeFanout implements RealtimeFanout {
           connectionString: options.connectionString,
           application_name: "cortexai-agent-hub-realtime",
           connectionTimeoutMillis: 5_000,
+          // An idle listener never writes, so without probes a failover leaves it deaf.
+          ...DATABASE_KEEPALIVE,
         }) as RealtimeListenerClient);
     this.reconnectBaseMs = options.reconnectBaseMs ?? 250;
     this.reconnectMaxMs = options.reconnectMaxMs ?? 10_000;
@@ -192,7 +196,7 @@ export class PostgresRealtimeFanout implements RealtimeFanout {
 
   private async disposeClient(client: RealtimeListenerClient): Promise<void> {
     client.removeAllListeners();
-    await client.end().catch(() => undefined);
+    await bestEffort("close realtime listener connection", client.end());
   }
 }
 

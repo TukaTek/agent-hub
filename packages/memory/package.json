@@ -19,6 +19,7 @@
     "@cortexai-agent-hub/db": "workspace:*"
   },
   "devDependencies": {
+    "@cortexai-agent-hub/core": "workspace:*",
     "typescript": "7.0.2",
     "vitest": "5.1.0"
   }

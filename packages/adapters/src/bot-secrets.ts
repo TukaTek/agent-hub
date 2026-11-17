@@ -15,6 +15,7 @@ import type {
   VaultPreview,
 } from "@cortexai-agent-hub/contracts";
 import {
+  AUTHENTICATOR_KEY_UNREADABLE,
   authenticatorKey,
   BLOCKED_ITEM_ANSWER,
   BotSecretAuth,
@@ -50,9 +51,10 @@ import {
 } from "@cortexai-agent-hub/contracts";
 import {
   attachmentExtensionForMimeType,
+  ClientError,
   inferAttachmentMimeType,
-  resolveEncryptionKey,
 } from "@cortexai-agent-hub/core";
+import { resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import {
   ContentDecryptionError,
@@ -63,6 +65,7 @@ import {
   runCodeSpentKind,
   runLoginKind,
   settingsTarget,
+  TransactionConflictError,
   withTransactionRetry,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -112,6 +115,54 @@ async function lockVault(tx: Pick<Prisma.TransactionClient, "$queryRaw">, scope:
 export const SPACE_VAULT_NOT_IN_USE = "This Space uses the account vault";
 export const VAULT_CHANGED = "Vault changed while saving; retry";
 
+/** A vault item refused for what was given, so the person can change it. Never quotes the value. */
+export class VaultItemRefusedError extends ClientError {
+  constructor(message: string) {
+    super("BAD_REQUEST", message);
+    this.name = "VaultItemRefusedError";
+  }
+}
+
+/** The vault already holds as many items as it may. */
+export class VaultFullError extends VaultItemRefusedError {
+  constructor() {
+    super("Credential limit reached");
+    this.name = "VaultFullError";
+  }
+}
+
+/** A login for the same site and username is already saved. */
+export class LoginAlreadySavedError extends VaultItemRefusedError {
+  constructor() {
+    super(LOGIN_ALREADY_SAVED);
+    this.name = "LoginAlreadySavedError";
+  }
+}
+
+/** The Space no longer keeps its own vault, so a write aimed at it is refused. */
+export class SpaceVaultNotInUseError extends VaultItemRefusedError {
+  constructor() {
+    super(SPACE_VAULT_NOT_IN_USE);
+    this.name = "SpaceVaultNotInUseError";
+  }
+}
+
+/** The vault changed under a save, or what the save depends on can't be read for now: retry. */
+export class VaultRetryError extends ClientError {
+  constructor(message: string) {
+    super("CONFLICT", message);
+    this.name = "VaultRetryError";
+  }
+}
+
+/** A create-only save found the name taken, by an earlier save or a concurrent one. */
+class SecretAlreadySavedError extends Error {
+  constructor() {
+    super("A credential with this name is already saved");
+    this.name = "SecretAlreadySavedError";
+  }
+}
+
 /**
  * A write aimed at a Space's own vault is refused once the Space stops customizing credentials,
  * since nothing would read it and it would only wait to be deleted.
@@ -119,7 +170,7 @@ export const VAULT_CHANGED = "Vault changed while saving; retry";
 async function assertVaultInUse(client: VaultClient, scope: BotSecretScope) {
   if (scope.vault !== "space") return;
   if ((await settingsTarget(client, scope, "credentials")) !== "space") {
-    throw new Error(SPACE_VAULT_NOT_IN_USE);
+    throw new SpaceVaultNotInUseError();
   }
 }
 
@@ -268,7 +319,8 @@ async function saveItemBots(
   if (botIds.length) {
     const [here, item] = await Promise.all([vaultFields(tx, owner), vaultFields(tx, scope)]);
     const found = await tx.bot.count({ where: { spaceId: scope.spaceId, id: { in: botIds } } });
-    if (here.spaceId !== item.spaceId || found !== botIds.length) throw new Error(UNKNOWN_BOTS);
+    if (here.spaceId !== item.spaceId || found !== botIds.length)
+      throw new VaultItemRefusedError(UNKNOWN_BOTS);
   }
   await tx.vaultCredentialBot.deleteMany({
     where: { ...owner, credentialId, botId: { notIn: botIds } },
@@ -303,11 +355,8 @@ const labels = { title: true, note: true } as const;
 // What reading an item's value needs: the vault it is in is part of its encryption.
 const vaultRow = { id: true, userId: true, spaceId: true, ciphertext: true } as const;
 
-const SECRET_ALREADY_SAVED = "A credential with this name is already saved";
-
-/** A create-only save found the name taken, by an earlier save or a concurrent one. */
 export function isSecretAlreadySaved(error: unknown): boolean {
-  return error instanceof Error && error.message === SECRET_ALREADY_SAVED;
+  return error instanceof SecretAlreadySavedError;
 }
 const UNUSABLE_CREDENTIAL = "Credential cannot be used with this authentication method";
 
@@ -335,7 +384,7 @@ function credentialHeader(destination: BotSecretDestination, plaintext: string) 
     destination.auth.type !== "header" &&
     destination.auth.type !== "basic"
   ) {
-    throw new Error("Credential cannot be used with this authentication method");
+    throw new VaultItemRefusedError(UNUSABLE_CREDENTIAL);
   }
   const name = destination.auth.type === "header" ? destination.auth.name : "Authorization";
   const value =
@@ -348,7 +397,7 @@ function credentialHeader(destination: BotSecretDestination, plaintext: string) 
     const headers = new Headers({ [name]: value });
     if (headers.get(name) !== value) throw new Error("Header value was normalized");
   } catch {
-    throw new Error("Credential cannot be used with this authentication method");
+    throw new VaultItemRefusedError(UNUSABLE_CREDENTIAL);
   }
   return { name, value };
 }
@@ -369,7 +418,7 @@ export function normalizeSecretDestination(value: unknown): BotSecretDestination
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "credential"}: ${issue.message}`)
       .join("; ");
-    throw new Error(`Invalid credential destination — ${detail}`);
+    throw new VaultItemRefusedError(`Invalid credential destination — ${detail}`);
   }
   if (isSitelessAuth(parsed.data.auth.type)) return parsed.data;
   return { ...parsed.data, origin: new URL(parsed.data.origin).origin };
@@ -574,7 +623,7 @@ export function resolveRequestSecretDestination(
     } catch (error) {
       return {
         error:
-          error instanceof Error && error.message.startsWith("Invalid credential destination")
+          error instanceof VaultItemRefusedError
             ? error.message
             : "Specify a credential name, HTTPS origin, and auth method.",
       };
@@ -821,22 +870,54 @@ export async function findSiteLogin(prisma: PrismaClient, scope: BotSecretScope,
 }
 
 /**
+ * Reads a value the person gave. One that isn't of its kind is theirs to fix, named without
+ * quoting it: a parse error can repeat the value.
+ */
+function readGivenValue<T>(read: () => T, refusal: (issues: z.ZodError["issues"]) => string): T {
+  try {
+    return read();
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof z.ZodError)) throw error;
+    throw new VaultItemRefusedError(refusal(error instanceof z.ZodError ? error.issues : []));
+  }
+}
+
+/** Reads a login the person gave, refusing one without a label and value for every field. */
+function readLoginValue<T>(read: () => T): T {
+  return readGivenValue(read, (issues) =>
+    issues.some((issue) => issue.path[0] === "otp")
+      ? AUTHENTICATOR_KEY_UNREADABLE
+      : "A website login needs a label and a value for every field",
+  );
+}
+
+/** A login read from an export, as it is saved. */
+export function importedLoginValue(login: Parameters<typeof encodeLoginSecret>[0]): string {
+  return readLoginValue(() => encodeLoginSecret(login));
+}
+
+/**
  * The value as it is saved: a login, card or contact in its current shape, so every reader gets
  * one form. Throws when the value is not one of its kind.
  */
 export function canonicalSecretValue(destination: BotSecretDestination, plaintext: string): string {
+  const { type } = destination.auth;
   // Saved in its current shape, also when an older app sends a username and password.
-  if (destination.auth.type === "login") {
-    const { fields, otp } = decodeLoginSecret(plaintext);
-    return encodeLoginSecret(otp ? { fields, otp } : { fields });
-  }
-  try {
-    if (destination.auth.type === "card") return encodeCardSecret(JSON.parse(plaintext));
-    if (destination.auth.type === "contact") return encodeContactSecret(JSON.parse(plaintext));
-  } catch {
-    // The parse error may quote the value, so only the kind is named.
-    throw new Error(`Invalid ${destination.auth.type}`);
-  }
+  if (type === "login")
+    return readLoginValue(() => {
+      const { fields, otp } = decodeLoginSecret(plaintext);
+      return encodeLoginSecret(otp ? { fields, otp } : { fields });
+    });
+  if (type === "card")
+    return readGivenValue(
+      () => encodeCardSecret(JSON.parse(plaintext)),
+      () => "Invalid card",
+    );
+  if (type === "contact")
+    return readGivenValue(
+      () => encodeContactSecret(JSON.parse(plaintext)),
+      () => "Invalid contact",
+    );
   return plaintext;
 }
 
@@ -869,11 +950,12 @@ export async function prepareBotSecret(input: {
 }) {
   const { prisma, secretStore, scope } = input;
   let { plaintext } = input;
-  if (!plaintext || plaintext.length > 16_384) throw new Error("Invalid credential length");
+  if (!plaintext || plaintext.length > 16_384)
+    throw new VaultItemRefusedError("Invalid credential length");
   const destination = normalizeSecretDestination(input.destination);
   const policy = policyField(destination.auth, input.policy);
   // A bot never widens where a login goes.
-  if (scope.botId && input.alsoOn) throw new Error(UNSUPPORTED_ACCESS);
+  if (scope.botId && input.alsoOn) throw new VaultItemRefusedError(UNSUPPORTED_ACCESS);
   const sites = alsoOnField(destination.auth, destination.origin, input.alsoOn);
   if (
     destination.auth.type === "login" ||
@@ -885,7 +967,7 @@ export async function prepareBotSecret(input: {
     // NUL cannot be an environment value. An unpaired surrogate cannot be percent-encoded
     // later, and that throw would abort every subsequent shell command for this bot.
     if (plaintext.includes("\0") || percentEncoded(plaintext) === undefined) {
-      throw new Error(UNUSABLE_CREDENTIAL);
+      throw new VaultItemRefusedError(UNUSABLE_CREDENTIAL);
     }
   } else credentialHeader(destination, plaintext);
   await assertVaultInUse(prisma, scope);
@@ -908,24 +990,26 @@ export async function prepareBotSecret(input: {
   if (destination.auth.type === "login" && botMoves(existing))
     plaintext = encodeLoginSecret({ fields: decodeLoginSecret(plaintext).fields });
   function validate(row: typeof existing, count: number) {
-    if (row && input.createOnly) throw new Error(SECRET_ALREADY_SAVED);
+    if (row && input.createOnly) throw new SecretAlreadySavedError();
     const saved = row && normalizeSecretDestination(row);
     if (
       saved &&
       !sameSecretDestination(saved, destination) &&
       !(row?.id === input.replaces && canReplaceLoginSite(saved, destination))
     )
-      throw new Error("Remove the existing credential before changing its destination");
-    if (!row && count >= VAULT_ITEM_LIMIT) throw new Error("Credential limit reached");
+      throw new VaultItemRefusedError(
+        "Remove the existing credential before changing its destination",
+      );
+    if (!row && count >= VAULT_ITEM_LIMIT) throw new VaultFullError();
   }
   // Before the destination checks, so the person answering is told the item is blocked.
   if (existing && (await hiddenFromBot(prisma, scope, destination.name)))
-    throw new Error(hiddenAnswer(existing.policy));
+    throw new VaultItemRefusedError(hiddenAnswer(existing.policy));
   // An import's login already saved is that, also in a full vault.
   const usernames = input.newLoginOnly;
   const repeats = (tx: Pick<Prisma.TransactionClient, "vaultCredential">) =>
     usernames && loginSaved(prisma, tx, secretStore, vault, destination, plaintext, usernames);
-  if (await repeats(prisma)) throw new Error(LOGIN_ALREADY_SAVED);
+  if (await repeats(prisma)) throw new LoginAlreadySavedError();
   validate(existing, await prisma.vaultCredential.count({ where: vault }));
   if (keepsKey) {
     const otp = await savedLoginKey(prisma, secretStore, existing);
@@ -948,7 +1032,7 @@ export async function prepareBotSecret(input: {
         input.expectedDefaultVault !== undefined &&
         (await settingsTarget(tx, scope, "credentials")) !== input.expectedDefaultVault
       )
-        throw new Error(VAULT_CHANGED);
+        throw new VaultRetryError(VAULT_CHANGED);
       if (existing)
         await tx.$queryRaw`SELECT id FROM vault_credentials WHERE id = ${existing.id} FOR UPDATE`;
       await assertVaultInUse(tx, scope);
@@ -957,15 +1041,15 @@ export async function prepareBotSecret(input: {
         where: { ...vault, name: destination.name },
       });
       if (await hiddenFromBot(tx, scope, destination.name))
-        throw new Error(hiddenAnswer(current?.policy));
+        throw new VaultItemRefusedError(hiddenAnswer(current?.policy));
       if (JSON.stringify(await vaultFields(tx, scope)) !== JSON.stringify(vault)) {
-        throw Object.assign(new Error("Vault changed while saving; retry"), { code: "P2034" });
+        throw new TransactionConflictError(VAULT_CHANGED);
       }
-      if (await repeats(tx)) throw new Error(LOGIN_ALREADY_SAVED);
+      if (await repeats(tx)) throw new LoginAlreadySavedError();
       validate(current, await tx.vaultCredential.count({ where: vault }));
       const conflict = await findCommandVariableConflict(tx, scope, destination);
       if (conflict) {
-        throw new Error(
+        throw new VaultItemRefusedError(
           `Invalid credential destination — name: ${conflict} is already exported as $${commandVariableName(destination.name)}`,
         );
       }
@@ -975,7 +1059,7 @@ export async function prepareBotSecret(input: {
         (keepsKey && current?.ciphertext !== existing?.ciphertext) ||
         (current && ciphertextKeyId(current.ciphertext) !== ciphertextKeyId(existing!.ciphertext))
       )
-        throw Object.assign(new Error("Credential changed while saving; retry"), { code: "P2034" });
+        throw new TransactionConflictError("Credential changed while saving; retry");
       const labelled = {
         // Its owner's own save may carry a fixed key, so its codes are typed again. A save a bot
         // started, such as a login card answered in chat, shows no key and keeps the saved one:
@@ -1028,7 +1112,7 @@ async function loadSavedValue(
       error instanceof ContentDecryptionError ||
       error instanceof SecretNotFoundError ||
       (!(error instanceof SecretStoreUnavailableError) && isPermanentDecryptFailure(error));
-    if (!unreadable) throw new Error(SAVED_LOGIN_UNREADABLE);
+    if (!unreadable) throw new VaultRetryError(SAVED_LOGIN_UNREADABLE);
     return undefined;
   }
 }
@@ -1432,7 +1516,7 @@ function policyField(auth: unknown, policy: VaultPolicy | undefined) {
   if (!policy) return {};
   const type = BotSecretAuth.safeParse(auth).data?.type;
   if (type === "contact" || (policy === "ask" && type !== "login"))
-    throw new Error(UNSUPPORTED_ACCESS);
+    throw new VaultItemRefusedError(UNSUPPORTED_ACCESS);
   return { policy };
 }
 
@@ -1442,11 +1526,11 @@ export const UNSUPPORTED_ACCESS = "This item can't be used that way";
 function alsoOnField(auth: unknown, origin: string, alsoOn: readonly string[] | undefined) {
   if (alsoOn === undefined) return {};
   if (alsoOn.length && BotSecretAuth.safeParse(auth).data?.type !== "login")
-    throw new Error(UNSUPPORTED_ACCESS);
+    throw new VaultItemRefusedError(UNSUPPORTED_ACCESS);
   // The editors' own check, so a site they let through is never refused here.
   const sites = alsoOn.map((site) => otherSiteOrigin(site.trim()));
   if (sites.some((site) => !site))
-    throw new Error(
+    throw new VaultItemRefusedError(
       "Invalid credential destination — every other site must be an HTTPS address a login " +
         "can be saved for",
     );
@@ -1559,6 +1643,184 @@ class SecretRequestFailure extends Error {}
  * the vault is no use; nor is a contact, which a bot reads in full as ordinary text.
  */
 export type VaultItemUse = { id: string; name: string; spaceId: string | null; kind: string };
+
+/** Response headers APIs page and rate-limit with. Other headers can echo request values. */
+const PAGING_HEADERS = [
+  "content-range",
+  "retry-after",
+  "x-next-page",
+  "x-page",
+  "x-per-page",
+  "x-total",
+  "x-total-count",
+  "x-total-pages",
+] as const;
+
+/** A longer link or paging header value is dropped rather than crowd out the body. */
+const MAX_PAGING_VALUE_CHARS = 2_000;
+/** All returned links and paging headers together; past this, the less useful ones are left out. */
+const MAX_PAGING_TOTAL_CHARS = 6_000;
+
+/**
+ * The entries of a `Link` header (RFC 8288) as their target and lowercased parameters. Quoted
+ * parameter values may hold commas and semicolons; the first occurrence of a parameter counts.
+ */
+export function linkHeaderEntries(
+  header: string,
+): { target: string; params: Map<string, string> }[] {
+  const entries: { target: string; params: Map<string, string> }[] = [];
+  let i = 0;
+  const skipSpace = () => {
+    while (i < header.length && /[ \t]/.test(header[i]!)) i++;
+  };
+  // Skips to the next top-level `;` or `,`, stepping over quoted strings.
+  const skipValue = () => {
+    while (i < header.length && header[i] !== ";" && header[i] !== ",") {
+      if (header[i] === '"') readQuoted();
+      else i++;
+    }
+  };
+  const readQuoted = () => {
+    let value = "";
+    i++;
+    while (i < header.length && header[i] !== '"') {
+      if (header[i] === "\\" && i + 1 < header.length) i++;
+      value += header[i++];
+    }
+    i++;
+    return value;
+  };
+  while (i < header.length) {
+    skipSpace();
+    if (header[i] !== "<") {
+      // Not an entry start: skip to the next top-level separator.
+      skipValue();
+      i++;
+      continue;
+    }
+    const end = header.indexOf(">", i);
+    if (end === -1) break;
+    const target = header.slice(i + 1, end).trim();
+    i = end + 1;
+    const params = new Map<string, string>();
+    for (;;) {
+      skipSpace();
+      if (header[i] !== ";") break;
+      i++;
+      skipSpace();
+      const nameStart = i;
+      while (i < header.length && !/[=;,\s]/.test(header[i]!)) i++;
+      const name = header.slice(nameStart, i).toLowerCase();
+      skipSpace();
+      let value = "";
+      if (header[i] === "=") {
+        i++;
+        skipSpace();
+        if (header[i] === '"') value = readQuoted();
+        else {
+          const valueStart = i;
+          while (i < header.length && !/[;,\s]/.test(header[i]!)) i++;
+          value = header.slice(valueStart, i);
+        }
+      }
+      if (name && !params.has(name)) params.set(name, value);
+    }
+    skipValue();
+    if (header[i] === ",") i++;
+    entries.push({ target, params });
+  }
+  return entries;
+}
+
+/**
+ * Where a paged API says the rest is: `links` from the `Link` header by relation, resolved
+ * against the request URL (Canvas and GitHub put the next page there), and `headers` for the
+ * other paging headers present. A value too long, a link that is not http(s), or anything that
+ * carries the credential is left out.
+ */
+export function responsePaging(
+  headers: Headers,
+  requestUrl: string,
+  secrets: readonly string[] = [],
+): { links?: Record<string, string>; headers?: Record<string, string> } {
+  // A Map, so a relation named like an Object property (constructor, __proto__) is kept as given.
+  const links = new Map<string, string>();
+  for (const { target, params } of linkHeaderEntries(headers.get("link") ?? "")) {
+    let url: URL;
+    try {
+      url = new URL(target, requestUrl);
+    } catch {
+      continue;
+    }
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.href.length > MAX_PAGING_VALUE_CHARS ||
+      carriesSecret(target, secrets) ||
+      carriesSecret(url.href, secrets)
+    )
+      continue;
+    // Registered relation names compare case-insensitively; extension relations are URIs.
+    for (const rel of params.get("rel")?.split(/\s+/) ?? []) {
+      const name = /[:/]/.test(rel) ? rel : rel.toLowerCase();
+      // An extension relation is a URI too, and can carry the credential like the link.
+      if (name && !links.has(name) && !carriesSecret(name, secrets)) links.set(name, url.href);
+    }
+  }
+  const found = new Map<string, string>();
+  for (const name of PAGING_HEADERS) {
+    const value = headers.get(name);
+    if (value !== null && value.length <= MAX_PAGING_VALUE_CHARS && !carriesSecret(value, secrets))
+      found.set(name, value);
+  }
+  let budget = MAX_PAGING_TOTAL_CHARS;
+  const withinBudget = (entries: Iterable<[string, string]>) => {
+    const kept: [string, string][] = [];
+    for (const [name, value] of entries) {
+      const size = name.length + value.length;
+      if (size > budget) continue;
+      budget -= size;
+      kept.push([name, value]);
+    }
+    return kept;
+  };
+  // The next page first, then the paging headers, then the other links.
+  const next = links.get("next");
+  const keptNext = withinBudget(next === undefined ? [] : [["next", next]]);
+  const keptHeaders = withinBudget(found);
+  const keptLinks = [...keptNext, ...withinBudget([...links].filter(([name]) => name !== "next"))];
+  return {
+    ...(keptLinks.length ? { links: Object.fromEntries(keptLinks) } : {}),
+    ...(keptHeaders.length ? { headers: Object.fromEntries(keptHeaders) } : {}),
+  };
+}
+
+/**
+ * Whether a value holds any form of a credential, compared case-insensitively and also after
+ * percent-decoding (any case of escape, repeated), so an echo the body redaction would miss is
+ * caught. A link or header that does is left out whole: with the value replaced it would not work.
+ */
+function carriesSecret(value: string, secrets: readonly string[]): boolean {
+  if (secrets.length === 0) return false;
+  const forms = [value, value.replace(/\+/g, " ")];
+  let decoded = value;
+  for (let round = 0; round < 3; round++) {
+    const next = decoded.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+      try {
+        return decodeURIComponent(run);
+      } catch {
+        return run;
+      }
+    });
+    if (next === decoded) break;
+    forms.push(next, next.replace(/\+/g, " "));
+    decoded = next;
+  }
+  const haystacks = forms.map((form) => form.toLowerCase());
+  return secrets.some((secret) => {
+    const needle = secret.toLowerCase();
+    return needle.length > 0 && haystacks.some((haystack) => haystack.includes(needle));
+  });
+}
 
 /** Credentials are resolved only inside this destination-bound HTTP boundary. */
 export async function requestWithBotSecret(input: {
@@ -1721,8 +1983,13 @@ export async function requestWithBotSecret(input: {
     }
     // Redact before truncating, so an output boundary cannot expose part of a value.
     const safe = JSON.stringify(redactConnectorPayload(body, redactions));
+    const paging = redactConnectorPayload(
+      responsePaging(response.headers, url.href, redactions),
+      redactions,
+    ) as Record<string, unknown>;
     return {
       status: response.status,
+      ...paging,
       body: safe.length > 20_000 ? safe.slice(0, 20_000) : JSON.parse(safe),
       truncated: safe.length > 20_000,
     };
@@ -1938,12 +2205,17 @@ function apiKeyRedactionForms(destination: BotSecretDestination, plaintext: stri
   ].filter(Boolean);
 }
 
-/** A card number as pages show it: as given, digits only, and in groups of four. */
+/**
+ * A card number as pages show it: as given, digits only, and in groups of four. American Express
+ * (15 digits) and Diners Club (14) print as 4-6-5 and 4-6-4.
+ */
 export function cardRedactionForms(number: string): string[] {
   const digits = number.replace(/\D/g, "");
   const grouped = digits.replace(/(\d{4})(?=\d)/g, "$1 ");
   const hyphenated = digits.replace(/(\d{4})(?=\d)/g, "$1-");
-  return [...new Set([number, digits, grouped, hyphenated].filter(Boolean))];
+  const long = digits.match(/^(\d{4})(\d{6})(\d{4,5})$/);
+  const printed = long ? [long.slice(1).join(" "), long.slice(1).join("-")] : [];
+  return [...new Set([number, digits, grouped, hyphenated, ...printed].filter(Boolean))];
 }
 
 export class VaultKeyUnavailableError extends Error {
@@ -2543,7 +2815,8 @@ export function loginCodeClaim(input: {
       try {
         return await take();
       } catch (error) {
-        // The same code's row, written by a previous release's claim that takes no lock.
+        // The same code's row, written by a previous release's claim that takes no lock. Rows it
+        // left stay in the database, so this goes only with a migration that settles them.
         if ((error as { code?: unknown } | null)?.code === "P2002") return CODE_ALREADY_TYPED;
         throw error;
       }

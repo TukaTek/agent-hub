@@ -6,33 +6,30 @@ import type {
 import {
   compatibleEndpointPresets,
   connectionDisplayName,
-  DEFAULT_MODEL_CONTEXT_WINDOW,
-  DEFAULT_MODEL_MAX_TOKENS,
-  MAX_MODEL_CONTEXT_WINDOW,
-  MAX_MODEL_MAX_TOKENS,
   matchCompatibleEndpointPreset,
   modelHeadersInput,
+  modelRoutingDirty,
   modelRoutingForm,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   savedCompatibleEndpointMatches,
 } from "@cortexai-agent-hub/contracts";
 import {
-  clampCatalogThinkingLevel,
   compatibleConnectionReady,
   compatibleModelRows,
-  compatibleThinkingLevels,
   connectionFormFields,
   connectionFormModelId,
-  connectionMaxTokensField,
+  connectionModels,
   createModelProbe,
   initialModelProbeState,
+  modelConnectionFormSecrets,
   modelConnectRequest,
+  sanitizeModelConnectionError,
   savedCompatibleModelIds,
 } from "@cortexai-agent-hub/core";
 import { ph } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -47,7 +44,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CompatibleEndpointForm } from "../../components/compatible-endpoint-form";
-import { DisclosureRow, LimitField } from "../../components/model-connection-fields";
+import { ConnectionModelList } from "../../components/connection-model-list";
+import { DisclosureRow } from "../../components/model-connection-fields";
 import { createModelsStyles } from "../../components/model-connection-styles";
 import { NativeActionButton } from "../../components/native-action-button";
 import type { MobileMe, MobileModel, MobileModelCredential } from "../../lib/mobile-types";
@@ -56,6 +54,7 @@ import {
   modelConnectionRequest,
 } from "../../lib/model-connection-request";
 import { native, useThemedStyles } from "../../lib/native";
+import { useScreenHeader } from "../../lib/screen-header";
 import { ACCOUNT_SETTINGS, settingsRpc } from "../../lib/settings-target";
 import { useListSearch } from "../../lib/use-list-search";
 import { useSubscriptionSignIn } from "../../lib/use-subscription-sign-in";
@@ -65,13 +64,12 @@ type ModelSelection = {
   modelId?: string;
 };
 
-type FeedbackAnchor = "probe" | "model" | "connection" | "limits";
+type FeedbackAnchor = "probe" | "model" | "connection";
 
 /** Connects or manages one provider for the model list that opened it. */
 export default function ModelConnection() {
   const styles = useThemedStyles(createModelsStyles);
   const router = useRouter();
-  const navigation = useNavigation();
   const { requestId = "" } = useLocalSearchParams<{ requestId?: string }>();
   const [request] = useState(() => modelConnectionRequest(requestId));
   const makeDefault = request?.makeDefault ?? false;
@@ -94,15 +92,12 @@ export default function ModelConnection() {
   const [apiKey, setApiKey] = useState("");
   const [accountId, setAccountId] = useState("");
   const [gatewayId, setGatewayId] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [region, setRegion] = useState("global");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiProtocol, setApiProtocol] = useState<ModelApiProtocol>("chat-completions");
   const [headerRows, setHeaderRows] = useState<ModelHeaderRow[] | null>(null);
-  const [reasoning, setReasoning] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | null>(null);
-  const [maxTokens, setMaxTokens] = useState(String(DEFAULT_MODEL_MAX_TOKENS));
-  const [contextWindow, setContextWindow] = useState(String(DEFAULT_MODEL_CONTEXT_WINDOW));
-  const [supportsImages, setSupportsImages] = useState(false);
-  const [maxImagesPerPrompt, setMaxImagesPerPrompt] = useState("");
   const [showEndpointHelp, setShowEndpointHelp] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -128,7 +123,6 @@ export default function ModelConnection() {
     setSavedNotice(next.notice === t`Saved.` ? next.notice : null);
     const message = nextError ?? next.notice ?? null;
     // VoiceOver keeps focus on the tapped button, so speak the result from here.
-    // Saved limits also show their result beside the button that was pressed.
     if (message) AccessibilityInfo.announceForAccessibility(message);
   }
 
@@ -138,15 +132,19 @@ export default function ModelConnection() {
     setSavedNotice(null);
   }
 
+  const loadGeneration = useRef(0);
+
   const load = useCallback(
     async (preferred: ModelSelection = {}) => {
       if (!request) throw new Error(t`Could not load model settings`);
+      const generation = ++loadGeneration.current;
       setError(null);
       const [nextMe, nextCatalog, nextCredentials] = await Promise.all([
         rpc("me"),
         rpc("models/list"),
         rpc("models/credentials"),
       ]);
+      if (generation !== loadGeneration.current) return nextMe;
       const nextProvider = request.provider;
       const nextCredential = nextCredentials.find((entry) => entry.id === credentialIdRef.current);
       const nextModel = connectionFormModelId({
@@ -173,18 +171,20 @@ export default function ModelConnection() {
       setEnabledModelIds(fields.enabledModelIds);
       setBaseUrl(fields.baseUrl);
       setApiProtocol(fields.apiProtocol);
-      setReasoning(fields.reasoning);
       setThinkingLevel(fields.thinkingLevel);
-      setMaxTokens(fields.maxTokens);
-      setContextWindow(fields.contextWindow);
-      setSupportsImages(fields.supportsImages);
-      setMaxImagesPerPrompt(fields.maxImagesPerPrompt);
       setAccountId(fields.accountId);
       setGatewayId(fields.gatewayId);
+      setProjectId(fields.projectId ?? "");
+      setRegion(fields.region ?? "global");
       return nextMe;
     },
     [request, rpc, t],
   );
+
+  function adoptSavedCredential(saved: MobileModelCredential) {
+    ++loadGeneration.current;
+    setCredentials((current) => [...current.filter((entry) => entry.id !== saved.id), saved]);
+  }
 
   const modelsForProvider = catalog.filter((entry) => entry.provider === provider);
   const selected = modelsForProvider.find((entry) => entry.id === modelId) ?? modelsForProvider[0];
@@ -208,6 +208,7 @@ export default function ModelConnection() {
     scope: target.scope,
     credentialIdRef,
     setCredentialId,
+    onSaved: adoptSavedCredential,
     modelId,
     load,
     finishConnecting,
@@ -229,14 +230,25 @@ export default function ModelConnection() {
 
   useFocusEffect(
     useCallback(() => {
-      void load()
-        .catch((err: unknown) =>
-          publishFeedback("connection", {
-            error: errorText(err, t`Could not load model settings`),
-          }),
-        )
-        .finally(() => setLoading(false));
-      return cancelInFlightWork;
+      let active = true;
+      const pendingLoad = load();
+      const generation = loadGeneration.current;
+      const isCurrent = () => active && generation === loadGeneration.current;
+      void pendingLoad
+        .catch((err: unknown) => {
+          if (isCurrent()) {
+            publishFeedback("connection", {
+              error: errorText(err, t`Could not load model settings`),
+            });
+          }
+        })
+        .finally(() => {
+          if (isCurrent()) setLoading(false);
+        });
+      return () => {
+        active = false;
+        cancelInFlightWork();
+      };
     }, [cancelInFlightWork, load]),
   );
 
@@ -248,14 +260,18 @@ export default function ModelConnection() {
   const selectedProviderLabel = credential
     ? connectionDisplayName(credential, providerName)
     : (endpointPreset?.name ?? providerName);
-  useLayoutEffect(() => {
-    if (selectedProviderLabel) navigation.setOptions({ title: selectedProviderLabel });
-  }, [navigation, selectedProviderLabel]);
+  useScreenHeader({ title: selectedProviderLabel || undefined });
   const isOpenAiCompatible = provider === OPENAI_COMPATIBLE_PROVIDER_ID;
-  const { needsRouting, needsGateway, routingReady } = modelRoutingForm(selected?.routingFields, {
-    accountId,
-    gatewayId,
-  });
+  const { needsRouting, needsGateway, needsProject, routingReady } = modelRoutingForm(
+    selected?.routingFields,
+    {
+      accountId,
+      gatewayId,
+      projectId,
+      region,
+    },
+    credential,
+  );
   const compatibleRows = compatibleModelRows(
     savedCompatibleModelIds(credential, baseUrl),
     enabledModelIds,
@@ -277,10 +293,7 @@ export default function ModelConnection() {
     credential,
     keyRequired: Boolean(endpointPreset),
   });
-  const limitsDirty = maxTokens !== connectionMaxTokensField(provider, credential?.maxTokens);
-  const gatewayDirty =
-    accountId.trim() !== (credential?.accountId ?? "") ||
-    gatewayId.trim() !== (credential?.gatewayId ?? "");
+  const gatewayDirty = modelRoutingDirty({ accountId, gatewayId, projectId, region }, credential);
   const gatewayOnlySave = needsRouting && Boolean(credential) && !apiKey.trim();
 
   function updateBaseUrl(nextBaseUrl: string) {
@@ -288,7 +301,7 @@ export default function ModelConnection() {
     setHeaderRows(null);
     // A new endpoint starts with no model or ticks; the saved endpoint gets its saved ones back.
     setEnabledModelIds(savedCompatibleModelIds(credential, nextBaseUrl));
-    stageCompatibleModelId(
+    setModelId(
       savedCompatibleEndpointMatches(nextBaseUrl, credential?.baseUrl)
         ? (credential?.modelId ?? "")
         : "",
@@ -299,12 +312,6 @@ export default function ModelConnection() {
 
   function updateApiProtocol(nextProtocol: ModelApiProtocol) {
     setApiProtocol(nextProtocol);
-    setThinkingLevel(
-      clampCatalogThinkingLevel(
-        thinkingLevel,
-        reasoning ? compatibleThinkingLevels(nextProtocol) : [],
-      ) as ThinkingLevel | null,
-    );
     resetOpenAiCompatibleProbe();
     clearFeedback();
   }
@@ -313,6 +320,13 @@ export default function ModelConnection() {
     setApiKey(nextApiKey);
     resetOpenAiCompatibleProbe();
     clearFeedback();
+  }
+
+  function connectionErrorText(err: unknown, fallback: string): string {
+    return sanitizeModelConnectionError(
+      errorText(err, fallback),
+      modelConnectionFormSecrets({ apiKey, headerRows }),
+    );
   }
 
   async function probeServerModels() {
@@ -334,9 +348,7 @@ export default function ModelConnection() {
           { timeoutMs: MODEL_CONNECT_TIMEOUT_MS },
         ),
       onSuccess: (models) => {
-        const next = modelId.trim() || models[0] || "";
-        if (next !== modelId) stageCompatibleModelId(next);
-        else setModelId(next);
+        setModelId(modelId.trim() || models[0] || "");
         publishFeedback("probe", {
           notice:
             models.length === 0
@@ -348,7 +360,7 @@ export default function ModelConnection() {
       },
       onError: (err) =>
         publishFeedback("probe", {
-          error: errorText(err, t`Could not reach this model server`),
+          error: connectionErrorText(err, t`Could not reach this model server`),
         }),
     });
   }
@@ -373,19 +385,8 @@ export default function ModelConnection() {
     }
   }
 
-  function stageCompatibleModelId(nextModelId: string) {
-    setModelId(nextModelId);
-    setThinkingLevel(
-      clampCatalogThinkingLevel(
-        credential?.modelId === nextModelId ? credential.thinkingLevel : null,
-        reasoning ? compatibleThinkingLevels(apiProtocol) : [],
-      ) as ThinkingLevel | null,
-    );
-  }
-
-  async function connectKey(limitsOnly = false) {
+  async function connectKey() {
     if (!selected) return;
-    const anchor = limitsOnly ? "limits" : "connection";
     const connect = modelConnectRequest({
       form: {
         apiKey,
@@ -394,52 +395,48 @@ export default function ModelConnection() {
         baseUrl,
         apiProtocol,
         headerRows,
-        reasoning,
         thinkingLevel,
-        maxTokens,
-        contextWindow,
-        supportsImages,
-        maxImagesPerPrompt,
         accountId,
         gatewayId,
+        projectId,
+        region,
       },
       selected,
       credential,
       credentialId: credentialIdRef.current,
-      settingsOnly: limitsOnly,
       makeDefault: { makeDefault, scope: target.scope },
     });
     if (connect.status === "incomplete") return;
-    // Drop the previous result before the limit check so it cannot sit beside the new one.
     Keyboard.dismiss();
     clearFeedback();
-    setFeedbackAnchor(anchor);
-    if (connect.status === "invalid") {
-      publishFeedback(anchor, {
-        error:
-          connect.field === "maxTokens"
-            ? t`Enter a whole number from 1 to ${ph({ max: MAX_MODEL_MAX_TOKENS })} for maximum output tokens.`
-            : connect.field === "maxImagesPerPrompt"
-              ? t`Enter a whole number from 1 to 1000 for the image limit.`
-              : t`Enter a whole number from 1 to ${ph({ max: MAX_MODEL_CONTEXT_WINDOW })} for the context limit.`,
-      });
-      return;
-    }
-    const { savingLimitOnly, activeModelId } = connect;
+    const { savingWithoutKey, activeModelId } = connect;
     setPending("connect");
     try {
       const saved = await rpc("models/connect", connect.input, {
         timeoutMs: MODEL_CONNECT_TIMEOUT_MS,
       });
+      adoptSavedCredential(saved);
       credentialIdRef.current = saved.id;
       setCredentialId(saved.id);
-      if (!limitsOnly) setApiKey("");
-      if (!savingLimitOnly && (await finishConnecting(activeModelId, saved.id))) return;
-      await load({ modelId });
-      publishFeedback(anchor, { notice: t`Saved.` });
+      setHeaderRows(null);
+      setApiKey("");
+      let refreshGeneration = loadGeneration.current;
+      try {
+        if (!savingWithoutKey && (await finishConnecting(activeModelId, saved.id))) return;
+        const refresh = load({ modelId });
+        refreshGeneration = loadGeneration.current;
+        await refresh;
+        if (refreshGeneration !== loadGeneration.current) return;
+        publishFeedback("connection", { notice: t`Saved.` });
+      } catch (err) {
+        if (refreshGeneration !== loadGeneration.current) return;
+        publishFeedback("connection", {
+          error: errorText(err, t`Could not load model settings`),
+        });
+      }
     } catch (err) {
-      publishFeedback(anchor, {
-        error: errorText(err, t`Could not connect this provider`),
+      publishFeedback("connection", {
+        error: connectionErrorText(err, t`Could not connect this provider`),
       });
     } finally {
       setPending(null);
@@ -472,11 +469,6 @@ export default function ModelConnection() {
     setShowAdvanced((visible) => !visible);
   }
 
-  function changeMaxTokens(value: string) {
-    setMaxTokens(value);
-    clearFeedback();
-  }
-
   const savedHeaderEndpointMatches = savedCompatibleEndpointMatches(baseUrl, credential?.baseUrl);
   const visibleHeaderRows =
     headerRows ??
@@ -506,29 +498,17 @@ export default function ModelConnection() {
       search={search}
       compatibleRows={compatibleRows}
       modelId={modelId}
-      onSelectModel={stageCompatibleModelId}
+      onSelectModel={setModelId}
       enabledModelIds={enabledModelIds}
       setEnabledModelIds={setEnabledModelIds}
       probeModels={probeModels}
       showAdvanced={showAdvanced}
       onToggleAdvanced={toggleAdvanced}
-      reasoning={reasoning}
-      setReasoning={setReasoning}
-      thinkingLevel={thinkingLevel}
-      setThinkingLevel={setThinkingLevel}
-      supportsImages={supportsImages}
-      setSupportsImages={setSupportsImages}
       headerRows={visibleHeaderRows}
       onChangeHeaderRows={changeHeaderRows}
       savedHeaderPlaceholder={(row) =>
         savedHeaderEndpointMatches && (credential?.headerNames?.includes(row.name) ?? false)
       }
-      contextWindow={contextWindow}
-      setContextWindow={setContextWindow}
-      maxTokens={maxTokens}
-      onChangeMaxTokens={changeMaxTokens}
-      maxImagesPerPrompt={maxImagesPerPrompt}
-      setMaxImagesPerPrompt={setMaxImagesPerPrompt}
     />
   ) : null;
 
@@ -593,36 +573,6 @@ export default function ModelConnection() {
       </View>
     ) : null;
 
-  // Managing a connection keeps its model choice in the list that opened it.
-  // Keys belong to the provider: models are picked in the list, limits only once connected.
-  const catalogModelCard =
-    !isOpenAiCompatible && selected && credential ? (
-      <>
-        <DisclosureRow label={t`Advanced`} expanded={showAdvanced} onPress={toggleAdvanced} />
-        {showAdvanced ? (
-          <>
-            <LimitField
-              label={t`Maximum output tokens`}
-              value={maxTokens}
-              onChangeText={changeMaxTokens}
-              maxLength={String(MAX_MODEL_MAX_TOKENS).length}
-              busy={busy}
-            />
-            {credential && limitsDirty ? (
-              <NativeActionButton
-                disabled={busy || !routingReady}
-                label={pending === "connect" && feedbackAnchor === "limits" ? t`Saving…` : t`Save`}
-                onPress={() => void connectKey(true)}
-                prominence="secondary"
-                style={{ marginTop: 12 }}
-              />
-            ) : null}
-            {feedbackAnchor === "limits" ? feedback : null}
-          </>
-        ) : null}
-      </>
-    ) : null;
-
   const catalogConnectionControls =
     !isOpenAiCompatible && selected ? (
       <>
@@ -685,14 +635,14 @@ export default function ModelConnection() {
                 style={{ marginTop: 12 }}
               />
             </View>
-          ) : (
+          ) : credential?.authKind !== "oauth" || credential.reconnectRequired ? (
             <NativeActionButton
               disabled={busy}
               fill
               label={
                 oauthPending
                   ? t`Starting…`
-                  : credential
+                  : credential?.authKind === "oauth"
                     ? t`Sign in again`
                     : (selected.oauthLabel ?? t`Sign in`)
               }
@@ -700,41 +650,45 @@ export default function ModelConnection() {
               prominence="secondary"
               style={{ marginTop: 12 }}
             />
-          )
+          ) : null
         ) : null}
         {acceptsKey || needsRouting ? (
           <View style={styles.keySection}>
             {needsRouting ? (
               <>
-                <Text style={styles.sectionTitle}>{t`Account ID`}</Text>
+                <Text style={styles.sectionTitle}>
+                  {needsProject ? t`Project ID` : t`Account ID`}
+                </Text>
                 <TextInput
-                  accessibilityLabel={t`Account ID`}
+                  accessibilityLabel={needsProject ? t`Project ID` : t`Account ID`}
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoComplete="off"
                   editable={!busy}
                   onChangeText={(value) => {
-                    setAccountId(value);
+                    (needsProject ? setProjectId : setAccountId)(value);
                     clearFeedback();
                   }}
                   style={styles.keyInput}
-                  value={accountId}
+                  value={needsProject ? projectId : accountId}
                 />
-                {needsGateway ? (
+                {needsGateway || needsProject ? (
                   <>
-                    <Text style={styles.sectionTitle}>{t`Gateway ID`}</Text>
+                    <Text style={styles.sectionTitle}>
+                      {needsProject ? t`Region` : t`Gateway ID`}
+                    </Text>
                     <TextInput
-                      accessibilityLabel={t`Gateway ID`}
+                      accessibilityLabel={needsProject ? t`Region` : t`Gateway ID`}
                       autoCapitalize="none"
                       autoCorrect={false}
                       autoComplete="off"
                       editable={!busy}
                       onChangeText={(value) => {
-                        setGatewayId(value);
+                        (needsProject ? setRegion : setGatewayId)(value);
                         clearFeedback();
                       }}
                       style={styles.keyInput}
-                      value={gatewayId}
+                      value={needsProject ? region : gatewayId}
                     />
                   </>
                 ) : null}
@@ -792,11 +746,8 @@ export default function ModelConnection() {
       </>
     ) : null;
 
-  const connectedStatusRow = credential ? (
+  const disconnectButton = credential ? (
     <View style={styles.statusRow}>
-      <View style={styles.providerCopy}>
-        <Text style={styles.secondary}>{t`Connected`}</Text>
-      </View>
       <NativeActionButton
         disabled={busy}
         fill={false}
@@ -820,6 +771,22 @@ export default function ModelConnection() {
       />
     </View>
   ) : null;
+  const modelList = credential ? (
+    <ConnectionModelList
+      models={connectionModels(credential, catalog)}
+      onOpen={(id) =>
+        router.push({
+          pathname: "/model-settings",
+          params: {
+            credentialId: credential.id,
+            modelId: id,
+            ...(target.scope === "space" ? { spaceId: target.spaceId } : {}),
+          },
+        })
+      }
+    />
+  ) : null;
+
   if (loading && catalog.length === 0) {
     return (
       <SafeAreaView edges={["bottom"]} style={[styles.screen, styles.centered]}>
@@ -842,15 +809,16 @@ export default function ModelConnection() {
               {compatConfig}
               {compatKeySection}
               {feedbackAnchor === "probe" ? null : feedback}
-              {connectedStatusRow}
+              {modelList}
+              {disconnectButton}
             </>
           ) : credential ? (
             <>
               {provider === me?.hostCredentialProvider ? serverCredentialsNote : null}
-              {connectedStatusRow}
               {catalogConnectionControls}
               {feedbackAnchor === "connection" ? feedback : null}
-              {catalogModelCard}
+              {modelList}
+              {disconnectButton}
             </>
           ) : provider === me?.hostCredentialProvider ? (
             <>
@@ -866,7 +834,6 @@ export default function ModelConnection() {
                 <>
                   {catalogConnectionControls}
                   {feedback}
-                  {catalogModelCard}
                 </>
               ) : null}
             </>
@@ -874,7 +841,6 @@ export default function ModelConnection() {
             <>
               {catalogConnectionControls}
               {feedback}
-              {catalogModelCard}
             </>
           )
         ) : (

@@ -8,7 +8,7 @@ import {
   recordMcpServerHealth,
 } from "@cortexai-agent-hub/adapters";
 import type { Actor, McpServer, McpServerConfigInput } from "@cortexai-agent-hub/contracts";
-import { mcpOAuthEnvReferences } from "@cortexai-agent-hub/contracts";
+import { ConnectionSetupError, mcpOAuthEnvReferences } from "@cortexai-agent-hub/contracts";
 import type { McpServer as McpServerRow, Prisma } from "@cortexai-agent-hub/db";
 import { itemSecretIn, spaceAvailability } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
@@ -129,12 +129,11 @@ export async function assertMcpRemoteEndpoint(
     await assertSafeRemoteUrl(endpoint, deps.remoteConnectors?.resolveHostname, {
       allowPrivateEndpoint: mayUsePrivateEndpoint(deps),
     });
-    assertNoMcpEndpointCredential(endpoint);
   } catch (error) {
-    throw new ORPCError("BAD_REQUEST", {
-      message: error instanceof Error ? error.message : "MCP endpoint is invalid",
-    });
+    if (!isHostNotFound(error)) throw error;
+    throw new ConnectionSetupError("Connector URL host could not be found", { cause: error });
   }
+  assertNoMcpEndpointCredential(endpoint);
 }
 
 /** A stdio server gets its OAuth grant through `{{oauth.*}}` references in env
@@ -371,4 +370,9 @@ export function createMcpServers(
     insertMcpServer,
     announceMcpServer,
   };
+}
+
+function isHostNotFound(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "ENOTFOUND" || code === "ENODATA";
 }

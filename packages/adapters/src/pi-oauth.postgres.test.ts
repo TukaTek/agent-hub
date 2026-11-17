@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { asSystem, createDb, runAsTenant } from "@cortexai-agent-hub/db";
 import type { Credential, OAuthCredential } from "@earendil-works/pi-ai";
@@ -315,10 +316,7 @@ describePostgres("model sign-in across API processes (PostgreSQL contract)", () 
     databases.push(db);
     cleanup ??= dbModule.asSystem(db.prisma);
     const oauth = await import("./pi-oauth.js");
-    let answer!: (credential: Credential) => void;
-    const answered = new Promise<Credential>((resolve) => {
-      answer = resolve;
-    });
+    const answered = deferred<Credential>();
     let signal: AbortSignal | undefined;
     const logins = new oauth.PiOAuthLogins<Saved>(
       async (provider, _type, interaction) => {
@@ -334,7 +332,7 @@ describePostgres("model sign-in across API processes (PostgreSQL contract)", () 
           verificationUri: "https://auth.openai.com/codex/device",
         });
         return new Promise<Credential>((resolve, reject) => {
-          void answered.then(resolve);
+          void answered.promise.then(resolve);
           interaction.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
             once: true,
           });
@@ -346,7 +344,7 @@ describePostgres("model sign-in across API processes (PostgreSQL contract)", () 
       system: dbModule.asSystem(db.prisma),
       oauth,
       logins,
-      answer: () => answer(oauthCredential),
+      answer: () => answered.resolve(oauthCredential),
       get stopped() {
         return signal?.aborted === true;
       },
