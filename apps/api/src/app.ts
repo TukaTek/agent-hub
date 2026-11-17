@@ -97,6 +97,7 @@ import {
   PLUGIN_SUBMISSIONS_PATH,
   SERVER_BUILD_HEADER,
 } from "@cortexai-agent-hub/contracts";
+import { deadlineSignal } from "@cortexai-agent-hub/core";
 import { encryptionKeyWarning } from "@cortexai-agent-hub/core/node/secrets-guard";
 import type { Pool, PrismaClient } from "@cortexai-agent-hub/db";
 import {
@@ -1139,10 +1140,10 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
       const grant = await prisma.hubSession.findUnique({
         where: { sessionId: session.sessionId },
       });
-      requestSignal = AbortSignal.any([
+      requestSignal = deadlineSignal(
+        Math.max(0, (grant?.accessUntil.getTime() ?? 0) - Date.now()),
         requestSignal,
-        AbortSignal.timeout(Math.max(0, (grant?.accessUntil.getTime() ?? 0) - Date.now())),
-      ]);
+      );
     }
     const { matched, response } = await rpc.handle(c.req.raw, {
       prefix: "/rpc",

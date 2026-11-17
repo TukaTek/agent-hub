@@ -1,5 +1,8 @@
 {
-  "app": ["packages/testkit/src/pi-image-file.postgres.test.ts -> ../../../apps/api/src/app.ts"],
+  "app": [
+    "packages/testkit/src/hub-policy-off.test.ts -> ../../../apps/api/src/hub-policy.ts",
+    "packages/testkit/src/pi-image-file.postgres.test.ts -> ../../../apps/api/src/app.ts"
+  ],
   "relative": [
     "apps/api/src/account-deletion.postgres.test.ts -> ../../../packages/adapters/src/object-storage.test-support.js",
     "apps/api/src/board-app.postgres.test.ts -> ../../../packages/testkit/src/index.js",
@@ -33,7 +36,6 @@
     "apps/web/vite.config.ts -> ../../packages/adapters/src/providers/computer/wuying/wuying-screen-policy.ts",
     "apps/web/vite.config.ts -> ../../packages/logging/src/env.ts",
     "apps/worker/src/secret-store.test.ts -> ../../../packages/adapters/src/secret-store-fake.js",
-    "apps/www/src/github.ts -> ../../../packages/core/src/http-response.js",
     "infra/sandboxes/supervisor/src/clipboard-bridge.test.ts -> ../../computer/clipboard-bridge.js",
     "infra/sandboxes/supervisor/src/mobile-keyboard.test.ts -> ../../computer/mobile-keyboard.js",
     "packages/testkit/src/agent-import.postgres.test.ts -> ../../adapters/src/memory-context.ts",
@@ -47,6 +49,7 @@
     "packages/testkit/src/cli/approval-eval.ts -> ../../../adapters/src/pi-runtime.ts",
     "packages/testkit/src/cli/evals.ts -> ../../../adapters/src/pi-runtime.ts",
     "packages/testkit/src/cli/process.ts -> ../../../../scripts/pnpm.mjs",
+    "packages/testkit/src/composio-health.test.ts -> ../../adapters/src/providers/integration/composio/composio-connector.js",
     "packages/testkit/src/dev-database.test.ts -> ../../../scripts/dev-branch-databases.ts",
     "packages/testkit/src/disposable-database-env.test.ts -> ../../db/prisma.config.js",
     "packages/testkit/src/evals/cache-budget.test.ts -> ../../../adapters/src/pi-usage.js",
@@ -55,6 +58,9 @@
     "packages/testkit/src/executor-turn-checkpoint.test.ts -> ../../adapters/src/pi-runtime.js",
     "packages/testkit/src/history-compaction-pi.test.ts -> ../../adapters/src/history-compaction.js",
     "packages/testkit/src/history-context.test.ts -> ../../adapters/src/context-selection.js",
+    "packages/testkit/src/hub-policy-off.test.ts -> ../../../apps/api/src/hub-policy.ts",
+    "packages/testkit/src/hub-policy-off.test.ts -> ../../auth/src/fixtures/agent-hub-auth.v2.json",
+    "packages/testkit/src/hub-policy-off.test.ts -> ../../auth/src/hub-client.js",
     "packages/testkit/src/mobile-screenshots-env.test.ts -> ../../db/prisma.config.js",
     "packages/testkit/src/parallel-web.test.ts -> ../../adapters/src/computer-lifecycle.js",
     "packages/testkit/src/parallel-web.test.ts -> ../../adapters/src/pi-runtime-models.js",

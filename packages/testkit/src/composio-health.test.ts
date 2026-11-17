@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioConnector } from "@cortexai-agent-hub/adapters";
+import type { createApp } from "@cortexai-agent-hub/api/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { createApp } from "../../../apps/api/src/app.ts";
 import type * as ComposioModule from "../../adapters/src/providers/integration/composio/composio-connector.js";
 
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
@@ -38,7 +38,7 @@ describeWithDatabase("Composio in the API connector stack", () => {
   async function start(composioApiKey: string | undefined) {
     vi.spyOn(ComposioConnector.prototype, "warmDirectory").mockResolvedValue(undefined);
     dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-composio-health-"));
-    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     handles = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,

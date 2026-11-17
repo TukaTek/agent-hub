@@ -40,6 +40,12 @@ const EXISTING = new Set([
   // process that took it (a takeover keeps it for hours and a later worker takes it back by run id),
   // it is taken inside other transactions, and those transactions end it by run id.
   "ComputerExecutionLease.fence",
+  // Fork (Hub sign-in), not long work in one process: one request at a time refreshes a session's
+  // Hub grant, and requests on other instances wait for that row to change rather than spend the
+  // same refresh token.
+  "HubSession.refreshLeaseUntil",
+  // Fork (Hub sign-in): when the shared Hub policy was last fetched, not an attempt counter.
+  "HubPolicySnapshot.attemptedAt",
 ]);
 
 const LEASE_LIKE = /(?<!re)lease|claim|attempt|fence|lockedAt/i;
