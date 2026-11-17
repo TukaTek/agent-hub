@@ -104,7 +104,7 @@ export function OrganizationRowMenu({
           // Off on this server (always under Hub): no new organizations.
           ...(list.organizationsEnabled === false
             ? []
-            : [{ id: NEW_ORGANIZATION, title: t`New organization`, image: "plus" }]),
+            : [{ id: NEW_ORGANIZATION, title: t`New organization`, image: "plus" as const }]),
           { id: ORGANIZATION_SETTINGS, title: t`Organization settings`, image: "gearshape" },
         ]}
         colorScheme={resolveMobileAppearance()}

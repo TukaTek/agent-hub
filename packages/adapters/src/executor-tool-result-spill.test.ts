@@ -1,14 +1,14 @@
 import type { AgentRunRequest, ComputerRef } from "@cortexai-agent-hub/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
-import { BoatSandboxProvider } from "./boat-sandbox.js";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
-import { CreateOSSandboxProvider } from "./createos-sandbox.js";
-import { DaytonaSandboxProvider } from "./daytona-sandbox.js";
-import { DesktopSandboxProvider } from "./desktop-sandbox.js";
-import { DockerSandboxProvider } from "./docker-sandbox.js";
-import { E2BSandboxProvider } from "./e2b-sandbox.js";
 import { createRunExecutor } from "./executor.js";
-import { FakeSandboxProvider } from "./fake-sandbox.js";
+import { BoatSandboxProvider } from "./providers/computer/boat/boat-sandbox.js";
+import { CreateOSSandboxProvider } from "./providers/computer/createos/createos-sandbox.js";
+import { DaytonaSandboxProvider } from "./providers/computer/daytona/daytona-sandbox.js";
+import { DesktopSandboxProvider } from "./providers/computer/desktop/desktop-sandbox.js";
+import { DockerSandboxProvider } from "./providers/computer/docker/docker-sandbox.js";
+import { E2BSandboxProvider } from "./providers/computer/e2b/e2b-sandbox.js";
+import { FakeSandboxProvider } from "./providers/computer/fake/fake-sandbox.js";
 import { formatSpillReceipt, formatStructuredSpill, spillUserKey } from "./tool-result-spill.js";
 
 const lifecycle = vi.hoisted(() => ({ computer: undefined as ComputerRef | undefined }));

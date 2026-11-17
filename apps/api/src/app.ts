@@ -1154,7 +1154,10 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
         // Ending a session or leaving its space also ends an active stream.
         // A database failure rejects this check; only a missing membership is unauthorized.
         stillAuthorized: async () => {
-          const current = (await requestSession(c.req.raw, true))?.actor;
+          const session = await requestSession(c.req.raw, true);
+          // Hub could not confirm the session: the check fails, which is not a sign-out.
+          if (session === "unavailable") throw new Error("Hub could not confirm the session");
+          const current = session?.actor;
           return Boolean(
             actor && current?.userId === actor.userId && current.spaceId === actor.spaceId,
           );

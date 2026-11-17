@@ -4,15 +4,18 @@ import path from "node:path";
 import { ComposioConnector } from "@cortexai-agent-hub/adapters";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
-import type * as ComposioModule from "../../adapters/src/composio-connector.js";
+import type * as ComposioModule from "../../adapters/src/providers/integration/composio/composio-connector.js";
 
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
 
 // The connector stack reads this from its own module, so mock it there rather than on the barrel.
-vi.mock("../../adapters/src/composio-connector.js", async (original) => ({
-  ...(await original<typeof ComposioModule>()),
-  isComposioEnabled: (apiKey: string | undefined) => Boolean(apiKey),
-}));
+vi.mock(
+  "../../adapters/src/providers/integration/composio/composio-connector.js",
+  async (original) => ({
+    ...(await original<typeof ComposioModule>()),
+    isComposioEnabled: (apiKey: string | undefined) => Boolean(apiKey),
+  }),
+);
 
 process.env.WAKEUP_DRIVER = "memory";
 process.env.SANDBOX_PROVIDER = "fake";

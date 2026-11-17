@@ -12,7 +12,7 @@ import {
   prismaHubPolicyStore,
   startHubPolicyRuntime,
 } from "@cortexai-agent-hub/auth";
-import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
+import { resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
 import { createDb } from "@cortexai-agent-hub/db";
 import type { Logger } from "@cortexai-agent-hub/logging";
 
