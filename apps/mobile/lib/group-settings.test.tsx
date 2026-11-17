@@ -150,7 +150,11 @@ it("saves once on a double tap to the group's Space, holds the form, then goes b
     [
       "groups/update",
       { groupId: "group-1", name: "Crew" },
-      { requestContext: expect.objectContaining({ headers: { "x-cortexai-agent-hub-space-id": "space-1" } }) },
+      {
+        requestContext: expect.objectContaining({
+          headers: { "x-cortexai-agent-hub-space-id": "space-1" },
+        }),
+      },
     ],
   ]);
   expect(button("Saving…")!.disabled).toBe(true);

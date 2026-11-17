@@ -165,7 +165,9 @@ export interface CortexAiAgentHubDesktop {
      * Codes captured from that browser's redirect to the app callback, which has
      * no app session of its own. Returns an unsubscribe function.
      */
-    onOAuthCallback: (listener: (callback: CortexAiAgentHubDesktopMcpOAuthCallback) => void) => () => void;
+    onOAuthCallback: (
+      listener: (callback: CortexAiAgentHubDesktopMcpOAuthCallback) => void,
+    ) => () => void;
   };
   platform: string;
   /** Absent on older frameless releases, which still need in-app controls. */

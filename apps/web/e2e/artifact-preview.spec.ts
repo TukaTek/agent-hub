@@ -103,7 +103,12 @@ test("agent-attached files appear as cards with previews and downloads", async (
 test("audio attachments can retry a failed preview without leaving the card", async ({
   page,
 }, testInfo) => {
-  await signup(page, `audio-retry-${Date.now()}@cortexai-agent-hub.test`, "password12", "Audio Retry");
+  await signup(
+    page,
+    `audio-retry-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Audio Retry",
+  );
   await completeOnboarding(page);
 
   // A short silent PCM WAV exercises native controls without an external audio service.

@@ -13,7 +13,12 @@ import type { Deferred } from "@cortexai-agent-hub/core/test-async";
 import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { currentDbContext, runProviderTransaction } from "@cortexai-agent-hub/db";
-import { createLogger, createTestSink, installLogger, wrapJobPayload } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  installLogger,
+  wrapJobPayload,
+} from "@cortexai-agent-hub/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBackgroundJobHandlers } from "./background-job-handlers.js";
 import {

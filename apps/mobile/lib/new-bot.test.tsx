@@ -147,7 +147,9 @@ it("creates once on a double tap, through the save's send, and holds the form me
   rpc.mockClear().mockResolvedValue([]);
   await send("bots/list", undefined);
   expect(rpc).toHaveBeenCalledWith("bots/list", undefined, {
-    requestContext: expect.objectContaining({ headers: { "x-cortexai-agent-hub-space-id": "space-work" } }),
+    requestContext: expect.objectContaining({
+      headers: { "x-cortexai-agent-hub-space-id": "space-work" },
+    }),
   });
   await act(async () => creating.resolve("created"));
   expect(router.back).not.toHaveBeenCalled();
@@ -173,7 +175,9 @@ it("keeps sending the new bot's onboarding to its Space after another is selecte
     "onboarding/start",
     { botId: "bot-1" },
     {
-      requestContext: expect.objectContaining({ headers: { "x-cortexai-agent-hub-space-id": "space-1" } }),
+      requestContext: expect.objectContaining({
+        headers: { "x-cortexai-agent-hub-space-id": "space-1" },
+      }),
     },
   );
 });

@@ -1,6 +1,6 @@
-import { createRouterClient } from "@orpc/server";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { Prisma } from "@cortexai-agent-hub/db";
+import { createRouterClient } from "@orpc/server";
 import { describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { appHandler, createRouter, handle } from "./router-test-support.js";

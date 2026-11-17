@@ -1,4 +1,5 @@
-import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 async function captureScreenshot(page: Page, testInfo: TestInfo, name: string) {
   const screenshotPath = testInfo.outputPath(`${name}.png`);

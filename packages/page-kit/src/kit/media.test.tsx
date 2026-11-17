@@ -411,7 +411,9 @@ describe("calendar", () => {
         ]}
       />,
     );
-    expect((host.querySelector(".cortexai-agent-hub-cal-body") as HTMLElement).style.height).toBe("88px");
+    expect((host.querySelector(".cortexai-agent-hub-cal-body") as HTMLElement).style.height).toBe(
+      "88px",
+    );
     expect(host.textContent).toContain("First day");
     expect(host.textContent).toContain("Last day");
     expect(host.textContent).not.toContain("Previous week");
@@ -428,7 +430,9 @@ describe("calendar", () => {
         ]}
       />,
     );
-    expect((host.querySelector(".cortexai-agent-hub-cal-body") as HTMLElement).style.height).toBe("440px");
+    expect((host.querySelector(".cortexai-agent-hub-cal-body") as HTMLElement).style.height).toBe(
+      "440px",
+    );
   });
 
   it("places week events by hour and draws the now line only on today", () => {

@@ -1,5 +1,9 @@
 import type { AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
-import { isBackgroundRunTrigger, redactSecrets, redactSecretsAfter } from "@cortexai-agent-hub/core";
+import {
+  isBackgroundRunTrigger,
+  redactSecrets,
+  redactSecretsAfter,
+} from "@cortexai-agent-hub/core";
 import { RunHistoryWriteError, recordUsage } from "@cortexai-agent-hub/db";
 import { bestEffort } from "@cortexai-agent-hub/logging";
 import { snapshotReply } from "./reply-snapshot.js";

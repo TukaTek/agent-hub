@@ -9,7 +9,6 @@ import {
   completeOnboarding,
   manageModelConnection,
   modelConnectionDialog,
-  modelConnectOption,
   openBotSettings,
   openModelConnection,
   openUserSettings,
@@ -470,7 +469,12 @@ test("a refused private model server names the setting that allows it", async ({
 test("project-scoped model connection keeps its routing after reopening", async ({
   page,
 }, testInfo) => {
-  await signup(page, `model-project-${Date.now()}@cortexai-agent-hub.test`, "password12", "Model Preview");
+  await signup(
+    page,
+    `model-project-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Model Preview",
+  );
   await completeOnboarding(page);
   await openUserSettings(page, "models");
   const dialog = await openModelConnection(page, "Google Vertex AI");

@@ -1,5 +1,5 @@
-import type { AuthInteraction } from "@earendil-works/pi-ai";
 import { ResponseTooLargeError } from "@cortexai-agent-hub/core";
+import type { AuthInteraction } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import {
   createManualAnthropicOAuthLogin,

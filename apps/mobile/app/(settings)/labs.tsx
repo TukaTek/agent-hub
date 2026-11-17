@@ -1,6 +1,6 @@
-import { useLingui } from "@lingui/react/macro";
 import type { LabFeature } from "@cortexai-agent-hub/contracts";
 import { withLab } from "@cortexai-agent-hub/contracts";
+import { useLingui } from "@lingui/react/macro";
 import { Alert, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { SettingsGroup, SettingsSwitch, useStackedSettings } from "../../components/settings-group";

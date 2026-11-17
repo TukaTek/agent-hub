@@ -88,7 +88,10 @@ test("the desktop app finds text in the open chat", async ({ page }, testInfo) =
       await expect
         .poll(() =>
           page.evaluate(() => {
-            const range = CSS.highlights.get("cortexai-agent-hub-find-current")?.values().next().value;
+            const range = CSS.highlights
+              .get("cortexai-agent-hub-find-current")
+              ?.values()
+              .next().value;
             const pre = range?.startContainer.parentElement?.closest("pre");
             if (!(range instanceof Range) || !pre) return false;
             const match = range.getBoundingClientRect();

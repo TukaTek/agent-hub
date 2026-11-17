@@ -41,7 +41,9 @@ describe("voice HTTP routes answering a typed client error", () => {
 });
 
 describe("voice HTTP routes reporting what they answer", () => {
-  afterEach(() => installLogger(createLogger({ service: "cortexai-agent-hub-api", level: "off", sinks: [] })));
+  afterEach(() =>
+    installLogger(createLogger({ service: "cortexai-agent-hub-api", level: "off", sinks: [] })),
+  );
 
   async function speak(refusal: ClientError) {
     const sink = createTestSink();

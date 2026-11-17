@@ -79,7 +79,9 @@ describe("mobile API requests", () => {
       const result = await fetchAuthenticatedAccountJson("/api/devices", {}, {});
       expect(result.response.status).toBe(401);
       expect(result.body).toEqual({});
-      expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty("x-cortexai-agent-hub-space-id");
+      expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty(
+        "x-cortexai-agent-hub-space-id",
+      );
       expect(rejected).toHaveBeenCalledOnce();
       expect(store.has("cortexai-agent-hub.session_token")).toBe(false);
     } finally {
@@ -156,7 +158,9 @@ describe("mobile API requests", () => {
   it.each(["malformed", "oversized"])(
     "rejects the session even with a %s account 401 body",
     async (body) => {
-      const store = new Map<string, string>([["cortexai-agent-hub.session_token", "expired-token"]]);
+      const store = new Map<string, string>([
+        ["cortexai-agent-hub.session_token", "expired-token"],
+      ]);
       mockSecureStore(store);
       await loadApiBase();
       const rejected = vi.fn();

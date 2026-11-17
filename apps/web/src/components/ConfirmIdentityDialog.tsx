@@ -1,5 +1,8 @@
 import type { AccountSecurity } from "@cortexai-agent-hub/contracts";
-import { identityConfirmationProviders, runWithIdentityConfirmation } from "@cortexai-agent-hub/contracts";
+import {
+  identityConfirmationProviders,
+  runWithIdentityConfirmation,
+} from "@cortexai-agent-hub/contracts";
 import {
   Button,
   Dialog,

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { i18n } from "@lingui/core";
+
 import type { Routine } from "@cortexai-agent-hub/contracts";
+import { i18n } from "@lingui/core";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";

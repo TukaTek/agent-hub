@@ -1,5 +1,5 @@
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { ConnectionSetupError } from "@cortexai-agent-hub/contracts";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_CODE_PROVIDER_ID } from "./cli-models/claude-code/provider-id.js";
 import { resolveDeploymentModel } from "./deployment-model.js";

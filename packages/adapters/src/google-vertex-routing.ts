@@ -1,6 +1,6 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelConnectInput } from "@cortexai-agent-hub/contracts";
 import { modelRoutingId } from "@cortexai-agent-hub/contracts";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 type ProjectRouting = { projectId?: string; region?: string };
 

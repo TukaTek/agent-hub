@@ -1,8 +1,8 @@
+import type { OrganizationInvitation, OrganizationMember } from "@cortexai-agent-hub/contracts";
+import { accountDisplay } from "@cortexai-agent-hub/core";
 import { MenuView } from "@expo/ui/community/menu";
 import { ph } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
-import type { OrganizationInvitation, OrganizationMember } from "@cortexai-agent-hub/contracts";
-import { accountDisplay } from "@cortexai-agent-hub/core";
 import { useIsFocused, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, Share, StyleSheet } from "react-native";

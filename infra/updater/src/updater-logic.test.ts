@@ -31,9 +31,9 @@ describe("resolveUpdaterConfig", () => {
   });
 
   it("only schedules when an operator explicitly selects a valid interval", () => {
-    expect(resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS: "6" })).toMatchObject(
-      { autoUpdateIntervalMs: 6 * 3_600_000 },
-    );
+    expect(
+      resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS: "6" }),
+    ).toMatchObject({ autoUpdateIntervalMs: 6 * 3_600_000 });
     for (const hours of ["true", "-1", "0.5", "169", "Infinity"]) {
       expect(() =>
         resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS: hours }),
@@ -50,7 +50,10 @@ describe("resolveUpdaterConfig", () => {
     expect(config.autoUpdateIntervalMs).toBe(0);
     expect(config.autoUpdateDisabledReason).toMatch(/manual controls remain available/);
     expect(
-      resolveUpdaterConfig({ ...base, CORTEXAI_AGENT_HUB_IMAGE: "registry.example.com/custom/app" }),
+      resolveUpdaterConfig({
+        ...base,
+        CORTEXAI_AGENT_HUB_IMAGE: "registry.example.com/custom/app",
+      }),
     ).toMatchObject({ autoUpdateIntervalMs: 0, autoUpdateDisabledReason: null });
   });
 

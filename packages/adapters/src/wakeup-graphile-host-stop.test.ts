@@ -310,7 +310,9 @@ describe("GraphileJobWorkerHost stop", () => {
     } finally {
       writeLanded.resolve();
       await host.stop();
-      installLogger(createLogger({ service: "cortexai-agent-hub-worker", level: "off", sinks: [] }));
+      installLogger(
+        createLogger({ service: "cortexai-agent-hub-worker", level: "off", sinks: [] }),
+      );
     }
   });
 

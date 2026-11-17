@@ -185,8 +185,8 @@ kubectl -n cortexai-agent-hub wait --for=condition=complete job/cortexai-agent-h
 [Caddy 예제](../examples/kubernetes/Caddyfile.edge.example)의 프로세스 환경에는
 다음 세 값을 넣습니다.
 
-| 값                        | 의미                                                    |
-| ------------------------- | ------------------------------------------------------- |
+| 값                                    | 의미                                                    |
+| ------------------------------------- | ------------------------------------------------------- |
 | `CORTEXAI_AGENT_HUB_PUBLIC_HOST`      | `app.example.com` 같은 공개 도메인                      |
 | `CORTEXAI_AGENT_HUB_PRIVATE_UPSTREAM` | 외부 입구만 접근 가능한 ingress 주소와 포트             |
 | `CORTEXAI_AGENT_HUB_AUTH_UPSTREAM`    | 같은 ingress로 전달하는 비공개 oauth2-proxy 주소와 포트 |

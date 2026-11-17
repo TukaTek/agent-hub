@@ -1,7 +1,7 @@
-import { useLingui } from "@lingui/react/macro";
 import type { Bot } from "@cortexai-agent-hub/contracts";
 import { modelOptionKey, parseModelOptionKey } from "@cortexai-agent-hub/core";
 import { toast } from "@cortexai-agent-hub/ui-web";
+import { useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import { botModelChoices } from "../../lib/bot-model-choices";
 import { useSave, useSpaceQueries } from "../../lib/query";

@@ -1,6 +1,10 @@
 import type { SemanticMemoryProvider } from "@cortexai-agent-hub/adapter-kit";
 import { hasLab, resolveLabs } from "@cortexai-agent-hub/contracts";
-import { BACKGROUND_HELPER_TRIGGER, isMessagingChannelRun, messagingChannelId } from "@cortexai-agent-hub/core";
+import {
+  BACKGROUND_HELPER_TRIGGER,
+  isMessagingChannelRun,
+  messagingChannelId,
+} from "@cortexai-agent-hub/core";
 import {
   effectiveMemoryScope,
   loadRunHistoryMessages,

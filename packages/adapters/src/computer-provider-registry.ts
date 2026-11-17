@@ -1,4 +1,7 @@
-import type { ComputerProviderDescriptor, ComputerProviderField } from "@cortexai-agent-hub/contracts";
+import type {
+  ComputerProviderDescriptor,
+  ComputerProviderField,
+} from "@cortexai-agent-hub/contracts";
 import {
   ipVersion,
   isCloudMetadataHost,

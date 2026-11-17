@@ -92,7 +92,9 @@ test("a subagent approval survives refresh while the parent keeps answering", as
     matchValue: "web_fetch",
   });
   const composer = page.getByPlaceholder(/Message/);
-  await composer.fill("delegate to a helper: fetch https://helper-approval.cortexai-agent-hub.test/notes");
+  await composer.fill(
+    "delegate to a helper: fetch https://helper-approval.cortexai-agent-hub.test/notes",
+  );
   await page.keyboard.press("Enter");
   const allow = page.getByRole("button", { name: "Allow once", exact: true });
   await expect(allow).toBeVisible({ timeout: 30_000 });

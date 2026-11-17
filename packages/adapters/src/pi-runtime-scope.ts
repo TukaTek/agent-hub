@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Models } from "@earendil-works/pi-ai";
 import type { AgentRuntime } from "@cortexai-agent-hub/adapter-kit";
+import type { Models } from "@earendil-works/pi-ai";
 
 const runtimeModels = new AsyncLocalStorage<Models>();
 

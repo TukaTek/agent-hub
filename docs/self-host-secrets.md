@@ -10,14 +10,14 @@ overwrite an existing `.env` without an explicit backup and operator consent.**
 `bash install-images.sh` (without a pre-existing `.env`) copies
 `.env.images.example` and fills empty keys with `openssl`:
 
-| Key                        | Installer fill         | Role                                                                                      |
-| -------------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`        | `openssl rand -hex 16` | Postgres owner password inside Compose (migrations)                                       |
-| `POSTGRES_APP_PASSWORD`    | `openssl rand -hex 16` | Password of the app's `cortexai_agent_hub_app` login, which row-level security applies to |
-| `BETTER_AUTH_SECRET`       | `openssl rand -hex 32` | Auth/session signing                                                                      |
-| `ENCRYPTION_KEY`           | `openssl rand -hex 32` | Encrypts stored credentials at rest                                                       |
-| `SCREEN_PROXY_SECRET`      | `openssl rand -hex 32` | Signs short-lived `/novnc/*` screen capabilities                                          |
-| `SANDBOX_SUPERVISOR_TOKEN` | `openssl rand -hex 32` | API ↔ sandbox supervisor auth                                                             |
+| Key                                | Installer fill         | Role                                                                                      |
+| ---------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`                | `openssl rand -hex 16` | Postgres owner password inside Compose (migrations)                                       |
+| `POSTGRES_APP_PASSWORD`            | `openssl rand -hex 16` | Password of the app's `cortexai_agent_hub_app` login, which row-level security applies to |
+| `BETTER_AUTH_SECRET`               | `openssl rand -hex 32` | Auth/session signing                                                                      |
+| `ENCRYPTION_KEY`                   | `openssl rand -hex 32` | Encrypts stored credentials at rest                                                       |
+| `SCREEN_PROXY_SECRET`              | `openssl rand -hex 32` | Signs short-lived `/novnc/*` screen capabilities                                          |
+| `SANDBOX_SUPERVISOR_TOKEN`         | `openssl rand -hex 32` | API ↔ sandbox supervisor auth                                                             |
 | `CORTEXAI_AGENT_HUB_UPDATER_TOKEN` | `openssl rand -hex 32` | Dedicated updater credential; unused until the updater profile is enabled                 |
 
 Re-runs **preserve** an existing `.env` (they do not rotate secrets); they only append

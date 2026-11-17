@@ -2,9 +2,9 @@
 
 vi.mock("./session", () => ({ currentSessionGeneration: () => 0 }));
 
-import { i18n } from "@lingui/core";
 import type { Deferred } from "@cortexai-agent-hub/core/test-async";
 import { deferred } from "@cortexai-agent-hub/core/test-async";
+import { i18n } from "@lingui/core";
 import type { ReactNode } from "react";
 import { act, createElement, useEffect } from "react";
 import type { Root } from "react-dom/client";

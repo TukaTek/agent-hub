@@ -70,7 +70,9 @@ const setupPageSync = <Method extends BridgeMethod>(): IpcChannel<Method> & { sy
 
 const SETUP_NOT_ACTIVE = { ok: false, error: "Setup is not active." };
 
-type Desktop = { [Key in keyof CortexAiAgentHubDesktop]-?: NonNullable<CortexAiAgentHubDesktop[Key]> };
+type Desktop = {
+  [Key in keyof CortexAiAgentHubDesktop]-?: NonNullable<CortexAiAgentHubDesktop[Key]>;
+};
 
 /**
  * Every channel a page can call, and who may call it. Types come from the bridge contracts the

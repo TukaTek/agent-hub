@@ -1,4 +1,9 @@
-import type { Bot, ModelApiProtocol, ModelCatalogEntry, ModelSettings } from "@cortexai-agent-hub/contracts";
+import type {
+  Bot,
+  ModelApiProtocol,
+  ModelCatalogEntry,
+  ModelSettings,
+} from "@cortexai-agent-hub/contracts";
 import {
   canonicalPiProviderId,
   normalizeOpenAiCompatibleBaseUrl,

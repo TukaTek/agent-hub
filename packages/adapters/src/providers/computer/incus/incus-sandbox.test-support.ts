@@ -100,7 +100,9 @@ export class FakeIncus implements IncusClient {
     const name = parts[1];
     if (method === "GET" && !name) {
       const [, botId] =
-        /^config\.user\.cortexai-agent-hub-bot-id eq (\S+)$/.exec(url.searchParams.get("filter") ?? "") ?? [];
+        /^config\.user\.cortexai-agent-hub-bot-id eq (\S+)$/.exec(
+          url.searchParams.get("filter") ?? "",
+        ) ?? [];
       return {
         metadata: [...this.instances]
           .filter(([, instance]) => instance.config["user.cortexai-agent-hub-bot-id"] === botId)

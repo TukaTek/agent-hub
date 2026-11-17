@@ -88,9 +88,9 @@ test("an owner invites someone to the organization, who joins with a private Spa
   const acme = joined.organizations.find((organization) => organization.name === "Acme")!;
   expect(acme.role).toBe("member");
   expect(acme.defaultSpaceId).not.toBe(activeOrganizationId);
-  expect(await inviteePage.evaluate(() => localStorage.getItem("cortexai-agent-hub:space-id"))).toBe(
-    acme.defaultSpaceId,
-  );
+  expect(
+    await inviteePage.evaluate(() => localStorage.getItem("cortexai-agent-hub:space-id")),
+  ).toBe(acme.defaultSpaceId);
 
   await ownerPage.reload();
   settings = await openUserSettings(ownerPage, "organization");

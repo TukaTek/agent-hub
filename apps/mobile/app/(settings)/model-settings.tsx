@@ -1,5 +1,3 @@
-import { ph } from "@lingui/core/macro";
-import { useLingui } from "@lingui/react/macro";
 import type { ModelSettings } from "@cortexai-agent-hub/contracts";
 import { MAX_MODEL_CONTEXT_WINDOW, MAX_MODEL_MAX_TOKENS } from "@cortexai-agent-hub/contracts";
 import type { ModelSettingsFields } from "@cortexai-agent-hub/core";
@@ -13,6 +11,8 @@ import {
   modelSettingsFields,
   modelSettingsRequest,
 } from "@cortexai-agent-hub/core";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import type { DataTag, QueryFunction, QueryKey } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";

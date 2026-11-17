@@ -18,7 +18,9 @@ export function organizationInvitationEmail(
     locale,
     say("{inviter} invited you to {organization} on CortexAI Agent Hub", values),
     <>
-      <Text>{say("{inviter} invited you to join {organization} on CortexAI Agent Hub.", values)}</Text>
+      <Text>
+        {say("{inviter} invited you to join {organization} on CortexAI Agent Hub.", values)}
+      </Text>
       <Button href={invitation.url}>{say("Join {organization}", values)}</Button>
       <FinePrint>
         {say("This invitation expires in 7 days. Sign in with this email address to accept it.")}

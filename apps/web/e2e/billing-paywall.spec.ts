@@ -364,7 +364,12 @@ test("start the own-key plan billed yearly", async ({ page }, testInfo) => {
 });
 
 test("start a bigger tier's trial from the tiers layout", async ({ page }, testInfo) => {
-  await signup(page, `plan-tiers-${Date.now()}@cortexai-agent-hub.test`, "password12", "Demo Customer");
+  await signup(
+    page,
+    `plan-tiers-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Demo Customer",
+  );
   await completeOnboarding(page);
   await page.route("**/api/auth/capabilities", async (route) => {
     const response = await route.fetch();
@@ -405,7 +410,9 @@ test("start a bigger tier's trial from the tiers layout", async ({ page }, testI
     page.waitForURL(/[?&]paid/),
     page.getByRole("button", { name: "Start Pro trial", exact: true }).click(),
   ]);
-  await expect(page.getByRole("heading", { name: "Choose how to use CortexAI Agent Hub" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Choose how to use CortexAI Agent Hub" }),
+  ).toBeVisible();
   expect(selected).toEqual({ funding: "byok", interval: "year", tier: "pro" });
 });
 

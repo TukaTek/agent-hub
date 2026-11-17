@@ -1,4 +1,8 @@
-import type { AdapterContext, AutoReviewRequest, DecisionRequest } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  AdapterContext,
+  AutoReviewRequest,
+  DecisionRequest,
+} from "@cortexai-agent-hub/adapter-kit";
 import { expect, it } from "vitest";
 import { DecisionAutoReviewProvider } from "./decision-auto-review.js";
 

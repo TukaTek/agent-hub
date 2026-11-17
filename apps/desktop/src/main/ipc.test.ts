@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
-import type { DesktopUpdateState, CortexAiAgentHubDesktop } from "@cortexai-agent-hub/contracts";
+import type { CortexAiAgentHubDesktop, DesktopUpdateState } from "@cortexai-agent-hub/contracts";
 import type { BrowserWindow, WebContents } from "electron";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appWindowTargets, desktop } from "./desktop-state.js";

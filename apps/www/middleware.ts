@@ -3,8 +3,8 @@ import {
   getMarkdownAlternate,
   getMarkdownDocument,
   markdownResponse,
-  negotiateRepresentation,
   NOT_FOUND_MARKDOWN,
+  negotiateRepresentation,
 } from "./src/agent-content.js";
 
 const VARY_HEADER = "Accept, Accept-Encoding";
@@ -24,18 +24,12 @@ export default function middleware(request: Request): Response {
     !markdown && (!acceptHeader?.trim() || acceptHeader.trim() === "*/*");
 
   if (representation === "markdown" || genericAgentNotFound) {
-    return markdownResponse(
-      markdown ?? NOT_FOUND_MARKDOWN,
-      request.method,
-      markdown ? 200 : 404,
-    );
+    return markdownResponse(markdown ?? NOT_FOUND_MARKDOWN, request.method, markdown ? 200 : 404);
   }
 
   if (representation === "not-acceptable") {
     return new Response(
-      request.method === "HEAD"
-        ? null
-        : "Not acceptable. Request text/html or text/markdown.\n",
+      request.method === "HEAD" ? null : "Not acceptable. Request text/html or text/markdown.\n",
       {
         status: 406,
         headers: {

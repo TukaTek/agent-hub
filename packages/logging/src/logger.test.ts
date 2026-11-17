@@ -24,7 +24,10 @@ describe("logger", () => {
   });
 
   it("counts a line lost while it is built as dropped, without marking the sinks unhealthy", () => {
-    const logger = createLogger({ service: "cortexai-agent-hub-worker", sinks: [createTestSink()] });
+    const logger = createLogger({
+      service: "cortexai-agent-hub-worker",
+      sinks: [createTestSink()],
+    });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const before = logSinkHealth();
     const broken = Object.defineProperty({}, "detail", {

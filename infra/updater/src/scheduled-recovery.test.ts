@@ -75,7 +75,10 @@ async function fixture(env: string, commit: string, computers = false) {
     const failed = (output: string) => ({ ok: false, exitCode: 1, stdout: "", output });
     if (command === "git") return ok(`${older}\trefs/tags/v1.0.0\n${newer}\trefs/tags/v1.1.0\n`);
     if (args[0] === "ps") {
-      if (args.at(-1) === '{{.Label "com.docker.compose.project"}}\t{{.Label "cortexai-agent-hub.managed"}}')
+      if (
+        args.at(-1) ===
+        '{{.Label "com.docker.compose.project"}}\t{{.Label "cortexai-agent-hub.managed"}}'
+      )
         return ok(
           `${[
             `${config.projectName}\t`,
@@ -341,7 +344,10 @@ describe("scheduled release state and recovery", () => {
     expect(
       subject.calls
         .filter(({ args }) => args.includes("up"))
-        .map(({ env }) => [env.CORTEXAI_AGENT_HUB_IMAGE_TAG, env.CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG]),
+        .map(({ env }) => [
+          env.CORTEXAI_AGENT_HUB_IMAGE_TAG,
+          env.CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG,
+        ]),
     ).toEqual([
       [`sha-${newer}`, `sha-${newer}`],
       [`sha-${older}`, cachedOlder],
@@ -370,7 +376,8 @@ describe("scheduled release state and recovery", () => {
     expect((await subject.app.applyScheduledUpdate()).ok).toBe(false);
     expect(await subject.env()).toContain("CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=latest\n");
     expect(
-      subject.calls.filter(({ args }) => args.includes("up")).at(-1)?.env.CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG,
+      subject.calls.filter(({ args }) => args.includes("up")).at(-1)?.env
+        .CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG,
     ).toBe(cachedOlder);
   });
 
@@ -417,7 +424,9 @@ describe("scheduled release state and recovery", () => {
       subject.state.unavailableComputer = false;
       expect((await subject.app.applyScheduledUpdate()).ok).toBe(true);
       expect(subject.state.images[`sha-${newer}`]).toBeDefined();
-      expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`);
+      expect(await subject.env()).toContain(
+        `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`,
+      );
       const pulls = subject.calls.filter(({ args }) => args.includes("pull")).length;
       await subject.app.applyScheduledUpdate();
       expect(subject.calls.filter(({ args }) => args.includes("pull"))).toHaveLength(pulls);
@@ -510,7 +519,9 @@ describe("scheduled release state and recovery", () => {
     subject.state.computer = `${computerImage}:sha-${newer}`;
     subject.state.images[cachedOlder] = `sha256:${"1".repeat(64)}`;
     expect((await subject.app.applyScheduledUpdate()).ok).toBe(true);
-    expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedNewer}\n`);
+    expect(await subject.env()).toContain(
+      `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedNewer}\n`,
+    );
     expect(subject.state.images[cachedNewer]).toBeDefined();
     const rollback = await subject.app.request("/rollback", {
       method: "POST",
@@ -532,7 +543,9 @@ describe("scheduled release state and recovery", () => {
     subject.state.images[obsolete] = `sha256:${"3".repeat(64)}`;
     expect((await subject.app.applyScheduledUpdate()).ok).toBe(true);
     expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_IMAGE_TAG_PREVIOUS=sha-${older}\n`);
-    expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`);
+    expect(await subject.env()).toContain(
+      `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`,
+    );
     expect(subject.state.images[cachedOlder]).toBeDefined();
     expect(subject.state.images[obsolete]).toBeUndefined();
     const rollback = await subject.app.request("/rollback", {
@@ -618,7 +631,11 @@ describe("scheduled release state and recovery", () => {
   ] as const)(
     "skips shared-host image cleanup (managed computer=%s, foreign project=%s)",
     async (computers, project) => {
-      const subject = await fixture(`CORTEXAI_AGENT_HUB_IMAGE_TAG=sha-${older}\n`, older, computers);
+      const subject = await fixture(
+        `CORTEXAI_AGENT_HUB_IMAGE_TAG=sha-${older}\n`,
+        older,
+        computers,
+      );
       const otherRollback = `sha-${"3".repeat(40)}`;
       subject.state.appImages[otherRollback] = `sha256:${"3".repeat(64)}`;
       const cache = `${cachePrefix}${"3".repeat(64)}`;
@@ -759,7 +776,9 @@ describe("scheduled release state and recovery", () => {
       body: JSON.stringify({ repoUrl: "https://github.com/TukaTek/agent-hub", branch: "main" }),
     });
     await expect(applied.json()).resolves.toMatchObject({ ok: true });
-    expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`);
+    expect(await subject.env()).toContain(
+      `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`,
+    );
     const rollback = await subject.app.request("/rollback", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
@@ -797,7 +816,9 @@ describe("scheduled release state and recovery", () => {
     );
     subject.state.computer = `${computerImage}:latest`;
     expect((await subject.app.applyScheduledUpdate()).ok).toBe(true);
-    expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`);
+    expect(await subject.env()).toContain(
+      `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedOlder}\n`,
+    );
     subject.state.images.latest = `sha256:${"2".repeat(64)}`;
     const pulled = subject.calls.filter(({ args }) => args.includes("pull")).length;
     const response = await subject.app.request("/rollback", {
@@ -808,7 +829,9 @@ describe("scheduled release state and recovery", () => {
     expect(subject.state.computer).toBe(`${computerImage}:${cachedOlder}`);
     expect(subject.state.versions.worker).toBe(older);
     expect(subject.state.images[cachedOlder]).toBe(`sha256:${"1".repeat(64)}`);
-    expect(await subject.env()).toContain(`CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedNewer}\n`);
+    expect(await subject.env()).toContain(
+      `CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG_PREVIOUS=${cachedNewer}\n`,
+    );
     const redo = await subject.app.request("/rollback", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },

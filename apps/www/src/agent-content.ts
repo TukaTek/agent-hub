@@ -121,10 +121,7 @@ function preferenceFor(accept: string, desiredType: string): MediaPreference {
   let best: MediaPreference = { quality: 0, specificity: -1 };
 
   for (const rawRange of accept.split(",")) {
-    const [rawType = "", ...rawParameters] = rawRange
-      .trim()
-      .toLowerCase()
-      .split(";");
+    const [rawType = "", ...rawParameters] = rawRange.trim().toLowerCase().split(";");
     const [major, minor] = rawType.trim().split("/");
     if (!major || !minor) continue;
 
@@ -138,9 +135,7 @@ function preferenceFor(accept: string, desiredType: string): MediaPreference {
             : -1;
     if (specificity < 0) continue;
 
-    const qualityParameter = rawParameters.find((parameter) =>
-      parameter.trim().startsWith("q="),
-    );
+    const qualityParameter = rawParameters.find((parameter) => parameter.trim().startsWith("q="));
     const parsedQuality = qualityParameter
       ? Number.parseFloat(qualityParameter.trim().slice(2))
       : 1;
@@ -160,9 +155,7 @@ function preferenceFor(accept: string, desiredType: string): MediaPreference {
   return best;
 }
 
-export function negotiateRepresentation(
-  acceptHeader: string | null,
-): Representation {
+export function negotiateRepresentation(acceptHeader: string | null): Representation {
   if (!acceptHeader?.trim()) return "html";
 
   const markdown = preferenceFor(acceptHeader, "text/markdown");
@@ -170,10 +163,7 @@ export function negotiateRepresentation(
 
   if (markdown.quality <= 0 && html.quality <= 0) return "not-acceptable";
   if (markdown.quality > html.quality) return "markdown";
-  if (
-    markdown.quality === html.quality &&
-    markdown.specificity > html.specificity
-  )
+  if (markdown.quality === html.quality && markdown.specificity > html.specificity)
     return "markdown";
   return "html";
 }
@@ -188,11 +178,7 @@ export function getMarkdownAlternate(pathname: string): string | undefined {
   return normalizedPathname === "/" ? "/index.md" : `${normalizedPathname}.md`;
 }
 
-export function markdownResponse(
-  body: string,
-  method = "GET",
-  status = 200,
-): Response {
+export function markdownResponse(body: string, method = "GET", status = 200): Response {
   return new Response(method === "HEAD" ? null : body, {
     status,
     headers: {

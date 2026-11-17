@@ -33,18 +33,28 @@ describe("desktop child windows", () => {
   });
 
   it("rejects malformed URLs and non-HTTPS third-party targets", () => {
-    expect(shouldOpenInAppPopup(appOrigin, "not a url", "cortexai-agent-hub-model-oauth")).toBe(false);
+    expect(shouldOpenInAppPopup(appOrigin, "not a url", "cortexai-agent-hub-model-oauth")).toBe(
+      false,
+    );
     expect(
-      shouldOpenInAppPopup(appOrigin, "http://provider.example.com", "cortexai-agent-hub-model-oauth"),
+      shouldOpenInAppPopup(
+        appOrigin,
+        "http://provider.example.com",
+        "cortexai-agent-hub-model-oauth",
+      ),
     ).toBe(false);
   });
 });
 
 it("keeps a server-named MCP sign-in window in an Electron popup", () => {
   const authorize = "https://provider.example.com/authorize";
-  expect(shouldOpenInAppPopup(appOrigin, authorize, "cortexai-agent-hub-mcp-signin:cabc")).toBe(true);
+  expect(shouldOpenInAppPopup(appOrigin, authorize, "cortexai-agent-hub-mcp-signin:cabc")).toBe(
+    true,
+  );
   expect(shouldOpenInAppPopup(appOrigin, authorize, "cortexai-agent-hub-mcp-signin:")).toBe(false);
-  expect(shouldOpenInAppPopup(appOrigin, authorize, "cortexai-agent-hub-mcp-signin:../other")).toBe(false);
+  expect(shouldOpenInAppPopup(appOrigin, authorize, "cortexai-agent-hub-mcp-signin:../other")).toBe(
+    false,
+  );
 });
 
 describe("MCP sign-in browsers", () => {
@@ -78,23 +88,33 @@ it("keeps SSO popups sandboxed in the parent session without a privileged preloa
     sandbox: true,
   });
   expect(oauthPopupSessionPreferences(null)).not.toHaveProperty("partition");
-  expect(shouldOpenInAppPopup(appOrigin, "http://provider.example.com", "cortexai-agent-hub-sso-oauth")).toBe(
-    false,
-  );
+  expect(
+    shouldOpenInAppPopup(appOrigin, "http://provider.example.com", "cortexai-agent-hub-sso-oauth"),
+  ).toBe(false);
 });
 
 it("allows only the named SSO blank popup before provider navigation", () => {
   expect(shouldOpenInAppPopup(appOrigin, "about:blank", "cortexai-agent-hub-sso-oauth")).toBe(true);
   for (const name of ["_blank", "cortexai-agent-hub-mcp-oauth", ""])
     expect(shouldOpenInAppPopup(appOrigin, "about:blank", name)).toBe(false);
-  expect(shouldOpenInAppPopup(appOrigin, "about:blank#unsafe", "cortexai-agent-hub-sso-oauth")).toBe(false);
+  expect(
+    shouldOpenInAppPopup(appOrigin, "about:blank#unsafe", "cortexai-agent-hub-sso-oauth"),
+  ).toBe(false);
 });
 
 it("keeps session-named MCP popups restricted to HTTPS", () => {
   expect(
-    shouldOpenInAppPopup(appOrigin, "http://provider.example.com", "cortexai-agent-hub-mcp-oauth:session"),
+    shouldOpenInAppPopup(
+      appOrigin,
+      "http://provider.example.com",
+      "cortexai-agent-hub-mcp-oauth:session",
+    ),
   ).toBe(false);
-  expect(shouldOpenInAppPopup(appOrigin, "https://provider.example.com", "cortexai-agent-hub-mcp-oauth:")).toBe(
-    false,
-  );
+  expect(
+    shouldOpenInAppPopup(
+      appOrigin,
+      "https://provider.example.com",
+      "cortexai-agent-hub-mcp-oauth:",
+    ),
+  ).toBe(false);
 });

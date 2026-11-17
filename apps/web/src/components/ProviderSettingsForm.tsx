@@ -1,4 +1,3 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type { ProviderSettingsField } from "@cortexai-agent-hub/contracts";
 import type { SettingsFieldProblem } from "@cortexai-agent-hub/core";
 import {
@@ -23,6 +22,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";

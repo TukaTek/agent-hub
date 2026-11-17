@@ -1,6 +1,11 @@
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import type { TestSink } from "@cortexai-agent-hub/logging";
-import { createLogger, createTestSink, getLogger, installLogger } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  getLogger,
+  installLogger,
+} from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatSdkMessagingSurface } from "./chat-sdk-surface.js";
 import { messagingPlatformsFromEnv, splitOutboundBody } from "./messaging-platforms.js";

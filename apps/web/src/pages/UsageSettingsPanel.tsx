@@ -1,4 +1,3 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type { UsageBreakdownBot, UsageDateRange } from "@cortexai-agent-hub/contracts";
 import {
   Field,
@@ -19,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@cortexai-agent-hub/ui-web/components/ui/table";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";

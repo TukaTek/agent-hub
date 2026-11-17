@@ -12,7 +12,12 @@ test("a self-hosted voice connection offers a separate transcription server", as
 }, testInfo) => {
   // The screenshot never submits the form or contacts a speech server.
   const stamp = Date.now();
-  await signup(page, `voice-stt-${stamp}@cortexai-agent-hub.test`, "password12", "Voice Transcription Preview");
+  await signup(
+    page,
+    `voice-stt-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Voice Transcription Preview",
+  );
   await completeOnboarding(page);
   await openUserSettings(page, "voice");
   const voice = page.getByTestId("voice-settings");

@@ -5,7 +5,13 @@ import { demoText, getDemoBots } from "../i18n/demo";
 import type { Locale } from "../i18n/locales";
 import { LandingBotAvatar } from "./LandingBotAvatar";
 import type { DemoTrigger } from "./product-demo-when";
-import { defaultTrigger, describeTrigger, displayRoutineWhen, parseWhen, resolveRoutineWhen } from "./product-demo-when";
+import {
+  defaultTrigger,
+  describeTrigger,
+  displayRoutineWhen,
+  parseWhen,
+  resolveRoutineWhen,
+} from "./product-demo-when";
 
 type DemoTranslator = (source: string, values?: Record<string, string | number>) => string;
 
@@ -97,7 +103,6 @@ function cloneBots(source: DemoBot[]): LiveBot[] {
     answers: [],
   }));
 }
-
 
 function displayedWhen(when: string, text: DemoTranslator): string {
   return displayRoutineWhen(when, text);
@@ -866,9 +871,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
                   type="button"
                   className="product-demo__screen"
                   onClick={takeControl}
-                  aria-label={
-                    hasControl ? text("Open computer") : text("Take control of computer")
-                  }
+                  aria-label={hasControl ? text("Open computer") : text("Take control of computer")}
                 >
                   <ComputerDesktop screen={active.screen} />
                 </button>
@@ -963,11 +966,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
             {panelMode === "routine" && routineDraft ? (
               <div className="product-demo__routine-editor">
                 <div className="product-demo__routine-nav">
-                  <button
-                    type="button"
-                    onClick={saveRoutine}
-                    aria-label={text("Back to computer")}
-                  >
+                  <button type="button" onClick={saveRoutine} aria-label={text("Back to computer")}>
                     ‹
                   </button>
                   <span>{text("Routine")}</span>
@@ -1173,9 +1172,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
                 <div className="product-demo__boot-track">
                   <div style={{ width: `${bootPct}%` }} />
                 </div>
-                <div className="product-demo__boot-step">
-                  {text(BOOT_STEPS[bootPct] ?? "")}
-                </div>
+                <div className="product-demo__boot-step">{text(BOOT_STEPS[bootPct] ?? "")}</div>
               </div>
             ) : (
               <div className="product-demo__takeover">
@@ -1183,9 +1180,7 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
                   <div className="product-demo__takeover-who">
                     <LandingBotAvatar color={active.color} size={32} />
                     <span>{text("{name}’s computer", { name: active.name })}</span>
-                    <span className="product-demo__takeover-pill">
-                      {text("You have control")}
-                    </span>
+                    <span className="product-demo__takeover-pill">{text("You have control")}</span>
                   </div>
                   <div className="product-demo__takeover-actions">
                     <Button type="button" variant="outline" size="sm" onClick={releaseControl}>
@@ -1210,7 +1205,9 @@ export function ProductDemo({ locale = "en" }: { locale?: Locale }) {
         ) : null}
       </div>
       <p className="product-demo__caption">
-        {text("Live demo. Pick an Assistant, open its computer, add a routine, or start a new chat.")}
+        {text(
+          "Live demo. Pick an Assistant, open its computer, add a routine, or start a new chat.",
+        )}
       </p>
     </div>
   );

@@ -1,4 +1,8 @@
-import type { MessageAuthor, ThreadMessage, ThreadMessagePage } from "@cortexai-agent-hub/contracts";
+import type {
+  MessageAuthor,
+  ThreadMessage,
+  ThreadMessagePage,
+} from "@cortexai-agent-hub/contracts";
 import { MessageBlock as MessageBlockSchema } from "@cortexai-agent-hub/contracts";
 import {
   BACKGROUND_RUN_TRIGGERS,

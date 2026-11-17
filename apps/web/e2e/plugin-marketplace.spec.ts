@@ -338,7 +338,12 @@ test("integration fallback icons preserve non-BMP initials", async ({ page }, te
       },
     }),
   );
-  await signup(page, `unicode-icons-${Date.now()}@cortexai-agent-hub.test`, "password12", "Unicode Icons");
+  await signup(
+    page,
+    `unicode-icons-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Unicode Icons",
+  );
   await completeOnboarding(page);
   await page.getByRole("button", { name: "Connect apps", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Integrations", exact: true });

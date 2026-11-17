@@ -1,6 +1,6 @@
-import { t } from "@lingui/core/macro";
 import type { UserDeviceRequest } from "@cortexai-agent-hub/core";
 import { listUserDevicesWith, removeUserDeviceWith } from "@cortexai-agent-hub/core";
+import { t } from "@lingui/core/macro";
 import { fetchAuthenticatedAccountJson } from "./api";
 
 const request: UserDeviceRequest = async (path, method) => {

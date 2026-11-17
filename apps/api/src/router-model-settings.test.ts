@@ -1,9 +1,12 @@
-import { RPCHandler } from "@orpc/server/fetch";
 import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import { listPiCatalog } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
-import { MAX_MODEL_SETTINGS_PER_CONNECTION, REPLY_QUOTE_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
+import {
+  MAX_MODEL_SETTINGS_PER_CONNECTION,
+  REPLY_QUOTE_MAX_LENGTH,
+} from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import { createModelConnector, prepareModelReconnectSettings } from "./model-credentials.js";
 import type { RouterDeps } from "./router.js";

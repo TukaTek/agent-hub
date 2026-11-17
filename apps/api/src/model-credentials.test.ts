@@ -1,7 +1,10 @@
 import type * as Adapters from "@cortexai-agent-hub/adapters";
 import type { CodexLiveCatalog } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
-import { ModelConnectInputSchema, OPENAI_COMPATIBLE_PROVIDER_ID } from "@cortexai-agent-hub/contracts";
+import {
+  ModelConnectInputSchema,
+  OPENAI_COMPATIBLE_PROVIDER_ID,
+} from "@cortexai-agent-hub/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createModelConnector } from "./model-credentials.js";
 import type { RouterDeps } from "./router.js";

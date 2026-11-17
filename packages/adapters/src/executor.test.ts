@@ -29,10 +29,10 @@ import { PRIVATE_MODEL_ENDPOINT_MESSAGE } from "./openai-compatible-url.js";
 import { RetiredModelCredentialError } from "./pi-oauth.js";
 import { modelsForRequest, resolveRuntimeModel } from "./pi-runtime-models.js";
 import {
+  CORTEXAI_AGENT_HUB_PLATFORM_INSTRUCTION,
   desktopGuardShellInstruction,
   dockerComputerToolInstruction,
   persistentComputerInstruction,
-  CORTEXAI_AGENT_HUB_PLATFORM_INSTRUCTION,
   threadContextForRun,
   userTurnInstructions,
   VOICE_CALL_INSTRUCTION,

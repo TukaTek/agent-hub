@@ -7,7 +7,11 @@ import type {
   SettingsScope,
   ThinkingLevel,
 } from "@cortexai-agent-hub/contracts";
-import { connectedBackupOptions, MAX_MODEL_BACKUPS, modelRoleChoiceKey } from "@cortexai-agent-hub/contracts";
+import {
+  connectedBackupOptions,
+  MAX_MODEL_BACKUPS,
+  modelRoleChoiceKey,
+} from "@cortexai-agent-hub/contracts";
 import {
   catalogEntryFor,
   connectionForModelChoice,

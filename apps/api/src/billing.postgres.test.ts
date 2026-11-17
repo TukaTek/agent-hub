@@ -159,7 +159,12 @@ describePostgres("billing service (PostgreSQL)", () => {
     // A member joined, and the recount after it never ran.
     const joinedId = `${memberId}-unrecounted`;
     await prisma.user.create({
-      data: { id: joinedId, name: "Late", email: `${joinedId}@cortexai-agent-hub.test`, emailVerified: false },
+      data: {
+        id: joinedId,
+        name: "Late",
+        email: `${joinedId}@cortexai-agent-hub.test`,
+        emailVerified: false,
+      },
     });
     await prisma.member.create({
       data: {

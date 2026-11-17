@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { i18n } from "@lingui/core";
 import type { Deferred } from "@cortexai-agent-hub/core/test-async";
 import { deferred, flush } from "@cortexai-agent-hub/core/test-async";
+import { i18n } from "@lingui/core";
 import type { ReactNode } from "react";
 import { act, createElement, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";

@@ -1,6 +1,8 @@
-import { createRouterClient } from "@orpc/server";
-import { RPCHandler } from "@orpc/server/fetch";
-import { SAVED_LOGIN_UNREADABLE, VaultItemRefusedError, VaultRetryError } from "@cortexai-agent-hub/adapters";
+import {
+  SAVED_LOGIN_UNREADABLE,
+  VaultItemRefusedError,
+  VaultRetryError,
+} from "@cortexai-agent-hub/adapters";
 import type { Actor, ProductEvent } from "@cortexai-agent-hub/contracts";
 import { BLOCKED_ITEM_ANSWER, UNCHOSEN_ITEM_ANSWER } from "@cortexai-agent-hub/contracts";
 import type { Deferred } from "@cortexai-agent-hub/core/test-async";
@@ -8,6 +10,8 @@ import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { AnswerTooLongError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
+import { createRouterClient } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { HEARTBEAT_MS, SESSION_RECHECK_MS } from "./router.js";

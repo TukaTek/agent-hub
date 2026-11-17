@@ -46,7 +46,9 @@ describe("Stripe own-key plan payments", () => {
           currency: "usd",
           amount_paid: 2000,
           created: 1_799_000_000,
-          parent: { subscription_details: { metadata: { cortexai_agent_hub_credit_cents: "2000" } } },
+          parent: {
+            subscription_details: { metadata: { cortexai_agent_hub_credit_cents: "2000" } },
+          },
         },
         {
           id: "in_credit_top_up",

@@ -1,4 +1,7 @@
-import { clearInactiveUserComputerControl, expireComputerControl } from "@cortexai-agent-hub/adapters";
+import {
+  clearInactiveUserComputerControl,
+  expireComputerControl,
+} from "@cortexai-agent-hub/adapters";
 import type { TestSink } from "@cortexai-agent-hub/logging";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

@@ -1,5 +1,5 @@
-import { useLingui } from "@lingui/react/macro";
 import type { ConnectionModel } from "@cortexai-agent-hub/core";
+import { useLingui } from "@lingui/react/macro";
 import { useEffect } from "react";
 import { AccessibilityInfo } from "react-native";
 import { useListSearch } from "../lib/use-list-search";

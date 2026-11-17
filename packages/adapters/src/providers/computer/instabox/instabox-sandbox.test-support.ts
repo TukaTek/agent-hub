@@ -1,5 +1,5 @@
-import { CommandExitError, InstaboxError, InstaboxQuotaError } from "@insforge/instabox-sdk";
 import type { UnreferencedMachineRecords } from "@cortexai-agent-hub/adapter-kit";
+import { CommandExitError, InstaboxError, InstaboxQuotaError } from "@insforge/instabox-sdk";
 import { parse } from "shell-quote";
 import { desktopCommandResponder, simpleCommand } from "../../../linux-desktop.test-support.js";
 import type {
@@ -241,13 +241,19 @@ export class InstaboxEmulator implements InstaboxApi {
     const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
     if (this.fails(command)) return { exitCode: 1, stdout: "", stderr: "permission denied\n" };
     // A page request: stdin from a private file the command removes before the helper starts.
-    const input = command.match(/exec 0< \S*?(\/tmp\/cortexai-agent-hub-page-input-[^'"\s;]+)/)?.[1];
+    const input = command.match(
+      /exec 0< \S*?(\/tmp\/cortexai-agent-hub-page-input-[^'"\s;]+)/,
+    )?.[1];
     if (input) {
       const file = computer.files.get(input);
       computer.files.delete(input);
       if (!file) return { exitCode: 1, stdout: "", stderr: "No such file or directory\n" };
       if (!this.pageBrowser)
-        return { exitCode: 127, stdout: "", stderr: "cortexai-agent-hub-page-browser: not found\n" };
+        return {
+          exitCode: 127,
+          stdout: "",
+          stderr: "cortexai-agent-hub-page-browser: not found\n",
+        };
       return {
         ...this.pageBrowser(JSON.parse(new TextDecoder().decode(file.content))),
         stderr: "",

@@ -281,7 +281,12 @@ describePostgres("secret persistence cleanup (PostgreSQL)", () => {
     const holder = `secret-persistence-cascade-${suffix}`;
     const fixture = asSystem(owner.prisma);
     await fixture.user.create({
-      data: { id: holder, name: "Cascade", email: `${holder}@cortexai-agent-hub.test`, emailVerified: true },
+      data: {
+        id: holder,
+        name: "Cascade",
+        email: `${holder}@cortexai-agent-hub.test`,
+        emailVerified: true,
+      },
     });
     await fixture.organization.create({
       data: { id: holder, name: "Cascade", slug: holder, createdAt: new Date() },

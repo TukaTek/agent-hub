@@ -169,7 +169,9 @@ describe("updater HTTP surface", () => {
       if (command === "docker" && args[0] === "ps") return ok("a".repeat(12));
       if (command === "docker" && args[0] === "exec")
         return ok(
-          args.at(-1) === "process.env.CORTEXAI_AGENT_HUB_COMPUTER_IMAGE" ? computerRef : runningCommit,
+          args.at(-1) === "process.env.CORTEXAI_AGENT_HUB_COMPUTER_IMAGE"
+            ? computerRef
+            : runningCommit,
         );
       if (args.includes("up")) {
         runningCommit = targetCommit;
@@ -280,7 +282,9 @@ describe("updater HTTP surface", () => {
       await expect(applyStableUpdate(createUpdaterApp(fixture.config, { run }))).rejects.toThrow(
         /avoid downgrading an edge or unknown build/,
       );
-      expect(await readFile(fixture.config.envFile, "utf8")).toBe(`CORTEXAI_AGENT_HUB_IMAGE_TAG=${tag}\n`);
+      expect(await readFile(fixture.config.envFile, "utf8")).toBe(
+        `CORTEXAI_AGENT_HUB_IMAGE_TAG=${tag}\n`,
+      );
     },
   );
 
@@ -361,7 +365,8 @@ describe("updater HTTP surface", () => {
       if (args[0] === "ps") return ok("a".repeat(12));
       if (args[0] === "exec") return ok(currentCommit);
       if (args.includes("up")) {
-        if (options.env?.CORTEXAI_AGENT_HUB_IMAGE_TAG === `sha-${currentCommit}` && recovered) return ok();
+        if (options.env?.CORTEXAI_AGENT_HUB_IMAGE_TAG === `sha-${currentCommit}` && recovered)
+          return ok();
         return failed("container health check failed");
       }
       return ok();
@@ -396,7 +401,9 @@ describe("updater HTTP surface", () => {
     await expect(applyStableUpdate(createUpdaterApp(fixture.config, { run }))).rejects.toThrow(
       /no published release tags/,
     );
-    expect(await readFile(fixture.config.envFile, "utf8")).toContain("CORTEXAI_AGENT_HUB_IMAGE_TAG=v1.0.0");
+    expect(await readFile(fixture.config.envFile, "utf8")).toContain(
+      "CORTEXAI_AGENT_HUB_IMAGE_TAG=v1.0.0",
+    );
   });
 
   it("refuses a rollback when no previous tag was recorded", async () => {

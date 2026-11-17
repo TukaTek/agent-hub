@@ -211,7 +211,12 @@ test("adds an MCP server with a pre-registered OAuth client", async ({ page }, t
 
 test("adds a custom MCP server and signs it in with OAuth", async ({ page }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `mcp-custom-oauth-${stamp}@cortexai-agent-hub.test`, "password12", "MCP OAuth");
+  await signup(
+    page,
+    `mcp-custom-oauth-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "MCP OAuth",
+  );
   await completeOnboarding(page);
 
   const browserOrigin = new URL(page.url()).origin;
@@ -313,7 +318,12 @@ test("sends a custom MCP server without client registration to its settings", as
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `mcp-custom-oauth-dcr-${stamp}@cortexai-agent-hub.test`, "password12", "MCP OAuth");
+  await signup(
+    page,
+    `mcp-custom-oauth-dcr-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "MCP OAuth",
+  );
   await completeOnboarding(page);
 
   const message = "Incompatible auth server: does not support dynamic client registration";

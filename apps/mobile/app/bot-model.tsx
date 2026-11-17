@@ -1,4 +1,3 @@
-import type { ChatModelChoice } from "@cortexai-agent-hub/core";
 import { useLingui } from "@lingui/react/macro";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";

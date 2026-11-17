@@ -1,5 +1,5 @@
-import { InstaboxError } from "@insforge/instabox-sdk";
 import type { PageBrowserCommand } from "@cortexai-agent-hub/adapter-kit";
+import { InstaboxError } from "@insforge/instabox-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { ComputerBrowserProvider } from "../../../computer-browser.js";
 import { installPageBrowserCommand } from "../../../page-browser-install.js";
@@ -79,7 +79,10 @@ describe("instabox computer backend", () => {
       ctx,
     );
     const { files } = emulator.computers.get(computer.id)!;
-    files.set("/home/user/cortexai-agent-hub-home/notes/deep/x", { content: new Uint8Array(1), mode: 0o644 });
+    files.set("/home/user/cortexai-agent-hub-home/notes/deep/x", {
+      content: new Uint8Array(1),
+      mode: 0o644,
+    });
     expect(await provider.listFiles(computer, "notes", ctx)).toEqual([
       { path: "notes/a b.txt", kind: "file", size: 2 },
       { path: "notes/deep", kind: "dir", size: 4096 },
@@ -475,7 +478,8 @@ describe("instabox page tools", () => {
     const provider = create();
     const computer = await provider.provision(request, ctx);
     emulator.onWrite = (path) => {
-      if (path.startsWith("/tmp/cortexai-agent-hub-page-browser-")) emulator.computers.delete(computer.id);
+      if (path.startsWith("/tmp/cortexai-agent-hub-page-browser-"))
+        emulator.computers.delete(computer.id);
     };
     const failure = await provider.prepare(computer, ctx).catch((error: unknown) => error);
     expect(isSandboxGoneError(failure)).toBe(true);
@@ -512,7 +516,8 @@ describe("instabox page tools", () => {
     expect(
       emulator.commands.some(
         (command) =>
-          command.startsWith("bash -c 'rm -f --") && command.includes("/tmp/cortexai-agent-hub-page-browser-"),
+          command.startsWith("bash -c 'rm -f --") &&
+          command.includes("/tmp/cortexai-agent-hub-page-browser-"),
       ),
     ).toBe(false);
   });

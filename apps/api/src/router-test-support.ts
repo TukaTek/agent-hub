@@ -1,7 +1,7 @@
+import type { Actor, Bot } from "@cortexai-agent-hub/contracts";
 import type { InferRouterInitialContext } from "@orpc/server";
 import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
-import type { Actor, Bot } from "@cortexai-agent-hub/contracts";
 import { withModelRoles } from "../../../packages/adapters/src/testing/model-roles.js";
 import type { RouterDeps } from "./router.js";
 import {

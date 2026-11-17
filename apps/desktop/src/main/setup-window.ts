@@ -9,7 +9,11 @@ import { desktop } from "./desktop-state.js";
 import { dockerDownloadUrl, isDesktopSetupLink } from "./docker-cli.js";
 import { desktopDirection, desktopLocale, desktopMessages, t } from "./i18n.js";
 import { handleIpc } from "./ipc.js";
-import { managedLocalOpenUrl, parseSetupInput, CORTEXAI_AGENT_HUB_CLOUD_URL } from "./setup-config.js";
+import {
+  CORTEXAI_AGENT_HUB_CLOUD_URL,
+  managedLocalOpenUrl,
+  parseSetupInput,
+} from "./setup-config.js";
 import { writeSetup } from "./setup-store.js";
 import { setupWindowOptions } from "./window-options.js";
 

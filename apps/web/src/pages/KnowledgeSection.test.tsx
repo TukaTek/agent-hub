@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { ORPCError } from "@orpc/client";
 import type { AgentSkillCatalogEntry } from "@cortexai-agent-hub/contracts";
 import { deferred, flush } from "@cortexai-agent-hub/core/test-async";
+import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";

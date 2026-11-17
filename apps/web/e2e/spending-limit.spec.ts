@@ -62,7 +62,12 @@ test("shows the spending limit once a card is saved, sets a monthly limit, and l
 });
 
 test("shows zero- and three-decimal currencies in payment history", async ({ page }, testInfo) => {
-  await signup(page, `spending-currencies-${Date.now()}@cortexai-agent-hub.test`, "password12", "Spender");
+  await signup(
+    page,
+    `spending-currencies-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Spender",
+  );
   await completeOnboarding(page);
   await page.route("**/rpc/spendingLimit/get", (route) =>
     route.fulfill({ json: { json: { shown: true, limit: null, spent: 0 } } }),

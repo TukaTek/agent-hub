@@ -1,7 +1,7 @@
+import { ConnectionSetupError } from "@cortexai-agent-hub/contracts";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { ConnectionSetupError } from "@cortexai-agent-hub/contracts";
 import { sanitizeConnectorError } from "./connector-safety.js";
 import { McpResponseTooLargeError } from "./mcp-response-limit.js";
 import { sanitizeIntegrationError } from "./providers/integration/composio/composio-connector.js";

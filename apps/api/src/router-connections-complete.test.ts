@@ -1,5 +1,3 @@
-import { createRouterClient } from "@orpc/server";
-import { RPCHandler } from "@orpc/server/fetch";
 import type { BackgroundJob, ManagedConnectorProvider } from "@cortexai-agent-hub/adapter-kit";
 import { connectionCleanupJob } from "@cortexai-agent-hub/adapter-kit";
 import {
@@ -12,6 +10,8 @@ import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { configureProviderTransactionPool, runProviderTransaction } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
+import { createRouterClient } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { createRouter, handle } from "./router-test-support.js";
@@ -408,7 +408,12 @@ describe("connections.complete", () => {
         {
           prefix: "/rpc",
           context: {
-            actor: { spaceId, userId, email: `${userId}@cortexai-agent-hub.test`, isDeploymentOwner: true },
+            actor: {
+              spaceId,
+              userId,
+              email: `${userId}@cortexai-agent-hub.test`,
+              isDeploymentOwner: true,
+            },
           },
         },
       );

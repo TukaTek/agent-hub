@@ -1,7 +1,11 @@
-import { Trans } from "@lingui/react/macro";
 import type { SignInProvider } from "@cortexai-agent-hub/contracts";
-import { LAST_SIGN_IN_COOKIE, lastSignInChoice, signInProviderGroups } from "@cortexai-agent-hub/contracts";
+import {
+  LAST_SIGN_IN_COOKIE,
+  lastSignInChoice,
+  signInProviderGroups,
+} from "@cortexai-agent-hub/contracts";
 import { Button } from "@cortexai-agent-hub/ui-web";
+import { Trans } from "@lingui/react/macro";
 import { KeyRound, Mail } from "lucide-react";
 import { useState } from "react";
 

@@ -1,5 +1,8 @@
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
-import { canReleaseScreenLease, canTakeScreenLease } from "@cortexai-agent-hub/core/node/screen-lease";
+import {
+  canReleaseScreenLease,
+  canTakeScreenLease,
+} from "@cortexai-agent-hub/core/node/screen-lease";
 
 export const COMPUTER_SCREEN_UNAVAILABLE =
   "The computer screen is temporarily busy. Retry in a moment. File and shell tools still work.";

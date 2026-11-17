@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { i18n } from "@lingui/core";
 import type { Bot } from "@cortexai-agent-hub/contracts";
 import type { Deferred } from "@cortexai-agent-hub/core/test-async";
 import { deferred, flush } from "@cortexai-agent-hub/core/test-async";
+import { i18n } from "@lingui/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";

@@ -1,7 +1,7 @@
-import { createRouterClient } from "@orpc/server";
-import { RPCHandler } from "@orpc/server/fetch";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { createRouterClient } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { appHandler, createRouter, handle } from "./router-test-support.js";
@@ -263,7 +263,10 @@ describe("MCP pre-registered OAuth client", () => {
         }),
       },
       user: {
-        findUnique: vi.fn(async () => ({ email: "owner@cortexai-agent-hub.test", emailVerified: true })),
+        findUnique: vi.fn(async () => ({
+          email: "owner@cortexai-agent-hub.test",
+          emailVerified: true,
+        })),
       },
       deploymentSettings: { findUnique: vi.fn().mockResolvedValue({ ownerUserId: "owner-1" }) },
       $executeRaw: vi.fn(async () => 1),

@@ -1,5 +1,5 @@
-import { useLingui } from "@lingui/react/macro";
 import type { UserDeviceSummary } from "@cortexai-agent-hub/contracts";
+import { useLingui } from "@lingui/react/macro";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {

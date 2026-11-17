@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import { deferred } from "@cortexai-agent-hub/core/test-async";
+import { expect, test } from "@playwright/test";
 import { captureScreenshot, chooseOption, completeOnboarding, signup } from "./helpers";
 
 test.afterEach(async ({ page }) => {

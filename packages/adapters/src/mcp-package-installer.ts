@@ -28,8 +28,8 @@ import {
 } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { bestEffort } from "@cortexai-agent-hub/logging";
+import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 export const DEFAULT_MCP_INSTALL_TIMEOUT_MS = 180_000;
 const READY_MARKER = ".ready";

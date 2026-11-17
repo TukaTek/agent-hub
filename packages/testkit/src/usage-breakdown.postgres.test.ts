@@ -48,7 +48,11 @@ describeBreakdown("usage.breakdown", () => {
   afterEach(() => vi.useRealTimers());
 
   it("attributes usage to bots, counts a run once across its subagents and honours every filter", async () => {
-    const cookie = await signup(app, `usage-breakdown-${stamp}@cortexai-agent-hub.test`, "Breakdown");
+    const cookie = await signup(
+      app,
+      `usage-breakdown-${stamp}@cortexai-agent-hub.test`,
+      "Breakdown",
+    );
     const create = (name: string) =>
       rpc<{ id: string }>(app, cookie, "bots/create", {
         name,
@@ -113,7 +117,11 @@ describeBreakdown("usage.breakdown", () => {
     });
     await rpc(app, cookie, "bots/remove", { botId: gone.id, deleteMemories: false });
 
-    const other = await signup(app, `usage-breakdown-other-${stamp}@cortexai-agent-hub.test`, "Other");
+    const other = await signup(
+      app,
+      `usage-breakdown-other-${stamp}@cortexai-agent-hub.test`,
+      "Other",
+    );
     const otherBot = await rpc<{ id: string }>(app, other, "bots/create", {
       name: "Elsewhere",
       title: "",
@@ -240,7 +248,11 @@ describeBreakdown("usage.breakdown", () => {
   it("cuts today and day buckets at the member's own midnight", async () => {
     vi.setSystemTime(new Date(`${utcDay(Date.now())}T09:59:30.000Z`));
     const offset = 14 * 60 * 60 * 1000;
-    const cookie = await signup(app, `usage-breakdown-tz-${stamp}@cortexai-agent-hub.test`, "Zoned");
+    const cookie = await signup(
+      app,
+      `usage-breakdown-tz-${stamp}@cortexai-agent-hub.test`,
+      "Zoned",
+    );
     const bot = await rpc<{ id: string }>(app, cookie, "bots/create", {
       name: "Zoned",
       title: "",

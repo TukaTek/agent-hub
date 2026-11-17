@@ -29,7 +29,9 @@ describe("computerProxyFromEnv", () => {
   });
 
   it("reads SOCKS5 with its default port", () => {
-    expect(computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "socks5://u:p@10.0.0.1" })).toEqual({
+    expect(
+      computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "socks5://u:p@10.0.0.1" }),
+    ).toEqual({
       type: "socks5",
       host: "10.0.0.1",
       port: 1080,
@@ -39,9 +41,9 @@ describe("computerProxyFromEnv", () => {
   });
 
   it("rejects unsupported schemes and malformed values", () => {
-    expect(() => computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "https://h:1" })).toThrow(
-      /must start with/,
-    );
+    expect(() =>
+      computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "https://h:1" }),
+    ).toThrow(/must start with/);
     expect(() => computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "not a url" })).toThrow(
       /not a valid URL/,
     );
@@ -50,24 +52,27 @@ describe("computerProxyFromEnv", () => {
   it("rejects a path, query or fragment it would otherwise drop", () => {
     for (const suffix of ["/endpoint", "?x=1", "#frag"]) {
       expect(() =>
-        computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: `http://proxy.example.com:8080${suffix}` }),
+        computerProxyFromEnv({
+          CORTEXAI_AGENT_HUB_COMPUTER_PROXY: `http://proxy.example.com:8080${suffix}`,
+        }),
       ).toThrow(/must be just/);
     }
     expect(
-      computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://proxy.example.com:8080/" })?.port,
+      computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://proxy.example.com:8080/" })
+        ?.port,
     ).toBe(8080);
   });
 
   it("rejects a password without a username instead of dropping it", () => {
-    expect(() => computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://:secret@h:1" })).toThrow(
-      /needs a username/,
-    );
+    expect(() =>
+      computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://:secret@h:1" }),
+    ).toThrow(/needs a username/);
   });
 
   it("rejects credentials tinyproxy would split", () => {
-    expect(() => computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://user:p%40ss@h:1" })).toThrow(
-      /cannot contain/,
-    );
+    expect(() =>
+      computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://user:p%40ss@h:1" }),
+    ).toThrow(/cannot contain/);
     for (const password of ["p%23x", "p%00x"]) {
       expect(() =>
         computerProxyFromEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: `http://u:${password}@h:1` }),
@@ -103,7 +108,9 @@ describe("computerProxyPrepareEnv", () => {
   });
 
   it("carries the config base64-encoded so the command line never holds credentials", () => {
-    const env = computerProxyPrepareEnv({ CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://u:secret@h:8080" });
+    const env = computerProxyPrepareEnv({
+      CORTEXAI_AGENT_HUB_COMPUTER_PROXY: "http://u:secret@h:8080",
+    });
     const encoded = env[COMPUTER_PROXY_CONFIG_ENV] ?? "";
     expect(encoded).not.toContain("secret");
     expect(Buffer.from(encoded, "base64").toString()).toContain("Upstream http u:secret@h:8080");

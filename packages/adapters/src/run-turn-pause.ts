@@ -1,4 +1,8 @@
-import { displayName, redactSecrets, TAKEOVER_COMPUTER_PENDING_STATE } from "@cortexai-agent-hub/core";
+import {
+  displayName,
+  redactSecrets,
+  TAKEOVER_COMPUTER_PENDING_STATE,
+} from "@cortexai-agent-hub/core";
 import { MAX_APPROVAL_DETAIL_LENGTH, truncate } from "./approval-ask.js";
 import { reportBotMessageWait } from "./bot-messages.js";
 import { scheduleComputerSleep } from "./computer-idle.js";

@@ -1,4 +1,8 @@
-import { credentialModelSettings, modelSettingsFields, modelSettingsRequest } from "@cortexai-agent-hub/core";
+import {
+  credentialModelSettings,
+  modelSettingsFields,
+  modelSettingsRequest,
+} from "@cortexai-agent-hub/core";
 import { describe, expect, it, vi } from "vitest";
 import { buildModelConnectPlaintext, modelCredentialDto } from "./model-connect.js";
 import {

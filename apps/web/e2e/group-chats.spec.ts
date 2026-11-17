@@ -300,7 +300,12 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
 test("subagents keep group approvals answerable across reload while conversation continues", async ({
   page,
 }, testInfo) => {
-  await signup(page, `group-subagent-${Date.now()}@cortexai-agent-hub.test`, "password12", "Group Delegation");
+  await signup(
+    page,
+    `group-subagent-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Group Delegation",
+  );
   await completeOnboarding(page);
   const researcherId = await createBot(page, "Researcher");
   const writerId = await createBot(page, "Writer");

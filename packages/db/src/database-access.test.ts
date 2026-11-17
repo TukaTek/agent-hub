@@ -112,7 +112,11 @@ describe("provisionRuntimeRole", () => {
 
 describe("timeZoneWarning", () => {
   const session = (zone: string) =>
-    ({ $queryRawUnsafe: async () => [{ zone, login: "cortexai_agent_hub_app", database: "cortexai-agent-hub" }] }) as never;
+    ({
+      $queryRawUnsafe: async () => [
+        { zone, login: "cortexai_agent_hub_app", database: "cortexai-agent-hub" },
+      ],
+    }) as never;
 
   it.each(["UTC", "Etc/UTC", "GMT", "Etc/GMT", "GMT0", "Etc/GMT+0", "Greenwich", "Zulu"])(
     "stays quiet for %s",

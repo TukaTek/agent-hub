@@ -1,6 +1,6 @@
-import { generateMessageId } from "@lingui/message-utils/generateMessageId";
 import type { Deferred } from "@cortexai-agent-hub/core/test-async";
 import { deferred } from "@cortexai-agent-hub/core/test-async";
+import { generateMessageId } from "@lingui/message-utils/generateMessageId";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("expo-localization", () => ({

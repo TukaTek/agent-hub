@@ -498,7 +498,9 @@ describe("development backup failures", () => {
   it("allows an empty archive when data is skipped", () => {
     const f = fixture();
     write(path.join(f.checkout, "data/home.txt"), "example home");
-    const result = f.run("scripts/backup.sh", ["example"], { CORTEXAI_AGENT_HUB_BACKUP_SKIP_HOMES: "1" });
+    const result = f.run("scripts/backup.sh", ["example"], {
+      CORTEXAI_AGENT_HUB_BACKUP_SKIP_HOMES: "1",
+    });
     expect(result.status, result.stderr).toBe(0);
     expect(contents(path.join(f.checkout, "backups/example/homes.tgz"))).toBe("");
   });

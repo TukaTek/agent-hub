@@ -1,4 +1,3 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type { ModelCredential, ModelSettings } from "@cortexai-agent-hub/contracts";
 import { MAX_MODEL_CONTEXT_WINDOW, MAX_MODEL_MAX_TOKENS } from "@cortexai-agent-hub/contracts";
 import type { ModelSettingsFields as Fields } from "@cortexai-agent-hub/core";
@@ -12,6 +11,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import { writeSaved } from "@cortexai-agent-hub/core/query";
 import { Button, ModelSettingsFields } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { ModelCatalogEntry } from "../../lib/model-auth";

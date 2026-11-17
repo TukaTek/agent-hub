@@ -90,7 +90,9 @@ describe("the images compose file", () => {
     for (const name of appServices) {
       expect(compose.services[name]?.image).toContain("CORTEXAI_AGENT_HUB_IMAGE_TAG:-latest");
     }
-    expect(compose.services.computer?.image).toContain("CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG:-latest");
+    expect(compose.services.computer?.image).toContain(
+      "CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG:-latest",
+    );
     const template = readFileSync(path.join(repoRoot, "infra/compose/.env.images.example"), "utf8");
     expect(template).toContain("CORTEXAI_AGENT_HUB_IMAGE_TAG=latest\n");
     expect(template).toContain("CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=latest\n");

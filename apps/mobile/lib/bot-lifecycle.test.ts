@@ -1,6 +1,6 @@
-import { i18n } from "@lingui/core";
 import type { Deferred } from "@cortexai-agent-hub/core/test-async";
 import { deferred } from "@cortexai-agent-hub/core/test-async";
+import { i18n } from "@lingui/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { rpc, alert, removeFromSearchInbox, captureApiRequestContext } = vi.hoisted(() => ({
@@ -243,7 +243,10 @@ it.each(["cancel", "dismiss", "success", "failure", "stale"] as const)(
 );
 
 it("pins default preview and deletion to the initial Space despite selection changes", async () => {
-  const context = { apiBase: "https://example.test", headers: { "x-cortexai-agent-hub-space-id": "space-a" } };
+  const context = {
+    apiBase: "https://example.test",
+    headers: { "x-cortexai-agent-hub-space-id": "space-a" },
+  };
   captureApiRequestContext.mockResolvedValueOnce(context);
   let finish!: Deferred<unknown[]>;
   rpc.mockImplementationOnce(() => {

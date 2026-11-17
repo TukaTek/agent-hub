@@ -174,7 +174,12 @@ test("returning people see the sign-in method they used last", async ({ page }, 
 });
 
 test("a successful email sign-up is remembered for the next sign-in", async ({ page }) => {
-  await signup(page, `last-used-${Date.now()}@cortexai-agent-hub.test`, "password12", "Last Used QA");
+  await signup(
+    page,
+    `last-used-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Last Used QA",
+  );
   const cookie = (await page.context().cookies()).find(({ name }) => name === LAST_SIGN_IN_COOKIE);
   expect(cookie?.value).toBe("email");
   expect(cookie?.httpOnly).toBe(false);

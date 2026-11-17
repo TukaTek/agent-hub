@@ -488,7 +488,9 @@ dbTests("model credits ledger", () => {
   });
   it("withholds one unreadable entry's excess while purchases, calls and settlements go on", async () => {
     const sink = createTestSink();
-    installLogger(createLogger({ service: "cortexai-agent-hub-api", sinks: [sink], level: "debug" }));
+    installLogger(
+      createLogger({ service: "cortexai-agent-hub-api", sinks: [sink], level: "debug" }),
+    );
     const lots = async () =>
       (
         await prisma.modelCreditLot.aggregate({

@@ -14,7 +14,6 @@ import {
   zonedDateTime,
 } from "@cortexai-agent-hub/core";
 import { IsolationError, LISTED_ARTIFACT, Prisma, parseComputerMode } from "@cortexai-agent-hub/db";
-import { ORPCError } from "@orpc/server";
 import {
   createOwnedArtifact,
   deleteArtifactFamily,

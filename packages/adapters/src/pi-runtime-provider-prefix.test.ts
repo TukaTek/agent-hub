@@ -5,7 +5,10 @@ import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { PiAgentRuntime } from "./pi-runtime.js";
 import { resolveRuntimeModel } from "./pi-runtime-models.js";
-import { CORTEXAI_AGENT_HUB_PLATFORM_INSTRUCTION, userTurnInstructions } from "./run-instructions.prompt.js";
+import {
+  CORTEXAI_AGENT_HUB_PLATFORM_INSTRUCTION,
+  userTurnInstructions,
+} from "./run-instructions.prompt.js";
 
 describe("Pi outgoing provider prefixes", () => {
   it.each(["png", "gif"] as const)(

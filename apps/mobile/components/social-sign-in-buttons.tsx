@@ -1,7 +1,7 @@
-import { ph } from "@lingui/core/macro";
-import { useLingui } from "@lingui/react/macro";
 import type { SignInProvider } from "@cortexai-agent-hub/contracts";
 import { signInProviderGroups } from "@cortexai-agent-hub/contracts";
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import type { ReactNode } from "react";
 import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import Svg, { Path } from "react-native-svg";

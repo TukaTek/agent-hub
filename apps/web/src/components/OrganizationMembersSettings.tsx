@@ -1,4 +1,3 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type {
   OrganizationInvitation,
   OrganizationMember,
@@ -18,6 +17,7 @@ import {
   toast,
   writeClipboard,
 } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";

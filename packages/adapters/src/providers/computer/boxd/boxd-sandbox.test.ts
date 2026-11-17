@@ -238,7 +238,9 @@ describe("boxd computers", () => {
     const token = new URLSearchParams(url.searchParams.get("path")!.split("?")[1]).get("token");
     expect(token).toMatch(/^[0-9a-f-]{36}$/);
     // The shell server starts in the machine and joins the gateway on the proxied port.
-    const started = boxd.commands.findLast(({ command }) => command.includes("cortexai-agent-hub-terminal.py"));
+    const started = boxd.commands.findLast(({ command }) =>
+      command.includes("cortexai-agent-hub-terminal.py"),
+    );
     expect(started?.command).toContain(String(token));
     expect(started?.command).toContain("/tmp/cortexai-agent-hub/sockets/terminal-");
     expect(started?.command).toContain("0.0.0.0:6100");

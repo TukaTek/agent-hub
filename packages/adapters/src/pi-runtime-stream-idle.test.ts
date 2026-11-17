@@ -1,3 +1,4 @@
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type {
   Api,
   AssistantMessage,
@@ -8,7 +9,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import { deferred } from "@cortexai-agent-hub/core/test-async";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOpenAiCompatibleFetch } from "./pi-openai-compatible-provider.js";
 import {

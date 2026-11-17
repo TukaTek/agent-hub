@@ -5,7 +5,10 @@ import type {
   ConnectorCall,
   ConnectorTool,
 } from "@cortexai-agent-hub/adapter-kit";
-import { MEMORY_REVISION_CONFLICT_ERROR, MemoryRevisionConflictError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  MEMORY_REVISION_CONFLICT_ERROR,
+  MemoryRevisionConflictError,
+} from "@cortexai-agent-hub/adapter-kit";
 import type { ModelRoleSettings, SpendingLimit } from "@cortexai-agent-hub/contracts";
 import type { ActionApprovalRule } from "@cortexai-agent-hub/core";
 import { inboundRoutineBlock } from "@cortexai-agent-hub/core";

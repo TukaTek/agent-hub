@@ -103,7 +103,8 @@ export const modelProviders = {
       mode: "device-code",
       loginLabel: "Sign in with GitHub Copilot",
       hint: "Copilot",
-      billing: "Sign in with GitHub Copilot. Uses your Copilot subscription. CortexAI Agent Hub does not pay.",
+      billing:
+        "Sign in with GitHub Copilot. Uses your Copilot subscription. CortexAI Agent Hub does not pay.",
     },
   },
   xai: {
@@ -111,7 +112,8 @@ export const modelProviders = {
       mode: "device-code",
       loginLabel: "Sign in with SuperGrok or X Premium",
       hint: "SuperGrok / key",
-      billing: "Sign in with SuperGrok or X Premium, or paste an xAI API key. CortexAI Agent Hub does not pay.",
+      billing:
+        "Sign in with SuperGrok or X Premium, or paste an xAI API key. CortexAI Agent Hub does not pay.",
     },
   },
   deepseek: {

@@ -1,5 +1,8 @@
 import type { SemanticMemoryProvider } from "@cortexai-agent-hub/adapter-kit";
-import type { MemoryProviderDescriptor, ProviderSettingsField } from "@cortexai-agent-hub/contracts";
+import type {
+  MemoryProviderDescriptor,
+  ProviderSettingsField,
+} from "@cortexai-agent-hub/contracts";
 
 /** One memory provider: everything the factory, Settings and tests read about it. */
 export interface MemoryProviderDefinition {

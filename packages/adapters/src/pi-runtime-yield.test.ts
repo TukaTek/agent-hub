@@ -1,7 +1,7 @@
-import type { AssistantMessage, Context, Model, ToolCall } from "@earendil-works/pi-ai";
-import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import type { AgentRunRequest, AgentRuntimeEvent } from "@cortexai-agent-hub/adapter-kit";
 import { deferred } from "@cortexai-agent-hub/core/test-async";
+import type { AssistantMessage, Context, Model, ToolCall } from "@earendil-works/pi-ai";
+import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin.tool-definition.js";
 

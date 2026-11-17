@@ -12,7 +12,12 @@ import {
 } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { ConnectionSetupError } from "@cortexai-agent-hub/contracts";
-import { ClientError, comparePlugins, containsSecret, matchesPluginQuery } from "@cortexai-agent-hub/core";
+import {
+  ClientError,
+  comparePlugins,
+  containsSecret,
+  matchesPluginQuery,
+} from "@cortexai-agent-hub/core";
 import type { Prisma } from "@cortexai-agent-hub/db";
 import {
   AVAILABILITY_SELECT,

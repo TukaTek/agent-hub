@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { onError } from "@orpc/server";
-import { RPCHandler } from "@orpc/server/fetch";
 import type { TransactionalEmail } from "@cortexai-agent-hub/adapter-kit";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
@@ -17,6 +15,8 @@ import {
   publishOrganizationChange,
   revokeOrganizationMember,
 } from "@cortexai-agent-hub/db";
+import { onError } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { createRouter } from "./router.js";

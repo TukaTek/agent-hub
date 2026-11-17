@@ -1,4 +1,8 @@
-import type { BillingPlanPayment, BillingProvider, PartnerProgram } from "@cortexai-agent-hub/adapter-kit";
+import type {
+  BillingPlanPayment,
+  BillingProvider,
+  PartnerProgram,
+} from "@cortexai-agent-hub/adapter-kit";
 import { BillingCustomerNotFoundError } from "@cortexai-agent-hub/adapter-kit";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { isOwnerRole } from "@cortexai-agent-hub/db";

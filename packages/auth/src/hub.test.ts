@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noExplicitAny: Hub fixtures and Prisma stand-ins are loosely typed test doubles.
 import { createHash, createHmac } from "node:crypto";
 import { HUB_SSO_ACCESS_DENIED } from "@cortexai-agent-hub/core";
 import { bootstrapUserSpace } from "@cortexai-agent-hub/db";

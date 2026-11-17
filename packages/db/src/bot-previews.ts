@@ -1,5 +1,9 @@
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
-import { BACKGROUND_RUN_TRIGGERS, isBackgroundRunTrigger, userVisibleMessages } from "@cortexai-agent-hub/core";
+import {
+  BACKGROUND_RUN_TRIGGERS,
+  isBackgroundRunTrigger,
+  userVisibleMessages,
+} from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "./client.js";
 import { Prisma } from "./client.js";
 import { contentEncryptionOf } from "./content-encryption.js";

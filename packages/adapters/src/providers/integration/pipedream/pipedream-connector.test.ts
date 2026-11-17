@@ -946,7 +946,10 @@ describe("oversized Pipedream answers", () => {
         identitySecret: "fake-identity-secret",
       },
       { fetch: vi.fn().mockResolvedValue(response) },
-    ).begin({ provider: "gmail", redirectUrl: "https://cortexai-agent-hub.example.test/app" }, context);
+    ).begin(
+      { provider: "gmail", redirectUrl: "https://cortexai-agent-hub.example.test/app" },
+      context,
+    );
 
   it("refuses a streamed answer over the cap as too large", async () => {
     const failure = begin(new Response(new Uint8Array(MAX_PIPEDREAM_RESPONSE_BYTES + 1)));

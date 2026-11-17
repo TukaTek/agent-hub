@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+
+import type { CortexAiAgentHubDesktop } from "@cortexai-agent-hub/contracts";
 import { i18n } from "@lingui/core";
 import { I18nProvider } from "@lingui/react";
-import type { CortexAiAgentHubDesktop } from "@cortexai-agent-hub/contracts";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";

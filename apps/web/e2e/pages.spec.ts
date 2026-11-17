@@ -104,7 +104,8 @@ test("a week calendar keeps its days aligned in a desktop two-column page", asyn
       heads,
       columns,
       weekGrid: rect(week.querySelector(".cortexai-agent-hub-cal-columns")!),
-      weekHeight: week.querySelector(".cortexai-agent-hub-cal-body")!.getBoundingClientRect().height,
+      weekHeight: week.querySelector(".cortexai-agent-hub-cal-body")!.getBoundingClientRect()
+        .height,
       weekScroll: { client: week.clientWidth, scroll: week.scrollWidth },
       sunday: rect(sunday),
       sundayText: sunday.textContent,
@@ -145,7 +146,12 @@ test("shared page contents jump below the header and copy fallback", async ({
   page,
   browser,
 }, testInfo) => {
-  await signup(page, `pages-anchor-${Date.now()}@cortexai-agent-hub.test`, "password12", "Page Reader");
+  await signup(
+    page,
+    `pages-anchor-${Date.now()}@cortexai-agent-hub.test`,
+    "password12",
+    "Page Reader",
+  );
   await completeOnboarding(page);
   const title = "Reading guide";
   const source = `export default function Guide() {

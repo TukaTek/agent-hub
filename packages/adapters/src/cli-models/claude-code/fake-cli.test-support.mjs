@@ -35,7 +35,7 @@ if (
 async function inventory() {
   const at = args.indexOf("--mcp-config");
   if (at < 0) return { tools: [] };
-  const server = JSON.parse(readFileSync(args[at + 1], "utf8")).mcpServers.cortexai-agent-hub;
+  const server = JSON.parse(readFileSync(args[at + 1], "utf8")).mcpServers.cortexai - agent - hub;
   const child = spawn(server.command, server.args, { stdio: ["pipe", "pipe", "inherit"] });
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const request = async (id, method, params) => {

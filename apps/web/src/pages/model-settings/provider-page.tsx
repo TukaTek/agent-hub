@@ -1,6 +1,6 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import type { ConnectionModel } from "@cortexai-agent-hub/core";
 import { ListSearchInput, SectionHeading } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import type { ReactNode } from "react";
 import { SettingsPageHeader } from "../../components/SettingsPageHeader";
 import { useListSearch } from "../../lib/use-list-search";

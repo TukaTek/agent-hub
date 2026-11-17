@@ -174,7 +174,11 @@ describe("computer maintenance rows", () => {
     expect(rpc).toHaveBeenCalledWith(
       "computer/reset",
       { botId: "bot-fixture" },
-      { requestContext: expect.objectContaining({ headers: { "x-cortexai-agent-hub-space-id": "space-1" } }) },
+      {
+        requestContext: expect.objectContaining({
+          headers: { "x-cortexai-agent-hub-space-id": "space-1" },
+        }),
+      },
     );
   });
 
@@ -193,7 +197,11 @@ describe("computer maintenance rows", () => {
     expect(rpc).toHaveBeenCalledWith(
       "computer/recover",
       { botId: "bot-fixture" },
-      { requestContext: expect.objectContaining({ headers: { "x-cortexai-agent-hub-space-id": "space-1" } }) },
+      {
+        requestContext: expect.objectContaining({
+          headers: { "x-cortexai-agent-hub-space-id": "space-1" },
+        }),
+      },
     );
   });
 

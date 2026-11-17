@@ -1,6 +1,11 @@
-import { Trans, useLingui } from "@lingui/react/macro";
 import { useTimeout } from "@cortexai-agent-hub/chat-ui/hooks";
-import type { Bot, ComputerReleaseReason, Me, Run, ThreadSnapshot } from "@cortexai-agent-hub/contracts";
+import type {
+  Bot,
+  ComputerReleaseReason,
+  Me,
+  Run,
+  ThreadSnapshot,
+} from "@cortexai-agent-hub/contracts";
 import { isComputerAllowanceUsed } from "@cortexai-agent-hub/contracts";
 import {
   COMPUTER_CONTROL_HEARTBEAT_MS,
@@ -8,6 +13,7 @@ import {
   isRetryableError,
 } from "@cortexai-agent-hub/core";
 import { Button, Spinner } from "@cortexai-agent-hub/ui-web";
+import { Trans, useLingui } from "@lingui/react/macro";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComputerMaintenanceActions } from "../../components/ComputerMaintenanceActions";

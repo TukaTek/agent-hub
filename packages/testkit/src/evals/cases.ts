@@ -231,7 +231,9 @@ const platformInput = (asks: string[], replies: string[]) =>
     conversation: asks.map((message, index) => ({ message, reply: replies[index] ?? "" })),
   });
 const readCortexAiAgentHubSkill = (e: Evidence) =>
-  e.toolCalls.some((call) => call.name === "skill_read" && /cortexai-agent-hub/i.test(String(call.args.name)));
+  e.toolCalls.some(
+    (call) => call.name === "skill_read" && /cortexai-agent-hub/i.test(String(call.args.name)),
+  );
 const repliedToEach = (e: Evidence, asks: string[]) =>
   check(
     "replied-to-each",

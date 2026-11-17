@@ -1,9 +1,9 @@
-import { RPCHandler } from "@orpc/server/fetch";
 import type { PiOAuthConnected, PiOAuthPersist } from "@cortexai-agent-hub/adapters";
 import * as adapters from "@cortexai-agent-hub/adapters";
 import { ModelSignInError } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { MODEL_KEY_FORMAT_ERROR } from "@cortexai-agent-hub/contracts";
+import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import type { RouterHandler } from "./router-test-support.js";

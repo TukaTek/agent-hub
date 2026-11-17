@@ -15,7 +15,10 @@ import {
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
-import { resolveContentEncryption, resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
+import {
+  resolveContentEncryption,
+  resolveEncryptionKey,
+} from "@cortexai-agent-hub/core/node/secrets-guard";
 import type { ContentMigrationMode } from "@cortexai-agent-hub/db";
 import {
   contentEncryptionStatus,

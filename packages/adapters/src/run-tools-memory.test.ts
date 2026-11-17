@@ -1,4 +1,7 @@
-import { MEMORY_REVISION_CONFLICT_ERROR, MemoryRevisionConflictError } from "@cortexai-agent-hub/adapter-kit";
+import {
+  MEMORY_REVISION_CONFLICT_ERROR,
+  MemoryRevisionConflictError,
+} from "@cortexai-agent-hub/adapter-kit";
 import { HistoryReadInputSchema, HistorySearchInputSchema } from "@cortexai-agent-hub/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { memoryTools, withoutBlankFields } from "./run-tools-memory.js";

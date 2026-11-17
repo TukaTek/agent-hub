@@ -1,7 +1,7 @@
-import { useLingui } from "@lingui/react/macro";
 import type { LabFeature } from "@cortexai-agent-hub/contracts";
 import { withLab } from "@cortexai-agent-hub/contracts";
 import { Label, Switch } from "@cortexai-agent-hub/ui-web";
+import { useLingui } from "@lingui/react/macro";
 import { useId } from "react";
 import { SettingsGroup, SettingsRow } from "../components/SettingsRows";
 import { useSave } from "../lib/query";

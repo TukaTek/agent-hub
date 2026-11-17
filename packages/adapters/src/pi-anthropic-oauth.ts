@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { AuthInteraction, OAuthCredential } from "@earendil-works/pi-ai";
 import { ResponseTooLargeError } from "@cortexai-agent-hub/core";
+import type { AuthInteraction, OAuthCredential } from "@earendil-works/pi-ai";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";

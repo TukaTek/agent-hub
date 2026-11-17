@@ -456,7 +456,8 @@ export const fleetTools: ConnectorTool[] = [
         },
         marketingEmails: {
           type: "boolean",
-          description: "false unsubscribes from CortexAI Agent Hub's product emails; true resubscribes.",
+          description:
+            "false unsubscribes from CortexAI Agent Hub's product emails; true resubscribes.",
         },
       },
       additionalProperties: false,

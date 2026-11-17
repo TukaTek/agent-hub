@@ -1,7 +1,7 @@
-import { Trans } from "@lingui/react/macro";
-import { ORPCError } from "@orpc/client";
 import type { OrganizationInvitationPreview } from "@cortexai-agent-hub/contracts";
 import { Button, cn } from "@cortexai-agent-hub/ui-web";
+import { Trans } from "@lingui/react/macro";
+import { ORPCError } from "@orpc/client";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useSave } from "../lib/query";

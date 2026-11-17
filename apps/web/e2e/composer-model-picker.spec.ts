@@ -7,7 +7,12 @@ test("the chat's model can be changed from the message box once turned on", asyn
   page,
 }, testInfo) => {
   const stamp = Date.now();
-  await signup(page, `composer-model-${stamp}@cortexai-agent-hub.test`, "password12", "Composer Model");
+  await signup(
+    page,
+    `composer-model-${stamp}@cortexai-agent-hub.test`,
+    "password12",
+    "Composer Model",
+  );
   await completeOnboarding(page);
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);

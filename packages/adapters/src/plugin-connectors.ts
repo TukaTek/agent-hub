@@ -2,7 +2,12 @@
  * No repository code is executed and no files are written to the host. */
 import { createHash } from "node:crypto";
 import { McpServerConfigInput, trimEndChars, trimStartChars } from "@cortexai-agent-hub/contracts";
-import { buildSkillMd, deadlineSignal, findSkillByName, parseSkillMd } from "@cortexai-agent-hub/core";
+import {
+  buildSkillMd,
+  deadlineSignal,
+  findSkillByName,
+  parseSkillMd,
+} from "@cortexai-agent-hub/core";
 import { z } from "zod";
 import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.prompt.js";
 import { assertNoSensitiveQuery } from "./connector-http.js";

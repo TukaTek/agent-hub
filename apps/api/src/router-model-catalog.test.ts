@@ -1,9 +1,9 @@
-import { createRouterClient } from "@orpc/server";
-import { RPCHandler } from "@orpc/server/fetch";
 import { SecretStoreUnavailableError } from "@cortexai-agent-hub/adapter-kit";
 import * as adapters from "@cortexai-agent-hub/adapters";
 import { CodexCatalogCache, listPiCatalog } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
+import { createRouterClient } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
 import { describe, expect, it, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import type { RouterHandler } from "./router-test-support.js";

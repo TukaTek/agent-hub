@@ -1,11 +1,16 @@
-import { createRouterClient } from "@orpc/server";
 import type { McpOAuthSummary } from "@cortexai-agent-hub/adapters";
 import { McpOAuthClientRequiredError, McpOAuthRefusedError } from "@cortexai-agent-hub/adapters";
 import type { Actor } from "@cortexai-agent-hub/contracts";
 import { MCP_OAUTH_CLIENT_REQUIRED } from "@cortexai-agent-hub/contracts";
 import { flush } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { createLogger, createTestSink, getLogger, installLogger } from "@cortexai-agent-hub/logging";
+import {
+  createLogger,
+  createTestSink,
+  getLogger,
+  installLogger,
+} from "@cortexai-agent-hub/logging";
+import { createRouterClient } from "@orpc/server";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { RouterDeps } from "./router.js";
 import { appHandler, createRouter, handle } from "./router-test-support.js";
@@ -82,7 +87,10 @@ describe("MCP server health", () => {
       mcpServerSpace: { findMany: vi.fn(async () => []) },
       secret: { findFirst: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
       user: {
-        findUnique: vi.fn(async () => ({ email: "owner@cortexai-agent-hub.test", emailVerified: true })),
+        findUnique: vi.fn(async () => ({
+          email: "owner@cortexai-agent-hub.test",
+          emailVerified: true,
+        })),
         findUniqueOrThrow: vi.fn(async () => ({
           email: "owner@cortexai-agent-hub.test",
           name: "Owner",

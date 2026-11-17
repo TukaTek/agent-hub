@@ -1,7 +1,12 @@
 import { plainTextLinkParts } from "@cortexai-agent-hub/chat-ui/native";
 import type { BotAvatarSet } from "@cortexai-agent-hub/contracts";
 import type { MentionTextPart } from "@cortexai-agent-hub/core";
-import { displayName, everyoneWords, groupMentionNames, splitMentionText } from "@cortexai-agent-hub/core";
+import {
+  displayName,
+  everyoneWords,
+  groupMentionNames,
+  splitMentionText,
+} from "@cortexai-agent-hub/core";
 import type { ReactNode } from "react";
 import { createContext } from "react";
 
