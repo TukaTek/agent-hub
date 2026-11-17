@@ -15,7 +15,6 @@
     "@astrojs/markdown-satteri": "0.4.7",
     "@astrojs/react": "7.1.4",
     "@astrojs/sitemap": "3.7.4",
-    "@cortexai-agent-hub/contracts": "workspace:*",
     "@cortexai-agent-hub/core": "workspace:*",
     "@cortexai-agent-hub/ui-web": "workspace:*",
     "@vercel/functions": "3.11.0",
