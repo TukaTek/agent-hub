@@ -169,7 +169,10 @@ test("a healthy running computer is not diagnosed while its screen URL loads", a
   await expect(viewport.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("Screen not connected", { exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "computer-screen-url-loading");
-  await expect(viewport.locator('iframe[title="Bot screen"]')).toHaveAttribute("src", screenUrl);
+  await expect(viewport.locator('iframe[title="Assistant screen"]')).toHaveAttribute(
+    "src",
+    screenUrl,
+  );
   await expect(viewport.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("Screen not connected", { exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "computer-screen-url-loaded");
@@ -290,7 +293,7 @@ test("a framed screen that drops after connecting loads again by itself through 
   await openBotPanel(page);
   await page.getByTestId("computer-preview").getByTestId("computer-preview-open").click();
   const viewport = page.getByTestId("computer-viewport");
-  const screen = viewport.locator('iframe[title="Bot screen"]');
+  const screen = viewport.locator('iframe[title="Assistant screen"]');
   await expect(screen).toHaveAttribute("src", /1\.drop-test\/vnc\.html/);
   await expect.poll(() => loads).toBe(2);
   expect(probes).toBeGreaterThanOrEqual(4);
