@@ -135,7 +135,10 @@ export function stripWorkspaceRoot(
   workspaceRoot: string | undefined,
 ): string {
   if (!workspaceRoot) return requestedPath;
-  const root = workspaceRoot.replace(/\/+$/, "");
+  // Trimmed by index: an unanchored /\/+$/ rescans every run of slashes, so it is quadratic.
+  let end = workspaceRoot.length;
+  while (end > 0 && workspaceRoot[end - 1] === "/") end -= 1;
+  const root = workspaceRoot.slice(0, end);
   const portable = requestedPath.replace(/\\/g, "/");
   if (portable === root) return "/";
   return portable.startsWith(`${root}/`) ? portable.slice(root.length) : requestedPath;

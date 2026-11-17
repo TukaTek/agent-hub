@@ -1,4 +1,5 @@
 import path from "node:path";
+import { expectLinearTime } from "@cortexai-agent-hub/contracts/test-timing";
 import { describe, expect, it } from "vitest";
 import {
   displayBotWorkspacePath,
@@ -216,5 +217,11 @@ describe("provider workspace roots", () => {
     expect(() =>
       resolveBotWorkspacePath("team", "bot-1", stripWorkspaceRoot(`${root}/../etc/passwd`, root)),
     ).toThrow("Path escapes the computer workspace");
+  });
+
+  it("trims a root's trailing slashes in linear time", () => {
+    expect(stripWorkspaceRoot(`${root}/a.txt`, `${root}///`)).toBe("/a.txt");
+    const slashes = `a${"/".repeat(200_000)}b`;
+    expectLinearTime(() => expect(stripWorkspaceRoot("notes/a.txt", slashes)).toBe("notes/a.txt"));
   });
 });
