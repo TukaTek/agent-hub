@@ -28,6 +28,8 @@ const RULES = [
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
   // Identifiers such as Stripe metadata keys (`metadata.<old>_x`, `{ <old>_x: }`) keep underscores.
   [new RegExp(`(?<=\\.|[{,]\\s*)${old}_(?=\\w)`, "g"), "cortexai_agent_hub_"],
+  // A property access (`config.<old>`) turns into a hyphenated name, which needs brackets.
+  [new RegExp(`(?<=[\\w\\])])\\.${old}(?![\\w.-])`, "g"), '["cortexai-agent-hub"]'],
   // A bare `<old>:` object key turns into a hyphenated name, which needs quotes.
   [new RegExp(`(?<=[{,]\\s*)${old}(?=\\s*:\\s)`, "g"), '"cortexai-agent-hub"'],
   // pgrep/pkill patterns bracket the first letter so they never match themselves.

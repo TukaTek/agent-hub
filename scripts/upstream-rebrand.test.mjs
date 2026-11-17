@@ -14,6 +14,8 @@ describe("rebrand", () => {
     [`window.__${old}NativeKeys = true`, "window.__cortexAiAgentHubNativeKeys = true"],
     [`process.env.${OLD}_ALLOWED_HOSTS`, "process.env.CORTEXAI_AGENT_HUB_ALLOWED_HOSTS"],
     [`"${OLD}-memory-test"`, '"CORTEXAI-AGENT-HUB-memory-test"'],
+    [`config.mcpServers.${old};`, 'config.mcpServers["cortexai-agent-hub"];'],
+    [`https://api.${old}.test/x`, "https://api.cortexai-agent-hub.test/x"],
     [`window.${old}ComputerKeyboard`, "window.cortexAiAgentHubComputerKeyboard"],
     [`class ${Old}NetworkCache {}`, "class CortexAiAgentHubNetworkCache {}"],
     [`appName: "${Old}"`, 'appName: "CortexAI Agent Hub"'],
