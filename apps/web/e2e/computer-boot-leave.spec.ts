@@ -4,7 +4,7 @@ import {
   activeBotId,
   captureScreenshot,
   completeOnboarding,
-  openBotPanelTab,
+  openBotPanel,
   rpc,
   signup,
 } from "./helpers";
@@ -49,7 +49,7 @@ test("a retrying computer can be closed and keeps booting without a stale error 
     held.push(route);
   });
 
-  await openBotPanelTab(page, "Computer");
+  await openBotPanel(page);
   const preview = page.getByTestId("computer-preview");
   await expect(preview).toContainText("Computer failed to boot");
   await expect(page.getByText("error", { exact: true })).toHaveCount(0);
@@ -82,7 +82,7 @@ test("a retrying computer can be closed and keeps booting without a stale error 
   staleError = false;
   const response = await held[0]!.fetch();
   await held[0]!.fulfill({ response });
-  await expect(preview.locator("iframe")).toHaveAttribute("src", screenUrl);
+  await expect(preview).toHaveAttribute("data-state", "running");
   await expect(close).toHaveCount(0);
 });
 
@@ -107,7 +107,7 @@ test("opening a computer refreshes a stale booting snapshot", async ({ page }, t
   await page.route("**/rpc/computer/boot", (route) => {
     boots.push(route);
   });
-  await openBotPanelTab(page, "Computer");
+  await openBotPanel(page);
   const preview = page.getByTestId("computer-preview");
   await expect(preview).toContainText("Booting live desktop…");
   stale = false;
@@ -144,7 +144,7 @@ test("opening a computer the server reports as booting does not start a second b
     boots.push(route);
   });
 
-  await openBotPanelTab(page, "Computer");
+  await openBotPanel(page);
   const preview = page.getByTestId("computer-preview");
   await expect(preview).toContainText("Booting live desktop…");
   const bootsBefore = boots.length;
@@ -186,9 +186,9 @@ test("Retry screen clears a failed takeover on a running computer", async ({ pag
     }),
   );
 
-  await openBotPanelTab(page, "Computer");
+  await openBotPanel(page);
   const preview = page.getByTestId("computer-preview");
-  await expect(preview.locator("iframe")).toHaveAttribute("src", screenUrl);
+  await expect(preview).toHaveAttribute("data-state", "running");
   await preview.hover();
   await preview.getByTestId("computer-preview-open").click();
   const screen = page.locator('iframe[title="Assistant screen"]');

@@ -310,10 +310,7 @@ export function createHubAuth(
           },
         });
       });
-      await bootstrapUserSpace(prisma, user, {
-        signupsEnabled: "false",
-        signupAllowlist: undefined,
-      });
+      await bootstrapUserSpace(prisma, user);
       const session = await ctx.context.internalAdapter.createSession(user.id);
       if (!session) throw new Error("Session creation failed");
       sessionId = session.id;

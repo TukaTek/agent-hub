@@ -1,5 +1,5 @@
 import type { AdapterContext, JobPublisher } from "@cortexai-agent-hub/adapter-kit";
-import type { Actor, Group, MessageBlock } from "@cortexai-agent-hub/contracts";
+import type { Actor, Group } from "@cortexai-agent-hub/contracts";
 import {
   BOT_INSTRUCTIONS_MAX_LENGTH,
   BotSectionName,
@@ -28,6 +28,7 @@ import {
   IsolationError,
   isRecordNotFound,
   SpaceDeletionInProgressError,
+  storedMessageBlocks,
 } from "@cortexai-agent-hub/db";
 import { getLogger } from "@cortexai-agent-hub/logging";
 import type { FleetCardSummary } from "./approval-ask.js";
@@ -1318,10 +1319,10 @@ export async function updateOwnBotFromTool(
   if (wantsImage && run.sourceMessageId) {
     const source = await deps.prisma.message.findUnique({
       where: { id: run.sourceMessageId },
-      select: { blocks: true, threadId: true },
+      select: { id: true, blocks: true, threadId: true },
     });
     if (source?.threadId === threadId) {
-      sourceImageArtifactIds = attachedImageArtifactIds(source.blocks as MessageBlock[]);
+      sourceImageArtifactIds = attachedImageArtifactIds(storedMessageBlocks(source));
     }
   }
   const avatar = await resolveUpdateBotAvatar({

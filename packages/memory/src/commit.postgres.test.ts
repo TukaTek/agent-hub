@@ -1,4 +1,5 @@
 import type { AdapterContext, MemoryCommitRequest } from "@cortexai-agent-hub/adapter-kit";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { asSystem, createDb, runAsSystem } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -91,10 +92,7 @@ describePostgres("memory commits (PostgreSQL)", () => {
         });
         const initial = await store.commit(write("initial"), context);
         let reads = 0;
-        let release!: () => void;
-        const bothRead = new Promise<void>((resolve) => {
-          release = resolve;
-        });
+        const bothRead = deferred();
         const concurrentStore = new MarkdownMemoryStore(
           prisma.$extends({
             query: {
@@ -103,8 +101,8 @@ describePostgres("memory commits (PostgreSQL)", () => {
                   const result = await query(args);
                   reads += 1;
                   // Both first attempts see revision 1 before either can write.
-                  if (reads === 2) release();
-                  if (reads <= 2) await bothRead;
+                  if (reads === 2) bothRead.resolve();
+                  if (reads <= 2) await bothRead.promise;
                   return result;
                 },
               },

@@ -150,7 +150,7 @@ test("local installations retain the welcome and signup flow", async ({ page }) 
   await page.goto("/");
   await page.getByRole("button", { name: /Sign up/ }).click();
   await expect(page).toHaveURL(/\/sign-up$/);
-  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
 });
 
 test("tenant entry does not offer signup when capabilities are unavailable", async ({ page }) => {

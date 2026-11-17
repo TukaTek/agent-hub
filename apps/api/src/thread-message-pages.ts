@@ -1,6 +1,5 @@
 import type {
   MessageAuthor,
-  MessageBlock,
   ThreadMessage,
   ThreadMessagePage,
 } from "@cortexai-agent-hub/contracts";
@@ -14,7 +13,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import { messageReplyPreview } from "@cortexai-agent-hub/core/message-quote";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
-import { loadMessageAuthors } from "@cortexai-agent-hub/db";
+import { loadMessageAuthors, storedMessageBlocks } from "@cortexai-agent-hub/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
 
@@ -90,7 +89,7 @@ export async function loadMessagePage(
     // Web hides receipts client-side, so its receipt-only pages keep scanning.
     // Mobile explicitly retains them and must receive each page for pagination.
     const hasSubstantive = visibleRows.some(
-      (row) => !isPeerReceiptBlocks(row.blocks as MessageBlock[]),
+      (row) => !isPeerReceiptBlocks(storedMessageBlocks(row)),
     );
     if (hasSubstantive || includePeerReceipts || !hasOlder || includePeerRuns) {
       return {
@@ -122,6 +121,7 @@ export async function loadAllMessages(
 
 async function withoutPeerRunMessages<
   T extends {
+    id: string;
     runId: string | null;
     blocks: Prisma.JsonValue;
   },
@@ -143,7 +143,7 @@ async function withoutPeerRunMessages<
   );
   return rows.filter((row) => {
     if (!row.runId) return true;
-    const blocks = row.blocks as MessageBlock[];
+    const blocks = storedMessageBlocks(row);
     if (backgroundRunIds.has(row.runId)) {
       // Ticket work stays off the transcript except existing user-input cards.
       return blocks.some(isBackgroundInputBlock);
@@ -311,7 +311,7 @@ function toThreadMessage(row: MessageRow, authors: Map<string, MessageAuthor>): 
     threadId: row.threadId,
     seq: row.seq,
     role: row.role as ThreadMessage["role"],
-    blocks: row.blocks as ThreadMessage["blocks"],
+    blocks: storedMessageBlocks(row),
     botId: row.botId ?? undefined,
     ...(author ? { author } : {}),
     replyToMessageId: row.replyToMessageId ?? undefined,

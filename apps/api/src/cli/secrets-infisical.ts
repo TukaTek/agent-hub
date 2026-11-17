@@ -8,9 +8,10 @@ import {
   secretStoreOptionsFromEnv,
   unwrapEnvFromKeyManager,
 } from "@cortexai-agent-hub/adapters";
-import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
+import { resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
 import { createDb, runAsSystem } from "@cortexai-agent-hub/db";
+import { bestEffort } from "@cortexai-agent-hub/logging";
 import { createSecretMigrationRepository } from "../secret-migration.js";
 
 loadRootEnv();
@@ -74,7 +75,7 @@ try {
 } finally {
   await infisical.close();
   await encrypted.close();
-  await realtime.close().catch(() => undefined);
-  await prisma.$disconnect().catch(() => undefined);
-  await pool.end().catch(() => undefined);
+  await bestEffort("close realtime connection", realtime.close());
+  await bestEffort("disconnect database client", prisma.$disconnect());
+  await bestEffort("close database pool", pool.end());
 }

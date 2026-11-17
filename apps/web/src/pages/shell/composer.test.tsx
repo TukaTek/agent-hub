@@ -7,6 +7,8 @@ import type {
 } from "@cortexai-agent-hub/contracts";
 import type { ComposerMention } from "@cortexai-agent-hub/core";
 import { MODEL_REQUIRED_SEND_ERROR, resolveComposerSendPlan } from "@cortexai-agent-hub/core";
+import type { Deferred } from "@cortexai-agent-hub/core/test-async";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import { i18n } from "@lingui/core";
 import type { ComponentProps, ReactNode } from "react";
 import { act, createRef } from "react";
@@ -408,6 +410,19 @@ describe("Composer", () => {
     expect(container?.querySelector('[data-testid="mention-picker"]')).toBeNull();
   });
 
+  it.each(["all", "所有"])("offers everyone for @%s, as the mobile picker does", (query) => {
+    const everyone: ComposerMention = {
+      kind: "everyone",
+      id: "everyone",
+      name: "everyone",
+      aliases: ["everyone", "all", "所有人"],
+    };
+    const textarea = renderComposer(vi.fn(), { mentionTargets: [bob, everyone] });
+    type(textarea, `ask @${query}`);
+    const options = [...(container?.querySelectorAll('[role="option"]') ?? [])];
+    expect(options.map((option) => option.getAttribute("aria-label"))).toEqual(["@everyone"]);
+  });
+
   it("replaces a selected bot without retaining its previous routing target", async () => {
     const bobby: ComposerMention = { kind: "bot", id: "bot-3", name: "Bobby" };
     const onSend = vi.fn().mockResolvedValue(true);
@@ -746,13 +761,11 @@ describe("Composer", () => {
   });
 
   it("restores the draft and its mentions when the send fails", async () => {
-    let finishSend = (_sent: boolean) => {};
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const onSend = vi.fn(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     const textarea = renderComposer(onSend);
     const mentionChips = () =>
       [...(container?.querySelectorAll("[data-testid='mention-chip']") ?? [])].map(
@@ -765,19 +778,17 @@ describe("Composer", () => {
     expect(onSend).toHaveBeenCalledWith("@Bob hello", [bob], expect.any(String));
     expect(textarea.value).toBe("");
     expect(mentionChips()).toEqual([]);
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("@Bob hello");
     expect(mentionChips()).toEqual(["@Bob"]);
   });
 
   it("restores the chosen skill when the send fails", async () => {
-    let finishSend = (_sent: boolean) => {};
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const onSend = vi.fn(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     const textarea = renderComposer(onSend);
     const skillChip = () => container?.querySelector("[data-testid='skill-chip']")?.textContent;
     type(textarea, "/sum");
@@ -788,39 +799,35 @@ describe("Composer", () => {
     pressEnter(textarea);
     expect(onSend).toHaveBeenCalledWith("/summarize\nthe notes", [], expect.any(String));
     expect(skillChip()).toBeUndefined();
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("the notes");
     expect(skillChip()).toBe("summarize");
   });
 
   it("keeps a newer draft when an earlier send fails", async () => {
-    let finishSend = (_sent: boolean) => {};
-    const textarea = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const textarea = renderComposer(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     type(textarea, "hello");
     pressEnter(textarea);
     type(textarea, "newer");
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("newer");
   });
 
   it("does not restore after a newer draft was typed then cleared while sending", async () => {
-    let finishSend = (_sent: boolean) => {};
-    const textarea = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const textarea = renderComposer(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     type(textarea, "hello");
     pressEnter(textarea);
     type(textarea, "newer");
     type(textarea, "");
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("");
   });
 
@@ -843,38 +850,34 @@ describe("Composer", () => {
   });
 
   it("does not restore after an attachment was picked while sending", async () => {
-    let finishSend = (_sent: boolean) => {};
-    const textarea = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const textarea = renderComposer(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     type(textarea, "hello");
     pressEnter(textarea);
     pickAttachment();
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("");
   });
 
   it("restores after a rejected attachment pick and preserves the nonce on rejected retry picks", async () => {
-    let finishSend = (_sent: boolean) => {};
-    const onSend = vi.fn<ComponentProps<typeof Composer>["onSend"]>(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const onSend = vi.fn<ComponentProps<typeof Composer>["onSend"]>(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     const onAttachmentPick = vi.fn(() => false);
     const textarea = renderComposer(onSend, { onAttachmentPick });
     type(textarea, "hello");
     pressEnter(textarea);
     pickAttachment();
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("hello");
     pickAttachment();
     pressEnter(textarea);
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(onAttachmentPick).toHaveBeenCalledTimes(2);
     expect(onSend.mock.calls[1]?.[2]).toBe(onSend.mock.calls[0]?.[2]);
   });
@@ -906,18 +909,18 @@ describe("Composer", () => {
   });
 
   it.each(replyChanges)("does not restore after a $name while sending", async ({ props }) => {
-    let finishSend = (_sent: boolean) => {};
+    let finishSend: Deferred<boolean> | undefined;
     const textarea = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
+      () => {
+        finishSend = deferred();
+        return finishSend.promise;
+      },
       { replyTarget: reply, replyQuote: "original" },
     );
     type(textarea, "hello");
     pressEnter(textarea);
     rerenderComposer(props);
-    await act(async () => finishSend(false));
+    await act(async () => finishSend?.resolve(false));
     expect(textarea.value).toBe("");
   });
 
@@ -962,6 +965,283 @@ describe("Composer", () => {
     expect(second.value).toBe("unsent thought");
   });
 
+  it.each(["Enter", "Tab", "pointer"])(
+    "restores the slash action caret before trailing text with %s and inserts there next",
+    (method) => {
+      const onSlashAction = vi.fn();
+      const textarea = renderComposer(vi.fn(), { onSlashAction });
+      type(textarea, "/settings trailing text");
+      act(() => {
+        textarea.focus();
+        textarea.setSelectionRange(9, 9);
+        document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+      });
+      const option = container?.querySelector<HTMLButtonElement>('[role="option"]');
+      expect(option?.textContent).toContain("Settings");
+      if (method === "pointer") act(() => option?.click());
+      else
+        act(() =>
+          textarea.dispatchEvent(new KeyboardEvent("keydown", { key: method, bubbles: true })),
+        );
+      expect(onSlashAction).toHaveBeenCalledExactlyOnceWith("chat-settings");
+      expect(textarea.value).toBe("trailing text");
+      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 0]);
+      expect(document.activeElement).toBe(textarea);
+      const start = textarea.selectionStart;
+      type(
+        textarea,
+        `${textarea.value.slice(0, start)}next ${textarea.value.slice(textarea.selectionEnd)}`,
+      );
+      expect(textarea.value).toBe("next trailing text");
+    },
+  );
+
+  it.each(["Enter", "Tab"])("picks the highlighted slash row with %s instead of sending", (key) => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const onSlashAction = vi.fn();
+    const textarea = renderComposer(onSend, { onSlashAction });
+    const press = (name: string) =>
+      act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true })));
+    type(textarea, "/s");
+    const selected = () =>
+      container?.querySelector('[data-testid="slash-picker"] [aria-selected="true"]');
+    expect(selected()?.getAttribute("aria-label")).toBe("Skill summarize");
+    expect(textarea.getAttribute("aria-activedescendant")).toBe(selected()?.id);
+    press(key);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea.value).toBe("");
+    expect(container?.querySelector('[aria-label="Remove skill summarize"]')).not.toBeNull();
+
+    act(() =>
+      container?.querySelector<HTMLButtonElement>('[aria-label="Remove skill summarize"]')?.click(),
+    );
+    type(textarea, "/s");
+    press("ArrowDown");
+    expect(selected()?.getAttribute("aria-label")).toBe("Chat Settings");
+    press(key);
+    expect(onSlashAction).toHaveBeenCalledWith("chat-settings");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the highlighted slash row when skills refresh and on Ctrl/Cmd+Enter", () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const onSlashAction = vi.fn();
+    const textarea = renderComposer(onSend, { onSlashAction, enterToSend: false });
+    const press = (init: KeyboardEventInit) =>
+      act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init })));
+    type(textarea, "/s");
+    press({ key: "ArrowDown" });
+    rerenderComposer({ agentSkills: [] });
+    expect(
+      container
+        ?.querySelector('[data-testid="slash-picker"] [aria-selected="true"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("Chat Settings");
+    const ctrlTab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => textarea.dispatchEvent(ctrlTab));
+    expect(ctrlTab.defaultPrevented).toBe(false);
+    expect(textarea.value).toBe("/s");
+    for (const init of [
+      { key: "ArrowDown", shiftKey: true },
+      { key: "Escape", ctrlKey: true },
+    ]) {
+      const modified = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+      act(() => textarea.dispatchEvent(modified));
+      expect(modified.defaultPrevented).toBe(false);
+    }
+    expect(
+      container?.querySelector('[data-testid="slash-picker"]')?.getAttribute("aria-label"),
+    ).toBe("Command menu");
+    press({ key: "Enter", metaKey: true });
+    expect(onSlashAction).toHaveBeenCalledWith("chat-settings");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("attaches a skill picked mid-message as the chip, keeping the words around it", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const textarea = renderComposer(onSend);
+    const picker = () => container?.querySelector('[data-testid="slash-picker"]');
+    type(textarea, "@Bo");
+    pressEnter(textarea);
+    type(textarea, "@Bob please /sum");
+    expect(picker()).not.toBeNull();
+    pressEnter(textarea);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea.value).toBe("@Bob please ");
+    expect(textarea.selectionStart).toBe(12);
+    expect(container?.querySelector("[data-testid='skill-chip']")?.textContent).toBe("summarize");
+    // One skill per message: another / offers nothing once the draft has one.
+    type(textarea, "@Bob please /s");
+    expect(picker()).toBeNull();
+    type(textarea, "@Bob please check the notes");
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(onSend).toHaveBeenCalledWith(
+      "/summarize\n@Bob please check the notes",
+      [bob],
+      expect.any(String),
+    );
+  });
+
+  it("sends a / in ordinary prose as typed instead of picking a row", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const onSlashAction = vi.fn();
+    const releaseNotes = { ...summarize, id: "skill-2", name: "release-notes" };
+    const textarea = renderComposer(onSend, {
+      onSlashAction,
+      agentSkills: [summarize, releaseNotes],
+    });
+    const picker = () => container?.querySelector('[data-testid="slash-picker"]');
+    for (const text of [
+      "should we ship it, yes / no",
+      "salt / pepper / set",
+      "where is /usage",
+      "is it 1 /",
+      "see https://x.com/sum",
+      "and/sum",
+    ]) {
+      type(textarea, text);
+      expect(picker()).toBeNull();
+      pressEnter(textarea);
+      await act(async () => {});
+      expect(onSend).toHaveBeenLastCalledWith(text, [], expect.any(String));
+    }
+    expect(onSlashAction).not.toHaveBeenCalled();
+    // Mid-message only skill names match; descriptions stay a start-of-draft aid.
+    type(textarea, "please /docu");
+    expect(picker()).toBeNull();
+    type(textarea, "/docu");
+    expect(picker()?.querySelector('[aria-label="Skill summarize"]')).not.toBeNull();
+  });
+
+  it("removes only / through the caret, and takes the chip after blank lines", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const textarea = renderComposer(onSend);
+    const chip = () => container?.querySelector("[data-testid='skill-chip']");
+    act(() => textarea.focus());
+    const pickAt = (text: string, caret: number) => {
+      type(textarea, text);
+      act(() => {
+        textarea.setSelectionRange(caret, caret);
+        document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+      });
+      pressEnter(textarea);
+    };
+    pickAt("please /sum, thanks", 11);
+    expect(textarea.value).toBe("please , thanks");
+    expect(chip()?.textContent).toBe("summarize");
+    act(() =>
+      container?.querySelector<HTMLButtonElement>('[aria-label="Remove skill summarize"]')?.click(),
+    );
+    pickAt("/sum，总结一下", 4);
+    expect(textarea.value).toBe("，总结一下");
+    expect(chip()?.textContent).toBe("summarize");
+    act(() =>
+      container?.querySelector<HTMLButtonElement>('[aria-label="Remove skill summarize"]')?.click(),
+    );
+    pickAt("\n/sum", 5);
+    expect(textarea.value).toBe("");
+    expect(chip()).not.toBeNull();
+    type(textarea, "the notes");
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(onSend).toHaveBeenCalledWith("/summarize\nthe notes", [], expect.any(String));
+  });
+
+  it("keeps slash Escape dismissal through a delayed native selection event", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const textarea = renderComposer(onSend);
+    act(() => textarea.focus());
+    type(textarea, "please /sum");
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      textarea.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", bubbles: true }));
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+    expect(container?.querySelector('[data-testid="slash-picker"]')).toBeNull();
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(onSend).toHaveBeenCalledWith("please /sum", [], expect.any(String));
+  });
+
+  it("turns a skill picked at the start of a longer draft into the chip, keeping the rest", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const textarea = renderComposer(onSend);
+    type(textarea, "@Bo");
+    pressEnter(textarea);
+    type(textarea, "@Bob the notes");
+    act(() => {
+      textarea.setSelectionRange(0, 0);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+    type(textarea, "/sum @Bob the notes");
+    act(() => {
+      textarea.setSelectionRange(4, 4);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+    pressEnter(textarea);
+    expect(container?.querySelector("[data-testid='skill-chip']")?.textContent).toBe("summarize");
+    expect(textarea.value).toBe("@Bob the notes");
+    expect(container?.querySelector('[data-testid="mention-chip"]')?.textContent).toBe("@Bob");
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(onSend).toHaveBeenCalledWith("/summarize\n@Bob the notes", [bob], expect.any(String));
+  });
+
+  it("picks into a restored mid-message draft at its query, not the mount caret", () => {
+    const draftKey = "bot:restored-slash";
+    type(renderComposer(vi.fn(), { draftKey }), "please /sum");
+    act(() => root?.unmount());
+    container?.remove();
+    const textarea = renderComposer(vi.fn(), { draftKey });
+    act(() =>
+      container?.querySelector<HTMLButtonElement>("button[aria-label='Skill summarize']")?.click(),
+    );
+    expect(textarea.value).toBe("please ");
+    expect(container?.querySelector("[data-testid='skill-chip']")?.textContent).toBe("summarize");
+  });
+
+  it("lets Shift+Tab leave the field while the slash menu is open", () => {
+    const textarea = renderComposer(vi.fn());
+    type(textarea, "/s");
+    const shiftTab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => textarea.dispatchEvent(shiftTab));
+    expect(shiftTab.defaultPrevented).toBe(false);
+    expect(textarea.value).toBe("/s");
+    expect(container?.querySelector("[data-testid='skill-chip']")).toBeNull();
+  });
+
+  it("refreshes skills only for a menu opened at the start of the draft", () => {
+    const onSlashOpen = vi.fn();
+    const textarea = renderComposer(vi.fn(), { onSlashOpen });
+    type(textarea, "please /sum");
+    expect(container?.querySelector('[data-testid="slash-picker"]')).not.toBeNull();
+    expect(onSlashOpen).not.toHaveBeenCalled();
+    type(textarea, "");
+    type(textarea, "/");
+    expect(onSlashOpen).toHaveBeenCalledOnce();
+  });
+
+  it("sends a slash draft as typed when no row matches", async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const textarea = renderComposer(onSend);
+    type(textarea, "/zzz");
+    expect(container?.querySelector('[data-testid="slash-picker"]')).toBeNull();
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(onSend).toHaveBeenCalledWith("/zzz", [], expect.any(String));
+  });
+
   it("keeps Enter as newline and Ctrl+Enter as send when enter-to-send is off", async () => {
     const onSend = vi.fn().mockResolvedValue(true);
     const textarea = renderComposer(onSend, {
@@ -986,13 +1266,11 @@ describe("Composer", () => {
 it.each([true, false])(
   "keeps a pending draft recoverable across unmount (accepted: %s)",
   async (accepted) => {
-    let finishSend = (_accepted: boolean) => {};
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const onSend = vi.fn(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     const draftKey = "bot:pending-draft";
     const textarea = renderComposer(onSend, { draftKey });
     type(textarea, "pending text");
@@ -1003,7 +1281,7 @@ it.each([true, false])(
     );
     act(() => root?.unmount());
     container?.remove();
-    await act(async () => finishSend(accepted));
+    await act(async () => finishSend?.resolve(accepted));
     const restored = renderComposer(vi.fn(), { draftKey });
     expect(restored.value).toBe(accepted ? "" : "pending text");
   },
@@ -1012,17 +1290,15 @@ it.each([true, false])(
 it.each([true, false])(
   "preserves newer stored edits when a send settles (accepted: %s)",
   async (accepted) => {
-    let finishSend = (_accepted: boolean) => {};
-    const textarea = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
-    );
+    let finishSend: Deferred<boolean> | undefined;
+    const textarea = renderComposer(() => {
+      finishSend = deferred();
+      return finishSend.promise;
+    });
     type(textarea, "submitted text");
     pressEnter(textarea);
     type(textarea, "newer text");
-    await act(async () => finishSend(accepted));
+    await act(async () => finishSend?.resolve(accepted));
     expect(textarea.value).toBe("newer text");
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe("newer text");
   },
@@ -1031,13 +1307,13 @@ it.each([true, false])(
 it.each([true, false])(
   "settles a submission after returning to its thread (accepted: %s)",
   async (accepted) => {
-    let finishSend = (_accepted: boolean) => {};
+    let finishSend: Deferred<boolean> | undefined;
     const draftKey = "bot:return-before-settle";
     const first = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishSend = resolve;
-        }),
+      () => {
+        finishSend = deferred();
+        return finishSend.promise;
+      },
       { draftKey },
     );
     type(first, "submitted text");
@@ -1046,7 +1322,7 @@ it.each([true, false])(
     container?.remove();
     const returned = renderComposer(vi.fn(), { draftKey });
     expect(returned.value).toBe("submitted text");
-    await act(async () => finishSend(accepted));
+    await act(async () => finishSend?.resolve(accepted));
     expect(returned.value).toBe(accepted ? "" : "submitted text");
     expect(localStorage.getItem(`cortexai-agent-hub.composerDraft.${draftKey}`)).toBe(
       accepted ? null : "submitted text",
@@ -1055,13 +1331,13 @@ it.each([true, false])(
 );
 
 it("preserves edits made after returning, even when the text matches the submission", async () => {
-  let finishSend = (_accepted: boolean) => {};
+  let finishSend: Deferred<boolean> | undefined;
   const draftKey = "bot:identical-newer-edit";
   const first = renderComposer(
-    () =>
-      new Promise<boolean>((resolve) => {
-        finishSend = resolve;
-      }),
+    () => {
+      finishSend = deferred();
+      return finishSend.promise;
+    },
     { draftKey },
   );
   type(first, "submitted text");
@@ -1071,7 +1347,7 @@ it("preserves edits made after returning, even when the text matches the submiss
   const returned = renderComposer(vi.fn(), { draftKey });
   type(returned, "edited text");
   type(returned, "submitted text");
-  await act(async () => finishSend(true));
+  await act(async () => finishSend?.resolve(true));
   expect(returned.value).toBe("submitted text");
   expect(localStorage.getItem(`cortexai-agent-hub.composerDraft.${draftKey}`)).toBe(
     "submitted text",
@@ -1079,17 +1355,15 @@ it("preserves edits made after returning, even when the text matches the submiss
 });
 
 it("clears accepted saved text when only an attachment was picked during the send", async () => {
-  let finishSend = (_accepted: boolean) => {};
-  const textarea = renderComposer(
-    () =>
-      new Promise<boolean>((resolve) => {
-        finishSend = resolve;
-      }),
-  );
+  let finishSend: Deferred<boolean> | undefined;
+  const textarea = renderComposer(() => {
+    finishSend = deferred();
+    return finishSend.promise;
+  });
   type(textarea, "submitted text");
   pressEnter(textarea);
   pickAttachment();
-  await act(async () => finishSend(true));
+  await act(async () => finishSend?.resolve(true));
   expect(textarea.value).toBe("");
   expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBeNull();
 });
@@ -1097,15 +1371,11 @@ it("clears accepted saved text when only an attachment was picked during the sen
 it.each([false, true])(
   "sends dictation at once and keeps a draft typed during its failing send (throws=%s)",
   async (throws) => {
-    let finish!: (value: boolean) => void;
-    let fail!: (error: Error) => void;
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        }),
-    );
+    let sending!: Deferred<boolean>;
+    const onSend = vi.fn(() => {
+      sending = deferred();
+      return sending.promise;
+    });
     let onFinal!: (text: string) => void;
     const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
       onFinal = options.onFinal;
@@ -1122,8 +1392,8 @@ it.each([false, true])(
       expect(textarea.value).toBe("");
       type(textarea, "typed draft");
       await act(async () => {
-        if (throws) fail(new Error("offline"));
-        else finish(false);
+        if (throws) sending.reject(new Error("offline"));
+        else sending.resolve(false);
       });
       // The draft the user typed while the send was in flight stays theirs alone.
       expect(textarea.value).toBe("typed draft");
@@ -1144,15 +1414,11 @@ it.each([
 ])(
   "ignores a late dictation failure after remount (throws=%s, different chat=%s)",
   async (throws, differentChat) => {
-    let finish!: (accepted: boolean) => void;
-    let fail!: (error: Error) => void;
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        }),
-    );
+    let sending!: Deferred<boolean>;
+    const onSend = vi.fn(() => {
+      sending = deferred();
+      return sending.promise;
+    });
     let onFinal!: (text: string) => void;
     const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
       onFinal = options.onFinal;
@@ -1173,8 +1439,8 @@ it.each([
       const saved = localStorage.getItem(`cortexai-agent-hub.composerDraft.${draftKey}`);
       const bindings = localStorage.getItem(`cortexai-agent-hub.composerBindings.${draftKey}`);
       await act(async () => {
-        if (throws) fail(new Error("offline"));
-        else finish(false);
+        if (throws) sending.reject(new Error("offline"));
+        else sending.resolve(false);
       });
       expect(returned.value).toBe("@Bob newer draft");
       expect(localStorage.getItem(`cortexai-agent-hub.composerDraft.${draftKey}`)).toBe(saved);
@@ -1197,17 +1463,17 @@ it.each([
 );
 
 it("restores dictation to the previous chat after switching draft keys", async () => {
-  let finish!: (accepted: boolean) => void;
+  let finish!: Deferred<boolean>;
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
   });
   try {
     const textarea = renderComposer(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finish = resolve;
-        }),
+      () => {
+        finish = deferred();
+        return finish.promise;
+      },
       {
         phoneCallsEnabled: true,
       },
@@ -1217,7 +1483,7 @@ it("restores dictation to the previous chat after switching draft keys", async (
     act(() => onFinal("late dictation"));
     rerenderComposer({ draftKey: "bot:other-bot" });
     type(textarea, "newer draft");
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
     expect(textarea.value).toBe("newer draft");
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:other-bot")).toBe(
       "newer draft",
@@ -1296,13 +1562,11 @@ it("shows late dictated words in the chat's composer when the user came back fir
 });
 
 it("keeps only the late dictated words once the earlier send is accepted", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1320,7 +1584,7 @@ it("keeps only the late dictated words once the earlier send is accepted", async
     act(() => mic?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
     act(() => root?.render(<Composer {...composerProps} key="bot:bot-2" draftKey="bot:bot-2" />));
     act(() => onFinal("new words"));
-    await act(async () => finish(true));
+    await act(async () => finish.resolve(true));
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe("new words");
   } finally {
     state.mockRestore();
@@ -1329,13 +1593,11 @@ it("keeps only the late dictated words once the earlier send is accepted", async
 });
 
 it("keeps the failed send's text with the late dictated words", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1352,7 +1614,7 @@ it("keeps the failed send's text with the late dictated words", async () => {
     act(() => mic?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
     act(() => root?.render(<Composer {...composerProps} key="bot:bot-2" draftKey="bot:bot-2" />));
     act(() => onFinal("new words"));
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe(
       "not sent new words",
     );
@@ -1363,13 +1625,11 @@ it("keeps the failed send's text with the late dictated words", async () => {
 });
 
 it("keeps late dictated words that landed during a send that then fails", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1391,7 +1651,7 @@ it("keeps late dictated words that landed during a send that then fails", async 
     expect(onSend).toHaveBeenCalledTimes(1);
     act(() => onFinal("new words"));
     expect(returned.value).toBe("not sent new words");
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
     expect(returned.value).toBe("not sent new words");
     type(returned, "not sent new words please");
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe(
@@ -1446,12 +1706,11 @@ it("retries an unchanged dictation with the same nonce after a failed send", asy
 
 it("does not retry a changed payload with a dictation's nonce", async () => {
   const nonces: string[] = [];
-  let finish!: (accepted: boolean) => void;
+  let finish!: Deferred<boolean>;
   const onSend = vi.fn((_text: string, _mentions: unknown[], clientNonce: string) => {
     nonces.push(clientNonce);
-    return new Promise<boolean>((resolve) => {
-      finish = resolve;
-    });
+    finish = deferred();
+    return finish.promise;
   });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
@@ -1469,7 +1728,7 @@ it("does not retry a changed payload with a dictation's nonce", async () => {
       replyTarget: { id: "m-9", blocks: [] } as unknown as ThreadMessage,
     });
     await act(async () => {});
-    finish(false);
+    finish.resolve(false);
     await act(async () => {});
     pressEnter(textarea);
     await act(async () => {});
@@ -1575,12 +1834,11 @@ it.each(["a typed draft", "a chosen skill", "a pending attachment"])(
 
 it("keeps a reply-linked dictation's words without its nonce", async () => {
   const nonces: string[] = [];
-  let fail!: (error: Error) => void;
+  let fail!: Deferred<boolean>;
   const onSend = vi.fn((_text: string, _mentions: unknown[], clientNonce: string) => {
     nonces.push(clientNonce);
-    return new Promise<boolean>((_resolve, reject) => {
-      fail = reject;
-    });
+    fail = deferred();
+    return fail.promise;
   });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
@@ -1599,7 +1857,7 @@ it("keeps a reply-linked dictation's words without its nonce", async () => {
     act(() => root?.unmount());
     container?.remove();
     await act(async () => {
-      fail(new Error("offline"));
+      fail.reject(new Error("offline"));
     });
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe("spoken words");
     expect(localStorage.getItem("cortexai-agent-hub.composerNonce.bot:bot-1")).toBeNull();
@@ -1622,12 +1880,11 @@ it("keeps a reply-linked dictation's words without its nonce", async () => {
 
 it("reuses the stored nonce when a send that lost its answer is retried from the saved draft", async () => {
   const nonces: string[] = [];
-  let fail!: (error: Error) => void;
+  let fail!: Deferred<boolean>;
   const onSend = vi.fn((_text: string, _mentions: unknown[], clientNonce: string) => {
     nonces.push(clientNonce);
-    return new Promise<boolean>((_resolve, reject) => {
-      fail = reject;
-    });
+    fail = deferred();
+    return fail.promise;
   });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
@@ -1643,7 +1900,7 @@ it("reuses the stored nonce when a send that lost its answer is retried from the
     act(() => root?.unmount());
     container?.remove();
     await act(async () => {
-      fail(new Error("offline"));
+      fail.reject(new Error("offline"));
     });
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe("spoken words");
     expect(localStorage.getItem("cortexai-agent-hub.composerNonce.bot:bot-1")).toBe(nonces[0]);
@@ -1664,12 +1921,11 @@ it("reuses the stored nonce when a send that lost its answer is retried from the
 
 it("recovers a dictation in a chat reopened before the send settles", async () => {
   const nonces: string[] = [];
-  let fail!: (error: Error) => void;
+  let fail!: Deferred<boolean>;
   const onSend = vi.fn((_text: string, _mentions: unknown[], clientNonce: string) => {
     nonces.push(clientNonce);
-    return new Promise<boolean>((_resolve, reject) => {
-      fail = reject;
-    });
+    fail = deferred();
+    return fail.promise;
   });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
@@ -1693,7 +1949,7 @@ it("recovers a dictation in a chat reopened before the send settles", async () =
     );
     expect(reopened.value).toBe("spoken words");
     await act(async () => {
-      fail(new Error("offline"));
+      fail.reject(new Error("offline"));
     });
     expect(localStorage.getItem("cortexai-agent-hub.composerNonce.bot:bot-1")).toBe(nonces[0]);
     pressEnter(reopened);
@@ -1705,13 +1961,11 @@ it("recovers a dictation in a chat reopened before the send settles", async () =
 });
 
 it("sends a dictation that finishes while an earlier send is in flight", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1726,7 +1980,7 @@ it("sends a dictation that finishes while an earlier send is in flight", async (
     act(() => onFinal("second words"));
     await act(async () => {});
     expect(onSend).toHaveBeenCalledTimes(1);
-    await act(async () => finish(true));
+    await act(async () => finish.resolve(true));
     rerenderComposer({ sending: false });
     await act(async () => {});
     expect(onSend).toHaveBeenCalledTimes(2);
@@ -1737,13 +1991,11 @@ it("sends a dictation that finishes while an earlier send is in flight", async (
 });
 
 it("keeps a dictation queued behind a send that fails with that send's words", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1759,7 +2011,7 @@ it("keeps a dictation queued behind a send that fails with that send's words", a
     await act(async () => {});
     expect(onSend).toHaveBeenCalledTimes(1);
     // The first send fails; the dictation queued behind it must not go out alone.
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
     rerenderComposer({ sending: false });
     await act(async () => {});
     expect(onSend).toHaveBeenCalledTimes(1);
@@ -1773,13 +2025,11 @@ it("keeps a dictation queued behind a send that fails with that send's words", a
 });
 
 it("keeps a newer draft typed after returning to the chat when the queued send fails", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1799,7 +2049,7 @@ it("keeps a newer draft typed after returning to the chat when the queued send f
     const returned = container?.querySelector("textarea");
     if (!returned) throw new Error("composer textarea not found");
     type(returned, "newer draft");
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
 
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(returned.value).toBe("newer draft");
@@ -1810,13 +2060,11 @@ it("keeps a newer draft typed after returning to the chat when the queued send f
 });
 
 it("recovers a queued dictation's failed send for a chat that was left and not edited", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1836,7 +2084,7 @@ it("recovers a queued dictation's failed send for a chat that was left and not e
     const returned = container?.querySelector("textarea");
     if (!returned) throw new Error("composer textarea not found");
     expect(returned.value).toBe("and a hotel");
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
 
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(returned.value).toBe("please book the flight and a hotel");
@@ -1850,13 +2098,11 @@ it("recovers a queued dictation's failed send for a chat that was left and not e
 });
 
 it("keeps a mention bound after reopening the chat when the queued send fails", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1884,7 +2130,7 @@ it("keeps a mention bound after reopening the chat when the queued send fails", 
     expect(saved).toBe("@Bob");
     expect(bindings).not.toBeNull();
 
-    await act(async () => finish(false));
+    await act(async () => finish.resolve(false));
     expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe(saved);
     expect(localStorage.getItem("cortexai-agent-hub.composerBindings.bot:bot-1")).toBe(bindings);
     expect(container?.querySelectorAll('[data-testid="mention-chip"]')).toHaveLength(1);
@@ -1894,13 +2140,11 @@ it("keeps a mention bound after reopening the chat when the queued send fails", 
 });
 
 it("does not auto-send a draft typed over a dictation queued behind an earlier send", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1915,7 +2159,7 @@ it("does not auto-send a draft typed over a dictation queued behind an earlier s
     act(() => onFinal("second words"));
     await act(async () => {});
     type(textarea, "half typed");
-    await act(async () => finish(true));
+    await act(async () => finish.resolve(true));
     rerenderComposer({ sending: false });
     await act(async () => {});
     expect(onSend).toHaveBeenCalledTimes(1);
@@ -1926,13 +2170,11 @@ it("does not auto-send a draft typed over a dictation queued behind an earlier s
 });
 
 it("does not auto-send a queued dictation when a reply arms as the earlier send settles", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1946,7 +2188,7 @@ it("does not auto-send a queued dictation when a reply arms as the earlier send 
     rerenderComposer({ sending: true });
     act(() => onFinal("second words"));
     await act(async () => {});
-    await act(async () => finish(true));
+    await act(async () => finish.resolve(true));
     // The reply and the end of the earlier send land in one commit.
     rerenderComposer({
       sending: false,
@@ -1960,13 +2202,11 @@ it("does not auto-send a queued dictation when a reply arms as the earlier send 
 });
 
 it("does not auto-send a queued dictation into a page opened before the earlier send settles", async () => {
-  let finish!: (accepted: boolean) => void;
-  const onSend = vi.fn(
-    (_text: string) =>
-      new Promise<boolean>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: Deferred<boolean>;
+  const onSend = vi.fn((_text: string) => {
+    finish = deferred();
+    return finish.promise;
+  });
   let onFinal!: (text: string) => void;
   const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
     onFinal = options.onFinal;
@@ -1993,7 +2233,7 @@ it("does not auto-send a queued dictation into a page opened before the earlier 
     act(() => onFinal("second words"));
     await act(async () => {});
     act(() => session.dock.set({ page: { id: "page-1", title: "Plan" } }));
-    await act(async () => finish(true));
+    await act(async () => finish.resolve(true));
     renderInChat({ sending: false });
     await act(async () => {});
     expect(onSend).toHaveBeenCalledTimes(1);
@@ -2005,12 +2245,11 @@ it("does not auto-send a queued dictation into a page opened before the earlier 
 
 it("does not keep the nonce when a reopened chat rebinds the same mention text", async () => {
   const nonces: string[] = [];
-  let fail!: (error: Error) => void;
+  let fail!: Deferred<boolean>;
   const onSend = vi.fn((_text: string, _mentions: unknown[], clientNonce: string) => {
     nonces.push(clientNonce);
-    return new Promise<boolean>((_resolve, reject) => {
-      fail = reject;
-    });
+    fail = deferred();
+    return fail.promise;
   });
   const textarea = renderComposer(onSend);
   type(textarea, "@Bo");
@@ -2028,7 +2267,7 @@ it("does not keep the nonce when a reopened chat rebinds the same mention text",
   type(reopened, "@Bob hi");
   expect(container?.querySelectorAll('[data-testid="mention-chip"]')).toHaveLength(0);
   await act(async () => {
-    fail(new Error("offline"));
+    fail.reject(new Error("offline"));
   });
   expect(localStorage.getItem("cortexai-agent-hub.composerNonce.bot:bot-1")).toBeNull();
 });
@@ -2048,13 +2287,11 @@ function renderWithOpenPage(onSend: ComponentProps<typeof Composer>["onSend"]) {
 }
 
 it("does not store a retry nonce for a send made with a page open", async () => {
-  let fail!: (error: Error) => void;
-  const onSend = vi.fn(
-    () =>
-      new Promise<boolean>((_resolve, reject) => {
-        fail = reject;
-      }),
-  );
+  let fail!: Deferred<boolean>;
+  const onSend = vi.fn(() => {
+    fail = deferred();
+    return fail.promise;
+  });
   const { textarea } = renderWithOpenPage(onSend);
   type(textarea, "about the page");
   pressEnter(textarea);
@@ -2062,7 +2299,7 @@ it("does not store a retry nonce for a send made with a page open", async () => 
   act(() => root?.unmount());
   container?.remove();
   await act(async () => {
-    fail(new Error("offline"));
+    fail.reject(new Error("offline"));
   });
   expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe("about the page");
   expect(localStorage.getItem("cortexai-agent-hub.composerNonce.bot:bot-1")).toBeNull();
@@ -2089,15 +2326,11 @@ it("renews the nonce when the page closes before a retry", async () => {
 it.each([false, true])(
   "restores dictation to the saved draft when the chat closes before the send fails (throws=%s)",
   async (throws) => {
-    let finish!: (accepted: boolean) => void;
-    let fail!: (error: Error) => void;
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        }),
-    );
+    let sending!: Deferred<boolean>;
+    const onSend = vi.fn(() => {
+      sending = deferred();
+      return sending.promise;
+    });
     let onFinal!: (text: string) => void;
     const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
       onFinal = options.onFinal;
@@ -2110,8 +2343,8 @@ it.each([false, true])(
       act(() => root?.unmount());
       container?.remove();
       await act(async () => {
-        if (throws) fail(new Error("offline"));
-        else finish(false);
+        if (throws) sending.reject(new Error("offline"));
+        else sending.resolve(false);
       });
       expect(localStorage.getItem("cortexai-agent-hub.composerDraft.bot:bot-1")).toBe(
         "spoken words",
@@ -2127,15 +2360,11 @@ it.each([false, true])(
 it.each([false, true])(
   "keeps a mention typed while a dictation send fails (throws=%s)",
   async (throws) => {
-    let finish!: (accepted: boolean) => void;
-    let fail!: (error: Error) => void;
-    const onSend = vi.fn(
-      () =>
-        new Promise<boolean>((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        }),
-    );
+    let sending!: Deferred<boolean>;
+    const onSend = vi.fn(() => {
+      sending = deferred();
+      return sending.promise;
+    });
     let onFinal!: (text: string) => void;
     const listen = vi.spyOn(dictation, "listen").mockImplementation(async (options) => {
       onFinal = options.onFinal;
@@ -2156,8 +2385,8 @@ it.each([false, true])(
         document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
       });
       await act(async () => {
-        if (throws) fail(new Error("offline"));
-        else finish(false);
+        if (throws) sending.reject(new Error("offline"));
+        else sending.resolve(false);
       });
       expect(textarea.value).toBe("@Bob");
       const record = JSON.parse(

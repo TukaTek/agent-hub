@@ -7,7 +7,7 @@ import {
   VoiceAccountError,
 } from "@cortexai-agent-hub/adapter-kit";
 import { ThreadMessagePageSchema } from "@cortexai-agent-hub/contracts";
-import { MODEL_IMAGE_INPUT_ERROR } from "@cortexai-agent-hub/core";
+import { ClientError, MODEL_IMAGE_INPUT_ERROR } from "@cortexai-agent-hub/core";
 import { IsolationError, SpaceDeletionInProgressError } from "@cortexai-agent-hub/db";
 import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub/logging";
 import { markExpectedFailure, requestLogging } from "@cortexai-agent-hub/logging/hono";
@@ -89,7 +89,7 @@ describe("logUnexpectedRpcError", () => {
         begin: os.handler(() => {
           logger.warn("provider sign-in unavailable");
           markExpectedFailure();
-          throw new ORPCError("SERVICE_UNAVAILABLE");
+          throw new ClientError("SERVICE_UNAVAILABLE", "Service Unavailable");
         }),
       },
       { clientInterceptors: [onError((error, { path }) => handleRpcError(error, path))] },

@@ -120,7 +120,7 @@ export function AuthPage({ mode: requestedMode }: { mode: AuthMode | "entry" }) 
     ) : mode === "in" ? (
       <Trans>Sign in to CortexAI Agent Hub</Trans>
     ) : mode === "up" ? (
-      <Trans>Create your CortexAI Agent Hub</Trans>
+      <Trans>Create your account</Trans>
     ) : (
       <Trans>Reset your password</Trans>
     );

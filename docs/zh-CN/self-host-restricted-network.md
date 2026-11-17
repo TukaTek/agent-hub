@@ -59,9 +59,9 @@ bash install-images.sh --offline
 
 ```env
 CORTEXAI_AGENT_HUB_IMAGE=registry.example.com/mirror/cortexai-agent-hub/app
-CORTEXAI_AGENT_HUB_IMAGE_TAG=edge
+CORTEXAI_AGENT_HUB_IMAGE_TAG=latest
 CORTEXAI_AGENT_HUB_COMPUTER_IMAGE=registry.example.com/mirror/cortexai-agent-hub/computer
-CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=edge
+CORTEXAI_AGENT_HUB_COMPUTER_IMAGE_TAG=latest
 POSTGRES_IMAGE=registry.example.com/library/postgres@sha256:<trusted-postgres-digest>
 BUSYBOX_IMAGE=registry.example.com/library/busybox@sha256:<trusted-busybox-digest>
 ```

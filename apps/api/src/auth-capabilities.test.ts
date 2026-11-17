@@ -23,6 +23,8 @@ describe("authCapabilities", () => {
         emailCode: false,
         billing: false,
         passkeyRpId: null,
+        providers: [],
+        demoAccount: null,
       });
       expect(authCapabilitiesSchema.parse(reply)).toMatchObject({
         hubSso: sso,
@@ -57,6 +59,7 @@ describe("authCapabilities", () => {
       mode: "local",
       hubSso: false,
       sso: { name: "Company SSO", availability: "available" },
+      providers: [{ id: "oidc", name: "Company SSO" }],
       passwordAuth: true,
       passwordReset: true,
       resetUrl: `${webOrigin}/reset-password`,
@@ -64,7 +67,20 @@ describe("authCapabilities", () => {
       billing: true,
       passkeyRpId: null,
       crispWebsiteId: "crisp-site",
+      demoAccount: null,
     });
+  });
+
+  it("offers no social sign-in or demo login under Hub, even when configured", () => {
+    const reply = authCapabilities(
+      {
+        hubAuth: hubAuth as never,
+        webOrigin,
+        demoAccount: { email: "demo@example.test", password: "demo-password" },
+      },
+      { email: true, billing: false },
+    );
+    expect(reply).toMatchObject({ providers: [], demoAccount: null, passkeyRpId: null });
   });
 
   it("hides password reset when password sign-in is off", () => {

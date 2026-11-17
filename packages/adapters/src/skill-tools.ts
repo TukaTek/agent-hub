@@ -8,7 +8,7 @@ import {
 } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { availableInSpace } from "@cortexai-agent-hub/db";
-import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.js";
+import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.prompt.js";
 
 export const SKILL_TOOL_NAMES = new Set([
   "skill_read",

@@ -1,3 +1,4 @@
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type {
   Api,
   AssistantMessage,
@@ -740,10 +741,7 @@ it("terminates a silent compatible HTTP stream through the real Pi provider", as
   vi.useFakeTimers();
   const caller = new AbortController();
   try {
-    let headersArrived!: () => void;
-    const headers = new Promise<void>((resolve) => {
-      headersArrived = resolve;
-    });
+    const headers = deferred();
     const fetch = vi.fn<NonNullable<SimpleStreamOptions["fetch"]>>(async (_input, init) => {
       return new Response(
         new ReadableStream({
@@ -776,7 +774,7 @@ it("terminates a silent compatible HTTP stream through the real Pi provider", as
         apiKey: "fake-key",
         signal: caller.signal,
         fetch,
-        onResponse: () => headersArrived(),
+        onResponse: () => headers.resolve(),
       },
       undefined,
     );
@@ -784,7 +782,7 @@ it("terminates a silent compatible HTTP stream through the real Pi provider", as
     const consume = (async () => {
       for await (const event of stream) events.push(event.type);
     })();
-    await headers;
+    await headers.promise;
     await vi.advanceTimersByTimeAsync(MODEL_STREAM_IDLE_TIMEOUT_MS + 1);
     await consume;
     await expect(stream.result()).resolves.toMatchObject({

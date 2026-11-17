@@ -1,7 +1,6 @@
 import type { RoutineRun, RoutineRunCursor } from "@cortexai-agent-hub/contracts";
 import {
   formatRoutineRunAt,
-  isRetryableError,
   mergeRoutineRunPages,
   normalizeRunError,
   routineHistoryPage,
@@ -25,9 +24,7 @@ export function RoutineRunHistory({ routineId }: { routineId: string }) {
       input: (before: RoutineRunCursor | null) => routineHistoryPage(routineId, before),
       initialPageParam: null as RoutineRunCursor | null,
       getNextPageParam: (page) => page.nextCursor,
-      // Polls every loaded page together so they stay one coherent list; a refused request stops.
-      refetchInterval: (query) =>
-        query.state.error && !isRetryableError(query.state.error) ? false : 15_000,
+      refetchOnWindowFocus: "always",
     }),
   );
   const runs = history.data ? mergeRoutineRunPages(history.data.pages) : null;

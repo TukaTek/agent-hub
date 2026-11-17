@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noExplicitAny: Hub fixtures and Prisma stand-ins are loosely typed test doubles.
 import { createHash } from "node:crypto";
 import {
   hubManagedDeploymentSettings,

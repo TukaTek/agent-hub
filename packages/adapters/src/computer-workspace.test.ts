@@ -18,6 +18,7 @@ import path from "node:path";
 import type { CommandRequest, ComputerRef, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
 import { SandboxDamagedError } from "@cortexai-agent-hub/adapter-kit";
 import { ATTACHMENT_MAX_BYTES } from "@cortexai-agent-hub/contracts";
+import { flush } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import * as Logging from "@cortexai-agent-hub/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -37,8 +38,8 @@ import {
   teamBrowserProfileName,
   WORKSPACE_SAVE_LIMITS,
 } from "./computer-workspace.js";
-import { FakeSandboxProvider } from "./fake-sandbox.js";
 import { LocalAgentHomeStore } from "./home.js";
+import { FakeSandboxProvider } from "./providers/computer/fake/fake-sandbox.js";
 
 const context = {
   operationId: "workspace-test",
@@ -203,7 +204,7 @@ describe("provider-neutral computer workspace", () => {
       const computer = {
         ...(await provider.provision({ botId: "bot-1", homePath: "/ignored" }, context)),
         // A Docker computer mounts the home, so its save only records a new revision.
-        kind: kind as ComputerRef["kind"],
+        kind: kind,
       };
       await provider.writeFile(computer, { path: "a.txt", content: Buffer.from("a") }, context);
       const exportWorkspace = vi.spyOn(provider, "exportWorkspace");
@@ -923,7 +924,7 @@ describe("Team bot folder cleanup", () => {
         20,
       );
       await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flush();
     } finally {
       logger.mockRestore();
     }

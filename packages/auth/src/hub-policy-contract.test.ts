@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noExplicitAny: Hub fixtures and Prisma stand-ins are loosely typed test doubles.
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/agent-hub-service-config.v1.json" with { type: "json" };
 // Verbatim from TukaTek/cortexai-hub docs/agent-hub-service-config.v1.sample.json at

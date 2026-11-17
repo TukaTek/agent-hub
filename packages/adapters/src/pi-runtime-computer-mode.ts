@@ -1,9 +1,6 @@
-import type {
-  AgentRunModel,
-  AgentRunRequest,
-  ConnectorTool,
-} from "@cortexai-agent-hub/adapter-kit";
+import type { AgentRunModel, AgentRunRequest } from "@cortexai-agent-hub/adapter-kit";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { computerModeToolDefinition } from "./builtin.tool-definition.js";
 import type { RuntimeModelTarget } from "./pi-runtime-models.js";
 import {
   cardOutputCeiling,
@@ -105,19 +102,7 @@ export function computerTransitionTool(
 ): AgentTool {
   const entering = mode === "main";
   const field = entering ? "goal" : "summary";
-  const definition: ConnectorTool = {
-    name: entering ? "enter_computer_mode" : "leave_computer_mode",
-    description: entering
-      ? "Hand off a concrete GUI goal to computer mode before any browser or desktop action. Call this alone; computer mode continues in the same run."
-      : "Finish computer work and return a summary to the main model in this same run. Call this alone.",
-    inputSchema: {
-      type: "object",
-      properties: { [field]: { type: "string", minLength: 1 } },
-      required: [field],
-      additionalProperties: false,
-    },
-    readOnly: true,
-  };
+  const definition = computerModeToolDefinition(entering);
   return {
     name: definition.name,
     label: definition.name,

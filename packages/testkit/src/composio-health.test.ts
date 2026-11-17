@@ -2,17 +2,20 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioConnector } from "@cortexai-agent-hub/adapters";
+import type { createApp } from "@cortexai-agent-hub/api/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { createApp } from "../../../apps/api/src/app.ts";
-import type * as ComposioModule from "../../adapters/src/composio-connector.js";
+import type * as ComposioModule from "../../adapters/src/providers/integration/composio/composio-connector.js";
 
 type AppHandles = Awaited<ReturnType<typeof createApp>>;
 
 // The connector stack reads this from its own module, so mock it there rather than on the barrel.
-vi.mock("../../adapters/src/composio-connector.js", async (original) => ({
-  ...(await original<typeof ComposioModule>()),
-  isComposioEnabled: (apiKey: string | undefined) => Boolean(apiKey),
-}));
+vi.mock(
+  "../../adapters/src/providers/integration/composio/composio-connector.js",
+  async (original) => ({
+    ...(await original<typeof ComposioModule>()),
+    isComposioEnabled: (apiKey: string | undefined) => Boolean(apiKey),
+  }),
+);
 
 process.env.WAKEUP_DRIVER = "memory";
 process.env.SANDBOX_PROVIDER = "fake";
@@ -35,7 +38,7 @@ describeWithDatabase("Composio in the API connector stack", () => {
   async function start(composioApiKey: string | undefined) {
     vi.spyOn(ComposioConnector.prototype, "warmDirectory").mockResolvedValue(undefined);
     dataDir = mkdtempSync(path.join(tmpdir(), "cortexai-agent-hub-composio-health-"));
-    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     handles = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,

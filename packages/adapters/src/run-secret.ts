@@ -11,7 +11,7 @@ import {
   normalizeOneTimeCode,
   SecretAskPurpose,
 } from "@cortexai-agent-hub/contracts";
-import { isSecretAskBlock } from "@cortexai-agent-hub/core";
+import { BACKGROUND_HELPER_TRIGGER, isSecretAskBlock } from "@cortexai-agent-hub/core";
 import type { PrismaClient, RunSecretWriter } from "@cortexai-agent-hub/db";
 import {
   runCodeKind,
@@ -132,7 +132,13 @@ export function createRunSecretWriter(secretStore: SecretStore): RunSecretWriter
           where: {
             id: input.runId,
             spaceId: input.spaceId,
-            threadId: input.threadId,
+            OR: [
+              { threadId: input.threadId },
+              {
+                trigger: BACKGROUND_HELPER_TRIGGER,
+                sourceMessage: { threadId: input.threadId, thread: { spaceId: input.spaceId } },
+              },
+            ],
             status: "waiting_input",
           },
           select: { botId: true, userId: true },

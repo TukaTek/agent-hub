@@ -8,7 +8,7 @@ import { createLogger, createTestSink, installLogger } from "@cortexai-agent-hub
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
 import { createRunExecutor } from "./executor.js";
-import { FakeSandboxProvider } from "./fake-sandbox.js";
+import { FakeSandboxProvider } from "./providers/computer/fake/fake-sandbox.js";
 
 const lifecycle = vi.hoisted(() => ({ computer: undefined as ComputerRef | undefined }));
 

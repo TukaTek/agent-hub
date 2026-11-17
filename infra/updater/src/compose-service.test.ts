@@ -67,6 +67,12 @@ describe("the updater compose service", () => {
 
   it("is opt-in because it grants root-equivalent Docker access", () => {
     expect(updater.profiles).toEqual(["updater"]);
+    expect(updater.environment?.CORTEXAI_AGENT_HUB_COMPUTER_IMAGE).toBe(
+      `\${CORTEXAI_AGENT_HUB_COMPUTER_IMAGE:-ghcr.io/tukatek/agent-hub/computer}`,
+    );
+    expect(updater.environment?.CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS).toBe(
+      interpolated("CORTEXAI_AGENT_HUB_AUTO_UPDATE_INTERVAL_HOURS", "0"),
+    );
   });
 
   it("publishes nothing on the host", () => {

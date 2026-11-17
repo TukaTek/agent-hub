@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import type { KeyProvider, KeyWrapContext, WrappedDataKey } from "@cortexai-agent-hub/adapter-kit";
-import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
+import { resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
 import type { DataKey } from "./content-crypto.js";
 import { createRowId } from "./row-id.js";
 import { runAsSystem } from "./row-security.js";

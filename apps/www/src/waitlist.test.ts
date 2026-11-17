@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import waitlistFunction from "../api/waitlist";
-import {
-  captureWaitlistSignup,
-  normalizeWaitlistEmail,
-  parseWaitlistBody,
-} from "./waitlist";
+import { captureWaitlistSignup, normalizeWaitlistEmail, parseWaitlistBody } from "./waitlist";
 
 describe("waitlist", () => {
   it("parses JSON and normalizes email addresses", () => {
@@ -21,8 +17,8 @@ describe("waitlist", () => {
   });
 
   it("captures a deduplicated person in the marketing analytics project", async () => {
-    const fetchImpl = vi.fn(async (..._args: Parameters<typeof fetch>) =>
-      new Response(null, { status: 200 }),
+    const fetchImpl = vi.fn(
+      async (..._args: Parameters<typeof fetch>) => new Response(null, { status: 200 }),
     );
     await expect(
       captureWaitlistSignup(

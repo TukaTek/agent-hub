@@ -1,3 +1,4 @@
+import { useTimeout } from "@cortexai-agent-hub/chat-ui/hooks";
 import { useExternalLinkOpener } from "@cortexai-agent-hub/chat-ui/web";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { MCP_APP_VIEWER_PATH } from "@cortexai-agent-hub/contracts/content-security-policy";
@@ -10,6 +11,7 @@ import type { ArtifactTarget } from "../lib/artifact-open";
 import { fetchArtifactBytes } from "../lib/artifact-open";
 import { composerDraftKey, offerComposerText } from "../lib/composer-draft";
 import { useAppTheme, useMedia } from "../lib/pages";
+import { useEventListener } from "../lib/use-event-listener";
 
 type AppBlock = Extract<MessageBlock, { kind: "app" }>;
 
@@ -126,23 +128,16 @@ export function McpAppCard({ block, target }: { block: AppBlock; target: Artifac
     return { ...created, usedGesture };
   }, [appDocument, csp]);
 
-  useEffect(() => {
-    if (!host) return;
-    function receive(event: MessageEvent) {
-      if (!host || event.source !== frame.current?.contentWindow) return;
-      const data = event.data as { type?: unknown; message?: unknown; gesture?: unknown };
-      if (data?.type !== "cortexai-agent-hub-app:view") return;
-      host.usedGesture.latest = typeof data.gesture === "string" ? data.gesture : null;
-      const message = data.message as { method?: unknown };
-      if (message?.method === "ui/initialize") setStarted(true);
-      host.receive(data.message);
-    }
-    window.addEventListener("message", receive);
-    return () => {
-      window.removeEventListener("message", receive);
-      host.teardown();
-    };
-  }, [host]);
+  useEventListener(host ? window : null, "message", (event) => {
+    if (!host || event.source !== frame.current?.contentWindow) return;
+    const data = event.data as { type?: unknown; message?: unknown; gesture?: unknown };
+    if (data?.type !== "cortexai-agent-hub-app:view") return;
+    host.usedGesture.latest = typeof data.gesture === "string" ? data.gesture : null;
+    const message = data.message as { method?: unknown };
+    if (message?.method === "ui/initialize") setStarted(true);
+    host.receive(data.message);
+  });
+  useEffect(() => (host ? () => host.teardown() : undefined), [host]);
 
   // A running view hears about later changes instead of restarting.
   useEffect(
@@ -155,11 +150,7 @@ export function McpAppCard({ block, target }: { block: AppBlock; target: Artifac
     [host, hostContext],
   );
 
-  useEffect(() => {
-    if (!appDocument || started) return;
-    const timer = window.setTimeout(() => setFailed(true), START_TIMEOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [appDocument, started]);
+  useTimeout(() => setFailed(true), !appDocument || started ? null : START_TIMEOUT_MS, appDocument);
 
   if (html.isError || failed) return null;
   const bordered = block.prefersBorder !== false;

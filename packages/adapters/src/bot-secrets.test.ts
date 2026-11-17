@@ -8,13 +8,17 @@ import {
   encodeLoginSecret,
 } from "@cortexai-agent-hub/contracts";
 import { redactSecrets } from "@cortexai-agent-hub/core";
+import type { Deferred } from "@cortexai-agent-hub/core/test-async";
+import { deferred, flush } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
-import { installAuditEventStore } from "@cortexai-agent-hub/db";
+import { installAuditEventStore, TransactionConflictError } from "@cortexai-agent-hub/db";
 import * as Logging from "@cortexai-agent-hub/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretDownloadTarget } from "./bot-secrets.js";
 import {
   CODE_ALREADY_TYPED,
+  canonicalSecretValue,
+  cardRedactionForms,
   credentialArgument,
   encodeRunCode,
   encodeRunLogin,
@@ -25,6 +29,7 @@ import {
   LOGIN_CODES_USED_UP,
   LOGIN_REMOVED,
   LOGIN_VALUE_CHANGED,
+  linkHeaderEntries,
   listBotSecrets,
   loadLoginPasswordRedactions,
   loadRunCodeRedactions,
@@ -39,8 +44,10 @@ import {
   resolveCodeFill,
   resolveLoginFill,
   resolveRequestSecretDestination,
+  responsePaging,
   sameSecretDestination,
   storeBotSecret,
+  VaultItemRefusedError,
 } from "./bot-secrets.js";
 import { fakeDatabase } from "./bot-secrets.test-support.js";
 import { recordVaultUse } from "./run-context.js";
@@ -384,6 +391,62 @@ describe("authenticated secret requests", () => {
     });
   });
 
+  it("returns where the next page is, redacted", async () => {
+    const { input, fetch } = await fixture();
+    const page = (n: number) => `${destination.origin}/api/v1/courses?page=${n}&per_page=10`;
+    fetch.mockResolvedValueOnce(
+      new Response("[]", {
+        headers: {
+          Link: `<${page(1)}>; rel="current",<${page(2)}>; rel="next",<${page(1)}>; rel="first", <${page(5)}&k=${secret}>; rel=last`,
+          "X-Total-Count": "42",
+          "X-Echo": secret,
+        },
+      }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(result).toMatchObject({ status: 200, truncated: false });
+    // A link that carries the credential is left out, not returned with it replaced.
+    expect(result).toHaveProperty("links", { current: page(1), next: page(2), first: page(1) });
+    expect(result).toHaveProperty("headers", { "x-total-count": "42" });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify(result)).not.toContain("x-echo");
+  });
+
+  it("leaves out links and headers echoing the credential in another case or escape", async () => {
+    const { input, fetch } = await fixture();
+    const page = (n: number) => `${destination.origin}/api/v1/courses?page=${n}`;
+    const lowerEscaped = encodeURIComponent(secret).toLowerCase();
+    fetch.mockResolvedValueOnce(
+      new Response("[]", {
+        headers: {
+          Link: `<${page(2)}>; rel=next, <${page(5)}&k=${lowerEscaped}>; rel=last, <${page(4)}&k=${encodeURIComponent(lowerEscaped)}>; rel=prev`,
+          "X-Next-Page": secret.toUpperCase(),
+          "X-Total": "40",
+        },
+      }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(result).toHaveProperty("links", { next: page(2) });
+    expect(result).toHaveProperty("headers", { "x-total": "40" });
+    const text = JSON.stringify(result).toLowerCase();
+    expect(text).not.toContain(lowerEscaped);
+    expect(text).not.toContain(secret.toLowerCase());
+  });
+
+  it("leaves out a relation whose URI carries the credential", async () => {
+    const { input, fetch } = await fixture();
+    const page = `${destination.origin}/api/v1/courses?page=2`;
+    const lowerEscaped = encodeURIComponent(secret).toLowerCase();
+    fetch.mockResolvedValueOnce(
+      new Response("[]", {
+        headers: { Link: `<${page}>; rel="next https://rel.example.test/${lowerEscaped}"` },
+      }),
+    );
+    const result = await requestWithBotSecret(input);
+    expect(result).toHaveProperty("links", { next: page });
+    expect(JSON.stringify(result).toLowerCase()).not.toContain(lowerEscaped);
+  });
+
   it("redacts before truncating and bounds the response body", async () => {
     const { input, fetch } = await fixture();
     fetch.mockResolvedValueOnce(new Response("x".repeat(19_990) + secret));
@@ -411,10 +474,11 @@ describe("authenticated secret requests", () => {
     const recordUse = vi.fn(async () => {});
     // Cancelled while the destination is still being checked: nothing is sent, then or after.
     const early = new AbortController();
-    let checked = (_addresses: { address: string; family: 4 }[]) => {};
-    const resolveHostname = vi.fn(
-      () => new Promise<{ address: string; family: 4 }[]>((resolve) => (checked = resolve)),
-    );
+    let checked: Deferred<{ address: string; family: 4 }[]> | undefined;
+    const resolveHostname = vi.fn(() => {
+      checked = deferred<{ address: string; family: 4 }[]>();
+      return checked.promise;
+    });
     const checking = requestWithBotSecret({
       ...input,
       recordUse,
@@ -424,8 +488,8 @@ describe("authenticated secret requests", () => {
     await vi.waitFor(() => expect(resolveHostname).toHaveBeenCalled());
     early.abort();
     expect(await checking).toHaveProperty("error");
-    checked([{ address: "203.0.113.10", family: 4 }]);
-    await new Promise((resolve) => setTimeout(resolve));
+    checked?.resolve([{ address: "203.0.113.10", family: 4 }]);
+    await flush();
     expect(recordUse).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     // Cancelled while the request is out, with no answer yet.
@@ -1011,6 +1075,87 @@ describe("authenticated secret requests", () => {
   });
 });
 
+describe("responsePaging", () => {
+  const base = "https://api.example.test/v1/items?page=1";
+
+  it("reads quoted Link parameters that hold commas and semicolons", () => {
+    const header =
+      '<https://api.example.test/v1/items?page=2>; title="Page, next; really"; rel="next", ' +
+      '<https://api.example.test/v1/items?page=9>; rel="last"; title="rel=next"';
+    expect(linkHeaderEntries(header).map((entry) => entry.params.get("rel"))).toEqual([
+      "next",
+      "last",
+    ]);
+    expect(responsePaging(new Headers({ Link: header }), base).links).toEqual({
+      next: "https://api.example.test/v1/items?page=2",
+      last: "https://api.example.test/v1/items?page=9",
+    });
+  });
+
+  it("resolves relative links against the request URL and drops unusable ones", () => {
+    const headers = new Headers({
+      Link: '</v1/items?page=2>; rel=next, <?page=1>; rel="first prev", <javascript:alert(1)>; rel=last',
+    });
+    expect(responsePaging(headers, base).links).toEqual({
+      next: "https://api.example.test/v1/items?page=2",
+      first: "https://api.example.test/v1/items?page=1",
+      prev: "https://api.example.test/v1/items?page=1",
+    });
+  });
+
+  it("keeps the case of extension relations, which are URIs", () => {
+    const headers = new Headers({
+      Link: '</v1/items?page=2>; rel="NEXT https://api.example.test/Relations/Next"',
+    });
+    expect(responsePaging(headers, base).links).toEqual({
+      next: "https://api.example.test/v1/items?page=2",
+      "https://api.example.test/Relations/Next": "https://api.example.test/v1/items?page=2",
+    });
+  });
+
+  it("keeps relations named like Object properties", () => {
+    const headers = new Headers({
+      Link: '</v1/items?page=2>; rel="constructor toString", </v1/items?page=3>; rel=__proto__',
+    });
+    const links = responsePaging(headers, base).links ?? {};
+    expect(links.constructor).toBe("https://api.example.test/v1/items?page=2");
+    // Registered names are lowercased.
+    expect(Object.hasOwn(links, "tostring")).toBe(true);
+    expect(Object.hasOwn(links, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(links)).toBe(Object.prototype);
+  });
+
+  it("bounds links and headers together, keeping the next page and paging headers", () => {
+    const pages = Array.from(
+      { length: 12 },
+      (_, n) => `</v1/items?p=${n}${"x".repeat(900)}>; rel=r${n}`,
+    );
+    const headers = new Headers({
+      Link: [...pages, "</v1/items?page=2>; rel=next"].join(", "),
+      "X-Next-Page": "2",
+      "X-Total": "40",
+    });
+    const result = responsePaging(headers, base);
+    expect(result.links?.next).toBe("https://api.example.test/v1/items?page=2");
+    expect(result.headers).toEqual({ "x-next-page": "2", "x-total": "40" });
+    expect(JSON.stringify(result).length).toBeLessThan(6_500);
+    expect(Object.keys(result.links ?? {}).length).toBeGreaterThan(1);
+  });
+
+  it("leaves out links and paging headers too long to return", () => {
+    const long = "x".repeat(2_001);
+    const headers = new Headers({
+      Link: `</v1/items?cursor=${long}>; rel=next, </v1/items?page=1>; rel=first`,
+      "X-Next-Page": long,
+      "X-Total": "40",
+    });
+    expect(responsePaging(headers, base)).toEqual({
+      links: { first: "https://api.example.test/v1/items?page=1" },
+      headers: { "x-total": "40" },
+    });
+  });
+});
+
 describe("resolveRequestSecretDestination", () => {
   const documented = {
     label: "API key",
@@ -1382,6 +1527,42 @@ describe("credentialArgument", () => {
       expect(collapsed).toEqual(destination);
       expect(JSON.stringify(collapsed)).not.toContain(plantedSecret);
     }
+  });
+});
+
+describe("vault refusals", () => {
+  const login = { name: "site", origin: "https://example.test", auth: { type: "login" } } as const;
+
+  it("names what is wrong with what was given as a refusal, without quoting it", () => {
+    for (const [destination, value] of [
+      [login, "{not json fake-value"],
+      [{ ...login, auth: { type: "card" } }, "fake-value"],
+    ] as const) {
+      let caught: unknown;
+      try {
+        canonicalSecretValue(destination as BotSecretDestination, value);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(VaultItemRefusedError);
+      expect((caught as Error).message).not.toContain("fake-value");
+    }
+    expect(() => normalizeSecretDestination({ name: "x" })).toThrow(VaultItemRefusedError);
+  });
+
+  it("refuses a legacy login with a blank username", () => {
+    const legacy = JSON.stringify({ username: " ", password: "fake-password" });
+    expect(() => canonicalSecretValue(login, legacy)).toThrow(
+      new VaultItemRefusedError("A website login needs a label and a value for every field"),
+    );
+  });
+
+  it("lets a failure that isn't about the value propagate", () => {
+    const fault = new TypeError("fault");
+    vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+      throw fault;
+    });
+    expect(() => canonicalSecretValue({ ...login, auth: { type: "card" } }, "{}")).toThrow(fault);
   });
 });
 
@@ -2552,11 +2733,32 @@ describe("replacing a saved login's site", () => {
     const toOther = await prepare(db, other, "fake-password-other", { replaces: before.id });
     await commit(db, toLogin);
     // It keeps whatever key is saved, so a value saved since sends it back to be prepared again.
-    await expect(commit(db, toOther)).rejects.toMatchObject({ code: "P2034" });
+    await expect(commit(db, toOther)).rejects.toBeInstanceOf(TransactionConflictError);
     await commit(db, await prepare(db, other, "fake-password-other", { replaces: before.id }));
     expect(db.rows()).toHaveLength(1);
     const [row] = db.rows();
     expect(row).toMatchObject({ id: before.id, origin: "https://other.example.test" });
     expect(await secretStore.load(row!.ciphertext, row!.id)).toBe(typed("fake-password-other"));
+  });
+});
+
+describe("cardRedactionForms", () => {
+  it("covers the groups of four that most cards are printed in", () => {
+    expect(cardRedactionForms("4242424242424242")).toEqual([
+      "4242424242424242",
+      "4242 4242 4242 4242",
+      "4242-4242-4242-4242",
+    ]);
+  });
+
+  it.each([
+    ["a 15-digit American Express", "378282246310005", "3782 822463 10005", "3782-822463-10005"],
+    ["a 14-digit Diners Club", "30569309025904", "3056 930902 5904", "3056-930902-5904"],
+  ])("also covers the groups %s is printed in", (_label, digits, spaced, hyphenated) => {
+    const forms = cardRedactionForms(digits);
+    expect(forms).toContain(digits);
+    expect(forms).toContain(spaced);
+    expect(forms).toContain(hyphenated);
+    expect(redactSecrets(`Card ${spaced} and ${hyphenated}`, forms)).not.toMatch(/\d{4}/);
   });
 });

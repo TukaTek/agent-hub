@@ -1,5 +1,5 @@
 import type { Bot } from "@cortexai-agent-hub/contracts";
-import { NativeSelect, NativeSelectOption, Spinner } from "@cortexai-agent-hub/ui-web";
+import { OptionSelect, Spinner } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -40,18 +40,13 @@ export function IntegrationSetupPage() {
     <div className="min-h-full bg-background px-6 py-12">
       <div className="mx-auto max-w-[560px]">
         {bots.length > 1 ? (
-          <NativeSelect
+          <OptionSelect
             aria-label={t`Bot`}
-            value={botId}
-            onChange={(event) => setBotId(event.target.value)}
-            className="mb-6 w-full"
-          >
-            {bots.map((bot) => (
-              <NativeSelectOption key={bot.id} value={bot.id}>
-                {bot.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+            value={botId || null}
+            options={bots.map((bot) => ({ value: bot.id, label: bot.name }))}
+            onValueChange={setBotId}
+            className="mb-6"
+          />
         ) : null}
         {ready ? (
           <IntegrationSetup

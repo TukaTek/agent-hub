@@ -1,4 +1,5 @@
-import { DEMO_ROSTER, type RosterBot } from "../demo";
+import type { RosterBot } from "../demo";
+import { DEMO_ROSTER } from "../demo";
 import { SITE_DESCRIPTION } from "../site";
 import type { Locale } from "./locales";
 

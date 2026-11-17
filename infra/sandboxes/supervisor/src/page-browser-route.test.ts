@@ -1,5 +1,6 @@
 import { Duplex, PassThrough, Readable, Writable } from "node:stream";
-import { resolveSupervisorToken } from "@cortexai-agent-hub/core";
+import { resolveSupervisorToken } from "@cortexai-agent-hub/core/node/secrets-guard";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mock = vi.hoisted(() => ({ exec: vi.fn(), inspect: vi.fn(), stdin: [] as string[] }));
@@ -210,10 +211,7 @@ it.each([
 it("closes helper stdin when the request is cancelled", async () => {
   const stream = new PassThrough();
   const controller = new AbortController();
-  let started!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    started = resolve;
-  });
+  const ready = deferred();
   const defaultExec = mock.exec.getMockImplementation()!;
   mock.exec.mockImplementation(async (options: { Cmd: string[]; AttachStdin?: boolean }) => {
     if (!options.Cmd.includes("/usr/local/bin/cortexai-agent-hub-page-browser"))
@@ -222,7 +220,7 @@ it("closes helper stdin when the request is cancelled", async () => {
     return {
       start: async (options: { stdin: boolean }) => {
         expect(options.stdin).toBe(true);
-        started();
+        ready.resolve();
         return stream;
       },
       inspect: async () => ({ ExitCode: 130 }),
@@ -239,7 +237,7 @@ it("closes helper stdin when the request is cancelled", async () => {
     },
     body: JSON.stringify({ command: "act", actions: [{ kind: "click", ref: "test-ref" }] }),
   });
-  await ready;
+  await ready.promise;
   controller.abort();
   expect(await (await response).json()).toMatchObject({ ok: false, uncertain: true });
   expect(stream.destroyed).toBe(true);

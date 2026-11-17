@@ -60,6 +60,12 @@ export const ATTACHMENT_AUDIO_MIME_TYPES = [
   "audio/mp4",
 ] as const;
 
+export const ATTACHMENT_ARCHIVE_MIME_TYPES = [
+  "application/zip",
+  "application/vnd.rar",
+  "application/x-7z-compressed",
+] as const;
+
 export const ATTACHMENT_FILE_MIME_TYPES = [
   ...ATTACHMENT_AUDIO_MIME_TYPES,
   "video/mp4",
@@ -70,7 +76,7 @@ export const ATTACHMENT_FILE_MIME_TYPES = [
   "text/html",
   "application/json",
   ...ATTACHMENT_OFFICE_MIME_TYPES,
-  "application/zip",
+  ...ATTACHMENT_ARCHIVE_MIME_TYPES,
 ] as const;
 
 export const ATTACHMENT_ALLOWED_MIME_TYPES = [
@@ -110,6 +116,10 @@ export function artifactPreviewKind(mimeType: string): ArtifactPreviewKind {
 
 export function isAttachmentAudioMimeType(mimeType: string): boolean {
   return (ATTACHMENT_AUDIO_MIME_TYPES as readonly string[]).includes(mimeType);
+}
+
+export function isAttachmentArchiveMimeType(mimeType: string): boolean {
+  return (ATTACHMENT_ARCHIVE_MIME_TYPES as readonly string[]).includes(mimeType);
 }
 
 export function isAllowedAttachmentMimeType(mimeType: string): mimeType is AttachmentMimeType {

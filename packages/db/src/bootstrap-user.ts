@@ -1,12 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { signupPolicyFromEnv } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "./client.js";
 import { isUniqueViolation } from "./prisma-errors.js";
-
-export interface SignupPolicyEnv {
-  signupsEnabled: string | undefined;
-  signupAllowlist: string | undefined;
-}
 
 type OrganizationClient = Pick<
   PrismaClient,
@@ -103,7 +97,6 @@ export async function createOrganizationWithDefaultSpace(
 export async function bootstrapUserSpace(
   prisma: PrismaClient,
   user: { id: string },
-  env: SignupPolicyEnv,
 ): Promise<{ spaceId: string }> {
   // Concurrent bootstraps for the same user (e.g. overlapping first phone inbounds) share the slug.
   const spaceId = await createOrganizationWithDefaultSpace(prisma, {
@@ -113,16 +106,9 @@ export async function bootstrapUserSpace(
     // Hub IDs share a prefix. Keep their whole identity hash, not the first eight hex digits.
     slug: `user-${user.id.startsWith("hub_") ? user.id : user.id.slice(0, 12)}`,
   });
-  const policy = signupPolicyFromEnv(env);
   await prisma.deploymentSettings.upsert({
     where: { id: "default" },
-    create: {
-      id: "default",
-      ownerUserId: null,
-      signupsEnabled: policy.enabled,
-      signupAllowlist: policy.allowlist.join(","),
-      signupPolicyInitialized: true,
-    },
+    create: { id: "default" },
     update: {},
   });
   return { spaceId };

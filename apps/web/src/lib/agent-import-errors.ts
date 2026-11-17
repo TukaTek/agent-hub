@@ -1,4 +1,5 @@
 import { agentImportErrorReason } from "@cortexai-agent-hub/contracts";
+import type { GrokBotExportErrorCode } from "@cortexai-agent-hub/core";
 import { translateRunError } from "@cortexai-agent-hub/i18n/run-error";
 import { t } from "@lingui/core/macro";
 
@@ -36,5 +37,19 @@ export function agentImportErrorText(error: unknown): string | undefined {
       return t`An imported API key could not be used. Untick it and try again.`;
     default:
       return undefined;
+  }
+}
+
+/** Why a Grok Bot's reply could not be read, and what to ask the Bot for. */
+export function grokBotErrorText(code: GrokBotExportErrorCode): string {
+  switch (code) {
+    case "not_export":
+      return t`That isn't a Grok Bot export. Paste the Bot's whole reply.`;
+    case "cut_off":
+      return t`The reply looks cut off. Ask the Bot for the rest, then paste both.`;
+    case "too_large":
+      return t`This export is too large to import.`;
+    case "newer_version":
+      return t`This export is newer than CortexAI Agent Hub can read. Update CortexAI Agent Hub and try again.`;
   }
 }

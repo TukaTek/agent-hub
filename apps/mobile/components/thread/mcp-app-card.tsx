@@ -1,3 +1,4 @@
+import { useTimeout } from "@cortexai-agent-hub/chat-ui/hooks";
 import { useNativeLinkConfirm } from "@cortexai-agent-hub/chat-ui/native";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { MCP_APP_MIME_TYPE } from "@cortexai-agent-hub/contracts";
@@ -64,11 +65,7 @@ export function McpAppCard({ block, target }: { block: AppBlock; target: MobileA
     // The artifact is immutable; the target only names where it is read from.
   }, [block.artifactId]);
 
-  useEffect(() => {
-    if (!html || started) return;
-    const timer = setTimeout(() => setFailed(true), START_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [html, started]);
+  useTimeout(() => setFailed(true), !html || started ? null : START_TIMEOUT_MS, html);
 
   const excludeHosts = useMemo(apiHost, []);
   // A refetched message is a new object with the same values; the app's session must outlive it.

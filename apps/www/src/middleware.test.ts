@@ -10,9 +10,7 @@ describe("marketing site middleware", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe(
-      "text/markdown; charset=utf-8",
-    );
+    expect(response.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     expect(response.headers.get("vary")).toBe("Accept, Accept-Encoding");
     await expect(response.text()).resolves.toContain("# CortexAI Agent Hub");
   });
@@ -25,9 +23,7 @@ describe("marketing site middleware", () => {
     );
 
     expect(response.status).toBe(404);
-    expect(response.headers.get("content-type")).toBe(
-      "text/markdown; charset=utf-8",
-    );
+    expect(response.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     await expect(response.text()).resolves.toContain(
       "https://www.tukasolutions.com/cortexaiagenthub/sitemap-index.xml",
     );
@@ -42,9 +38,7 @@ describe("marketing site middleware", () => {
 
     expect(response.status).toBe(406);
     expect(response.headers.get("vary")).toBe("Accept, Accept-Encoding");
-    await expect(response.text()).resolves.toContain(
-      "text/html or text/markdown",
-    );
+    await expect(response.text()).resolves.toContain("text/html or text/markdown");
   });
 
   it("continues browser requests with negotiation-safe response headers", () => {

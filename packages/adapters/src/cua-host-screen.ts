@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { pollUntil } from "@cortexai-agent-hub/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   getDefaultEnvironment,
@@ -191,13 +192,13 @@ export function createCuaHostScreen(options: CuaHostScreenOptions): HostScreen {
     return Number(launched.structuredContent?.pid) || 0;
   }
 
-  async function windowWithin(pid: number, ms: number, signal: AbortSignal) {
-    const deadline = Date.now() + ms;
-    for (;;) {
-      const window = await frontWindow(pid, signal);
-      if (window || Date.now() > deadline) return window;
-      await sleep(400, undefined, { signal });
-    }
+  function windowWithin(pid: number, ms: number, signal: AbortSignal) {
+    return pollUntil(() => frontWindow(pid, signal), {
+      intervalMs: 400,
+      timeoutMs: ms,
+      signal,
+      onTimeout: () => undefined,
+    });
   }
 
   async function target(query: string, signal: AbortSignal): Promise<Target> {

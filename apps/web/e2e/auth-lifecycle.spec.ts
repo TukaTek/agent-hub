@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import {
   captureScreenshot,
   completeOnboarding,
+  openEmailSignIn,
   showPasswordForm,
   signup,
   signupThroughForm,
@@ -46,9 +47,7 @@ test(
     await captureScreenshot(page, testInfo, "signup-options-pending");
 
     releaseCapabilities();
-    await expect(
-      page.getByRole("heading", { name: "Create your CortexAI Agent Hub" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
     await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
     await captureScreenshot(page, testInfo, "signup-ready");
   },
@@ -129,9 +128,7 @@ test(
     await page.goto("/");
     await page.getByRole("button", { name: /Sign up/ }).click();
     await expect(page).toHaveURL(/\/sign-up$/);
-    await expect(
-      page.getByRole("heading", { name: "Create your CortexAI Agent Hub" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 320);
     await captureScreenshot(page, testInfo, "logged-out-sign-up-phone");
     await page.getByRole("link", { name: "Sign in", exact: true }).click();
@@ -234,7 +231,7 @@ test("logout protects bot deep links and sign-in restores the session", async ({
   );
   await page.getByRole("button", { name: /Sign up/ }).click();
   await expect(page).toHaveURL(/\/sign-up$/);
-  await expect(page.getByRole("heading", { name: "Create your CortexAI Agent Hub" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
   await page.goto("/");
   await captureScreenshot(page, testInfo, "37-logged-out-welcome");
 
@@ -243,6 +240,7 @@ test("logout protects bot deep links and sign-in restores the session", async ({
   await expect(page.getByRole("heading", { name: "Sign in to CortexAI Agent Hub" })).toBeVisible();
   await expect(page.getByText("Chief", { exact: true })).toHaveCount(0);
   await expect(page.getByText(userName, { exact: true })).toHaveCount(0);
+  await openEmailSignIn(page);
   await expect(page.getByLabel("Email")).toHaveAttribute("autocomplete", "username webauthn");
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "38-protected-deep-link-sign-in");
@@ -416,6 +414,7 @@ test("changes and recovers an email password", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Reset password" }).click();
   await expect(page.getByText("Password updated")).toBeVisible();
   await page.getByRole("link", { name: "Sign in" }).click();
+  await openEmailSignIn(page);
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await showPasswordForm(page);

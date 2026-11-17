@@ -7,6 +7,7 @@ import type {
 import { historyCompactJob } from "@cortexai-agent-hub/adapter-kit";
 import type { MessageBlock } from "@cortexai-agent-hub/contracts";
 import { setHubManagedDeploymentSettings } from "@cortexai-agent-hub/core";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   createLogger,
@@ -19,8 +20,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   COMPACTION_BATCH_SIZE,
   compactHistory,
-  formatCompactedSummary,
-  formatRecalledMemory,
   HISTORY_WINDOW_SIZE,
   historyWindowSize,
   MAX_COMPACTED_SUMMARY_CHARS,
@@ -35,6 +34,7 @@ import {
   shouldEnqueueCompaction,
   summarizeTimeoutMs,
 } from "./history-compaction.js";
+import { formatCompactedSummary, formatRecalledMemory } from "./history-compaction.prompt.js";
 
 describe("shouldEnqueueCompaction", () => {
   it("is false when nothing has aged out of the window yet", () => {
@@ -887,25 +887,19 @@ describe("compactHistory", () => {
 
   it("does not resurrect a summary when clear wins while summarization is running", async () => {
     const harness = compactionHarness({ deploymentModelKey: "openrouter-key" });
-    let releaseSummary!: () => void;
-    let summarizationBegan!: () => void;
-    const summarizationStarted = new Promise<void>((resolve) => {
-      releaseSummary = resolve;
-    });
-    const summarizationBegun = new Promise<void>((resolve) => {
-      summarizationBegan = resolve;
-    });
+    const summarizationStarted = deferred();
+    const summarizationBegun = deferred();
     harness.runtime.run.mockImplementation(async function* () {
-      summarizationBegan();
-      await summarizationStarted;
+      summarizationBegun.resolve();
+      await summarizationStarted.promise;
       yield { type: "done", text: "stale summary" };
     });
 
     const pending = compactHistory(harness.deps, "thread-1");
-    await summarizationBegun;
+    await summarizationBegun.promise;
     harness.thread.historyCompactedUpToSeq = 49;
     harness.thread.historyCompactionSummary = null;
-    releaseSummary();
+    summarizationStarted.resolve();
     await pending;
 
     expect(harness.thread.historyCompactedUpToSeq).toBe(49);
@@ -918,24 +912,18 @@ describe("compactHistory", () => {
       deploymentModelKey: "openrouter-key",
       withMemoryProvider: false,
     });
-    let releaseSummary!: () => void;
-    let summarizationBegan!: () => void;
-    const summarizationStarted = new Promise<void>((resolve) => {
-      releaseSummary = resolve;
-    });
-    const summarizationBegun = new Promise<void>((resolve) => {
-      summarizationBegan = resolve;
-    });
+    const summarizationStarted = deferred();
+    const summarizationBegun = deferred();
     harness.runtime.run.mockImplementation(async function* () {
-      summarizationBegan();
-      await summarizationStarted;
+      summarizationBegun.resolve();
+      await summarizationStarted.promise;
       yield { type: "done", text: "valid summary" };
     });
 
     const pending = compactHistory(harness.deps, "thread-1");
-    await summarizationBegun;
+    await summarizationBegun.promise;
     harness.thread.nextEventSeq = 1;
-    releaseSummary();
+    summarizationStarted.resolve();
     await pending;
 
     expect(harness.thread.historyCompactedUpToSeq).toBe(49);
@@ -949,26 +937,20 @@ describe("compactHistory", () => {
         defaultMemoryScope: "shared",
       },
     });
-    let releaseSave!: () => void;
-    let saveBegan!: () => void;
-    const saveCanFinish = new Promise<void>((resolve) => {
-      releaseSave = resolve;
-    });
-    const saveStarted = new Promise<void>((resolve) => {
-      saveBegan = resolve;
-    });
+    const saveCanFinish = deferred();
+    const saveStarted = deferred();
     harness.saveMemory.mockImplementationOnce(async () => {
-      saveBegan();
-      await saveCanFinish;
+      saveStarted.resolve();
+      await saveCanFinish.promise;
       return { ok: true, value: undefined };
     });
 
     const pending = compactHistory(harness.deps, "thread-1");
-    await saveStarted;
+    await saveStarted.promise;
     harness.thread.historyCompactedUpToSeq = 49;
     harness.thread.historyCompactionSummary = null;
     harness.thread.historyCompactionGeneration = 1;
-    releaseSave();
+    saveCanFinish.resolve();
     await pending;
 
     expect(harness.thread.historyCompactionSummary).toBeNull();

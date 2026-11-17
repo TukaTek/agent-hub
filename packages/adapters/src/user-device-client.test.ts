@@ -6,6 +6,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { USER_DEVICE_CONNECT_PATH } from "@cortexai-agent-hub/contracts";
+import type { Deferred } from "@cortexai-agent-hub/core/test-async";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
 import { WebSocketServer } from "ws";
@@ -181,8 +183,11 @@ describe("user device client", () => {
   });
 
   it("asks before every request and refuses what this computer does not allow", async () => {
-    let answer: (allowed: boolean) => void = () => undefined;
-    const authorize = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    let answer: Deferred<boolean> | undefined;
+    const authorize = vi.fn(() => {
+      answer = deferred<boolean>();
+      return answer.promise;
+    });
     start(authorize);
     const ws = await connection();
     const received = frames(ws);
@@ -191,7 +196,7 @@ describe("user device client", () => {
     );
     await until(() => authorize.mock.calls.length === 1);
     expect(received).toEqual([]);
-    answer(false);
+    answer?.resolve(false);
     await until(() => received.length === 1);
     expect(received[0]).toEqual({
       type: "frame",
@@ -204,17 +209,19 @@ describe("user device client", () => {
     );
     await until(() => authorize.mock.calls.length === 2);
     ws.send(JSON.stringify({ type: "cancel", id: "b" }));
-    answer(true);
+    answer?.resolve(true);
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(received.filter((frame) => frame.id === "b")).toEqual([]);
   });
 
   it("stops running commands and refuses waiting requests on cancelAll, and keeps serving", async () => {
-    let answer: (allowed: boolean) => void = () => undefined;
+    let answer: Deferred<boolean> | undefined;
     let ask = false;
-    start(() =>
-      ask ? new Promise<boolean>((resolve) => (answer = resolve)) : Promise.resolve(true),
-    );
+    start(() => {
+      if (!ask) return Promise.resolve(true);
+      answer = deferred<boolean>();
+      return answer.promise;
+    });
     const ws = await connection();
     const received = frames(ws);
     ws.send(
@@ -256,7 +263,7 @@ describe("user device client", () => {
     expect(received.find((frame) => frame.id === "wait")?.frame).toEqual({
       error: "Not allowed on this computer",
     });
-    answer(true);
+    answer?.resolve(true);
     ask = false;
     ws.send(
       JSON.stringify({

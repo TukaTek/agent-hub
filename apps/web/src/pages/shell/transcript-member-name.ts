@@ -1,4 +1,4 @@
-import { memberName } from "@cortexai-agent-hub/core";
+import { botDisplayName } from "@cortexai-agent-hub/core";
 import { t } from "@lingui/core/macro";
 
 type NamedBot = {
@@ -24,10 +24,10 @@ export function resolveTranscriptMemberName({
   archivedBots: readonly NamedBot[];
 }): string | undefined {
   if (members === undefined) return undefined;
-  const current = memberName(members, botId);
+  const current = botDisplayName(members, bots, botId);
   if (current !== undefined) return current;
   if (!botId) return undefined;
-  return nameOf(bots, botId) ?? nameOf(archivedBots, botId) ?? t`Deleted bot`;
+  return nameOf(archivedBots, botId) ?? t`Deleted bot`;
 }
 
 function nameOf(bots: readonly NamedBot[], botId: string): string | undefined {

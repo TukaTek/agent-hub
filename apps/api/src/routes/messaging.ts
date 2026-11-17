@@ -1,4 +1,5 @@
-import { displayName } from "@cortexai-agent-hub/core";
+import { MessagingInstallRefusedError } from "@cortexai-agent-hub/adapter-kit";
+import { ClientError, displayName } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import {
   crossSpaceCommunicationAllowed,
@@ -33,8 +34,10 @@ export function messagingRoutes(ctx: RouterContext) {
           if (!deps.messagingInstallations) throw new ORPCError("BAD_REQUEST");
           try {
             await deps.messagingInstallations.complete(context.actor, input.state, input.code);
-          } catch {
-            throw new ORPCError("BAD_REQUEST");
+          } catch (error) {
+            if (error instanceof MessagingInstallRefusedError)
+              throw new ClientError("BAD_REQUEST", "Bad Request");
+            throw error;
           }
           return { ok: true as const };
         }),
@@ -141,9 +144,7 @@ export function messagingRoutes(ctx: RouterContext) {
           } catch (error) {
             // botId is unique: the target bot is already linked elsewhere.
             if (isUniqueViolation(error)) {
-              throw new ORPCError("BAD_REQUEST", {
-                message: "That bot is already linked to a chat app.",
-              });
+              throw new ClientError("BAD_REQUEST", "That bot is already linked to a chat app.");
             }
             throw error;
           }

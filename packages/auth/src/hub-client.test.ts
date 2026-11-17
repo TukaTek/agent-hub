@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noExplicitAny: Hub fixtures and Prisma stand-ins are loosely typed test doubles.
 import { describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import web from "./fixtures/agent-hub-web-sso.v1.json" with { type: "json" };

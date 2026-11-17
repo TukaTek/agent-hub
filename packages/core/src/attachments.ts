@@ -338,6 +338,8 @@ const EXTENSION_MIME_TYPES: Record<string, AttachmentMimeType> = {
   ".doc": "application/msword",
   ".ppt": "application/vnd.ms-powerpoint",
   ".zip": "application/zip",
+  ".rar": "application/vnd.rar",
+  ".7z": "application/x-7z-compressed",
 };
 
 /** Macro-enabled and auto-run Office files are refused even when a picker labels them as allowed. */
@@ -378,6 +380,8 @@ const MIME_TYPE_EXTENSIONS: Record<AttachmentMimeType, string> = {
   "application/msword": ".doc",
   "application/vnd.ms-powerpoint": ".ppt",
   "application/zip": ".zip",
+  "application/vnd.rar": ".rar",
+  "application/x-7z-compressed": ".7z",
 };
 
 export function supportedAttachmentExtensions(): string[] {
@@ -405,12 +409,17 @@ export function inferAttachmentMimeType(
   const dot = name.lastIndexOf(".");
   const extension = dot < 0 ? "" : name.slice(dot).toLowerCase();
   if (BLOCKED_EXTENSIONS.has(extension)) return null;
-  if (
-    reportedType === "application/x-zip-compressed" ||
-    reportedType === "application/x-zip" ||
-    reportedType === "multipart/x-zip"
-  ) {
-    return "application/zip";
+  const archiveAliases: Record<string, AttachmentMimeType> = {
+    "application/x-zip-compressed": "application/zip",
+    "application/x-zip": "application/zip",
+    "multipart/x-zip": "application/zip",
+    "application/x-rar-compressed": "application/vnd.rar",
+    "application/x-rar": "application/vnd.rar",
+    "application/rar": "application/vnd.rar",
+    "application/x-7z": "application/x-7z-compressed",
+  };
+  if (reportedType && Object.hasOwn(archiveAliases, reportedType)) {
+    return archiveAliases[reportedType]!;
   }
   const audioAliases: Record<string, AttachmentMimeType> = {
     "audio/mp3": "audio/mpeg",
@@ -471,6 +480,8 @@ export function userTurnMessageForRun<
         ),
     );
   }
+  if (trigger === "helper")
+    return messages.find((message) => message.role === "user" && message.runId === runId);
   if (trigger !== "user" && trigger !== "messaging" && trigger !== "reaction") return undefined;
   return messages.find(
     (message) =>

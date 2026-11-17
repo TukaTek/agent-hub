@@ -9,6 +9,7 @@ import {
 } from "@cortexai-agent-hub/ui-web";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useRef, useState } from "react";
+import { runsOnUserMachine } from "../../lib/computer-sandbox";
 import { rpc } from "../../lib/rpc";
 import { errorText } from "../../lib/user-error";
 
@@ -95,7 +96,7 @@ export function TeachComputerOverlayControl({
   }, [botId, onRefresh]); // t omitted: identity churn must not re-lock Start
 
   // Hide only for desktop-host bots. Null computer still shows the control so teaching can boot.
-  if (computer?.kind === "desktop") return null;
+  if (runsOnUserMachine(computer)) return null;
 
   async function refreshView() {
     const requestBotId = botId;

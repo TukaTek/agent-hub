@@ -23,8 +23,8 @@ describe("GitHub stars", () => {
 
   it("returns the fallback when GitHub does not settle before the deadline", async () => {
     vi.useFakeTimers();
-    const fetchImpl = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Promise<Response>(() => undefined),
+    const fetchImpl = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>(() => undefined),
     );
 
     const pending = fetchGithubStars(fetchImpl as typeof fetch);

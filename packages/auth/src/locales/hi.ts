@@ -26,27 +26,25 @@ export const HI_MESSAGES: Record<string, string> = {
   "Enter this code in CortexAI Agent Hub to confirm it's you:":
     "यह पुष्टि करने के लिए कि यह आप ही हैं, CortexAI Agent Hub में यह कोड डालें:",
   "Welcome to CortexAI Agent Hub": "CortexAI Agent Hub में आपका स्वागत है",
-  "Thanks for signing up for CortexAI Agent Hub.":
-    "CortexAI Agent Hub के लिए साइन अप करने के लिए धन्यवाद।",
-  "CortexAI Agent Hub also has apps for": "CortexAI Agent Hub के ऐप इनके लिए भी हैं:",
-  "Questions or ideas?": "सवाल या सुझाव?",
-  "Join us on Discord": "Discord पर हमसे जुड़ें",
-  "CortexAI Agent Hub is open source. If you like it,":
-    "CortexAI Agent Hub ओपन सोर्स है। अगर आपको यह पसंद है, तो",
-  "a star on GitHub": "GitHub पर एक स्टार",
-  "helps others find it.": "दूसरों को इसे ढूँढने में मदद करता है।",
-  "Want to run it on your own servers?": "इसे अपने सर्वर पर चलाना चाहते हैं?",
-  "Self-host CortexAI Agent Hub": "CortexAI Agent Hub को खुद होस्ट करें",
-  "Have any questions? Reply to this email.": "कोई सवाल है? इस ईमेल का जवाब दें।",
+  "Welcome to CortexAI Agent Hub. The people who get the most out of it do three things:":
+    "CortexAI Agent Hub में आपका स्वागत है। जो लोग इसका सबसे ज़्यादा फ़ायदा उठाते हैं, वे तीन काम करते हैं:",
+  "Get the apps": "ऐप डाउनलोड करें",
+  "CortexAI Agent Hub runs on {platforms}, so your bots can reach you wherever you are.":
+    "CortexAI Agent Hub {platforms} पर चलता है, ताकि आपके बॉट आप तक कहीं भी पहुँच सकें।",
+  "Join the community": "कम्युनिटी से जुड़ें",
+  "See what others are building, get help fast, and tell us what to build next on {discord}.":
+    "देखें दूसरे क्या बना रहे हैं, जल्दी मदद पाएँ, और {discord} पर हमें बताएँ कि आगे क्या बनाएँ।",
+  "Star us on GitHub": "GitHub पर हमें स्टार दें",
+  "CortexAI Agent Hub is open source. {star} helps more people find it.":
+    "CortexAI Agent Hub ओपन सोर्स है। {star} से ज़्यादा लोग इसे ढूँढ पाते हैं।",
+  "A star on GitHub": "GitHub पर एक स्टार",
+  "Questions? Just reply. I read every one.": "कोई सवाल? बस जवाब दें। मैं हर ईमेल पढ़ता हूँ।",
   Unsubscribe: "सदस्यता छोड़ें",
   "Invite a friend": "किसी दोस्त को आमंत्रित करें",
   "Invite a friend to CortexAI Agent Hub: they get {weeks} weeks free, and you earn a free month when they start a qualifying subscription with a new card.":
     "किसी दोस्त को CortexAI Agent Hub पर बुलाएँ: उन्हें {weeks} हफ़्ते मुफ़्त मिलते हैं, और जब वे नए कार्ड से योग्य सदस्यता शुरू करते हैं तो आपको एक महीना मुफ़्त मिलता है।",
   "Open CortexAI Agent Hub": "CortexAI Agent Hub खोलें",
   "and choose Invite friends for your link.": "और अपना लिंक पाने के लिए दोस्तों को आमंत्रित करें चुनें।",
-  "Have any questions? Just reply to this email.": "कोई सवाल है? बस इस ईमेल का जवाब दें।",
-  "If you're enjoying CortexAI Agent Hub,": "अगर आपको CortexAI Agent Hub पसंद आ रहा है,",
-  "give us a star on GitHub": "तो GitHub पर हमें एक स्टार दें",
   "We received your CortexAI Agent Hub plugin": "हमें आपका CortexAI Agent Hub प्लगइन मिल गया है",
   "Thanks for submitting a plugin to the CortexAI Agent Hub marketplace.":
     "CortexAI Agent Hub मार्केटप्लेस में प्लगइन भेजने के लिए धन्यवाद।",
@@ -76,4 +74,17 @@ export const HI_MESSAGES: Record<string, string> = {
     "आपकी सहेजी गई कंप्यूटर फ़ाइलें {date} को हटा दी जाएँगी, जब तक आप फिर से सदस्यता नहीं लेते।",
   "Your saved computer files will be deleted on {date} unless you choose a plan.":
     "आपकी सहेजी गई कंप्यूटर फ़ाइलें {date} को हटा दी जाएँगी, जब तक आप कोई प्लान नहीं चुनते।",
+  "{inviter} invited you to {organization} on CortexAI Agent Hub":
+    "{inviter} ने आपको CortexAI Agent Hub पर {organization} में आमंत्रित किया",
+  "{inviter} invited you to join {organization} on CortexAI Agent Hub.":
+    "{inviter} ने आपको CortexAI Agent Hub पर {organization} से जुड़ने के लिए आमंत्रित किया है।",
+  "Join {organization}": "{organization} से जुड़ें",
+  "This invitation expires in 7 days. Sign in with this email address to accept it.":
+    "यह आमंत्रण 7 दिनों में समाप्त हो जाएगा। इसे स्वीकार करने के लिए इसी ईमेल पते से साइन इन करें।",
+  "{inviter} invited you to {space} on CortexAI Agent Hub":
+    "{inviter} ने आपको CortexAI Agent Hub पर {space} में आमंत्रित किया",
+  "{inviter} invited you to join {space} on CortexAI Agent Hub.":
+    "{inviter} ने आपको CortexAI Agent Hub पर {space} से जुड़ने के लिए आमंत्रित किया है।",
+  "Join {space}": "{space} से जुड़ें",
+  "This invitation expires in 7 days.": "यह आमंत्रण 7 दिनों में समाप्त हो जाएगा।",
 };

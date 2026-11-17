@@ -8,8 +8,8 @@ import {
   PrismaPushTokenStore,
   unwrapEnvFromKeyManager,
 } from "@cortexai-agent-hub/adapters";
-import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
+import { resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
 import { createDb } from "@cortexai-agent-hub/db";
 
 loadRootEnv();

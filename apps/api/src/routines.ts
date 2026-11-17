@@ -7,6 +7,7 @@ import {
 import type { Actor, CreateRoutineInput, Routine } from "@cortexai-agent-hub/contracts";
 import { canonicalPiProviderId, RoutineEmailSendersSchema } from "@cortexai-agent-hub/contracts";
 import {
+  ClientError,
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
@@ -71,7 +72,8 @@ export function nextRoutineDate(crons: string[], timezone: string): Date {
   try {
     next = nextCronDateAcrossStrict(crons, new Date(), timezone);
   } catch {
-    throw new ORPCError("BAD_REQUEST", { message: "Enter a valid cron expression." });
+    // Parsing the caller's expressions is all this does, so any failure is a malformed one.
+    throw new ClientError("BAD_REQUEST", "Enter a valid cron expression.");
   }
   if (!next) throw new ORPCError("BAD_REQUEST", { message: "Enter a valid cron expression." });
   return next;

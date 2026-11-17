@@ -1,3 +1,4 @@
+import { flush } from "@cortexai-agent-hub/core/test-async";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { notificationIcon, prepareNotificationIcons } from "./notification-icon.js";
 
@@ -14,7 +15,7 @@ class FakeImage {
   }
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve));
+const settle = () => flush();
 
 beforeEach(() => {
   loads = [];

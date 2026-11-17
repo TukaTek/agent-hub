@@ -18,8 +18,8 @@ const RULES = [
   ],
   // Any other repository reference, such as an image alias without its registry host.
   [new RegExp(`elie222/${old}`, "g"), "tukatek/agent-hub"],
-  // An upper-case HTTP header prefix (`X-<OLD>-…`) keeps hyphens.
-  [new RegExp(`(?<=[Xx]-)${OLD}(?=-)`, "g"), "CORTEXAI-AGENT-HUB"],
+  // An upper-case name followed by a hyphen (`X-<OLD>-…`, `<OLD>-x`) keeps hyphens.
+  [new RegExp(`${OLD}(?=-)`, "g"), "CORTEXAI-AGENT-HUB"],
   [new RegExp(OLD, "g"), "CORTEXAI_AGENT_HUB"],
   [new RegExp(`(?<![A-Za-z0-9])${old}(?=[A-Z])`, "g"), "cortexAiAgentHub"],
   [new RegExp(`(?<![0-9])${Old}(?=[A-Z])`, "g"), "CortexAiAgentHub"],
@@ -28,6 +28,8 @@ const RULES = [
   [new RegExp(Old, "g"), "CortexAI Agent Hub"],
   // Identifiers such as Stripe metadata keys (`metadata.<old>_x`, `{ <old>_x: }`) keep underscores.
   [new RegExp(`(?<=\\.|[{,]\\s*)${old}_(?=\\w)`, "g"), "cortexai_agent_hub_"],
+  // A property access (`config.<old>`) turns into a hyphenated name, which needs brackets.
+  [new RegExp(`(?<=[\\w\\])])\\.${old}(?![\\w.-])`, "g"), '["cortexai-agent-hub"]'],
   // A bare `<old>:` object key turns into a hyphenated name, which needs quotes.
   [new RegExp(`(?<=[{,]\\s*)${old}(?=\\s*:\\s)`, "g"), '"cortexai-agent-hub"'],
   // pgrep/pkill patterns bracket the first letter so they never match themselves.

@@ -1,0 +1,49 @@
+# See ../../self-host-kubernetes.md before applying.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cortexai-agent-hub-controller
+  labels:
+    cortexai-agent-hub.example/phase: foundation
+  namespace: cortexai-agent-hub
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cortexai-agent-hub-computers
+  labels:
+    cortexai-agent-hub.example/phase: foundation
+  namespace: cortexai-agent-hub-sandboxes
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - create
+      - get
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - pods/exec
+    verbs:
+      - create
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cortexai-agent-hub-computers
+  labels:
+    cortexai-agent-hub.example/phase: foundation
+  namespace: cortexai-agent-hub-sandboxes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cortexai-agent-hub-computers
+subjects:
+  - kind: ServiceAccount
+    name: cortexai-agent-hub-controller
+    namespace: cortexai-agent-hub

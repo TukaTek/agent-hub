@@ -1,10 +1,11 @@
+import { useTimeout } from "@cortexai-agent-hub/chat-ui/hooks";
 import { PageIcon } from "@cortexai-agent-hub/chat-ui/web";
 import { PAGE_TITLE_MAX_LENGTH } from "@cortexai-agent-hub/contracts";
 import { cn, Dialog, DialogClose, DialogContent, DialogTitle } from "@cortexai-agent-hub/ui-web";
 import { useLingui } from "@lingui/react/macro";
 import { Pencil, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   DARWIN_WINDOW_CONTROLS_WIDTH_PX,
   desktopBridge,
@@ -69,11 +70,7 @@ export function PageView({
     setStalled(false);
   }
   const waiting = document !== null && !drawn && notice === null;
-  useEffect(() => {
-    if (!waiting) return;
-    const timer = window.setTimeout(() => setStalled(true), FRAME_TIMEOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [waiting, attempt]);
+  useTimeout(() => setStalled(true), waiting ? FRAME_TIMEOUT_MS : null, attempt);
   const onDrawn = useCallback(() => setDrawn(true), []);
   // In the macOS app the window controls sit in the top-left corner over a full-window page, so
   // its top row starts below them, as the main window's rows do.

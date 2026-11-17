@@ -2,11 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type {
-  AdapterContext,
-  JobPublisher,
-  SandboxProvider,
-} from "@cortexai-agent-hub/adapter-kit";
+import type { AdapterContext, SandboxProvider } from "@cortexai-agent-hub/adapter-kit";
 import { SandboxDamagedError } from "@cortexai-agent-hub/adapter-kit";
 import type * as Db from "@cortexai-agent-hub/db";
 import type { PrismaClient, ThreadEvents } from "@cortexai-agent-hub/db";
@@ -17,12 +13,13 @@ import {
   provisionComputer,
   replaceComputer,
 } from "./computer-lifecycle.js";
-import { DesktopSandboxProvider } from "./desktop-sandbox.js";
-import { FakeSandboxProvider } from "./fake-sandbox.js";
 import { LocalAgentHomeStore } from "./home.js";
 import type { AgentHomeRecords, StoredHome } from "./home-object-store.js";
 import { ObjectAgentHomeStore } from "./home-object-store.js";
 import { MemoryObjectStorage } from "./object-storage.test-support.js";
+import { DesktopSandboxProvider } from "./providers/computer/desktop/desktop-sandbox.js";
+import { FakeSandboxProvider } from "./providers/computer/fake/fake-sandbox.js";
+import { InMemoryJobQueue } from "./wakeup.js";
 
 // The plan's size is read from billing, which these Prisma doubles do not model.
 vi.mock("@cortexai-agent-hub/db", async (importOriginal) => ({
@@ -102,7 +99,7 @@ async function fixture(provider: "fake" | "desktop" = "fake") {
     prisma: prisma as unknown as PrismaClient,
     sandbox,
     home,
-    jobs: {} as JobPublisher,
+    jobs: new InMemoryJobQueue(),
     events: {} as ThreadEvents,
     dataDir: root,
   };

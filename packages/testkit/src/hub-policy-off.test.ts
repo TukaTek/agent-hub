@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { createApp } from "@cortexai-agent-hub/api/app";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { createApp } from "../../../apps/api/src/app.ts";
 import contract from "../../auth/src/fixtures/agent-hub-auth.v2.json" with { type: "json" };
 import { hubAuthFromEnv } from "../../auth/src/hub-client.js";
 import { asSystem } from "./system-db.js";
@@ -68,7 +68,7 @@ describeIntegration("Hub mode without Hub registration (CAAH-83)", () => {
     const { startApiHubPolicy } = await import("../../../apps/api/src/hub-policy.ts");
     const runtime = await startApiHubPolicy(source, logger);
     close = runtime?.close;
-    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const { createApp } = await import("@cortexai-agent-hub/api/app");
     handles = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,

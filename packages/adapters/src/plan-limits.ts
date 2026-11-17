@@ -2,6 +2,7 @@ import type { SecretStore } from "@cortexai-agent-hub/adapter-kit";
 import type { PlanLimits, PlanLimitWindow } from "@cortexai-agent-hub/contracts";
 import { readBoundedJsonResponse } from "@cortexai-agent-hub/core";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
+import { bestEffort } from "@cortexai-agent-hub/logging";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { parseModelSecret } from "./model-secret.js";
 import {
@@ -61,7 +62,7 @@ async function getJson(
     signal,
   });
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
+    await bestEffort("cancel unread response body", response.body?.cancel());
     throw new Error(`http ${response.status}`);
   }
   return readBoundedJsonResponse(response, MAX_BYTES, signal);

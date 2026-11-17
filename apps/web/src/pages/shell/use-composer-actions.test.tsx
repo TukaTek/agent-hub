@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+
 import type {
   Bot,
   ComputerStatus,
@@ -6,6 +7,7 @@ import type {
   ThreadMessage,
   ThreadSnapshot,
 } from "@cortexai-agent-hub/contracts";
+import { flush as flushTimer } from "@cortexai-agent-hub/core/test-async";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
@@ -97,7 +99,7 @@ function switchChat(activeId: string) {
 
 async function flush() {
   await act(async () => {
-    for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 20; i++) await flushTimer();
   });
 }
 

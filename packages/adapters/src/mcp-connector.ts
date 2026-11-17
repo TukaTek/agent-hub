@@ -37,17 +37,22 @@ import {
   sanitizeConnectorError,
 } from "./connector-safety.js";
 import { credentialDigest } from "./credential-digest.js";
+import type { CatalogEntry } from "./lazy-tool-catalog.js";
 import {
   CATALOG_EXECUTE,
+  CATALOG_SEARCH,
   catalogEntries,
   DIRECT_TOOL_LIMIT,
   executeLazyCatalogControl,
   isLazyCatalogControlRoute,
   lazyCatalogTools,
+  loadCatalogEntry,
   resolveCatalogCall,
+  UnknownCatalogToolError,
 } from "./lazy-tool-catalog.js";
 import { mcpToolAppResourceUri, readMcpApp } from "./mcp-app.js";
 import { closeMcpResource } from "./mcp-close.js";
+import { UNAVAILABLE_TOOL, unavailableTool } from "./mcp-connector.tool-definition.js";
 import type { McpOAuthBroker, OAuthMaterial } from "./mcp-oauth.js";
 import {
   accessTokenExpiresAt,
@@ -91,6 +96,12 @@ type SessionEntry = {
   /** Resolved credential values the child may echo in errors or tool output. */
   launchSecrets?: string[];
 };
+class McpSecretChangedError extends Error {
+  constructor() {
+    super("Secret changed during MCP connection; retry");
+  }
+}
+
 type PendingSession = {
   revision: number;
   promise: Promise<McpSession>;
@@ -230,8 +241,6 @@ function recoveredSince(
   return server.healthStatus === "ok" && (server.healthCheckedAt?.getTime() ?? 0) > since;
 }
 
-/** Route name of the stand-in tool for an assigned server whose discovery failed. */
-const UNAVAILABLE_TOOL = "__cortexai-agent-hub_unavailable";
 /** Skip rewriting an unchanged health observation more often than this. */
 const HEALTH_REWRITE_MS = 60_000;
 
@@ -278,25 +287,6 @@ export function mcpStdioOptionsFromEnv(
     idleMs: positiveInteger(env.MCP_STDIO_IDLE_MS, true) ?? DEFAULT_MCP_STDIO_IDLE_MS,
     discoveryTimeoutMs:
       positiveInteger(env.MCP_DISCOVERY_TIMEOUT_MS, true) ?? DEFAULT_MCP_DISCOVERY_TIMEOUT_MS,
-  };
-}
-
-/** Stand-in for an assigned server whose tools could not be listed, so the model can say
- * why instead of concluding the server is not assigned. Calling it returns the reason. */
-function unavailableTool(server: McpServer, reason: string): ConnectorTool {
-  const brief = reason.length > 400 ? `${reason.slice(0, 400)}...` : reason;
-  return {
-    name: `mcp__${server.slug}__unavailable`,
-    description: `The MCP server "${server.name}" is assigned to you but is unavailable right now, so none of its tools can be used. Reason: ${brief}. Tell the user it failed to start rather than saying it is not assigned. Calling this tool returns the same error.`,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    readOnly: true,
-    route: {
-      connectorId: "mcp",
-      resourceId: server.id,
-      resourceRevision: server.revision,
-      toolName: UNAVAILABLE_TOOL,
-      catalogGroup: server.slug,
-    },
   };
 }
 
@@ -449,17 +439,50 @@ export class McpConnector implements ConnectorProvider {
     context: AdapterContext,
   ): Promise<{ call: ConnectorCall; tool: ConnectorTool } | undefined> {
     if (!call.route && call.tool.startsWith("mcp__")) {
-      return resolveCatalogCall(
-        { ...call, args: { id: call.tool, arguments: call.args } },
-        catalogEntries(await this.authorizedTools(context)),
-      );
+      const args = { id: call.tool, arguments: call.args };
+      return resolveCatalogCall({ ...call, args }, await this.catalogFor(context, args));
     }
     // Wrappers have no resourceId; real tools always do.
     if (call.route?.resourceId || call.route?.toolName !== CATALOG_EXECUTE) return undefined;
-    return resolveCatalogCall(call, catalogEntries(await this.authorizedTools(context)));
+    return resolveCatalogCall(call, await this.catalogFor(context, call.args));
   }
 
-  private async authorizedTools(context: AdapterContext): Promise<ConnectorTool[]> {
+  /** Servers re-listed for a missing tool, per run (keyed by the run's signal). */
+  private readonly relistedInRun = new WeakMap<AbortSignal, Set<string>>();
+
+  /** The bot's catalog. Tool lists are cached per session, so a tool the cached lists lack
+   * (added or renamed on the server since) lists its server again once per run before failing. */
+  private async catalogFor(
+    context: AdapterContext,
+    lookup?: Record<string, unknown>,
+  ): Promise<CatalogEntry[]> {
+    const entries = catalogEntries(await this.authorizedTools(context));
+    if (!lookup) return entries;
+    try {
+      loadCatalogEntry(entries, lookup);
+      return entries;
+    } catch (error) {
+      if (!(error instanceof UnknownCatalogToolError)) return entries;
+      // Only the server the id names re-lists, once per run, so typos and repeated guesses
+      // never spend a server's rate limit on more listings.
+      const id = String(lookup.id ?? "");
+      const relisted = this.relistedInRun.get(context.signal) ?? new Set<string>();
+      this.relistedInRun.set(context.signal, relisted);
+      return catalogEntries(
+        await this.authorizedTools(context, (serverId, slug) => {
+          if (relisted.has(serverId)) return false;
+          if (!id.startsWith(`${serverId}:`) && !id.startsWith(`mcp__${slug}__`)) return false;
+          relisted.add(serverId);
+          return true;
+        }),
+      );
+    }
+  }
+
+  private async authorizedTools(
+    context: AdapterContext,
+    refresh: (serverId: string, slug: string) => boolean = () => false,
+  ): Promise<ConnectorTool[]> {
     if (!context.botId) return [];
     const usable = { enabled: true, ...availableInSpace(context) };
     const [assigned, shared] = await Promise.all([
@@ -484,6 +507,11 @@ export class McpConnector implements ConnectorProvider {
         const server = assignment.server;
         const key = this.sessionKey(server, context);
         const live = this.sessions.get(key)?.revision === server.revision;
+        // As an idle connection that is closed and reopened would, a session nobody used for
+        // `idleMs` lists again, so tools added without `list_changed` reach the next conversation.
+        const idleMs = this.options.idleMs ?? DEFAULT_MCP_STDIO_IDLE_MS;
+        const lastUsedAt = this.sessions.get(key)?.lastUsedAt;
+        const idle = idleMs > 0 && lastUsedAt !== undefined && Date.now() - lastUsedAt >= idleMs;
         // A package still installing finishes in the background; this run goes on without it.
         if (!live && this.installing.has(key))
           return [
@@ -513,17 +541,20 @@ export class McpConnector implements ConnectorProvider {
               entry = this.sessions.get(key);
               return session.listTools({
                 signal: AbortSignal.any([context.signal, listing.signal]),
+                refresh: idle || refresh(assignment.serverId, server.slug),
               });
             }),
             this.options.discoveryTimeoutMs ?? DEFAULT_MCP_DISCOVERY_TIMEOUT_MS,
           );
           this.discoveryBackoff.delete(key);
           this.unavailable.delete(key);
-          void this.recordHealth(
-            assignment.server.id,
-            { status: "ok", message: null, toolCount: listed.tools.length },
-            { revision: server.revision },
-          );
+          // Only a listing the server answered says it is healthy; a cached one says nothing.
+          if (!listed.cached)
+            void this.recordHealth(
+              assignment.server.id,
+              { status: "ok", message: null, toolCount: listed.tools.length },
+              { revision: server.revision },
+            );
           reportAllowlistDrift(assignment, listed.tools, context);
           return listed.tools
             .filter((tool) => mcpToolAllowed(assignment, tool.name))
@@ -655,7 +686,10 @@ export class McpConnector implements ConnectorProvider {
       try {
         yield* executeLazyCatalogControl(
           call,
-          catalogEntries(await this.authorizedTools(context)),
+          await this.catalogFor(
+            context,
+            call.route.toolName === CATALOG_SEARCH ? undefined : call.args,
+          ),
           (resolved) => this.execute(resolved, context),
         );
       } catch (error) {
@@ -793,7 +827,7 @@ export class McpConnector implements ConnectorProvider {
               ...(material ? oauthMaterialSecrets(material) : []),
               ...(this.sessions.get(key)?.launchSecrets ?? []),
             ];
-            return session.listTools({ signal: context.signal });
+            return session.listTools({ signal: context.signal, refresh: true });
           })
         ).tools.length;
       } else {
@@ -925,8 +959,45 @@ export class McpConnector implements ConnectorProvider {
     use: (session: McpSession) => Promise<T>,
   ): Promise<T> {
     const sessionKey = this.sessionKey(server, context);
-    for (let attempt = 0; ; attempt += 1) {
-      const session = await this.sessionFor(server, context);
+    let retriedRotation = false;
+    let retriedSessionLoss = false;
+    for (;;) {
+      let session: McpSession;
+      try {
+        session = await this.sessionFor(server, context);
+        if (retriedRotation) {
+          // A further rotation may have happened before this connection registered its ref.
+          // Verify the adopted record once; a mismatch exhausts the existing retry budget.
+          const current = await this.prisma.mcpServer.findFirst({
+            where: { id: server.id, revision: server.revision, ...availableInSpace(context) },
+            select: { secretId: true },
+          });
+          if (
+            !current ||
+            (current.secretId ?? undefined) !== this.sessions.get(sessionKey)?.recordId
+          ) {
+            await this.evict(sessionKey);
+            throw new McpSecretChangedError();
+          }
+          server.secretId = current.secretId;
+        }
+      } catch (error) {
+        // No tool has run yet: reconnect once with the current credentials.
+        context.signal.throwIfAborted();
+        if (retriedRotation || !(error instanceof McpSecretChangedError)) throw error;
+        retriedRotation = true;
+        // Cleanup may leave the old secret row readable after the server moved on.
+        // Retry from its current pointer, rather than reconnecting with that old row.
+        const current = await this.prisma.mcpServer.findFirst({
+          where: { id: server.id, revision: server.revision, ...availableInSpace(context) },
+          select: { secretId: true },
+        });
+        if (!current) throw error;
+        // Keep the caller's snapshot current too: execute reads the app resource
+        // with this same object after the tool call has recovered its session.
+        server.secretId = current.secretId;
+        continue;
+      }
       this.inFlight.set(session, (this.inFlight.get(session) ?? 0) + 1);
       // A session in use is never reaped as idle.
       const entry = this.sessions.get(sessionKey);
@@ -934,7 +1005,9 @@ export class McpConnector implements ConnectorProvider {
       try {
         return await use(session);
       } catch (error) {
-        if (attempt !== 0 || !isMcpSessionGoneError(error)) throw error;
+        context.signal.throwIfAborted();
+        if (retriedSessionLoss || !isMcpSessionGoneError(error)) throw error;
+        retriedSessionLoss = true;
         // Stop reusing the expired session immediately, but let its other requests
         // receive their own responses before closing the shared SDK client.
         if (this.sessions.get(sessionKey)?.session === session) this.sessions.delete(sessionKey);
@@ -1021,7 +1094,7 @@ export class McpConnector implements ConnectorProvider {
       }) => {
         if (this.connecting.get(sessionKey)?.invalidated) {
           await closeEntry({ session, credentialDir });
-          throw new Error("Secret changed during MCP connection; retry");
+          throw new McpSecretChangedError();
         }
         connected = {
           session,
@@ -1039,6 +1112,12 @@ export class McpConnector implements ConnectorProvider {
         this.sessions.set(sessionKey, connected);
         if (connected.stdio) this.startReaper();
         return session;
+      },
+      (error: unknown) => {
+        // connectSession has already closed the failed connection and sanitized its error.
+        // Share the rotation result with every caller waiting on this connection.
+        if (this.connecting.get(sessionKey)?.invalidated) throw new McpSecretChangedError();
+        throw error;
       },
     );
     this.connecting.set(sessionKey, { revision: server.revision, promise });
@@ -1081,12 +1160,16 @@ export class McpConnector implements ConnectorProvider {
           where: { id: server.id, revision: server.revision, ...availableInSpace(context) },
           select: { secretId: true },
         });
-        if (current?.secretId) {
+        // The server was edited, reconnected or removed from the space after this run read it.
+        // Re-adding it keeps its revision, so only wait briefly.
+        if (!current)
+          throw new McpConnectFailure("MCP server changed while connecting", "unreachable");
+        if (current.secretId) {
           secret = await this.prisma.secret.findFirst({
             where: { id: current.secretId, ...itemSecretIn(context) },
           });
         }
-        if (!secret) throw new Error("MCP server secret is unavailable; retry");
+        if (!secret) throw new McpSecretChangedError();
       }
       let ref = secret?.ciphertext;
       let recordId = secret?.id;

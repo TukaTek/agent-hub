@@ -5,6 +5,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -243,7 +244,8 @@ export function remerge({ cwd = process.cwd(), format = true } = {}) {
       }
     }
     const file = join(cwd, path);
-    if (!existsSync(file)) continue;
+    // Symlinks (such as one pointing at a directory) carry no text to rebrand.
+    if (!existsSync(file) || !lstatSync(file).isFile()) continue;
     const buffer = readFileSync(file);
     if (isBinary(buffer)) continue;
     const source = buffer.toString("utf8");

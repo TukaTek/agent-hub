@@ -14,8 +14,11 @@ import {
   vaultItemsUnderOlderKeys,
   withSecretPersistence,
 } from "@cortexai-agent-hub/adapters";
-import { resolveContentEncryption, resolveEncryptionKey } from "@cortexai-agent-hub/core";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
+import {
+  resolveContentEncryption,
+  resolveEncryptionKey,
+} from "@cortexai-agent-hub/core/node/secrets-guard";
 import type { ContentMigrationMode } from "@cortexai-agent-hub/db";
 import {
   contentEncryptionStatus,
@@ -26,6 +29,7 @@ import {
   rotateSpaceDataKeys,
   runAsSystem,
 } from "@cortexai-agent-hub/db";
+import { bestEffort } from "@cortexai-agent-hub/logging";
 import { moveMcpArgsIntoSecrets } from "../mcp-args-migration.js";
 import { createSecretMigrationRepository } from "../secret-migration.js";
 
@@ -304,6 +308,6 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  await prisma.$disconnect().catch(() => undefined);
-  await pool.end().catch(() => undefined);
+  await bestEffort("disconnect database client", prisma.$disconnect());
+  await bestEffort("close database pool", pool.end());
 }

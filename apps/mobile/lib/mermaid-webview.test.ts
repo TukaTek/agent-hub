@@ -1,4 +1,5 @@
 import { chatMermaidConfig } from "@cortexai-agent-hub/chat-ui/mermaid";
+import { flush } from "@cortexai-agent-hub/core/test-async";
 import { darkTokens } from "@cortexai-agent-hub/ui-tokens";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -67,7 +68,7 @@ describe("diagram boot script", () => {
     };
     const document = { getElementById: () => root };
     new Function("window", "document", diagramBootScript(source, config))(window, document);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush();
     return { posted, root, svg };
   }
 

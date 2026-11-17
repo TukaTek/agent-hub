@@ -1,7 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import {
+  activeBotId,
+  captureScreenshot,
+  completeOnboarding,
+  openBotPanel,
+  rpc,
+  signup,
+} from "./helpers";
 
-test("Open work in bot Advanced settings collapses a long list and remembers the choice", async ({
+test("Open work in the bot panel collapses a long list and remembers the choice", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
@@ -12,13 +19,8 @@ test("Open work in bot Advanced settings collapses a long list and remembers the
     await rpc(page, "scratchpad/create", { botId, title: `Follow up on task ${index}` });
   }
 
-  await page
-    .locator("main")
-    .getByRole("button", { name: /^Chief/ })
-    .click();
-  const settings = page.getByTestId("bot-settings");
-  await settings.getByText("Advanced", { exact: true }).click();
-  const openWork = settings.getByTestId("bot-scratchpad");
+  await openBotPanel(page);
+  const openWork = page.getByTestId("bot-settings").getByTestId("bot-scratchpad");
   const header = openWork.getByRole("button", { name: /Open work/ });
   await expect(header).toHaveText(/Open work\s*\(12\)/);
   await expect(header).toHaveAttribute("aria-expanded", "false");
@@ -34,11 +36,9 @@ test("Open work in bot Advanced settings collapses a long list and remembers the
   await header.scrollIntoViewIfNeeded();
   await captureScreenshot(page, testInfo, "open-work-expanded");
 
-  // The chat reopens its side panel on the Advanced tab after a reload.
+  // After a reload the bot panel shows Open work still expanded.
   await page.reload();
-  await expect(
-    page.getByTestId("bot-settings").getByRole("tab", { name: "Advanced", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  await openBotPanel(page);
   await expect(
     page.getByTestId("bot-scratchpad").getByRole("button", { name: /Open work/ }),
   ).toHaveAttribute("aria-expanded", "true");

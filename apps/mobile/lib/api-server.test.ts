@@ -1,6 +1,8 @@
 vi.mock("./ai-consent", () => ({ promptAiConsent: vi.fn() }));
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
+import type { Deferred } from "@cortexai-agent-hub/core/test-async";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import * as SecureStore from "expo-secure-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -292,15 +294,15 @@ describe("mobile API server and Space selection", () => {
       ]),
     );
     mockSecureStore(store);
-    let releaseSessionRead: (() => void) | undefined;
+    let releaseSessionRead: Deferred | undefined;
     let sessionReads = 0;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
       if (key === "cortexai-agent-hub.session_token") {
         sessionReads += 1;
-        if (sessionReads === 1)
-          await new Promise<void>((resolve) => {
-            releaseSessionRead = resolve;
-          });
+        if (sessionReads === 1) {
+          releaseSessionRead = deferred();
+          await releaseSessionRead.promise;
+        }
       }
       return store.get(key) ?? null;
     });
@@ -320,7 +322,7 @@ describe("mobile API server and Space selection", () => {
     await vi.waitFor(() => expect(sessionReads).toBeGreaterThanOrEqual(1));
     const switching = saveApiBase("https://second-server.example");
     await vi.waitFor(() => expect(sessionReads).toBeGreaterThanOrEqual(2));
-    releaseSessionRead?.();
+    releaseSessionRead?.resolve();
     await settling;
     await expect(switching).resolves.toMatchObject({ ok: false });
 
@@ -387,14 +389,13 @@ describe("mobile API server and Space selection", () => {
       const apiBase = currentApiBase();
       await restoreSessionToken("token-a");
       await selectSpace("space-old");
-      let releaseRollback!: () => void;
+      let releaseRollback!: Deferred;
       const rollbackStarted = new Promise<void>((resolve) => {
         vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
           if (key === "cortexai-agent-hub.space_rollback" && value) {
             resolve();
-            await new Promise<void>((release) => {
-              releaseRollback = release;
-            });
+            releaseRollback = deferred();
+            await releaseRollback.promise;
             throw new Error("device locked");
           }
           store.set(key, value);
@@ -419,7 +420,7 @@ describe("mobile API server and Space selection", () => {
           expect(records[0].provisional).toBeUndefined();
         });
       } finally {
-        releaseRollback();
+        releaseRollback.resolve();
       }
       await expect(switching).resolves.toMatchObject({ ok: false });
       await signingOut;
@@ -501,16 +502,13 @@ describe("mobile API server and Space selection", () => {
     mockSecureStore(store);
     await restoreSessionToken("token-a");
     await selectSpace("space-old");
-    let releaseSave!: () => void;
-    const saveHeld = new Promise<void>((resolve) => {
-      releaseSave = resolve;
-    });
+    const saveHeld = deferred();
     let saving: Promise<void> | undefined;
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
-      if (key === "cortexai-agent-hub.session_token" && value === "token-b") await saveHeld;
+      if (key === "cortexai-agent-hub.session_token" && value === "token-b") await saveHeld.promise;
       // The save completes while the switch writes the Space rollback.
       if (key === "cortexai-agent-hub.space_rollback" && value) {
-        releaseSave();
+        saveHeld.resolve();
         await saving;
       }
       store.set(key, value);
@@ -523,7 +521,7 @@ describe("mobile API server and Space selection", () => {
       result = await saveApiBase("https://second-server.example");
     } finally {
       configureSessionEndHangUp(undefined);
-      releaseSave();
+      saveHeld.resolve();
       await saving;
       mockSecureStore(store);
     }
@@ -918,18 +916,15 @@ describe("mobile API server and Space selection", () => {
     const fetchMock = vi.fn<typeof globalThis.fetch>(async () => jsonResponse({}));
     vi.stubGlobal("fetch", fetchMock);
     await flushPendingSignOut(true);
-    let releaseSave!: () => void;
-    const saveHeld = new Promise<void>((resolve) => {
-      releaseSave = resolve;
-    });
+    const saveHeld = deferred();
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
-      if (key === "cortexai-agent-hub.session_token") await saveHeld;
+      if (key === "cortexai-agent-hub.session_token") await saveHeld.promise;
       store.set(key, value);
     });
     // The same token is saved again; a flush runs while its write is held.
     const saving = saveSessionToken("token-a");
     await flushPendingSignOut(true);
-    releaseSave();
+    saveHeld.resolve();
     await saving;
     mockSecureStore(store);
     await flushPendingSignOut(true);
@@ -958,12 +953,9 @@ describe("mobile API server and Space selection", () => {
       ],
     ]);
     mockSecureStore(store);
-    let releaseSave!: () => void;
-    const saveHeld = new Promise<void>((resolve) => {
-      releaseSave = resolve;
-    });
+    const saveHeld = deferred();
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
-      if (key === "cortexai-agent-hub.session_token") await saveHeld;
+      if (key === "cortexai-agent-hub.session_token") await saveHeld.promise;
       store.set(key, value);
     });
     const fetchMock = vi.fn<typeof globalThis.fetch>(async () => jsonResponse({}));
@@ -981,7 +973,7 @@ describe("mobile API server and Space selection", () => {
     ]);
     expect(pendingSignOutRecords(store).map((entry) => entry.token)).toEqual(["token-c"]);
 
-    releaseSave();
+    saveHeld.resolve();
     await saving;
     await flushPendingSignOut(true);
     expect(signOuts()).toEqual([
@@ -1520,12 +1512,11 @@ describe("mobile API server and Space selection", () => {
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
     });
-    let rejectA!: (reason: Error) => void;
+    let rejectA!: Deferred<never>;
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
       if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
-        await new Promise<never>((_, reject) => {
-          rejectA = reject;
-        });
+        rejectA = deferred<never>();
+        await rejectA.promise;
       }
       storage.set(key, value);
     });
@@ -1534,7 +1525,7 @@ describe("mobile API server and Space selection", () => {
     const pendingA = selectSpace("space-a");
     await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-a"));
     await expect(selectSpace("space-b")).resolves.toBe(true);
-    rejectA(new Error("device locked"));
+    rejectA.reject(new Error("device locked"));
 
     await expect(pendingA).resolves.toBe(false);
     expect(selectedSpaceId()).toBe("space-b");
@@ -1544,14 +1535,13 @@ describe("mobile API server and Space selection", () => {
   it("does not commit a selection superseded during rollback cleanup", async () => {
     const storage = new Map<string, string>([["cortexai-agent-hub.space_id", "space-current"]]);
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
-    let releaseOlderCleanup!: () => void;
+    let releaseOlderCleanup!: Deferred;
     let heldOlderCleanup = false;
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       if (key === "cortexai-agent-hub.space_rollback" && !heldOlderCleanup) {
         heldOlderCleanup = true;
-        await new Promise<void>((resolve) => {
-          releaseOlderCleanup = resolve;
-        });
+        releaseOlderCleanup = deferred();
+        await releaseOlderCleanup.promise;
       }
       storage.delete(key);
     });
@@ -1571,7 +1561,7 @@ describe("mobile API server and Space selection", () => {
     expect(selectedSpaceId()).toBe("space-newer");
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-newer");
 
-    releaseOlderCleanup();
+    releaseOlderCleanup.resolve();
     await expect(pendingOlder).resolves.toBe(false);
     expect(spaceSelectionSeq()).toBe(previousSeq + 2);
     expect(selectedSpaceId()).toBe("space-newer");
@@ -1584,12 +1574,11 @@ describe("mobile API server and Space selection", () => {
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
     });
-    let resolveA!: () => void;
+    let resolveA!: Deferred;
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
       if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
-        await new Promise<void>((resolve) => {
-          resolveA = resolve;
-        });
+        resolveA = deferred();
+        await resolveA.promise;
       }
       storage.set(key, value);
     });
@@ -1599,7 +1588,7 @@ describe("mobile API server and Space selection", () => {
     await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-a"));
     await expect(selectSpace("space-b")).resolves.toBe(true);
     // The older write lands stale after the newer one completed.
-    resolveA();
+    resolveA.resolve();
 
     await expect(pendingA).resolves.toBe(true);
     expect(selectedSpaceId()).toBe("space-b");
@@ -1614,7 +1603,7 @@ describe("mobile API server and Space selection", () => {
 
   it("does not restore the first selection after switching away and back", async () => {
     const storage = new Map<string, string>([["cortexai-agent-hub.session_token", "fake-token"]]);
-    let releaseFirstA!: () => void;
+    let releaseFirstA!: Deferred;
     let firstA = true;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
@@ -1623,9 +1612,8 @@ describe("mobile API server and Space selection", () => {
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
       if (key === "cortexai-agent-hub.space_id" && value === "space-a" && firstA) {
         firstA = false;
-        await new Promise<void>((resolve) => {
-          releaseFirstA = resolve;
-        });
+        releaseFirstA = deferred();
+        await releaseFirstA.promise;
       }
       storage.set(key, value);
     });
@@ -1634,7 +1622,7 @@ describe("mobile API server and Space selection", () => {
     await vi.waitFor(() => expect(firstA).toBe(false));
     await expect(selectSpace("space-b")).resolves.toBe(true);
     await expect(selectSpace("space-a")).resolves.toBe(true);
-    releaseFirstA();
+    releaseFirstA.resolve();
     await expect(pendingA).resolves.toBe(true);
     expect(selectedSpaceId()).toBe("space-a");
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-a");
@@ -1648,14 +1636,13 @@ describe("mobile API server and Space selection", () => {
 
   it("does not restore an obsolete selection after its token read finishes", async () => {
     const storage = new Map<string, string>([["cortexai-agent-hub.session_token", "fake-token"]]);
-    let releaseToken!: () => void;
+    let releaseToken!: Deferred;
     let tokenReadHeld = false;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
       if (key === "cortexai-agent-hub.session_token" && !tokenReadHeld) {
         tokenReadHeld = true;
-        await new Promise<void>((resolve) => {
-          releaseToken = resolve;
-        });
+        releaseToken = deferred();
+        await releaseToken.promise;
       }
       return storage.get(key) ?? null;
     });
@@ -1670,7 +1657,7 @@ describe("mobile API server and Space selection", () => {
     const pendingA = selectSpace("space-a");
     await vi.waitFor(() => expect(tokenReadHeld).toBe(true));
     await expect(selectSpace("space-b")).resolves.toBe(true);
-    releaseToken();
+    releaseToken.resolve();
     await expect(pendingA).resolves.toBe(true);
     expect(selectedSpaceId()).toBe("space-b");
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-b");
@@ -1678,18 +1665,99 @@ describe("mobile API server and Space selection", () => {
     expect(resumeLiveNotifications).toHaveBeenCalledWith(currentApiBase(), "fake-token", "space-b");
   });
 
+  it("does not resume a deleted-space fallback after a newer Space is selected", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.session_token", "fake-token"]]);
+    let releaseToken!: Deferred;
+    let tokenReadHeld = false;
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.session_token" && !tokenReadHeld) {
+        tokenReadHeld = true;
+        releaseToken = deferred();
+        await releaseToken.promise;
+      }
+      return storage.get(key) ?? null;
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    await loadApiBase();
+    vi.mocked(resumeLiveNotifications).mockClear();
+
+    const pending = adoptDeletedSpaceFallback("space-fallback");
+    await vi.waitFor(() => expect(tokenReadHeld).toBe(true));
+    await expect(selectSpace("space-b")).resolves.toBe(true);
+    releaseToken.resolve();
+    await expect(pending).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-b");
+    expect(resumeLiveNotifications).toHaveBeenCalledOnce();
+    expect(resumeLiveNotifications).toHaveBeenCalledWith(currentApiBase(), "fake-token", "space-b");
+  });
+
+  it("resumes the fallback Space after failed auth recovery invalidates its pending resume", async () => {
+    const storage = new Map<string, string>([["cortexai-agent-hub.session_token", "fake-token"]]);
+    let releaseToken!: Deferred;
+    let tokenReadHeld = false;
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "cortexai-agent-hub.session_token" && !tokenReadHeld) {
+        tokenReadHeld = true;
+        releaseToken = deferred();
+        await releaseToken.promise;
+      }
+      return storage.get(key) ?? null;
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    await loadApiBase();
+    vi.mocked(resumeLiveNotifications).mockClear();
+
+    const pending = adoptDeletedSpaceFallback("space-fallback");
+    await vi.waitFor(() => expect(tokenReadHeld).toBe(true));
+    let releaseResume!: () => void;
+    vi.mocked(resumeLiveNotifications).mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseResume = () => resolve(true);
+        }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(rpcErrorResponse(401, "UNAUTHORIZED", "Unauthorized"))
+        .mockRejectedValueOnce(new Error("Network unavailable")),
+    );
+    await expect(rpc("spaces/list")).rejects.toThrow("Network unavailable");
+    expect(resumeLiveNotifications).toHaveBeenCalledOnce();
+    releaseResume();
+    releaseToken.resolve();
+    await expect(pending).resolves.toBe(true);
+    expect(selectedSpaceId()).toBe("space-fallback");
+    expect(resumeLiveNotifications).toHaveBeenCalledOnce();
+    expect(resumeLiveNotifications).toHaveBeenCalledWith(
+      currentApiBase(),
+      "fake-token",
+      "space-fallback",
+    );
+  });
+
   it("restores notifications for the previous selection when a newer persist fails", async () => {
     const storage = new Map<string, string>([["cortexai-agent-hub.session_token", "fake-token"]]);
-    let releaseA!: () => void;
+    let releaseA!: Deferred;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
     });
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
       if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
-        await new Promise<void>((resolve) => {
-          releaseA = resolve;
-        });
+        releaseA = deferred();
+        await releaseA.promise;
       }
       if (key === "cortexai-agent-hub.space_id" && value === "space-b")
         throw new Error("device locked");
@@ -1705,7 +1773,7 @@ describe("mobile API server and Space selection", () => {
       storage.set(key, value);
     });
     await expect(selectSpace("space-b")).resolves.toBe(false);
-    releaseA();
+    releaseA.resolve();
     await expect(pendingA).resolves.toBe(true);
     expect(selectedSpaceId()).toBe("space-a");
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-a");
@@ -1720,14 +1788,13 @@ describe("mobile API server and Space selection", () => {
       storage.delete(key);
     });
     let firstAWriteCount = 0;
-    let rejectFirstA!: (reason: Error) => void;
+    let rejectFirstA!: Deferred<never>;
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
       if (key === "cortexai-agent-hub.space_id" && value === "space-a") {
         firstAWriteCount += 1;
         if (firstAWriteCount === 1) {
-          await new Promise<never>((_, reject) => {
-            rejectFirstA = reject;
-          });
+          rejectFirstA = deferred<never>();
+          await rejectFirstA.promise;
         }
       }
       storage.set(key, value);
@@ -1739,7 +1806,7 @@ describe("mobile API server and Space selection", () => {
     await expect(selectSpace("space-b")).resolves.toBe(true);
     await expect(selectSpace("space-a")).resolves.toBe(true);
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-a");
-    rejectFirstA(new Error("device locked"));
+    rejectFirstA.reject(new Error("device locked"));
 
     await expect(pendingFirstA).resolves.toBe(false);
     expect(selectedSpaceId()).toBe("space-a");
@@ -1751,10 +1818,7 @@ describe("mobile API server and Space selection", () => {
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     let injected = false;
     let holdCleanupReconcile = false;
-    let releaseCleanupWrite!: () => void;
-    const cleanupWriteHeld = new Promise<void>((resolve) => {
-      releaseCleanupWrite = resolve;
-    });
+    const cleanupWriteHeld = deferred();
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       if (key === "cortexai-agent-hub.space_id" && !injected) {
         injected = true;
@@ -1768,7 +1832,7 @@ describe("mobile API server and Space selection", () => {
       if (key === "cortexai-agent-hub.space_id" && value === "space-b" && holdCleanupReconcile) {
         holdCleanupReconcile = false;
         // Hold only the post-clear reconcile write of the B snapshot.
-        await cleanupWriteHeld;
+        await cleanupWriteHeld.promise;
       }
       storage.set(key, value);
     });
@@ -1784,7 +1848,7 @@ describe("mobile API server and Space selection", () => {
     await vi.waitFor(() => expect(selectedSpaceId()).toBe("space-b"));
     await expect(selectSpace("space-c")).resolves.toBe(true);
     expect(storage.get("cortexai-agent-hub.space_id")).toBe("space-c");
-    releaseCleanupWrite();
+    cleanupWriteHeld.resolve();
 
     await expect(pendingRpc).resolves.toEqual({ spaces: [] });
     expect(selectedSpaceId()).toBe("space-c");

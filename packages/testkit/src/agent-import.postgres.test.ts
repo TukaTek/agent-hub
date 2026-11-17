@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { EncryptedSecretStore, InMemoryRealtimeFanout } from "@cortexai-agent-hub/adapters";
 import type { AgentImportPlan, Bot, MemoryDocument } from "@cortexai-agent-hub/contracts";
-import { resolveEncryptionKey } from "@cortexai-agent-hub/core";
+import { resolveEncryptionKey } from "@cortexai-agent-hub/core/node/secrets-guard";
 import type { Prisma, PrismaClient } from "@cortexai-agent-hub/db";
 import { createDb } from "@cortexai-agent-hub/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

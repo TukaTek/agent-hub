@@ -322,7 +322,6 @@ describe("model stream stall retry", () => {
       codex.provider,
       backup.provider,
       backup.provider,
-      backup.provider,
     ]);
     expect(onModelChange).toHaveBeenCalledOnce();
     expect(onModelChange).toHaveBeenCalledWith(backup.provider, backup.id);
@@ -474,108 +473,5 @@ describe("same-model provider backoff", () => {
       "provider-retried",
       "ok",
     ]);
-  });
-});
-
-describe("subagent model fallback", () => {
-  function withSubagentTool(input: AgentRunRequest) {
-    input.tools = [
-      {
-        name: "run_subagent",
-        description: "Run a helper agent.",
-        inputSchema: { type: "object", properties: {} },
-        readOnly: true,
-      },
-    ] as AgentRunRequest["tools"];
-    return input;
-  }
-
-  it("switches a subagent to the backup after a Codex idle timeout before output", async () => {
-    const input = withSubagentTool(request([backupChoice]));
-    const onModelChange = vi.fn(async () => undefined);
-    input.onModelChange = onModelChange;
-    script(
-      [callsSubagent(), answers("parent done")],
-      [stalls(), stalls(), answers("helper used the backup")],
-    );
-    const { events, done } = run(input);
-    await vi.advanceTimersByTimeAsync(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS + 1);
-    await vi.advanceTimersByTimeAsync(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS + 1);
-    await done;
-
-    expect(calledProviders()).toEqual([
-      codex.provider,
-      codex.provider,
-      codex.provider,
-      backup.provider,
-      codex.provider,
-    ]);
-    expect(onModelChange).not.toHaveBeenCalled();
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "subagent",
-        status: "running",
-        progress: `Provider unavailable. Switched to backup model ${backup.id}.`,
-      }),
-    );
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "subagent",
-        status: "completed",
-        result: "helper used the backup",
-      }),
-    );
-    const helperCalls = modelCalls().filter((event) => event.agentId !== "main");
-    expect(helperCalls.map((event) => event.outcome)).toEqual([
-      "idle-timeout-retried",
-      "idle-timeout-retried",
-      "ok",
-    ]);
-  });
-
-  it("retries a stalled subagent on its own model when the space has no backup", async () => {
-    script([callsSubagent(), answers("parent done")], [stalls(), answers("helper recovered")]);
-    const { events, done } = run(withSubagentTool(request()));
-    await vi.advanceTimersByTimeAsync(MODEL_STREAM_FIRST_EVENT_TIMEOUT_MS + 1);
-    await done;
-
-    expect(calledProviders()).toEqual([
-      codex.provider,
-      codex.provider,
-      codex.provider,
-      codex.provider,
-    ]);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "subagent",
-        status: "completed",
-        result: "helper recovered",
-      }),
-    );
-  });
-
-  it("backs a subagent off on its own model without touching the parent's model", async () => {
-    const input = withSubagentTool(request());
-    const onModelChange = vi.fn(async () => undefined);
-    input.onModelChange = onModelChange;
-    script(
-      [callsSubagent(), answers("parent done")],
-      [failsWith("503 service unavailable"), answers("helper recovered")],
-    );
-    const { events, done } = run(input);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await done;
-
-    expect(calledProviders()).toEqual(Array<string>(4).fill(codex.provider));
-    expect(onModelChange).not.toHaveBeenCalled();
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "subagent",
-        status: "completed",
-        result: "helper recovered",
-      }),
-    );
-    const helperCalls = modelCalls().filter((event) => event.agentId !== "main");
-    expect(helperCalls.map((event) => event.outcome)).toEqual(["provider-retried", "ok"]);
   });
 });

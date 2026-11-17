@@ -1,8 +1,9 @@
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import path, { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadEnv, parseExtraAuthOrigins } from "./env.js";
+import { loadEnv, parseExtraAuthOrigins, withEnvOverrides } from "./env.js";
 
 const base = {
   DATABASE_URL:
@@ -53,10 +54,10 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...base, MAX_UPLOAD_SIZE_MB: value })).toThrow("MAX_UPLOAD_SIZE_MB");
   });
   it("keeps the ticket board off unless explicitly enabled", () => {
-    expect(loadEnv(base).ticketBoardEnabled).toBe(false);
+    expect(loadEnv(base).deploymentLabs).toEqual([]);
     for (const value of ["false", "1", ""])
-      expect(loadEnv({ ...base, TICKET_BOARD_ENABLED: value }).ticketBoardEnabled).toBe(false);
-    expect(loadEnv({ ...base, TICKET_BOARD_ENABLED: "true" }).ticketBoardEnabled).toBe(true);
+      expect(loadEnv({ ...base, TICKET_BOARD_ENABLED: value }).deploymentLabs).toEqual([]);
+    expect(loadEnv({ ...base, TICKET_BOARD_ENABLED: "true" }).deploymentLabs).toEqual(["board"]);
   });
   it("loads operator menu links and refuses to start on a bad value", () => {
     expect(loadEnv(base).navLinks).toEqual([]);
@@ -209,9 +210,11 @@ describe("loadEnv", () => {
     });
     expect(env).toMatchObject({
       sandboxProvider: "daytona",
-      daytonaApiKey: "test-daytona-key",
-      daytonaApiUrl: "https://daytona.test/api",
-      daytonaTarget: "test-target",
+      sandboxOptions: {
+        daytonaApiKey: "test-daytona-key",
+        daytonaApiUrl: "https://daytona.test/api",
+        daytonaTarget: "test-target",
+      },
     });
   });
 
@@ -225,8 +228,7 @@ describe("loadEnv", () => {
       }),
     ).toMatchObject({
       sandboxProvider: "novita",
-      novitaApiKey: "test-novita-key",
-      sandboxTemplate: "custom-desktop",
+      sandboxOptions: { novitaApiKey: "test-novita-key", sandboxTemplate: "custom-desktop" },
     });
     expect(
       loadEnv({ ...base, SANDBOX_PROVIDER: "novita", E2B_API_KEY: "test-e2b-key" }).sandboxProvider,
@@ -242,9 +244,27 @@ describe("loadEnv", () => {
     });
     expect(env).toMatchObject({
       sandboxProvider: "boat",
-      boatApiKey: "test-boat-key",
-      boatApiUrl: "https://boat.test/api/v1",
+      sandboxOptions: { boatApiKey: "test-boat-key", boatApiUrl: "https://boat.test/api/v1" },
     });
+  });
+
+  it("starts without reading a malformed computer setting until a computer is built", () => {
+    const env = loadEnv({ ...base, KUBERNETES_SANDBOX_POD_ANNOTATIONS: "{" });
+    expect(env.databaseUrl).toBe(base.DATABASE_URL);
+    expect(() => env.sandboxOptions).toThrow(/KUBERNETES_SANDBOX_POD_ANNOTATIONS/);
+  });
+
+  it("keeps environment computer options a partial override leaves out", () => {
+    const env = loadEnv({
+      ...base,
+      SANDBOX_PROVIDER: "daytona",
+      DAYTONA_API_KEY: "test-daytona-key",
+      DAYTONA_TARGET: "env-target",
+    });
+    expect(
+      withEnvOverrides(env, { sandboxOptions: { daytonaTarget: "override-target" } })
+        .sandboxOptions,
+    ).toMatchObject({ daytonaApiKey: "test-daytona-key", daytonaTarget: "override-target" });
   });
 
   it("throws when production omits secrets", () => {
@@ -466,6 +486,109 @@ describe("OIDC environment", () => {
     expect(() => loadEnv({ ...hub, SCIM_BEARER_TOKEN: "s".repeat(32) })).toThrow(
       "SCIM directory provisioning can't be combined with Hub sign-in",
     );
+    expect(() => loadEnv({ ...hub, BILLING_EMULATOR: "true" })).toThrow(
+      "Billing can't be combined with Hub sign-in",
+    );
+    expect(() =>
+      loadEnv({ ...hub, GOOGLE_CLIENT_ID: "google-id", GOOGLE_CLIENT_SECRET: "google-secret" }),
+    ).toThrow("Google or Apple sign-in can't be combined with Hub sign-in");
+  });
+
+  it("keeps organizations, Space email invites and the demo login off by default and under Hub", () => {
+    const hub = {
+      ...base,
+      AUTH_MODE: "hub",
+      HUB_AUTH_ORIGIN: "https://hub.example.test",
+      HUB_POLICY_ENFORCEMENT: "off",
+    };
+    const on = {
+      CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS: "true",
+      CORTEXAI_AGENT_HUB_ENABLE_SPACE_EMAIL_INVITES: "true",
+      DEMO_ACCOUNT_EMAIL: "demo@example.test",
+      DEMO_ACCOUNT_PASSWORD: "demo-password",
+    };
+    const local = loadEnv(base);
+    expect(local.organizationsEnabled).toBe(false);
+    expect(local.spaceEmailInvitesEnabled).toBe(false);
+    expect(local.demoAccount).toBeNull();
+    const enabled = loadEnv({ ...base, ...on });
+    expect(enabled.organizationsEnabled).toBe(true);
+    expect(enabled.spaceEmailInvitesEnabled).toBe(true);
+    expect(enabled.demoAccount).toEqual({ email: "demo@example.test", password: "demo-password" });
+    const underHub = loadEnv({ ...hub, ...on });
+    expect(underHub.organizationsEnabled).toBe(false);
+    expect(underHub.spaceEmailInvitesEnabled).toBe(false);
+    expect(underHub.demoAccount).toBeNull();
+  });
+});
+
+describe("social sign-in environment", () => {
+  const privateKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+    .privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    })
+    .toString();
+  const apple = {
+    APPLE_CLIENT_ID: "com.example.service",
+    APPLE_TEAM_ID: "TEAMID1234",
+    APPLE_KEY_ID: "KEYID12345",
+    APPLE_PRIVATE_KEY: privateKey,
+  };
+
+  it("leaves sign-in unchanged when no provider is configured", () => {
+    expect(loadEnv(base).social).toBeUndefined();
+  });
+
+  it("enables a provider only when its credentials are complete", () => {
+    expect(() => loadEnv({ ...base, GOOGLE_CLIENT_ID: "client" })).toThrow(/configured together/);
+    expect(() => loadEnv({ ...base, ...apple, APPLE_KEY_ID: undefined })).toThrow(
+      /configured together/,
+    );
+    expect(
+      loadEnv({ ...base, GOOGLE_CLIENT_ID: "client", GOOGLE_CLIENT_SECRET: "secret" }).social,
+    ).toEqual({
+      providers: [{ id: "google", name: "Google", clientId: "client", clientSecret: "secret" }],
+    });
+    expect(loadEnv({ ...base, ...apple }).social).toMatchObject({
+      providers: [
+        expect.objectContaining({
+          id: "apple",
+          clientId: "com.example.service",
+        }),
+      ],
+    });
+  });
+
+  it("reads the Apple private key from a file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cortexai-agent-hub-apple-"));
+    const file = join(dir, "key.p8");
+    try {
+      writeFileSync(file, privateKey);
+      expect(
+        loadEnv({ ...base, ...apple, APPLE_PRIVATE_KEY: undefined, APPLE_PRIVATE_KEY_FILE: file })
+          .social?.providers[0],
+      ).toMatchObject({ id: "apple" });
+      expect(() => loadEnv({ ...base, ...apple, APPLE_PRIVATE_KEY_FILE: file })).toThrow(
+        /not both/,
+      );
+      try {
+        loadEnv({
+          ...base,
+          ...apple,
+          APPLE_PRIVATE_KEY: undefined,
+          APPLE_PRIVATE_KEY_FILE: join(dir, "missing.p8"),
+        });
+        expect.unreachable("Missing private key must fail startup");
+      } catch (error) {
+        expect(error).toMatchObject({
+          message: "APPLE_PRIVATE_KEY_FILE could not be read",
+          cause: { code: "ENOENT", path: join(dir, "missing.p8") },
+        });
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

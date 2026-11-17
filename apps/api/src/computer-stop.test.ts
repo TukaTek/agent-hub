@@ -4,9 +4,11 @@ import path from "node:path";
 import type { AdapterContext } from "@cortexai-agent-hub/adapter-kit";
 import {
   FakeSandboxProvider,
+  InMemoryJobQueue,
   LocalAgentHomeStore,
   provisionComputer,
 } from "@cortexai-agent-hub/adapters";
+import { deferred } from "@cortexai-agent-hub/core/test-async";
 import type * as Db from "@cortexai-agent-hub/db";
 import type { PrismaClient } from "@cortexai-agent-hub/db";
 import { RPCHandler } from "@orpc/server/fetch";
@@ -19,14 +21,6 @@ vi.mock("@cortexai-agent-hub/db", async (importOriginal) => ({
   ...(await importOriginal<typeof Db>()),
   planComputerSize: vi.fn(async () => "standard"),
 }));
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 describe("Stop during a computer reconnect", () => {
   it.each([false, true])(
@@ -115,13 +109,14 @@ describe("Stop during a computer reconnect", () => {
           createMany: vi.fn(async () => ({ count: 1 })),
         },
         run: { findFirst: vi.fn(async () => null) },
+        $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
       } as unknown as PrismaClient;
       const deps = {
         prisma,
         sandbox,
         home: new LocalAgentHomeStore(dataDir),
         dataDir,
-        jobs: { cancel: vi.fn(async () => undefined) },
+        jobs: new InMemoryJobQueue(),
         env: {
           defaultProvider: "fake",
           defaultModel: "fake-model",

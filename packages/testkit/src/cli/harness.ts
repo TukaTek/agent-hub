@@ -6,11 +6,14 @@ import type { createApp } from "@cortexai-agent-hub/api/app";
 import { loadRootEnv } from "@cortexai-agent-hub/core/node/load-root-env";
 import type { runAsSystem as RunAsSystem } from "@cortexai-agent-hub/db";
 import { createModelConnectionFixtureFetch } from "../model-connection-fixture.js";
+import { pinLocalSecretStore } from "../pin-secret-store.js";
 import { PluginMarketplaceFixture } from "../plugin-marketplace-fixture.js";
 import { startPostgres } from "./postgres.js";
 import { runProcess } from "./process.js";
 
 loadRootEnv();
+
+if (!process.env.VERIFY_PROVIDERS) pinLocalSecretStore();
 
 const integration = process.argv.includes("--integration");
 const e2e = process.argv.includes("--e2e");
@@ -85,7 +88,6 @@ async function main() {
     process.env.AGENT_RUNTIME = agentRuntime;
     process.env.CORTEXAI_AGENT_HUB_LIVE_MODEL_CATALOG = "off";
     if (!integration) {
-      process.env.TICKET_BOARD_ENABLED = "true";
       process.env.PHONE_CALLS_ENABLED = "true";
       process.env.INBOUND_EMAIL_DOMAIN = "bots.cortexai-agent-hub.test";
       process.env.INBOUND_EMAIL_SECRET = "test-inbound-email-secret-test-32chars";
@@ -113,6 +115,9 @@ async function main() {
     process.env.DATA_DIR = path.join(reportDir, "data");
     process.env.SIGNUPS_ENABLED = "true";
     process.env.SIGNUP_ALLOWLIST = "";
+    // Organization membership and Space email invitations are opt-in; the suites cover them.
+    process.env.CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS = "true";
+    process.env.CORTEXAI_AGENT_HUB_ENABLE_SPACE_EMAIL_INVITES = "true";
     // Model and speech fixtures listen on loopback, and most test accounts are not the owner.
     process.env.MCP_ALLOW_PRIVATE_ENDPOINT = "true";
     if (!integration) {
