@@ -266,17 +266,16 @@ it("refreshes authenticated linked-account state after a successful provider lin
 });
 
 it.each(["google", "apple"])(
-  "hides unsupported linked %s confirmation without email delivery",
+  "hides deletion when a linked %s account has no way to confirm it without email delivery",
   async (id) => {
     vi.mocked(fetchAccountSecurity).mockResolvedValue({
       ...security,
+      hasPassword: false,
       sso: null,
       ssoLinked: false,
       linkedProviderIds: [id],
     });
     await render();
-    await click("Delete");
-    expect(deleteButton().disabled).toBe(true);
     expect(host.textContent).not.toContain("Continue with Provider");
     expect(authClient.signIn.social).not.toHaveBeenCalled();
     expect(requestAccountDeletionCode).not.toHaveBeenCalled();

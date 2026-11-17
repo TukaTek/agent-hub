@@ -65,8 +65,12 @@ export function lazyCatalogTools(
 ): ConnectorTool[] {
   // Execution budgets are bound per entry, so they ride on the execute tool's definition.
   const resultCharsByToolId = catalogResultBudgets(entries);
+  const budgeted = Object.keys(resultCharsByToolId).length > 0;
   return lazyCatalogToolDefinitions(prefix, connectorId, label, groupedNames(entries)).map(
-    (tool) => (tool.route?.toolName === CATALOG_EXECUTE ? { ...tool, resultCharsByToolId } : tool),
+    (tool) =>
+      budgeted && tool.route?.toolName === CATALOG_EXECUTE
+        ? { ...tool, resultCharsByToolId }
+        : tool,
   );
 }
 

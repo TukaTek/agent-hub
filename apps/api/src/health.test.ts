@@ -111,7 +111,7 @@ describe("health routes", () => {
       ok: true,
       status: "degraded",
       hubPolicy: status,
-      telemetry: { degraded: false, failures: 0, lastFailureAt: null },
+      telemetry: { degraded: false, failures: 0, lastFailureAt: null, droppedLines: 0 },
     });
   });
 

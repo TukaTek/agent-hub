@@ -285,6 +285,7 @@ it("tags guests, and says before inviting someone by email that they are outside
     canManage: true,
     addable: [colleague],
     organizationName: "Acme",
+    emailInvites: true,
   });
   expect(
     [...host.querySelectorAll('ul[aria-label="Members"] > li')].map((row) => row.textContent),

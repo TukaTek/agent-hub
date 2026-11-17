@@ -397,6 +397,7 @@ it("tags guests, and says before inviting someone by email that they are outside
         canManage: true,
         addable: [colleague],
         organizationName: "Acme",
+        emailInvites: true,
       };
     if (procedure === "spaces/invites/create")
       return {

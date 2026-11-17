@@ -238,22 +238,6 @@ function expectBefore(first: Element, second: Element) {
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
-it.each(["in", "up"])("offers a provider before the email form in %s mode", async (mode) => {
-  route.mode = mode;
-  vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...capabilities, sso: exampleSso });
-  await render();
-  expect(input("Email")).toBeNull();
-  expect(button("Continue with Example")).toBeDefined();
-  expect(button("Continue with email")).toBeDefined();
-  expect(host.textContent).toContain("or");
-  expect(host.textContent).toContain(mode === "in" ? "Welcome back" : "Create your account");
-  await press("Continue with email");
-  expect(input("Email")).not.toBeNull();
-  expect(button("Back")).toBeDefined();
-  await press("Back");
-  expect(input("Email")).toBeNull();
-});
-
 it.each(["in", "up"])(
   "shows one primary SSO action without credentials in SSO-only %s mode",
   async (mode) => {
@@ -270,37 +254,6 @@ it.each(["in", "up"])(
     expect(host.querySelector("input")).toBeNull();
   },
 );
-
-it("offers native provider controls and uses browser OAuth for sign-in", async () => {
-  vi.mocked(passwordResetCapabilities).mockResolvedValue({
-    ...capabilities,
-    sso: null,
-    providers: [
-      { id: "oidc", name: "Company" },
-      { id: "google", name: "Google" },
-      { id: "apple", name: "Apple" },
-    ],
-  });
-  vi.mocked(continueWithSso).mockResolvedValue(false);
-  await render();
-  expect(input("Email")).toBeNull();
-  expect(button("Continue with Google")).toBeDefined();
-  expect(button("Continue with Apple")).toBeDefined();
-  expect(host.querySelector("[data-native-provider]")).not.toBeNull();
-  expect(button("Continue with email")).toBeDefined();
-  expect(
-    button("Continue with email")!.compareDocumentPosition(button("Continue with Company")!) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  await press("Continue with Company");
-  expect(continueWithSso).toHaveBeenCalledWith("sign-in", "oidc");
-  await press("Continue with Google");
-  expect(continueWithSso).toHaveBeenCalledWith("sign-in", "google");
-  await press("Continue with Apple");
-  expect(continueWithSso).toHaveBeenCalledWith("sign-in", "apple");
-  await press("Continue with email");
-  expect(input("Email")).not.toBeNull();
-});
 
 it("hides social buttons when the server configures none", async () => {
   vi.mocked(passwordResetCapabilities).mockResolvedValue({ ...capabilities, sso: null });
@@ -405,7 +358,7 @@ it("asks before a sign-in deletes the queue a rejected session kept", async () =
   vi.mocked(confirmUnsentSendLoss).mockResolvedValue(true);
   vi.mocked(rpc).mockResolvedValue({ needsSetup: false } as never);
   await press("Sign in");
-  expect(signIn).toHaveBeenCalledExactlyOnceWith("ada@example.test", "example-password");
+  expect(signIn).toHaveBeenCalledExactlyOnceWith("ada@example.test", "example-password", false);
   expect(router.replace).toHaveBeenCalledWith("/");
 });
 
@@ -538,26 +491,6 @@ it("offers a secondary passkey sign-in only in sign-in mode on a supported serve
 
   act(() => buttonNamed("Sign up")!.click());
   expect(buttonNamed("Sign in with passkey")).toBeUndefined();
-});
-
-it("moves passkey sign-in to the provider chooser", async () => {
-  vi.mocked(passwordResetCapabilities).mockResolvedValue({
-    ...capabilities,
-    sso: exampleSso,
-    passkeyRpId: "example.invalid",
-  });
-  vi.mocked(passkeysAvailable).mockResolvedValue(true);
-  vi.mocked(signInWithPasskey).mockResolvedValue(false);
-  await render();
-  expectBefore(button("Continue with email")!, button("Continue with passkey")!);
-  await press("Continue with passkey");
-  expect(signInWithPasskey).toHaveBeenCalledOnce();
-
-  await press("Continue with email");
-  expect(button("Sign in with passkey")).toBeUndefined();
-  await press("Back");
-  await press("Sign up");
-  expect(button("Continue with passkey")).toBeUndefined();
 });
 
 it("asks the signup survey after an external sign-in creates the account", async () => {

@@ -323,7 +323,7 @@ export default function SignIn() {
                     <NativeActionButton
                       label={t`Continue with ${ph({ name: reset.sso.name })}`}
                       disabled={pending}
-                      onPress={() => void externalSignIn(continueWithSso)}
+                      onPress={() => void externalSignIn(() => continueWithSso("sign-in", "oidc"))}
                       style={{ marginTop: 16 }}
                     />
                   ) : null}
@@ -518,7 +518,9 @@ export default function SignIn() {
                           label={t`Continue with ${ph({ name: reset.sso.name })}`}
                           prominence="quiet"
                           disabled={pending}
-                          onPress={() => void externalSignIn(continueWithSso)}
+                          onPress={() =>
+                            void externalSignIn(() => continueWithSso("sign-in", "oidc"))
+                          }
                           style={{ alignSelf: "center", marginTop: 16 }}
                         />
                       ) : null}

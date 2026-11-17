@@ -356,7 +356,6 @@ describe("Hub authentication through real auth endpoints", () => {
     expect(bootstrapUserSpace).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ id: userId }),
-      expect.anything(),
     );
     expect(f.grants.size).toBe(1);
     const stored = [...f.grants.values()][0];

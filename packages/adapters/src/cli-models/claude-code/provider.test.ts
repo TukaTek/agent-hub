@@ -585,7 +585,8 @@ describe.skipIf(process.platform === "win32")("Claude Code CLI provider", () => 
 
   it("gives up on a CLI that stops reading its input", async () => {
     const previousIdle = process.env.MODEL_STREAM_IDLE_TIMEOUT_MS;
-    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "500");
+    // The fork's lowest idle timeout is 30 seconds; shorter values fall back to the default.
+    vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", "30000");
     fakeClaude("deaf");
     const long: Context = {
       systemPrompt: "You are a helpful bot.",
@@ -598,7 +599,7 @@ describe.skipIf(process.platform === "win32")("Claude Code CLI provider", () => 
     } finally {
       vi.stubEnv("MODEL_STREAM_IDLE_TIMEOUT_MS", previousIdle);
     }
-  });
+  }, 60_000);
 
   it.each(["0", "2000"])(
     "uses the shared idle setting (%s), independent of HTTP timeout",
