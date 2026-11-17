@@ -167,6 +167,8 @@ describePostgres("organization members and invitations (PostgreSQL)", () => {
         screenProxySecret: "fake-test-secret",
         invitationRecipientKey: "fake-recipient-key",
         sandboxProvider: "fake",
+        organizationsEnabled: true,
+        spaceEmailInvitesEnabled: true,
       },
       dataDir: "/tmp/cortexai-agent-hub-organization-members-test",
     } as unknown as RouterDeps;

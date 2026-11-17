@@ -115,6 +115,9 @@ async function main() {
     process.env.DATA_DIR = path.join(reportDir, "data");
     process.env.SIGNUPS_ENABLED = "true";
     process.env.SIGNUP_ALLOWLIST = "";
+    // Organization membership and Space email invitations are opt-in; the suites cover them.
+    process.env.CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS = "true";
+    process.env.CORTEXAI_AGENT_HUB_ENABLE_SPACE_EMAIL_INVITES = "true";
     // Model and speech fixtures listen on loopback, and most test accounts are not the owner.
     process.env.MCP_ALLOW_PRIVATE_ENDPOINT = "true";
     if (!integration) {

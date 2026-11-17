@@ -512,6 +512,8 @@ services:
       PASSKEY_APPLE_APP_IDS:
       PASSKEY_ANDROID_CERT_SHA256:
       COMPUTER_SETTINGS_ENABLED:
+      CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS:
+      CORTEXAI_AGENT_HUB_ENABLE_SPACE_EMAIL_INVITES:
       # The hop in front of the API whose X-Forwarded-For is believed; see docs/self-host-production.md#client-addresses.
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-caddy}
       CLIENT_IP_HEADER:

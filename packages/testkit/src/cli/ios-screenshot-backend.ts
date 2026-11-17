@@ -48,6 +48,8 @@ export async function startIosScreenshotBackend(input: {
     DATA_DIR: input.dataDir,
     SIGNUPS_ENABLED: "true",
     SIGNUP_ALLOWLIST: "",
+    CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS: "true",
+    CORTEXAI_AGENT_HUB_ENABLE_SPACE_EMAIL_INVITES: "true",
     PAYMENT_WALLET_PROVIDER: "emulator",
     LOG_LEVEL: "warn",
     CI: "1",

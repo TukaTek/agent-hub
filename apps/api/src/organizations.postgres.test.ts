@@ -66,7 +66,7 @@ describePostgres("organizations (PostgreSQL)", () => {
   const deps = () =>
     ({
       prisma,
-      env: {},
+      env: { organizationsEnabled: true },
       sandbox: sandbox as unknown as SandboxProvider,
       home,
       jobs: { cancel: vi.fn(), enqueue: vi.fn() } as unknown as JobPublisher,
@@ -197,6 +197,7 @@ describePostgres("organizations (PostgreSQL)", () => {
           memberCount: 1,
         },
       ],
+      organizationsEnabled: true,
     });
     await expect(client(asUser(ada, work.id)).organizations.list()).resolves.toMatchObject({
       activeOrganizationId: work.id,

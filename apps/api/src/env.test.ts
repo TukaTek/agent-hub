@@ -486,6 +486,39 @@ describe("OIDC environment", () => {
     expect(() => loadEnv({ ...hub, SCIM_BEARER_TOKEN: "s".repeat(32) })).toThrow(
       "SCIM directory provisioning can't be combined with Hub sign-in",
     );
+    expect(() => loadEnv({ ...hub, BILLING_EMULATOR: "true" })).toThrow(
+      "Billing can't be combined with Hub sign-in",
+    );
+    expect(() =>
+      loadEnv({ ...hub, GOOGLE_CLIENT_ID: "google-id", GOOGLE_CLIENT_SECRET: "google-secret" }),
+    ).toThrow("Google or Apple sign-in can't be combined with Hub sign-in");
+  });
+
+  it("keeps organizations, Space email invites and the demo login off by default and under Hub", () => {
+    const hub = {
+      ...base,
+      AUTH_MODE: "hub",
+      HUB_AUTH_ORIGIN: "https://hub.example.test",
+      HUB_POLICY_ENFORCEMENT: "off",
+    };
+    const on = {
+      CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS: "true",
+      CORTEXAI_AGENT_HUB_ENABLE_SPACE_EMAIL_INVITES: "true",
+      DEMO_ACCOUNT_EMAIL: "demo@example.test",
+      DEMO_ACCOUNT_PASSWORD: "demo-password",
+    };
+    const local = loadEnv(base);
+    expect(local.organizationsEnabled).toBe(false);
+    expect(local.spaceEmailInvitesEnabled).toBe(false);
+    expect(local.demoAccount).toBeNull();
+    const enabled = loadEnv({ ...base, ...on });
+    expect(enabled.organizationsEnabled).toBe(true);
+    expect(enabled.spaceEmailInvitesEnabled).toBe(true);
+    expect(enabled.demoAccount).toEqual({ email: "demo@example.test", password: "demo-password" });
+    const underHub = loadEnv({ ...hub, ...on });
+    expect(underHub.organizationsEnabled).toBe(false);
+    expect(underHub.spaceEmailInvitesEnabled).toBe(false);
+    expect(underHub.demoAccount).toBeNull();
   });
 });
 

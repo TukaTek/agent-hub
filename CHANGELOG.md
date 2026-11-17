@@ -29,14 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Organization owners and admins can invite people, change member roles and remove members from Settings > Organization > Members. Each new member gets a private Space; joining does not reveal anyone else's Spaces. Paid organization seats follow membership, and removing a member keeps their work in the organization.
+- Organization owners and admins can invite people, change member roles and remove members from Settings > Organization > Members. Each new member gets a private Space; joining does not reveal anyone else's Spaces. Paid organization seats follow membership, and removing a member keeps their work in the organization. Off unless `CORTEXAI_AGENT_HUB_ENABLE_ORGANIZATIONS=true`, and always off with Hub sign-in.
 - Optional conversation memory can learn from direct and group chats, recall facts and answer questions from a bot's own memory. Memory is isolated by default; choosing **Shared** pools learned conversations, including direct chats, within the Space. Connected memory providers can be edited without disconnecting ([memory](docs/memory.md)).
 - Vault items can limit which bots use them, ask before each use, hold additional login sites and authenticator keys, and show usage history. Import saved logins from CSV ([reusable credentials](docs/bot-secrets.md)).
 - Each connected model has its own context and output limits, image support and thinking settings, with a searchable model list and individual settings pages. Connections can also supply project and region routing where required ([models](docs/models.md)).
 - Connect your own T3 Code environment and hand it coding work through the cloud-agent card, including follow-ups and cancellation ([integrations](docs/self-host-integrations.md)).
 - Import Agent Skills catalogs or individual skill folders from GitHub, including supported referenced text resources; imported scripts are not executed ([skills](docs/skills.md)). Agent imports also accept a Grok Bot's self-export ([import an agent](docs/import-an-agent.md)).
 - Custom MCP servers offer browser OAuth sign-in when being added, and each server gets its own sign-in browser session.
-- Optional Google and Apple account sign-in, with passkeys available alongside the other methods and the last-used method marked ([account sign-in](docs/self-host-accounts.md)).
+- Optional Google and Apple account sign-in, with passkeys available alongside the other methods and the last-used method marked ([account sign-in](docs/self-host-accounts.md)). Not available with Hub sign-in.
 - Large composer pastes can be attached as a file or kept inline. Cmd/Ctrl+L on desktop, or Cmd/Ctrl+Shift+L in a browser, quotes selected transcript text. Slash commands work anywhere in a message with Enter choosing the highlighted command.
 - Settings > Labs enables the ticket board and its bot tools for an account.
 - Usage can be broken down by bot and model over a local-calendar date range.
